@@ -73,6 +73,25 @@ function evidence(
 }
 
 describe('Work display grouping of the canonical allocation', () => {
+  it('carries measured-floor provenance beside reported totals through Work groups and turns', () => {
+    const parts = { ...contribution('parts', 'session', 'turn'),
+      tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+    const reported = { ...contribution('reported', 'session', 'turn'), tokens: { ...tokens, total: 2000 } };
+    const work = allocateUsageOutcomes({ contributions: [reported, parts], evidence: [evidence('session', 'turn', 1)] });
+    const basis = { metric: 'tokens', costBasis: 'auto' } as const;
+    const summary = summarizeUsageWork(work, basis);
+    expect.soft(summary).toMatchObject({ total: 3713, tokensFromParts: true });
+    expect.soft(summary.projects[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
+    expect.soft(summary.sessions[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
+    expect.soft(summary.outcomes[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
+    expect.soft(summary.projects[0]?.sessions[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
+    const autopsy = summarizeUsageWorkSession(work, basis, 'session');
+    expect.soft(autopsy).toMatchObject({ amount: 3713, tokensFromParts: true });
+    expect(autopsy.turns[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
+    const exact = summarizeUsageWork(allocateUsageOutcomes({ contributions: [reported], evidence: [] }), basis);
+    expect(exact).toMatchObject({ total: 2000, tokensFromParts: false });
+  });
+
   it('uses measured parts in Work amounts and grouped totals', () => {
     const measured = { ...contribution('parts', 'session', 'turn'),
       tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };

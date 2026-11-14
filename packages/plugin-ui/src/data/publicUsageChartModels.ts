@@ -90,9 +90,11 @@ export function projectPublicUsageChartModels(snapshot: PublicProfileSnapshotV1,
     }));
   return {
     summary,
+    ...(facts.tokensFromParts ? { tokensFromParts: true } : {}),
     coverage: snapshot.coverage,
     highlights: facts.highlights ?? null,
-    footprint: facts.footprint === undefined ? null : { ...(facts.tokens === undefined ? {} : { accountedTokens: facts.tokens }) },
+    footprint: facts.footprint === undefined ? null : { ...(facts.tokens === undefined ? {} : { accountedTokens: facts.tokens }),
+      ...(facts.tokensFromParts ? { tokensFromParts: true } : {}) },
     sourceShares: facts.sourceSplit ?? null,
     agentMix: facts.agentMix ?? null,
     sky,

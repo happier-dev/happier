@@ -244,6 +244,7 @@ export function formatUsageChartMetric(
   }
 }
 
-export function usageChartMetricName(metric: UsageChartMetric): string {
-  return t(`usage.board.charts.metric_${metric}`);
+export function usageChartMetricName(metric: UsageChartMetric, tokensFromParts?: boolean): string {
+  return [t(`usage.board.charts.metric_${metric}`), metric === 'tokens' && tokensFromParts
+    ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
 }

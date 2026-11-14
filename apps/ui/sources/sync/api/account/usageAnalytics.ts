@@ -152,9 +152,9 @@ export interface UsageAnalyticsLeaderSections {
  * Hero section reads these instead of re-deriving from raw totals.
  */
 export interface UsageHeroViewModel {
-    /** The measured token figure (`resolveUsageMeasuredTokens`): the reported total, or else the sum of reported parts. */
+    /** The measured token figure, retaining each contribution's total or measured parts. */
     totalTokens: number | null;
-    /** True when no agent reported a total and the figure is the sum of the parts they did report (a floor). */
+    /** True when any contribution used measured parts as a floor. */
     totalTokensFromParts: boolean;
     /** Effective (auto) cost for the period, independent of the metric toggle. */
     effectiveUsd: number | null;

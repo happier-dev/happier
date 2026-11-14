@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { UsageAnalyticsCostFactValueSchema, type UsageAnalyticsCostFact } from './usageAnalyticsContracts.js';
-import { addUsageTokens } from './usageAggregation.js';
+import { addUsageMeasuredTokens } from './usageAggregation.js';
 import { createUsageMoneyAccumulator, readUsageMoney, transferUsageMoney, usageMoneyToNumber, withUsageMoney } from './usageMoney.js';
 
 /** A total preserves every contributing source; it never impersonates one producer. */
@@ -16,8 +16,7 @@ export function projectUsageCostFactTotals(facts: readonly UsageAnalyticsCostFac
   return aggregateUsageCostFactTotals(facts.map(fact => ({
     kind: fact.kind, currency: fact.currency, amountUsd: fact.amountUsd, source: fact.source,
     eventCount: fact.eventCount, asOfMs: fact.asOfMs, complete: fact.complete,
-    tokens: { input: fact.tokens.input, output: fact.tokens.output, reasoning: fact.tokens.reasoning,
-      cacheRead: fact.tokens.cacheRead, cacheWrite: fact.tokens.cacheWrite, total: fact.tokens.total },
+    tokens: fact.tokens,
   })));
 }
 
@@ -64,7 +63,7 @@ function createUsageCostFactGroups(separateSources: boolean) {
         if (previous.amount) previous.amount.add(operand);
         else previous.amount = createUsageMoneyAccumulator(operand);
       }
-      previous.tokens = addUsageTokens(previous.tokens, fact.tokens);
+      previous.tokens = addUsageMeasuredTokens(previous.tokens, fact.tokens);
       previous.eventCount += fact.eventCount;
       previous.asOfMs = Math.min(previous.asOfMs, fact.asOfMs);
       previous.complete &&= fact.complete;

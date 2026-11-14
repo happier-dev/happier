@@ -22,6 +22,40 @@ const snapshot: PublicProfileSnapshotV1 = PublicProfileSnapshotV1Schema.parse({ 
   lenses: [{ execution: 'outside', facts }],
 });
 describe('public-profile disclosure projection', () => {
+  it('keeps floor provenance under token consent through stored reads and source lenses', () => {
+    const measured = { ...facts, tokensFromParts: true,
+      agentMix: facts.agentMix.map(row => ({ ...row, tokensFromParts: true })),
+      sourceSplit: facts.sourceSplit.map(row => ({ ...row, tokensFromParts: true })) };
+    const admitted = PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: measured,
+      lenses: [{ execution: 'outside', facts: measured }] });
+    expect(PublicProfileSnapshotV1StoredSchema.parse(JSON.parse(JSON.stringify(admitted)))).toEqual(admitted);
+    expect(PublicProfileSnapshotV1StoredSchema.parse(snapshot)).toEqual(snapshot);
+    const enabled = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields,
+      tokens: true, agentMix: true, sourceSplit: true } };
+    expect(projectPublicProfileSnapshot(admitted, enabled)).toMatchObject({ facts: { tokensFromParts: true,
+      agentMix: [{ tokensFromParts: true }], sourceSplit: [{ tokensFromParts: true }] },
+      lenses: [{ facts: { tokensFromParts: true, agentMix: [{ tokensFromParts: true }], sourceSplit: [{ tokensFromParts: true }] } }] });
+    const hidden = projectPublicProfileSnapshot(admitted, { ...enabled, fields: { ...enabled.fields, tokens: false } });
+    for (const facts of [hidden.facts, ...hidden.lenses!.map(lens => lens.facts)]) {
+      expect(facts).not.toHaveProperty('tokens');
+      expect(facts).not.toHaveProperty('tokensFromParts');
+      for (const row of [...facts.agentMix ?? [], ...facts.sourceSplit ?? []]) {
+        expect(row).not.toHaveProperty('tokens');
+        expect(row).not.toHaveProperty('tokensFromParts');
+      }
+    }
+    const layout = PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'agent-floors', size: 'medium', frameStyle: 'plain',
+      presentation: { kind: 'declarative', document: { version: 1, root: { kind: 'table',
+        data: { kind: 'value', value: { kind: 'public_profile' } }, rows: ['snapshot', 'facts', 'agentMix'], columns: [
+          { label: 'Agent', field: { path: ['agentId'], type: 'string' } },
+          { label: 'Parts floor', field: { path: ['tokensFromParts'], type: 'boolean' } },
+        ] } } } }] });
+    const preview = (tokens: boolean) => projectPublicProfilePreview({ context: { handle: 'person', identity: {}, service: null, urls: null },
+      metadata: {}, snapshot: admitted, layout, appearance: { theme: 'auto', atmosphere: { source: 'none' } },
+      policy: { ...enabled, fields: { ...enabled.fields, tokens } } });
+    expect(JSON.stringify(preview(true)?.layout)).toContain('Parts floor');
+    expect(JSON.stringify(preview(false)?.layout)).not.toContain('Parts floor');
+  });
   it('carries the chosen relative period to strict public and local views without inferring it from the date range', () => {
     const context = { handle: 'person', identity: {}, service: { displayName: 'Service', publicBaseUrl: 'https://example.com' },
       urls: { page: 'https://example.com/@person', json: 'https://example.com/v1/public/profiles/person',

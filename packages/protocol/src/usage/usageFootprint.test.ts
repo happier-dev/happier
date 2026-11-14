@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { projectUsageFootprint } from './index.js';
+import { UsageFootprintProjectionSchema } from './usageFootprint.js';
 import type { UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 
 const response: UsageAnalyticsQueryResponse = {
   v: 1,
   totals: {
     eventCount: 2,
-    tokens: { input: 100, output: 20, reasoning: 5, cacheRead: 80, cacheWrite: 4, total: 120 },
+    tokens: { input: 100, output: 20, reasoning: 5, cacheRead: 80, cacheWrite: 4, total: 120,
+      measured: { total: 170, fromParts: true } },
     cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' },
   },
   breakdowns: {
@@ -22,7 +24,7 @@ const response: UsageAnalyticsQueryResponse = {
 
 describe('usage footprint projection', () => {
   it('keeps attributed accounting as an uncovered proxy without manufacturing energy or carbon', () => {
-    expect(projectUsageFootprint(response)).toEqual({
+    expect(UsageFootprintProjectionSchema.parse(projectUsageFootprint(response))).toEqual({
       status: 'insufficient_basis',
       reason: 'no_applicable_versioned_method',
       method: null,

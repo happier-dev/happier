@@ -18,6 +18,7 @@ import {
 import { usageCostKindPhrase, usagePageCostCaption } from '../usageCostPresentation';
 import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 
 /**
@@ -43,11 +44,12 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const tokensCaption = view.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : undefined;
   const current = cost ? selectedCost.amountUsd : tokens;
   const previousAccounting = props.slice.comparison?.accounting;
-  // A sum of parts is a floor, not a total: it is never compared with an earlier period's total.
+  // A measured floor in either period cannot establish an exact change.
+  const previousTokens = previousAccounting ? resolveUsageMeasuredTokens(previousAccounting.totals.tokens) : null;
   const previous = previousAccounting
     ? cost
       ? previousCost
-      : view.hero.totalTokensFromParts ? null : previousAccounting.totals.tokens.total
+      : view.hero.totalTokensFromParts || previousTokens?.fromParts ? null : previousAccounting.totals.tokens.total
     : null;
   const comparison = usageComparison(current, previous);
   const apiEquivalent = props.slice.costFactTotals?.find(fact => fact.kind === 'api_equivalent' && fact.currency === currency);

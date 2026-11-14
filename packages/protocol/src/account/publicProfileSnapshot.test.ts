@@ -44,6 +44,29 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false, agent
 }
 
 describe('public-profile snapshot computation from canonical Usage', () => {
+  it('publishes the same measured token floors in rich and compact totals, Agent rows and source lenses', () => {
+    const original = result(undefined, false, ['codex', 'claude', 'codex'], 4);
+    const empty = createEmptyUsageTokens();
+    const measurements = [{ ...empty, total: 1000, input: 20 }, { ...empty, input: 100, output: 50 },
+      empty, { ...empty, total: 0, input: 500 }];
+    const rows = original.accounting!.contributions!.map((row, index) => ({ ...row, tokens: measurements[index]! }));
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ ...original.accounting, contributions: rows,
+      totals: { ...original.accounting!.totals, tokens: rows.reduce((total, row) => addUsageTokens(total, row.tokens), empty) } });
+    const prepared = [accounting, projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(query, endMs))];
+    for (const value of prepared) {
+      const queryResult = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value,
+        status: 'available', asOfMs: endMs }] }).results[0]!;
+      const built = buildPublicProfileSnapshot({ queryResult, policy, nowMs: endMs });
+      expect(built.kind).toBe('ready');
+      if (built.kind !== 'ready') throw new Error('Expected public measured tokens');
+      expect(built.snapshot.facts).toMatchObject({ tokens: 1150, tokensFromParts: true,
+        agentMix: [{ agentId: 'claude', tokens: 150, tokensFromParts: true }, { agentId: 'codex', tokens: 1000 }],
+        sourceSplit: [{ execution: 'happier', tokens: 1000 }, { execution: 'outside', tokens: 150, tokensFromParts: true }] });
+      expect(built.snapshot.lenses?.find(lens => lens.execution === 'outside')?.facts)
+        .toMatchObject({ tokens: 150, tokensFromParts: true });
+      expect(PublicProfileRefreshBodyV1Schema.parse({ query, snapshot: built.snapshot }).snapshot).toEqual(built.snapshot);
+    }
+  });
   it.each([false, true])('retains unknown measurements and partial coverage in public rich and compact facts (known subtotal %s)', hasKnown => {
     const original = result();
     const unknown = { ...original.accounting!.contributions![1]!, tokens: createEmptyUsageTokens(),

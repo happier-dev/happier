@@ -1,5 +1,5 @@
-import type { UsageAnalyticsContribution, UsageAnalyticsCoverage, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsSummary, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
+import type { UsageAnalyticsTokens, UsageAnalyticsContribution, UsageAnalyticsCoverage, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsSummary, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
+import { addUsageMeasuredTokens, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
 import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from './usageCalendar.js';
 import { mergeUsageAccountingSessionMembership, projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership, type UsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import { projectUsageAgentAccountingCalendar, projectUsageCalendarAccountingFacts, resolveUsageAccountingCalendarPeriod, type UsageAgentAccountingHourFacts } from './usageAgentCalendar.js';
@@ -45,14 +45,14 @@ export function projectUsageSummaryObservationRange(rows: readonly Pick<UsageAna
 }
 
 /** Canonical non-monetary totals; folded source identities are disjoint across admitted contributions. */
-export function projectUsageContributionTotals(rows: readonly Pick<UsageAnalyticsContribution, 'tokens' | 'eventCount' | 'context'>[],
+export function projectUsageContributionTotals(rows: readonly (Pick<UsageAnalyticsContribution, 'eventCount' | 'context'> & { tokens: UsageAnalyticsTokens })[],
     cost: UsageAnalyticsQueryResponse['totals']['cost']): UsageAnalyticsQueryResponse['totals'] {
-    let tokens: UsageObservationTokens = rows.length ? createEmptyUsageTokens()
+    let tokens: UsageAnalyticsTokens = rows.length ? createEmptyUsageTokens()
         : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
     let eventCount = 0;
     let context: Totals['context'];
     for (const row of rows) {
-        tokens = addUsageTokens(tokens, row.tokens);
+        tokens = addUsageMeasuredTokens(tokens, row.tokens);
         eventCount += row.eventCount ?? 1;
         if (row.context && (row.context.usedTokens != null || row.context.windowTokens != null)) context = row.context;
     }
@@ -152,7 +152,7 @@ export function projectUsageActivityProjectionDayFacts(operands: readonly UsageA
         observationRange: projectUsageSummaryObservationRange(rows), unknownAccountCount: countUsageSummaryUnknownAccounts(rows),
         accounts: groupUsageSummaryAccounts(rows).map(group => ({ ref: group.ref, contributionCount: group.rows.length,
             population: buildUsageAdmittedPricingPopulation(group.rows, accountSelections) })),
-        execution: { coverage: execution.coverage, totalTokens: execution.totalTokens, groups: execution.groups.map(({ contributions: _rows, ...group }) => group) },
+        execution: { ...execution, groups: execution.groups.map(({ contributions: _rows, ...group }) => group) },
         sessionIds: projectUsageAccountingSessionIds(rows), sessionMembership: projectUsageAccountingSessionMembership(rows),
         hours: [...hourly].sort(([a], [b]) => a - b).map(([startMs, agents]) => ({ startMs,
             agents: [...agents].map(([agentId, selected]) => ({ agentId, facts: projectUsageCalendarAccountingFacts(selected) })) })),
@@ -166,7 +166,7 @@ export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityP
     const totals = projectUsageContributionTotals(populated.map(part => ({ ...part.totals, tokens: restoreUsageMoneyProvenance(part.totals.tokens, part.exact.tokens) })), createEmptyUsageCost());
     const tokenCategories = projectUsageContributionTokenCategories(populated.map(part => ({
         tokenCategories: part.tokenCategories && restoreUsageMoneyProvenance(part.tokenCategories, part.exact.categories ?? {}) })));
-    const execution = summarizeUsageExecutionSources(parts.flatMap(part => part.execution.groups.map(group => ({ tokens: { total: group.tokens }, sourceContext: { execution: group.execution } }))));
+    const execution = summarizeUsageExecutionSources(parts.flatMap(part => part.execution.groups.map(group => ({ tokens: { total: group.tokens, ...(group.tokensFromParts && group.tokens !== null ? { measured: { total: group.tokens, fromParts: true as const } } : {}) }, sourceContext: { execution: group.execution } }))));
     const accountGroups: Array<{ ref: AccountRows['ref']; contributionCount: number; populations: UsagePricingPopulation[] }> = [];
     for (const part of parts) for (const account of part.accounts) {
         let group = accountGroups.find(group => sameQualifiedConnectedAccountRef(group.ref, account.ref));
@@ -200,7 +200,7 @@ export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityP
                     hour.population.groups.reduce((sum, group) => sum + group.contributionCount, 0)) ?? hour.population])) } } : {}),
         accounts: { unknownContributionCount: parts.reduce((sum, part) => sum + part.unknownAccountCount, 0),
             values: accountGroups.map(group => ({ ref: group.ref, contributionCount: group.contributionCount, pricedContributionCount: 0, apiEquivalentUsd: 0, pricingSources: [] })) },
-        execution: { coverage: execution.coverage, totalTokens: execution.totalTokens, groups: execution.groups.map(({ contributions: _rows, ...group }) => group) } },
+        execution: { ...execution, groups: execution.groups.map(({ contributions: _rows, ...group }) => group) } },
         // The existing full projection appends the selected presentation before delivery admits membership.
         costPresentation: undefined,
         sessionIds: [...new Set(parts.flatMap(part => part.sessionIds))],

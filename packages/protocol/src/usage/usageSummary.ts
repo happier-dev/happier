@@ -1,4 +1,4 @@
-import { compareUsageMeasurementsDescending } from './usageAggregation.js';
+import { resolveUsageMeasuredTokens, compareUsageMeasurementsDescending } from './usageAggregation.js';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse, type UsageAnalyticsSummary,
     type UsageObservationCost, type UsageAnalyticsBreakdownEntry, type UsagePricingPopulation, type UsageAnalyticsTimelineSource } from './usageAnalyticsContracts.js';
 import { readUsagePageCostProjectionBasis, resolveUsageCostBasis, resolveUsageContributionDimensionKey, serializeUsageCostBasis, usagePageCostProjectionBasis, type UsageCostMode } from './usageCostFacts.js';
@@ -46,17 +46,19 @@ function buildRankedPricing(rows: readonly UsageAnalyticsContribution[], dimensi
         const admittedValues = admitted?.candidates.map(candidate => {
             const { cost: _cost, sources: _sources, ...value } = candidate.value;
             return { ...value, label: labels.get(value.key) ?? value.key };
-        }).sort((left, right) => compareUsageMeasurementsDescending(left.tokens.total, right.tokens.total));
-        const admittedFrontier = admittedValues?.[Math.min(previous.length, admittedValues.length) - 1]?.tokens.total;
+        }).sort((left, right) => compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(left.tokens).total, resolveUsageMeasuredTokens(right.tokens).total));
+        const admittedBoundary = admittedValues?.[Math.min(previous.length, admittedValues.length) - 1];
+        const admittedFrontier = admittedBoundary ? resolveUsageMeasuredTokens(admittedBoundary.tokens).total : undefined;
         const candidates = countedRows && !witnessedAll
-            ? decorateUsageBreakdownList(admittedValues?.filter(entry => admittedFrontier !== undefined && compareUsageMeasurementsDescending(entry.tokens.total, admittedFrontier) <= 0)
+            ? decorateUsageBreakdownList(admittedValues?.filter(entry => admittedFrontier !== undefined && compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(entry.tokens).total, admittedFrontier) <= 0)
                 ?? selectUsageLeaderTokenFrontier(countedRows, dimension, previous.length, labels).map(group => group.value),
                 countedRows, dimension, previous)
             : previous;
-        const frontier = candidates[Math.min(previous.length, candidates.length) - 1]?.tokens.total;
+        const boundary = candidates[Math.min(previous.length, candidates.length) - 1];
+        const frontier = boundary ? resolveUsageMeasuredTokens(boundary.tokens).total : undefined;
         // Compact operands have no selected price yet; private repricing owns tie ordering.
-        return { key, entries: candidates.filter(entry => frontier !== undefined && compareUsageMeasurementsDescending(entry.tokens.total, frontier) <= 0)
-            .sort((left, right) => compareUsageMeasurementsDescending(left.tokens.total, right.tokens.total) || left.key.localeCompare(right.key)) };
+        return { key, entries: candidates.filter(entry => frontier !== undefined && compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(entry.tokens).total, frontier) <= 0)
+            .sort((left, right) => compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(left.tokens).total, resolveUsageMeasuredTokens(right.tokens).total) || left.key.localeCompare(right.key)) };
     });
     // One dimension admits each candidate's money once for all consuming outputs.
     // Labels, context and requested frontiers still belong to each output.
@@ -232,7 +234,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
         ...(accountingCalendar ? { accountingCalendar } : {}),
         ...(publicProfileAccounting ? { publicProfileAccounting } : {}),
         accounts,
-        execution: { coverage: execution.coverage, totalTokens: execution.totalTokens,
+        execution: { ...execution,
             groups: execution.groups.map(({ contributions: _rows, ...group }) => group) } };
     return projectSummaryFacts(value, summary, mode);
 }

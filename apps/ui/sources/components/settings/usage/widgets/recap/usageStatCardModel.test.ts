@@ -46,6 +46,39 @@ function composed(
 }
 
 describe('private stat card model', () => {
+  it('qualifies public measured totals while keeping share-only exports free of token provenance', async () => {
+    const { buildUsageStatCardModel } = await import('./usageStatCardModel');
+    const { UsageRecapComposeResultSchema } = await import('@happier-dev/protocol/usage/usageRecap');
+    const { t } = await import('@/text');
+    const result = (facts: object) => UsageRecapComposeResultSchema.parse({ ...composed(['tokens', 'agentMix'], {}),
+      source: 'public_profile', publicSnapshot: { v: 1, computedAtMs: periodEnd,
+        period: { startMs: periodStart, endMs: periodEnd, timeZoneOffsetMinutes: 120 },
+        coverage: { status: 'partial', method: 'runtime' }, fieldCoverage: {}, facts } });
+    const shared = result({ tokens: 1713, tokensFromParts: true,
+      agentMix: [{ agentId: 'codex', share: 1, tokens: 1713, tokensFromParts: true,
+        coverage: { status: 'partial', method: 'runtime' } }] });
+    const shareOnly = result({ agentMix: [{ agentId: 'codex', share: 1,
+      coverage: { status: 'partial', method: 'runtime' } }] });
+    if (shared.kind !== 'composed' || shareOnly.kind !== 'composed') throw new Error('Expected composed fixture');
+    const model = buildUsageStatCardModel(shared);
+    expect.soft(model.headline?.unit).toContain(t('usage.board.page.tokensFromParts'));
+    expect.soft(model.mixGroups[0]).toMatchObject({ totalTokens: 1713, tokensFromParts: true });
+    const hidden = buildUsageStatCardModel(shareOnly);
+    expect(hidden.headline).toBeNull();
+    expect(hidden.mixGroups[0]?.totalTokens).toBeNull();
+    expect(hidden.mixGroups[0]?.tokensFromParts).toBeFalsy();
+  });
+  it('retains the measured-floor qualifier for scalar mix totals and observed peaks', async () => {
+    const { buildUsageStatCardModel } = await import('./usageStatCardModel');
+    const { t } = await import('@/text');
+    const model = buildUsageStatCardModel(composed(['agentMix', 'highlights'], {
+      agentMix: [{ agentId: 'codex', tokens: 1713, tokensFromParts: true, events: 1 }],
+      highlights: [{ kind: 'observed_peak', bucketStartMs: periodStart, bucketEndMs: periodEnd,
+        tokens: 1713, tokensFromParts: true }],
+    }));
+    expect.soft(model.mixGroups[0]).toMatchObject({ totalTokens: 1713, tokensFromParts: true });
+    expect(model.stats.find(stat => stat.id === 'observedPeak')?.label).toContain(t('usage.board.page.tokensFromParts'));
+  });
   it('shows measured token parts and their provenance without inventing a cache share', async () => {
     const { buildUsageStatCardModel } = await import('./usageStatCardModel');
     const { formatTokenCount } = await import('@/utils/format/usageNumbers');

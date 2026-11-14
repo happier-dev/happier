@@ -95,7 +95,8 @@ export function buildPublicProfileSnapshot(input: Readonly<{ queryResult: UsageQ
   Object.assign(facts, slice.publicProfileEvidence?.accountingFacts);
   const sourceSummary = accounting.summary?.execution ?? summarizeUsageExecutionSources(accounting.contributions);
   facts.sourceSplit = sourceSummary.groups.flatMap(group => group.share === null || group.tokens === null ? []
-    : [{ execution: group.execution, tokens: group.tokens, share: group.share }]);
+    : [{ execution: group.execution, tokens: group.tokens, share: group.share,
+      ...(group.tokensFromParts ? { tokensFromParts: true as const } : {}) }]);
   if (accounting.activity?.weekdayHourBuckets) {
     const buckets = accounting.activity.weekdayHourBuckets;
     const ranked = levels(buckets.map(bucket => bucket.eventCount));

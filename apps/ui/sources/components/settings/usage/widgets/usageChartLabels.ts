@@ -24,6 +24,7 @@ export function usagePublicOriginalLabels(query: Pick<UsageQuery, 'timeZoneOffse
     },
     formatMetric: (kind, value) => kind === 'agentTimeMs' ? formatUsageDuration(value) : kind === 'tokens' ? formatTokenCount(value) : value.toLocaleString(),
     activityLevel: t('publicIdentity.page.activityLevel'), level: value => levels[value] ?? t('common.unavailable'),
+    tokensFromParts: t('usage.board.page.tokensFromParts'),
     date: dates.short, weekdays: usageChartWeekdays(), clock: usageChartClock,
     showValues: t('usage.board.charts.showValues'), hideValues: t('usage.board.charts.hideValues'),
     agentMix: t('publicIdentity.publicData.fields.agentMix'), sourceSplit: t('publicIdentity.publicData.fields.sourceSplit'), percent: usageChartPercent,

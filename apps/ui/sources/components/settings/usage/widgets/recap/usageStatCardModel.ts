@@ -55,6 +55,7 @@ export type UsageStatCardMixGroup = Readonly<{
   kind: 'agentMix' | 'modelMix';
   rows: readonly UsageStatCardMixRow[];
   totalTokens: number | null;
+  tokensFromParts?: boolean;
 }>;
 
 /**
@@ -114,6 +115,7 @@ function mixGroup(
   return {
     kind,
     totalTokens,
+    tokensFromParts: rows.some(row => row.tokensFromParts),
     rows: totalTokens === null || totalTokens <= 0
       ? []
       : rows
@@ -149,8 +151,10 @@ export function buildUsageStatCardModel(
       stats.push({ id, value: formatCount(highlight.count), label });
     }
     return { style: result.style, format: result.format, manifest: result.selectedFields, unavailable: result.unavailableFields,
-      headline: facts.tokens === undefined ? null : { value: formatTokenCount(facts.tokens), unit: t('usage.board.recap.tokensUnit') },
+      headline: facts.tokens === undefined ? null : { value: formatTokenCount(facts.tokens),
+        unit: [t('usage.board.recap.tokensUnit'), facts.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ') },
       mixGroups: facts.agentMix ? [{ kind: 'agentMix', totalTokens: facts.tokens ?? null,
+        tokensFromParts: facts.tokens !== undefined && facts.tokensFromParts === true,
         rows: facts.agentMix.map((row, index) => ({ id: `agentMix-${index}`, agentId: row.agentId, share: row.share, label: usageAgentTitle(row.agentId) })) }] : [],
       stats, days: facts.calendar?.map(day => day.level ?? 0) ?? [],
       period: result.period, periodLabel: formatUsageRecapPeriod(result.period), asOfMs: result.asOfMs };
@@ -217,7 +221,7 @@ export function buildUsageStatCardModel(
     });
   for (const highlight of facts.highlights ?? []) {
     if (highlight.kind === 'observed_peak') stats.push({ id: 'observedPeak', value: formatTokenCount(highlight.tokens),
-      label: t('usage.banner.peakTokens') });
+      label: [t('usage.banner.peakTokens'), highlight.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ') });
     else if (!facts.work) stats.push({ id: 'highlightOutcomes', value: formatCount(highlight.count), label: t('usage.board.recap.statLinkedOutcomes') });
   }
   if (facts.dollars) {

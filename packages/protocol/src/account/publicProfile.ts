@@ -43,23 +43,24 @@ export const PublicPeriodV1Schema = lazyZodSchema(() => z.strictObject({
 export type PublicPeriod = z.infer<typeof PublicPeriodV1Schema>;
 const level = z.nullable(z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]));
 export const PublicDayV1Schema = lazyZodSchema(() => z.strictObject({ date: z.iso.date(), level }));
-const agentMixEntry = z.strictObject({ agentId: AgentIdV1Schema, share, tokens: z.optional(count), coverage: PublicCoverageV1Schema });
+const agentMixEntry = z.strictObject({ agentId: AgentIdV1Schema, share, tokens: z.optional(count),
+  tokensFromParts: z.optional(z.literal(true)), coverage: PublicCoverageV1Schema });
 const window = { startMs: count, endMs: count };
 function uniqueBy<T>(values: readonly T[], key: (value: T) => string) { return new Set(values.map(key)).size === values.length; }
 export const PublicUsageFactsV1Schema = lazyZodSchema(() => z.strictObject({
-  tokens: z.optional(count), activeDays: z.optional(count), agentTimeMs: z.optional(amount), mergedPrs: z.optional(count),
+  tokens: z.optional(count), tokensFromParts: z.optional(z.literal(true)), activeDays: z.optional(count), agentTimeMs: z.optional(amount), mergedPrs: z.optional(count),
   currentStreakDays: z.optional(count), bestStreakDays: z.optional(count), peakParallel: z.optional(count),
   calendar: z.optional(z.array(PublicDayV1Schema).check(z.refine(days => uniqueBy(days, day => day.date)))),
   agentMix: z.optional(z.array(agentMixEntry).check(z.refine(rows => uniqueBy(rows, row => row.agentId)))),
   sourceSplit: z.optional(z.array(z.strictObject({ execution: z.enum(['happier', 'outside', 'unknown']), share,
-    tokens: z.optional(count) })).check(z.refine(rows => uniqueBy(rows, row => row.execution)))),
+    tokens: z.optional(count), tokensFromParts: z.optional(z.literal(true)) })).check(z.refine(rows => uniqueBy(rows, row => row.execution)))),
   punch: z.optional(z.array(z.strictObject({ weekday: z.number().check(z.int(), z.minimum(0), z.maximum(6)),
     hour: z.number().check(z.int(), z.minimum(0), z.maximum(23)), level })).check(z.refine(rows => uniqueBy(rows, row => `${row.weekday}:${row.hour}`)))),
   highlights: z.optional(z.array(z.strictObject({ kind: z.enum(['merged_prs', 'peak_parallel', 'active_days']), count }))),
   footprint: z.optional(z.strictObject({ status: z.literal('insufficient_basis'), reason: z.literal('no_applicable_versioned_method') })),
   agentActiveDays: z.optional(z.array(z.strictObject({ agentId: AgentIdV1Schema, days: count, coverage: PublicCoverageV1Schema }))
     .check(z.refine(rows => uniqueBy(rows, row => row.agentId)))),
-  weeklyAgentMix: z.optional(z.array(z.strictObject({ ...window, mix: z.array(z.omit(agentMixEntry, { tokens: true })) })
+  weeklyAgentMix: z.optional(z.array(z.strictObject({ ...window, mix: z.array(z.omit(agentMixEntry, { tokens: true, tokensFromParts: true })) })
     .check(z.refine(row => row.endMs > row.startMs && uniqueBy(row.mix, item => item.agentId))))
     .check(z.refine(rows => uniqueBy(rows, row => `${row.startMs}:${row.endMs}`)))),
   weeklyPeakParallel: z.optional(z.array(z.strictObject({ ...window, peak: count, coverage: PublicCoverageV1Schema })

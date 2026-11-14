@@ -25,6 +25,24 @@ const response = UsageAnalyticsQueryResponseSchema.parse({
 const snapshot = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available', asOfMs: 9500 }] }).results[0]!;
 
 describe('private recap composition', () => {
+  it('keeps additive measured floors in mixes and selects the measured peak without replacing raw totals', () => {
+    const raw = { input: 100, output: 50, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const mixed = { ...raw, total: 1000, measured: { total: 1150, fromParts: true as const } };
+    const rows = [mixed, raw, { ...raw, input: null, output: null }, { ...raw, total: 0 }].map((tokens, index) => ({
+      key: `model-${index}`, eventCount: 1, tokens, cost: response.totals.cost,
+    }));
+    const result = composeUsageRecap({ input: UsageRecapComposeInputSchema.parse({ query,
+      selectedFields: ['tokens', 'agentMix', 'modelMix', 'highlights'] }), snapshot: { ...snapshot, accounting: {
+      ...response, totals: { ...response.totals, tokens: mixed }, breakdowns: { agent: rows, model: rows },
+      series: [...rows.map((row, index) => ({ ...row, bucketStartMs: 1000 + index * 1000, bucketEndMs: 2000 + index * 1000 })),
+        { ...rows[0]!, bucketStartMs: 6000, bucketEndMs: 7000, tokens: { ...raw, total: 1100 } }],
+    } } });
+    expect(result).toMatchObject({ kind: 'composed', facts: { tokens: mixed,
+      agentMix: [{ tokens: 1150, tokensFromParts: true }, { tokens: 150, tokensFromParts: true }, { tokens: null }, { tokens: 0 }],
+      modelMix: [{ tokens: 1150, tokensFromParts: true }, { tokens: 150, tokensFromParts: true }, { tokens: null }, { tokens: 0 }],
+      highlights: [{ kind: 'observed_peak', bucketStartMs: 1000, tokens: 1150, tokensFromParts: true }],
+    } });
+  });
   it('keeps All private interval, night and Coach facts on their admitted source period', () => {
     const endMs = 5 * 86_400_000;
     const observedAtMs = 4 * 86_400_000 + 1000;

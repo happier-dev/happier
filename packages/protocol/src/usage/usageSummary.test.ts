@@ -726,7 +726,8 @@ describe('compact Usage summary', () => {
     it('contracts custom-priced filtered summaries after historical membership admission', () => {
         const rich = response([contribution(1), contribution(2), contribution(3)]);
         const requested = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, projects: ['project'],
-            includeWorkEvidence: true, workProjection: 'summary', includeSessionEvidence: true, includeTranscriptEvidence: false });
+            // Coach admission retains rows (b67931869cc); this fixture exercises compact pricing only.
+            includeWorkEvidence: true, workProjection: 'summary', includeSessionEvidence: true, includeCoach: false, includeTranscriptEvidence: false });
         const projected = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: rich },
             { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } }).priceProjection!.value;
         expect(projected.contributions).toBeUndefined();

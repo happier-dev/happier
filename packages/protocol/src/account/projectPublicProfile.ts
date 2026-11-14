@@ -14,7 +14,7 @@ import type { UsageRelativePeriod } from '../inputs/usageQuery.js';
 import { isUnattributedUsageAgentId } from '../usage/usageFormatting.js';
 
 /** Which consent field discloses each public fact: the one map projection, figure eyes and demand read. */
-export const PUBLIC_PROFILE_FACT_FIELDS_V1 = { tokens: 'tokens', activeDays: 'activeDays', agentTimeMs: 'agentTime', mergedPrs: 'mergedPrs',
+export const PUBLIC_PROFILE_FACT_FIELDS_V1 = { tokens: 'tokens', tokensFromParts: 'tokens', activeDays: 'activeDays', agentTimeMs: 'agentTime', mergedPrs: 'mergedPrs',
   currentStreakDays: 'currentStreak', bestStreakDays: 'bestStreak', peakParallel: 'peakParallel', calendar: 'calendar',
   agentMix: 'agentMix', sourceSplit: 'sourceSplit', punch: 'punch', highlights: 'highlights', footprint: 'footprint',
   agentActiveDays: 'agentActiveDays', weeklyAgentMix: 'weeklyAgentMix', weeklyPeakParallel: 'weeklyPeakParallel',
@@ -50,8 +50,8 @@ function projectFacts(facts: PublicUsageFactsV1, policy: PublicProfilePolicyV1):
   if (result.weeklyAgentMix) result.weeklyAgentMix = result.weeklyAgentMix.map(week => ({ ...week, mix: week.mix.filter(attributed) }));
   if (result.sessionDurations) result.sessionDurations = result.sessionDurations.filter(attributed);
   if (!enabled(policy, 'tokens')) {
-    if (result.agentMix) result.agentMix = result.agentMix.map(({ tokens: _tokens, ...entry }) => entry);
-    if (result.sourceSplit) result.sourceSplit = result.sourceSplit.map(({ tokens: _tokens, ...entry }) => entry);
+    if (result.agentMix) result.agentMix = result.agentMix.map(({ tokens: _tokens, tokensFromParts: _tokensFromParts, ...entry }) => entry);
+    if (result.sourceSplit) result.sourceSplit = result.sourceSplit.map(({ tokens: _tokens, tokensFromParts: _tokensFromParts, ...entry }) => entry);
   }
   if (result.highlights) result.highlights = result.highlights.filter(highlight => enabled(policy,
     highlight.kind === 'active_days' ? 'activeDays' : highlight.kind === 'peak_parallel' ? 'peakParallel' : 'mergedPrs'));
@@ -115,7 +115,7 @@ function pathDependencies(path: readonly string[]): readonly PublicProfileField[
   }
   if (path[0] === 'snapshot' && path[1] === 'facts') {
     const field = PUBLIC_PROFILE_FACT_FIELDS_V1[path[2] as keyof PublicUsageFactsV1];
-    return field ? [field, ...(path.slice(3).includes('tokens') ? ['tokens' as const] : [])] : null;
+    return field ? [field, ...(path.slice(3).some(key => key === 'tokens' || key === 'tokensFromParts') ? ['tokens' as const] : [])] : null;
   }
   if (path[0] === 'snapshot' && path[1] === 'fieldCoverage') return [path[2] as PublicProfileField];
   if (path[0] === 'identity') return [path[1] === 'sinceMs' ? 'since' : path[1] === 'avatarUrl' || path[1] === 'avatar' ? 'avatar' : 'name'];

@@ -13,11 +13,11 @@ import { resolveUsageContributionDimensionKey } from '@happier-dev/protocol/usag
 import { hasCompleteUsageCostEvidence, projectUsageAnalyticsSummarySteps, readUsagePageCostProjectionBasis, repriceUsageAnalyticsCoverage, repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
 import { resolveCapturedUsageModelPriceCatalog, type CapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import type { ScopedUsageContribution, ScopedUsageReplayContext } from "./query/resolveScopedUsageContributions";
-import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
+import { createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
 import { withEffectiveUsageCost, type UsageCostMode } from "./query/resolveUsageCostMode";
 import type { UsageQueryEvent } from "./query/loadUsageEventsForQuery";
 import { buildUsageResultProjection } from "./query/buildUsageResultProjection";
-import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageMeasuredTokens, aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
 import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectUsageAnalyticsPopulation, type UsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
@@ -65,7 +65,7 @@ function buildSeries(
         } };
         const current = group.value;
         current.eventCount += row.contributingEventIds.length;
-        current.tokens = addUsageTokens(current.tokens, row.tokens);
+        current.tokens = addUsageMeasuredTokens(current.tokens, row.tokens);
         current.context = readContributionContext(row) ?? current.context;
         group.rows.push(row);
         buckets.set(bucketStartMs, group);

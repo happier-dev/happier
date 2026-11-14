@@ -231,7 +231,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
                 label: sessionLabel(row.sessionId),
                 value: row.amount,
                 color: group.id === 'unlinked' ? quiet : accent,
-                annotation: [usageWorkSessionOutcomeLine(row)]
+                annotation: [usageWorkSessionOutcomeLine(row), row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null]
                   .filter((note): note is string => Boolean(note) && !shared.includes(note!))
                   .join(' · ') || undefined,
               }))}

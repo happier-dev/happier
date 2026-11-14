@@ -22,6 +22,27 @@ const base: PublicProfileSnapshotV1 = {
 };
 
 describe('public Usage chart producer', () => {
+  it('preserves admitted token-floor provenance and removes it with token consent', () => {
+    const supplied: PublicProfileSnapshotV1 = { ...base, facts: { tokens: 1150, tokensFromParts: true,
+      footprint: { status: 'insufficient_basis', reason: 'no_applicable_versioned_method' },
+      agentMix: [{ agentId: 'codex', share: 1, tokens: 1150, tokensFromParts: true, coverage: base.coverage }],
+      sourceSplit: [{ execution: 'happier', share: 1, tokens: 1150, tokensFromParts: true }] } };
+    const models = (tokens: boolean) => components.projectPublicUsageChartModels(projectPublicProfileSnapshot(supplied, {
+      ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields,
+        tokens, footprint: true, agentMix: true, sourceSplit: true },
+    }));
+    expect(models(true)).toMatchObject({ tokensFromParts: true, summary: { tokens: 1150 },
+      footprint: { accountedTokens: 1150, tokensFromParts: true },
+      agentMix: [{ tokens: 1150, tokensFromParts: true }], sourceShares: [{ tokens: 1150, tokensFromParts: true }] });
+    const hidden = models(false);
+    expect(hidden).not.toHaveProperty('tokensFromParts');
+    expect(hidden.summary).not.toHaveProperty('tokens');
+    expect(hidden.footprint).toEqual({});
+    for (const row of [...hidden.agentMix ?? [], ...hidden.sourceShares ?? []]) {
+      expect(row).not.toHaveProperty('tokens');
+      expect(row).not.toHaveProperty('tokensFromParts');
+    }
+  });
   it('renders public River weeks with unreported and empty shares alongside reported agents', async () => {
     const fixture = await createPluginUiTestkit({ identity: { instanceId: 'river', mountNonce: 'river' },
       surface: defineUiSurface(() => <PublicProfileUsageBody

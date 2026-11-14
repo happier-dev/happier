@@ -8532,6 +8532,14 @@ frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
 `packages/protocol/src/usage` counterpart. No adapter, wire epoch or second
 reconciliation path is introduced.
 
+The consumed public-profile snapshot facts also carry optional `tokensFromParts`
+on their headline and Agent/source token amounts. The existing token consent
+owner removes both amounts and their provenance, including declarative layout
+bindings, when tokens are hidden. Stored V1 snapshots without this optional
+metadata remain valid; new prepared editions and fixed/public UI renderers
+retain the floor qualifier. No new disclosure permission or published field
+control is introduced.
+
 Unreleased 0.3 Computer interrupted input results may carry optional `code`,
 retaining the native refusal independently of completion certainty. The result
 and its target identity remain closed; omission remains valid. Matching Protocol,

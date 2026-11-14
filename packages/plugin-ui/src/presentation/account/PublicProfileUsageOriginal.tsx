@@ -31,6 +31,7 @@ export type PublicUsageOriginalLabels = Readonly<{
   }>;
   footprint: UsageFootprintLabels;
   period: string;
+  tokensFromParts?: string;
 }>;
 
 /** Model translation only: original private and public forms consume the same presentation bodies. */
@@ -43,7 +44,10 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
     const kind = key as PublicUsageMetricId;
     // A public figure the period could not record keeps its slot as a dash; the reason is its quiet caption, never the figure.
     return value === undefined ? [] : [{ id: kind, label: labels.metrics[kind],
-      ...(value === null ? { value: '—', caption: host.labels.unavailable } : { value: labels.formatMetric(kind, value) }),
+      ...(value === null ? { value: '—', caption: host.labels.unavailable } : {
+        value: `${kind === 'tokens' && models.tokensFromParts ? '≥ ' : ''}${labels.formatMetric(kind, value)}`,
+        ...(kind === 'tokens' && models.tokensFromParts && labels.tokensFromParts ? { caption: labels.tokensFromParts } : {}),
+      }),
       ...(props.figures ? { accessory: props.figures.render(kind), quieted: props.figures.hidden.has(kind) } : {}) } satisfies UsageSummaryMetric];
   });
   const caption = <HappierText variant="micro" tone="secondary">{labels.activityLevel}</HappierText>;
@@ -68,7 +72,7 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
     }
     case 'usage_footprint':
       return models.footprint ? <UsageFootprintBody theme={theme} testID={testID} labels={labels.footprint}
-        {...(models.footprint.accountedTokens === undefined ? {} : { accountedTokens: labels.formatMetric('tokens', models.footprint.accountedTokens) })}
+        {...(models.footprint.accountedTokens === undefined ? {} : { accountedTokens: `${models.footprint.tokensFromParts ? '≥ ' : ''}${labels.formatMetric('tokens', models.footprint.accountedTokens)}` })}
         coverage={coverage} /> : null;
     case 'usage_source_coverage':
       return <UsageSourceCoverageBody theme={theme} testID={testID} label={labels.coverage.title} columns={labels.coverage.columns}

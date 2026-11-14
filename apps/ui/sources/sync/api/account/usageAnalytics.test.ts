@@ -25,6 +25,7 @@ import {
 } from './usageAnalytics';
 import type { UsageDataPoint } from './apiUsage';
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { addUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 const baseState: UsageFilterState = {
     period: '7days',
@@ -47,6 +48,38 @@ describe('exact model-mix amounts', () => {
 });
 
 describe('buildUsageAnalyticsViewModel', () => {
+    it('retains mixed reported totals and measured floors through summary, trends and breakdowns', () => {
+        // Option B keeps the reported total raw while carrying the mixed population's measured amount.
+        const tokens = addUsageMeasuredTokens(
+            { input: 10, output: 4, reasoning: null, cacheRead: null, cacheWrite: null, total: 2000 },
+            { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+        );
+        const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+        const nowMs = Date.now();
+        const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 2, tokens, cost },
+            series: [
+                { bucketStartMs: nowMs - 172_800_000, bucketEndMs: nowMs - 86_400_000, eventCount: 1,
+                    tokens: { ...tokens, measured: undefined }, cost },
+                { bucketStartMs: nowMs - 86_400_000, bucketEndMs: nowMs, eventCount: 2, tokens, cost },
+            ],
+            breakdowns: { model: [{ key: 'mixed-model', eventCount: 2, tokens, cost }] },
+            engineTimeline: [{ bucketStartMs: 0, bucketEndMs: nowMs,
+                leaders: [{ key: 'opencode', eventCount: 2, tokens, cost }] }],
+        });
+        const summary = buildUsageAnalyticsSummaryViewModel(response);
+        expect.soft(summary.totalTokens).toBe(3713);
+        expect.soft(summary.weekTokens).toBe(5713);
+        expect.soft(summary.topModel?.totalTokens).toBe(3713);
+        const view = buildUsageAnalyticsViewModel(response, baseState);
+        expect.soft(view.hero).toMatchObject({ totalTokens: 3713, totalTokensFromParts: true });
+        expect.soft(view.trend.map(point => [point.tokens, point.tokensFromParts])).toEqual([[2000, false], [3713, true]]);
+        expect.soft(view.heroTrend.delta).toEqual({ deltaPct: null, direction: 'flat' });
+        expect.soft(view.breakdowns.models[0]?.totalTokens).toBe(3713);
+        expect.soft(view.breakdowns.buckets.find(row => row.key === 'total')?.totalTokens).toBe(3713);
+        expect.soft(view.agentMix.keys.map(key => key.totalTokens)).toEqual([3713]);
+        expect(response.totals.tokens.total).toBe(2000);
+    });
+
     it('uses measured parts throughout the summary without comparing them against prior reported totals', () => {
         const nowMs = Date.now();
         const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };

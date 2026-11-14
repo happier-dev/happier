@@ -701,6 +701,19 @@ describe('Work and Coach widget bodies', () => {
     expect(text).not.toContain(t('usage.board.work.notLinked'));
     expect(text).not.toContain(t('usage.board.work.linkedToPrs'));
   });
+  it('labels measured token floors in the ledger while retaining a reported total in the same group', async () => {
+    const reported = contribution('reported', 's1', 't1');
+    const parts = { ...contribution('parts', 's1', 't1'),
+      tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+    const work = allocateUsageOutcomes({ contributions: [reported, parts], evidence: [] });
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props}
+      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={{ ...slice, work }}
+      id="usage_project_ledger" testID="parts-ledger" />);
+    const rows = screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'parts-ledger.projects')!;
+    expect(rows.props.rows[0][1]).toBe(1727);
+    expect(rows.props.rows[0][2]).toContain(t('usage.board.page.tokensFromParts'));
+    expect(screen.getTextContent()).toContain(t('usage.board.page.tokensFromParts'));
+  });
   it('bounds the project ledger behind Show all and says the PR qualifier once for the band, not on every row', async () => {
     const many = Array.from({ length: 12 }, (_, index) => ({ ...contribution(`m${index}`, `ms${index}`, null), projectKey: `project-${index}` }));
     const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: many, evidence: [] }));

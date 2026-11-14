@@ -195,6 +195,7 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
                     state: usageWorkPullRequestState(pullRequest),
                   }),
                   mergedIn(row),
+                  row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null,
                 ]
                   .filter(Boolean)
                   .join(' · '),

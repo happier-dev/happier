@@ -6,6 +6,7 @@ import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema
     getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
 import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCost';
+import { resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
@@ -180,14 +181,33 @@ describe('compact Usage activity summary read cache', () => {
         ]);
     });
 
-    it('rebuilds prior-version empty measurements instead of reusing a stale warm summary', async () => {
+    it('conserves mixed reported totals and parts-only floors through cold and retained warm reads', async () => {
+        const { account, sessions } = await seed();
+        await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[0]!.id,
+            externalKey: randomUUID(), observedAt: new Date(startMs + 4 * day), agentId: 'codex',
+            source: 'runtime', scope: 'turn_delta', isCumulative: false, inputTokens: 100, outputTokens: 50,
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } } } });
+        const query = compactQuery();
+        const cold = await expectControl(account.id, query);
+        const warm = await read(account.id, query);
+        expectSameWire(warm.serialized, cold.serialized);
+        const result = warm.delivery.results[0];
+        if (!result || !('value' in result)) throw new Error('Expected accounting response');
+        expect(result.value.totals.tokens.total).toBe(15);
+        expect(resolveUsageMeasuredTokens(result.value.totals.tokens)).toEqual({ total: 165, fromParts: true });
+        expect(result.value.summary?.execution).toMatchObject({ totalTokens: 165, tokensFromParts: true });
+        expect(result.value.summary?.accountingCalendar?.value.periodSummary.totals)
+            .toMatchObject({ tokens: 165, tokensFromParts: true });
+    });
+
+    it('rebuilds prior-version token measurements instead of reusing a stale warm summary', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const query = compactQuery();
         const control = await read(account.id, query, false);
         const result = control.delivery.results[0];
         if (!result || !('value' in result) || !result.value.coverage) throw new Error('Expected empty accounting coverage');
-        // Version 7 persisted null aggregates even with no canonical events or source witnesses.
-        const legacy = { version: 7, format: 'selective-day-facts', queryKey: getUsageAnalyticsQueryRequestKey(query), query,
+        // Version 8 predates additive parts-only token totals; retained aggregates must be rebuilt.
+        const legacy = { version: 8, format: 'selective-day-facts', queryKey: getUsageAnalyticsQueryRequestKey(query), query,
             subjectCount: 0, sourceDigest: '', response: { ...result.value,
                 totals: { ...result.value.totals,
                     tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
@@ -196,9 +216,9 @@ describe('compact Usage activity summary read cache', () => {
             sourceDays: [], subjectKeys: [], sessionKeys: [], sourceCoverage: [], reportSources: [],
             legacyReports: [], projectionDays: [], days: [] };
         const recordKey = createHash('sha256').update(JSON.stringify([
-            'usage-activity-summary-v7', account.id, 'actSummary7', 0,
+            'usage-activity-summary-v8', account.id, 'actSummary8', 0,
         ])).digest('hex');
-        await db.usageAccountingProjection.create({ data: { accountId: account.id, recordKey, kind: 'actSummary7',
+        await db.usageAccountingProjection.create({ data: { accountId: account.id, recordKey, kind: 'actSummary8',
             observedAtMs: 0n, validFromMs: 0n, payload: JSON.stringify(legacy) } });
         const actual = await read(account.id, query);
         const projected = actual.delivery.results[0];

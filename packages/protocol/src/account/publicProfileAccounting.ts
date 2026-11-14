@@ -7,7 +7,7 @@ import { projectUsageFootprint } from '../usage/usageFootprint.js';
 import { projectUsageWorkIntervals, type UsageWorkIntervalsProjection } from '../usage/usageWorkIntervals.js';
 import type { UsageHowYouWork } from '../usage/resolveUsageHowYouWork.js';
 import { projectUsageAccountingSessionMembership } from '../usage/usageAccountingMembership.js';
-import { addUsageMeasurements } from '../usage/usageAggregation.js';
+import { addUsageMeasuredTokens, createEmptyUsageTokens, resolveUsageMeasuredTokens } from '../usage/usageAggregation.js';
 import type { PublicProfileAccountingPopulation, PublicProfileAccountingProjection, PublicProfilePrivateFacts } from './publicProfileAccountingContracts.js';
 export { PublicProfileAccountingProjectionSchema, PublicProfilePrivateFactsSchema, PublicProfilePrivateAccountingFactsSchema,
   PublicProfilePrivateFieldCoverageSchema, type PublicProfileAccountingPopulation, type PublicProfileAccountingProjection,
@@ -53,6 +53,7 @@ export function projectPublicProfilePopulationFacts(population: PublicProfileAcc
     const id = AgentIdV1Schema.safeParse(agent.agentId);
     return id.success && agent.shares.tokens !== null ? [{ agentId: id.data, share: agent.shares.tokens,
       ...(agent.metrics.tokens === null ? {} : { tokens: agent.metrics.tokens }),
+      ...(agent.metrics.tokensFromParts ? { tokensFromParts: true as const } : {}),
       coverage: { status: agent.coverage.accounting, method: methods.get(agent.agentId) ?? 'unknown' } }] : [];
   });
   facts.agentActiveDays = calendar.agentActiveDays.flatMap(agent => {
@@ -74,12 +75,14 @@ function population(rows: readonly UsageAnalyticsContribution[], accounting: Usa
   const complete = accounting.coverage?.status === 'complete' && accounting.coverage.range.complete;
   const methods = captureMethods(rows, accounting);
   const footprint = projectUsageFootprint(accounting);
-  const tokens = rows.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), null);
+  const measured = resolveUsageMeasuredTokens(rows.reduce((tokens, row) => addUsageMeasuredTokens(tokens, row.tokens), createEmptyUsageTokens()));
+  const tokens = measured.total;
   const value: PublicProfileAccountingPopulation = { contributionCount: rows.length,
     coverage: { status: complete ? 'complete_for_supplied_facts' : rows.length ? 'partial' : 'unknown', method: methods.method },
     agentMethods: methods.agentMethods, calendar,
     days: days ?? calendar.days.map(day => ({ date: day.date, eventCount: day.totals.eventCount })),
     facts: rows.length || complete ? { ...(tokens === null ? {} : { tokens }),
+      ...(measured.fromParts ? { tokensFromParts: true } : {}),
       footprint: { status: footprint.status, reason: footprint.reason } } : {} };
   return { ...value, facts: projectPublicProfilePopulationFacts(value) };
 }

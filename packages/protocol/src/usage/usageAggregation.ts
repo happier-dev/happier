@@ -1,4 +1,4 @@
-import type { UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
+import type { UsageAnalyticsTokens, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
 import { resolveEffectiveUsageCostUsd, resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis } from './usageCostFacts.js';
 import { addUsageMoney, createUsageMoneyAccumulator, hasUsageMoneyProvenance, readUsageMoney, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
@@ -16,9 +16,32 @@ export function addUsageMeasurements(left: number | null, right: number | null):
 }
 
 /** Returns the measured lower bound when a provider omits its aggregate total. */
-export function sumKnownUsageTokenParts(tokens: UsageObservationTokens): number | null {
+export function sumKnownUsageTokenParts(tokens: Readonly<Partial<UsageObservationTokens>>): number | null {
     return [tokens.input, tokens.output, tokens.reasoning, tokens.cacheRead, tokens.cacheWrite]
-        .reduce<number | null>((sum, value) => addUsageMeasurements(sum, value), null);
+        .reduce<number | null>((sum, value) => addUsageMeasurements(sum, value ?? null), null);
+}
+
+/**
+ * Each admitted contribution uses its reported total, otherwise its measured parts as a floor.
+ * Aggregates conserve these per-contribution amounts and retain fromParts if any operand used
+ * a floor. Raw total remains the distinct reported fact; floor-containing comparisons are inexact.
+ */
+export function resolveUsageMeasuredTokens(tokens: Readonly<Pick<UsageAnalyticsTokens, 'total' | 'measured'>
+    & Partial<UsageObservationTokens>>): Readonly<{ total: number | null; fromParts: boolean }> {
+    if (tokens.measured) return tokens.measured;
+    if (tokens.total !== null) return { total: tokens.total, fromParts: false };
+    const total = sumKnownUsageTokenParts(tokens);
+    return { total, fromParts: total !== null };
+}
+
+/** Presentation fold only: reconciliation continues to add raw provider counters. */
+export function addUsageMeasuredTokens(left: UsageAnalyticsTokens, right: UsageAnalyticsTokens): UsageAnalyticsTokens {
+    const a = resolveUsageMeasuredTokens(left);
+    const b = resolveUsageMeasuredTokens(right);
+    const total = addUsageMeasurements(a.total, b.total);
+    const raw = addUsageTokens(left, right);
+    return total !== null && (a.fromParts || b.fromParts)
+        ? { ...raw, measured: { total, fromParts: true } } : raw;
 }
 
 /** Descending presentation order retains unknown values after every measured value. */

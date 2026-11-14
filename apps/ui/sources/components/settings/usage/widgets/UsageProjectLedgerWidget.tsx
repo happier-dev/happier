@@ -174,7 +174,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     usageWorkBranchName(row.branch.branch.ref),
     cell(row.amount, row.moneyBasis),
     withProject ? row.projectKeys.map(projectWhere).join(', ') : '',
-    sessionsLine(row.sessions.length),
+    [sessionsLine(row.sessions.length), row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
     row.perSession === null || row.sessions.length < 2
       ? ''
       : t('usage.board.work.perSession', { amount: format(row.perSession, row.moneyBasis) }),
@@ -248,10 +248,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             rows={row.outcomes.map((outcome) => [
               usageWorkPullRequestTitle(outcome.outcome.pullRequest),
               cell(outcome.amount, outcome.moneyBasis),
-              t('usage.board.work.prLine', {
+              [t('usage.board.work.prLine', {
                 sessions: outcome.sessions.length,
                 state: usageWorkPullRequestState(outcome.outcome.pullRequest),
-              }),
+              }), outcome.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
             ])}
             rowDatums={row.outcomes.map(outcome => datum(usageWorkPullRequestTitle(outcome.outcome.pullRequest), outcome.amount, outcome.moneyBasis))}
           />
@@ -325,6 +325,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           [anyLinked
             ? t('usage.board.work.ledgerRowLine', { sessions: row.sessionIds.length, prs: row.outcomes.length })
             : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
+            row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null,
             projectPlace(row.projectKey)].filter(Boolean).join(' · '),
           ...(anyLinked
             ? [row.unallocated === null || row.unallocated > 0
@@ -469,7 +470,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               </View>
             ) : null}
             <Text style={[styles.reasonLabel, caption]}>
-              {[t('usage.board.work.noneLinked'), ...(reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : [])].join(' · ')}
+              {[t('usage.board.work.noneLinked'), ...(reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
+                ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
             </Text>
           </>
         ) : (
@@ -478,6 +480,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               <Text style={[styles.totalLabel, title]}>{t('usage.board.work.allProjects')}</Text>
               <Text style={[styles.totalValue, title]}>{format(summary.total)}</Text>
             </View>
+            {summary.tokensFromParts ? <Text style={[styles.reasonLabel, caption]}>{t('usage.board.page.tokensFromParts')}</Text> : null}
             <View style={styles.line}>
               <Text style={[styles.partLabel, caption]}>{t('usage.board.work.linkedToPrs')}</Text>
               <Text style={[styles.partValue, caption]}>{format(summary.allocated, summary.allocatedBasis)}</Text>

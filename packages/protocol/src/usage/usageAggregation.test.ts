@@ -1,9 +1,11 @@
 import { expect, it } from 'vitest';
-import { addUsageTokens, createEmptyUsageTokens, addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
+import { resolveUsageMeasuredTokens, addUsageTokens, createEmptyUsageTokens, addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
 import { resolveUsageCostBasis } from './usageCost.js';
 import { projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
+import { buildUsageBreakdownList } from './usageLeaderProjection.js';
+import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
 import { normalizeLegacyUsageTokens } from './legacyUsageTokens.js';
-import { aggregateUsageCostFactTotals } from './usageCostFactTotals.js';
+import { projectUsageCostFactTotals, aggregateUsageCostFactTotals } from './usageCostFactTotals.js';
 import { addUsageMoney, readUsageMoney, restoreUsageMoneyProvenance, serializeUsageMoneyProvenance,
     withUsageMoney } from './usageMoney.js';
 
@@ -199,4 +201,205 @@ it('does not mistake a nonempty aggregate for an empty identity when its next re
     expect(resolveUsageCostBasis(next, 'reported')).toMatchObject({ amountUsd: 0.2 });
     expect(next.effectiveUsd).toBe(0.2);
     expect(next.reportedUsd).toBe(0.2);
+});
+
+// Owner ruling 2026-11-14 02:22Z: mixed populations conserve per-contribution measured tokens.
+it('conserves the 424671 parts-only tokens alongside reported totals without replacing raw facts', () => {
+    const parts = [
+    {
+        "input": 12416,
+        "output": 76,
+        "reasoning": 332,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 3685,
+        "output": 97,
+        "reasoning": 15,
+        "cacheRead": 12401,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 585,
+        "output": 63,
+        "reasoning": 165,
+        "cacheRead": 15985,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 6167,
+        "output": 75,
+        "reasoning": 264,
+        "cacheRead": 16497,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 2354,
+        "output": 70,
+        "reasoning": 25,
+        "cacheRead": 22641,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 890,
+        "output": 115,
+        "reasoning": 431,
+        "cacheRead": 24945,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 12418,
+        "output": 81,
+        "reasoning": 535,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 3895,
+        "output": 180,
+        "reasoning": 138,
+        "cacheRead": 12401,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 2184,
+        "output": 133,
+        "reasoning": 1141,
+        "cacheRead": 16241,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 1814,
+        "output": 99,
+        "reasoning": 278,
+        "cacheRead": 18417,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 2391,
+        "output": 72,
+        "reasoning": 51,
+        "cacheRead": 20209,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 959,
+        "output": 245,
+        "reasoning": 353,
+        "cacheRead": 22513,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 14355,
+        "output": 265,
+        "reasoning": 1579,
+        "cacheRead": 23409,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 12904,
+        "output": 152,
+        "reasoning": 731,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 5559,
+        "output": 76,
+        "reasoning": 109,
+        "cacheRead": 12785,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 5150,
+        "output": 76,
+        "reasoning": 13,
+        "cacheRead": 18289,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 2147,
+        "output": 244,
+        "reasoning": 388,
+        "cacheRead": 23409,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 4367,
+        "output": 283,
+        "reasoning": 271,
+        "cacheRead": 25457,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 4084,
+        "output": 544,
+        "reasoning": 1024,
+        "cacheRead": 29809,
+        "cacheWrite": 0,
+        "total": null
+    },
+    {
+        "input": 100,
+        "output": 50,
+        "reasoning": null,
+        "cacheRead": null,
+        "cacheWrite": null,
+        "total": null
+    }
+];
+    const unknown = createEmptyUsageTokens();
+    const rows = [...parts, { ...unknown, total: 1000 }, unknown, { ...unknown, total: 0 }]
+        .map((tokens, index) => ({ tokens, eventCount: 1, agent: index < 19 ? 'opencode' : 'codex',
+            model: index < 19 ? 'muse' : null, project: index % 3, session: index % 4, turn: index % 5,
+            source: index < 19 ? 'native' : 'runtime', execution: index < 19 ? 'happier' : 'unknown', day: index % 2 }));
+    const fold = (selected: typeof rows) => projectUsageContributionTotals(selected, { reportedUsd: null,
+        estimatedUsd: null, invoiceUsd: null, currency: 'USD', billingContext: 'unknown', costSource: 'none' }).tokens;
+    const total = fold(rows);
+    expect(total).toMatchObject({ total: 1000, measured: { total: 425671, fromParts: true } });
+    expect(resolveUsageMeasuredTokens(unknown)).toEqual({ total: null, fromParts: false });
+    expect(resolveUsageMeasuredTokens({ ...unknown, input: 0 })).toEqual({ total: 0, fromParts: true });
+    expect(resolveUsageMeasuredTokens({ ...unknown, input: 99, total: 0 })).toEqual({ total: 0, fromParts: false });
+    const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD', billingContext: 'unknown' as const, costSource: 'none' as const };
+    const contributions: UsageAnalyticsContribution[] = rows.map((row, index) => ({ id: String(index), eventCount: 1,
+        observedAtMs: row.day * 86400000, sessionId: String(row.session), turnId: null, agentId: row.agent,
+        modelId: row.model, machineId: String(row.project), projectKey: String(row.project), workspaceId: null,
+        source: row.source, tokens: row.tokens, cost }));
+    for (const dimension of ['agent', 'model', 'project', 'session', 'machine', 'source'] as const) {
+        const entries = buildUsageBreakdownList(contributions, dimension, rows.length, 'auto');
+        expect(entries.reduce((sum, entry) => sum + (resolveUsageMeasuredTokens(entry.tokens).total ?? 0), 0), dimension).toBe(425671);
+    }
+    const facts = projectUsageCostFactTotals(contributions.map(row => ({ tokens: row.tokens, kind: 'unpriced' as const,
+        currency: 'USD', amountUsd: null, source: 'none', eventCount: 1, asOfMs: 1, complete: false })));
+    expect(resolveUsageMeasuredTokens(facts[0]!.tokens)).toEqual({ total: 425671, fromParts: true });
+    const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+        totals: { eventCount: rows.length, tokens: total, cost }, costFacts: facts.map(({ sources, ...fact }) => ({ ...fact, source: sources[0] })) });
+    expect(resolveUsageMeasuredTokens(response.totals.tokens)).toEqual({ total: 425671, fromParts: true });
+
+    for (const dimension of ['agent', 'model', 'project', 'session', 'turn', 'source', 'execution', 'day'] as const) {
+        const groups = Map.groupBy(rows, row => row[dimension]);
+        const merged = projectUsageContributionTotals([...groups.values()].map(group => ({ tokens: fold(group), eventCount: group.length })),
+            { reportedUsd: null, estimatedUsd: null, currency: 'USD', billingContext: 'unknown', costSource: 'none' });
+        expect(merged.tokens, dimension).toEqual(total);
+        expect([...groups.values()].reduce((sum, group) => sum + (resolveUsageMeasuredTokens(fold(group)).total ?? 0), 0), dimension).toBe(425671);
+    }
 });

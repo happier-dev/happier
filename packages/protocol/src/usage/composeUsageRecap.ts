@@ -3,6 +3,7 @@ import { resolveUsageQueryPeriod } from '../inputs/usageQuery.js';
 import { projectUsagePageCost } from './usageCostFacts.js';
 import { projectUsageCostFactTotals } from './usageCostFactTotals.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
+import { resolveUsageMeasuredTokens } from './usageAggregation.js';
 import { UsageRecapComposeResultSchema, USAGE_RECAP_FIELDS,
   type UsageRecapPrivateComposeInput, type UsageRecapComposeResult, type UsageRecapFacts } from './usageRecap.js';
 
@@ -36,9 +37,12 @@ export function composeUsageRecap(args: Readonly<{
   }
   for (const [field, dimension] of [['modelMix', 'model'], ['agentMix', 'agent']] as const) {
     const rows = accounting.breakdowns?.[dimension];
-    if (selected.has(field) && rows) facts[field] = rows.map(row => ({ tokens: row.tokens.total, events: row.eventCount,
-      ...(dimension === 'agent' && row.key ? { agentId: row.key } : {}),
-      ...(selected.has('names') && row.label ? { name: row.label } : {}) }));
+    if (selected.has(field) && rows) facts[field] = rows.map(row => {
+      const measured = resolveUsageMeasuredTokens(row.tokens);
+      return { tokens: measured.total, ...(measured.fromParts ? { tokensFromParts: true as const } : {}), events: row.eventCount,
+        ...(dimension === 'agent' && row.key ? { agentId: row.key } : {}),
+        ...(selected.has('names') && row.label ? { name: row.label } : {}) };
+    });
   }
   if (selected.has('cache')) facts.cache = { readTokens: accounting.totals.tokens.cacheRead, writeTokens: accounting.totals.tokens.cacheWrite };
   if (selected.has('rhythm') && accounting.activity?.calendarDays && accounting.activity.weekdayHourBuckets) {
@@ -69,9 +73,12 @@ export function composeUsageRecap(args: Readonly<{
   })) };
   if (selected.has('highlights')) {
     facts.highlights = [];
-    const peak = accounting.series?.reduce<(NonNullable<typeof accounting.series>)[number] | undefined>((current, row) =>
-      row.tokens.total !== null && row.tokens.total > 0 && (!current || current.tokens.total === null || row.tokens.total > current.tokens.total) ? row : current, undefined);
-    if (peak) facts.highlights.push({ kind: 'observed_peak', bucketStartMs: peak.bucketStartMs, bucketEndMs: peak.bucketEndMs, tokens: peak.tokens.total });
+    const peak = accounting.series?.reduce<{ row: NonNullable<typeof accounting.series>[number]; measured: ReturnType<typeof resolveUsageMeasuredTokens> } | undefined>((current, row) => {
+      const measured = resolveUsageMeasuredTokens(row.tokens);
+      return measured.total !== null && measured.total > 0 && (!current || measured.total > current.measured.total!) ? { row, measured } : current;
+    }, undefined);
+    if (peak) facts.highlights.push({ kind: 'observed_peak', bucketStartMs: peak.row.bucketStartMs, bucketEndMs: peak.row.bucketEndMs, tokens: peak.measured.total,
+      ...(peak.measured.fromParts ? { tokensFromParts: true } : {}) });
     if (work?.outcomes.length) facts.highlights.push({ kind: 'linked_outcomes', count: work.outcomes.length });
   }
   if (selected.has('dollars')) {

@@ -221,7 +221,8 @@ export function UsageWorkSessionRows(
       rows={props.parts.map((part) => [
         props.sessionLabel(part.sessionId),
         props.cell(part.amount, part.moneyBasis),
-        usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
+        [usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
+          part.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
       ])}
       rowDatums={props.parts.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}
       renderIdentity={(_row, visual, index) => {

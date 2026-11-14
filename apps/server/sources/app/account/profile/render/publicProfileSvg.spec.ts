@@ -20,7 +20,7 @@ const options: Omit<PublicProfileSvgOptions, 'kind'> = {
         dark: { background: '#141212', foreground: '#efefef', secondary: '#9a918c', border: '#333333', backgroundRgb: [20, 18, 18] },
     },
 };
-function published(tokens = true, name = 'Nadia Müller'): PublicProfileReadResultV1 {
+function published(tokens = true, name = 'Nadia Müller', tokensFromParts = false): PublicProfileReadResultV1 {
     const context = { handle: 'nadia', identity: { name }, service: { displayName: 'My Home', publicBaseUrl: 'https://profiles.example/prefix' },
         urls: { page: 'https://profiles.example/prefix/@nadia', json: 'https://profiles.example/prefix/v1/public/profiles/nadia',
             badgeBase: 'https://profiles.example/prefix/@nadia/badge', card: 'https://profiles.example/prefix/@nadia/card.svg',
@@ -30,12 +30,21 @@ function published(tokens = true, name = 'Nadia Müller'): PublicProfileReadResu
         appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
         snapshot: PublicProfileSnapshotV1Schema.parse({ v: 1, computedAtMs: 2000,
             period: { startMs: 1000, endMs: 2000, timeZoneOffsetMinutes: 120 }, coverage: { status: 'partial', method: 'runtime' },
-            fieldCoverage: {}, facts: { tokens: 987654321, activeDays: 17, currentStreakDays: 6 } }) });
+            fieldCoverage: {}, facts: { tokens: 987654321, ...(tokensFromParts ? { tokensFromParts: true } : {}), activeDays: 17, currentStreakDays: 6 } }) });
     if (!view) throw new Error('Expected admitted fixture');
     return { kind: 'published', view };
 }
 
 describe('fixed public profile assets', () => {
+    it('marks disclosed token floors in badge messages and accessible card figures', async () => {
+        const floor = published(true, 'Nadia Müller', true);
+        expect(publicProfileBadgeMessage(floor, 'tokens', options.labels))
+            .toEqual({ message: '≥ 987654321 tokens', isError: false });
+        expect(await renderPublicProfileSvg(floor, { ...options, kind: 'card' })).toContain('≥ 987654321 tokens');
+        expect(publicProfileBadgeMessage(published(false, 'Nadia Müller', true), 'tokens', options.labels))
+            .toEqual({ message: 'Unavailable', isError: true });
+    });
+
     it('renders a self-contained K1 from the actual projector with measured shipped-face glyph pixels', async () => {
         const sharp = await loadSharp();
         const svg = await renderPublicProfileSvg(published(), { ...options, kind: 'card' });

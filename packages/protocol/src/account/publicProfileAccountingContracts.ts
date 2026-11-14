@@ -16,7 +16,7 @@ export const PublicProfilePrivateFieldCoverageSchema = lazyZodSchema(() => z.par
 
 const PublicProfileAccountingPopulationSchema = lazyZodSchema(() => z.strictObject({
   contributionCount: z.number().check(z.int(), z.nonnegative()), coverage: PublicCoverageV1Schema,
-  facts: z.pick(PublicUsageFactsV1Schema, { tokens: true, agentMix: true, agentActiveDays: true, weeklyAgentMix: true, footprint: true }),
+  facts: z.pick(PublicUsageFactsV1Schema, { tokens: true, tokensFromParts: true, agentMix: true, agentActiveDays: true, weeklyAgentMix: true, footprint: true }),
   days: z.array(z.strictObject({ date: z.string(), eventCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
   agentMethods: z.array(z.strictObject({ agentId: z.nullable(z.string()), method: PublicCoverageV1Schema.shape.method })),
   calendar: UsageAgentCalendarSchema,

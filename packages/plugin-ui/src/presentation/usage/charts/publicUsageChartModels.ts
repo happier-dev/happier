@@ -52,11 +52,12 @@ export type PublicUsageRecordKind = 'activeDays' | 'currentStreakDays' | 'bestSt
 export type PublicUsageChartModels = Readonly<{
   /** Null is shared but unavailable evidence; an absent key is not shared. */
   summary: Readonly<Partial<Record<'tokens' | 'activeDays' | 'agentTimeMs' | 'mergedPrs' | 'currentStreakDays' | 'bestStreakDays' | 'peakParallel', number | null>>>;
+  tokensFromParts?: true;
   coverage: UsageChartCoverage;
   highlights: readonly Readonly<{ kind: 'merged_prs' | 'peak_parallel' | 'active_days'; count: number }>[] | null;
-  footprint: Readonly<{ accountedTokens?: number }> | null;
-  sourceShares: readonly Readonly<{ execution: 'happier' | 'outside' | 'unknown'; share: number; tokens?: number }>[] | null;
-  agentMix: readonly Readonly<{ agentId: string; share: number; tokens?: number; coverage: UsageChartCoverage }>[] | null;
+  footprint: Readonly<{ accountedTokens?: number; tokensFromParts?: true }> | null;
+  sourceShares: readonly Readonly<{ execution: 'happier' | 'outside' | 'unknown'; share: number; tokens?: number; tokensFromParts?: true }>[] | null;
+  agentMix: readonly Readonly<{ agentId: string; share: number; tokens?: number; tokensFromParts?: true; coverage: UsageChartCoverage }>[] | null;
   sky: UsageSkyModel | null;
   weekHours: UsageWeekHourModel | null;
   daylight: UsageDaylightModel | null;

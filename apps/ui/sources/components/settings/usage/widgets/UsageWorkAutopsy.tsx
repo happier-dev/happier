@@ -223,7 +223,7 @@ export function UsageWorkAutopsy(
               label={t('usage.board.work.autopsyTitle')}
               value={autopsy.amount ?? format(null, autopsy.moneyBasis)}
               valueFormatter={value => format(value, autopsy.moneyBasis)}
-              caption={sessionLabel(selected)}
+              caption={[sessionLabel(selected), autopsy.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
             />
             <HappierDataMetric
               theme={theme}
@@ -240,7 +240,8 @@ export function UsageWorkAutopsy(
                 label={t('usage.board.work.largestTurn')}
                 value={largest.amount!}
                 valueFormatter={value => format(value, largest.moneyBasis)}
-                caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`].filter(Boolean).join(' · ')}
+                caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`,
+                  largest.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
               />
             ) : null}
           </View>
@@ -338,7 +339,7 @@ export function UsageWorkAutopsy(
             rows={shownTurns.rows.map((turn) => [
               turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId),
               cell(turn.amount, turn.moneyBasis),
-              outcomeLine(turn),
+              [outcomeLine(turn), turn.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
               evidenceLine(turn),
               usageWorkRetainedChangeLine(turn.retainedChanges),
               sharedIdentity === null ? identityLine(turn) : '',

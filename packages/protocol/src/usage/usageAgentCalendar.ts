@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { addUsageMeasurements, createEmptyUsageSelectedCost, mergeUsageSelectedCosts, resolveUsageContributionCosts, selectResolvedUsageCost,
+import { addUsageMeasurements, createEmptyUsageSelectedCost, mergeUsageSelectedCosts, resolveUsageContributionCosts, resolveUsageMeasuredTokens, selectResolvedUsageCost,
     type UsageSelectedCostAccumulator } from './usageAggregation.js';
 import { createUsageFixedBucketResolver, resolveUsageBucketBounds, resolveUsageCalendarDateStart, resolveUsageCalendarInstant } from './usageCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
@@ -16,7 +16,7 @@ const AgentId = lazyZodSchema(() => z.nullable(z.string().check(z.minLength(1)))
 const Cost = lazyZodSchema(() => z.strictObject({ amountUsd: Amount, currency: z.string(), source: z.string(),
     kind: z.enum(['reported', 'estimated', 'api_equivalent', 'invoice', 'mixed']) }));
 const Metrics = lazyZodSchema(() => z.strictObject({
-    tokens: z.nullable(Count), eventCount: z.nullable(Count), sessions: z.nullable(Count), cost: z.nullable(Cost),
+    tokens: z.nullable(Count), tokensFromParts: z.optional(z.literal(true)), eventCount: z.nullable(Count), sessions: z.nullable(Count), cost: z.nullable(Cost),
     busyMs: z.nullable(Amount), steeringCount: z.nullable(Count), peakParallel: z.nullable(Count),
 }));
 const Leader = lazyZodSchema(() => z.strictObject({
@@ -111,6 +111,7 @@ export interface UsageAgentAccountingCalendar {
 export interface UsageCalendarAccountingFacts {
     contributionCount: number;
     tokens: number | null;
+    tokensFromParts?: true;
     eventCount: number | null;
     sessionIds: string[] | null;
     sources: Array<{ source: UsageAnalyticsContribution['source']; path: string; machineId: string | null }>;
@@ -126,36 +127,45 @@ export function mergeUsageCalendarAccountingFacts(parts: readonly UsageCalendarA
     const sources = new Map<string, UsageCalendarAccountingFacts['sources'][number]>();
     let contributionCount = 0;
     let tokens: number | null = null;
+    let tokensFromParts = false;
     let eventCount: number | null = 0;
     let knownSessions = true;
     for (const part of parts) {
         contributionCount += part.contributionCount;
-        if (part.contributionCount > 0) tokens = addUsageMeasurements(tokens, part.tokens);
+        if (part.contributionCount > 0) {
+            tokens = addUsageMeasurements(tokens, part.tokens);
+            tokensFromParts ||= part.tokensFromParts === true;
+        }
         eventCount = eventCount === null || part.eventCount === null ? null : eventCount + part.eventCount;
         if (part.sessionIds === null) knownSessions = false;
         else for (const id of part.sessionIds) sessionIds.add(id);
         for (const source of part.sources) sources.set(JSON.stringify([source.source, source.path, source.machineId]), source);
     }
-    return { contributionCount, tokens: contributionCount === 0 ? 0 : tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
+    return { contributionCount, tokens: contributionCount === 0 ? 0 : tokens, ...(tokensFromParts ? { tokensFromParts: true } : {}),
+        eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
 }
 
 export function projectUsageCalendarAccountingFacts(rows: readonly UsageAnalyticsContribution[]): UsageCalendarAccountingFacts {
     const sessionIds = new Set<string>();
     const sources = new Map<string, UsageCalendarAccountingFacts['sources'][number]>();
     let tokens: number | null = null;
+    let tokensFromParts = false;
     let eventCount: number | null = 0;
     let knownSessions = true;
     for (const row of rows) {
-        tokens = addUsageMeasurements(tokens, row.tokens.total);
+        const measured = resolveUsageMeasuredTokens(row.tokens);
+        tokens = addUsageMeasurements(tokens, measured.total);
+        tokensFromParts ||= measured.fromParts;
         eventCount = eventCount === null || row.eventCount === undefined ? null : eventCount + row.eventCount;
-        if (row.tokens.total !== 0 || row.eventCount !== 0) {
+        if (measured.total !== 0 || row.eventCount !== 0) {
             if (row.sessionId === null) knownSessions = false;
             else sessionIds.add(row.sessionId);
         }
         const source = { source: row.source, path: row.sourceContext?.path ?? 'unknown', machineId: row.machineId };
         sources.set(JSON.stringify([source.source, source.path, source.machineId]), source);
     }
-    return { contributionCount: rows.length, tokens: rows.length === 0 ? 0 : tokens, eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
+    return { contributionCount: rows.length, tokens: rows.length === 0 ? 0 : tokens, ...(tokensFromParts ? { tokensFromParts: true } : {}),
+        eventCount, sessionIds: knownSessions ? [...sessionIds] : null, sources: [...sources.values()] };
 }
 
 /** Open accounting calendars begin on the selected population's first observed local day. */
@@ -271,7 +281,7 @@ function accountingCoverage(facts: UsageCalendarAccountingFacts | undefined, acc
         ? 'complete_for_supplied_facts' : 'partial';
 }
 
-export function resolveUsageCalendarLeaders(agents: CalendarBucket['agents'], metric: keyof CalendarMetrics, total: CalendarMetrics): z.infer<typeof Leader> {
+export function resolveUsageCalendarLeaders(agents: CalendarBucket['agents'], metric: keyof z.infer<typeof Leaders>, total: CalendarMetrics): z.infer<typeof Leader> {
     const amount = (metrics: CalendarMetrics) => metric === 'cost' ? metrics.cost?.amountUsd ?? null : metrics[metric];
     const totalValue = amount(total);
     if (totalValue === null || agents.some(agent => amount(agent.metrics) === null)) return { status: 'unavailable', agentIds: [], includesUnknown: false };
@@ -337,6 +347,7 @@ export function projectUsageAgentCalendar(input: UsageAgentCalendarInput): Usage
         steeringCount: detail.coverage.steering === 'complete_for_supplied_facts' ? 0 : null });
     const combineMetrics = (a: CalendarMetrics, b: CalendarMetrics): CalendarMetrics => ({
         tokens: a.tokens, eventCount: a.eventCount, sessions: a.sessions, cost: a.cost,
+        ...(a.tokensFromParts ? { tokensFromParts: true } : {}),
         busyMs: b.busyMs, peakParallel: b.peakParallel, steeringCount: b.steeringCount,
     });
     const combineFigures = (a: z.infer<typeof Figures> | undefined, b: z.infer<typeof Figures> | undefined): z.infer<typeof Figures> => {
@@ -416,6 +427,7 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         const hasBusy = intervals !== null && ((busy?.busyMs ?? 0) > 0 || busyCoverage === 'complete_for_supplied_facts');
         const hasSteers = steering?.inputsObserved === true && (steers.length > 0 || steeringCoverage === 'complete_for_supplied_facts');
         return { tokens: hasAccounting ? facts.tokens : null,
+            ...(hasAccounting && facts.tokensFromParts ? { tokensFromParts: true } : {}),
             eventCount: hasAccounting ? facts.eventCount : null,
             sessions: hasAccounting && facts.sessionIds !== null ? facts.sessionIds.length : null,
             cost: cost.available ? cost.selected : null,

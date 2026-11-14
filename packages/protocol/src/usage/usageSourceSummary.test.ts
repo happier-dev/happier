@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
 
 describe('summarizeUsageExecutionSources', () => {
+    it('adds reported totals and parts-only floors while retaining their provenance', () => {
+        const result = summarizeUsageExecutionSources([
+            { tokens: { total: 1000, input: 20 }, sourceContext: { execution: 'happier' as const } },
+            { tokens: { total: null, input: 100, output: 50 }, sourceContext: { execution: 'outside' as const } },
+            { tokens: { total: null }, sourceContext: { execution: 'outside' as const } },
+            { tokens: { total: 0, input: 500 }, sourceContext: { execution: 'unknown' as const } },
+        ]);
+        expect(result).toMatchObject({ totalTokens: 1150, tokensFromParts: true, groups: [
+            { execution: 'happier', tokens: 1000, share: 1000 / 1150 },
+            { execution: 'outside', tokens: 150, share: 150 / 1150, tokensFromParts: true },
+            { execution: 'unknown', tokens: 0, share: 0 },
+        ] });
+        expect(result.groups[0]).not.toHaveProperty('tokensFromParts');
+    });
     it('retains unknown totals and known-only subtotals without attributing an invented zero', () => {
         const unknown = { tokens: { total: null }, sourceContext: { execution: 'outside' as const } };
         expect(summarizeUsageExecutionSources([unknown])).toMatchObject({ totalTokens: null, groups: [{ tokens: null, share: null }] });

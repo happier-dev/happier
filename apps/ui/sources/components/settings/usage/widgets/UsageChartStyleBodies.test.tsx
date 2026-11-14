@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { renderScreen } from '@/dev/testkit';
 import { UsageChartPending } from './UsageChartStyleBodies';
+import { usageChartMetricName } from './usageChartHost';
 import { usageCrewLabels } from './usageChartLabels';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { lightTheme } from '@/theme';
@@ -20,6 +21,12 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
+
+it('qualifies measured-floor token chart captions without qualifying exact tokens or other measures', () => {
+  expect(usageChartMetricName('tokens', true)).toContain(t('usage.board.page.tokensFromParts'));
+  expect(usageChartMetricName('tokens', false)).not.toContain(t('usage.board.page.tokensFromParts'));
+  expect(usageChartMetricName('busy', true)).not.toContain(t('usage.board.page.tokensFromParts'));
+});
 
 it.each(['en', 'fr'] as const)('keeps an unreported Crew share quiet in the real %s host while preserving zero', async language => {
   const previousLanguage = getPreferredLanguage();

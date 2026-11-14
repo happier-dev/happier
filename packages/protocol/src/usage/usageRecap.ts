@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { UsageQuerySchema, type UsageQuery } from '../inputs/usageQuery.js';
-import { UsageObservationTokensSchema, UsageAnalyticsCostFactValueSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsTokensSchema, UsageAnalyticsCostFactValueSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { UsageQuerySourceStatusSchema } from './resolveUsagePageAggregation.js';
 import { UsageHowYouWorkSchema } from './resolveUsageHowYouWork.js';
 import { UsageFileResultSchema } from './usageExport.js';
@@ -52,15 +52,15 @@ export type UsageRecapDeliveryInput = z.infer<typeof UsageRecapDeliveryInputSche
 
 const count = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const amount = lazyZodSchema(() => z.number().check(z.nonnegative()));
-const mixRow = lazyZodSchema(() => z.strictObject({ tokens: z.nullable(amount), events: count, name: z.optional(z.string()) }));
+const mixRow = lazyZodSchema(() => z.strictObject({ tokens: z.nullable(amount), tokensFromParts: z.optional(z.literal(true)), events: count, name: z.optional(z.string()) }));
 const agentMixRow = lazyZodSchema(() => z.extend(mixRow, { agentId: z.optional(z.string().check(z.minLength(1))) }));
 const highlight = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('observed_peak'), bucketStartMs: count, bucketEndMs: count, tokens: z.nullable(amount) }),
+  z.strictObject({ kind: z.literal('observed_peak'), bucketStartMs: count, bucketEndMs: count, tokens: z.nullable(amount), tokensFromParts: z.optional(z.literal(true)) }),
   z.strictObject({ kind: z.literal('linked_outcomes'), count }),
 ]));
 
 export const UsageRecapFactsSchema = lazyZodSchema(() => z.strictObject({
-  tokens: z.optional(UsageObservationTokensSchema),
+  tokens: z.optional(UsageAnalyticsTokensSchema),
   activeDays: z.optional(count),
   streak: z.optional(z.strictObject({ longestDays: count })),
   modelMix: z.optional(z.array(mixRow)),

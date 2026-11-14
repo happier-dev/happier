@@ -34,6 +34,24 @@ if (composed.kind !== 'composed') throw new Error('The canonical recap producer 
 const FORMATS = ['square', 'story', 'link-preview'] as const;
 
 describe('private stat card renderer', () => {
+    it('labels scalar measured floors when token headlines are not selected', async () => {
+        const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+        const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+            breakdowns: { agent: [{ key: 'codex', eventCount: 1, tokens: parts, cost: accounting.totals.cost }] },
+            series: [{ bucketStartMs: query.period.startMs, bucketEndMs: query.period.endMs,
+                eventCount: 1, tokens: parts, cost: accounting.totals.cost }],
+        });
+        const result = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({ query, selectedFields: ['agentMix', 'highlights'] }),
+            snapshot: resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }).results[0]! });
+        if (result.kind !== 'composed') throw new Error('Expected admitted scalar-parts recap');
+        const model = buildUsageStatCardModel(result);
+        const screen = await renderScreen(<UsageStatCard model={model} tone="dark" testID="scalar-parts" />);
+        try {
+            expect(model.headline).toBeNull();
+            expect(screen.findByTestId('scalar-parts')!.props.accessibilityLabel).toContain(t('usage.board.page.tokensFromParts'));
+            expect(screen.getTextContent()).toContain(t('usage.board.page.tokensFromParts'));
+        } finally { standardCleanup(); }
+    });
     it('renders measured token parts from the canonical recap composer with their qualifier', async () => {
         const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
         const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, totals: { ...accounting.totals, tokens: parts } });

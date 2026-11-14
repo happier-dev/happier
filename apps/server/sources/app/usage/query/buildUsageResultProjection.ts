@@ -7,7 +7,7 @@ import { resolveUsageContributionDimensionKey, resolveUsageCostBasis, resolveUsa
 import { resolveUsageTokenCategories } from "@happier-dev/protocol/usage/usageTokenCategories";
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema } from "@happier-dev/protocol/providers/ids";
 
-import { addUsageTokens } from "../usageMetrics";
+import { addUsageMeasuredTokens } from "@happier-dev/protocol/usage/usageAggregation";
 import type { ScopedUsageContribution, ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { resolveUsageContributionSourceContext } from "./resolveScopedUsageContributions";
 import { projectUsageCoverageEvidence, type UsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -190,7 +190,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
             groupedFacts.set(key, previous ? {
                 ...fact,
                 amountUsd: fact.amountUsd === null || previous.amountUsd === null ? null : fact.amountUsd + previous.amountUsd,
-                tokens: addUsageTokens(previous.tokens, fact.tokens),
+                tokens: addUsageMeasuredTokens(previous.tokens, fact.tokens),
                 eventCount: previous.eventCount + fact.eventCount,
                 asOfMs: Math.max(previous.asOfMs, fact.asOfMs),
                 complete: previous.complete && fact.complete,

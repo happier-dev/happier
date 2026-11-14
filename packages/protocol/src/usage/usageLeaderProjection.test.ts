@@ -10,7 +10,7 @@ const contribution = { id: 'row', observedAtMs: 1, sessionId: 'session', turnId:
 
 it('retains unknown token totals after measured zero in ranked and frontier projections', () => {
     const rows = [null, 0, 7].map((total, index) => ({ ...contribution, id: String(index), sessionId: String(index),
-        eventCount: 1, tokens: { ...contribution.tokens, total }, cost: { ...contribution.cost, costSource: 'none' as const } }));
+        eventCount: 1, tokens: total === null ? { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total } : { ...contribution.tokens, total }, cost: { ...contribution.cost, costSource: 'none' as const } }));
     expect(selectUsageLeaderTokenFrontier(rows, 'session', 3).map(group => group.value.tokens.total)).toEqual([7, 0, null]);
     const ranked = rows.map(row => ({ ...row, key: row.id }));
     expect(selectUsageRankedLeaders(ranked, 3, 'auto').map(row => row.tokens.total)).toEqual([7, 0, null]);

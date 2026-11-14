@@ -35,6 +35,13 @@ export const UsageObservationTokensSchema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsageObservationTokens = z.infer<typeof UsageObservationTokensSchema>;
 
+/** Additive measured presentation; the six observation fields remain raw reported facts. */
+export const UsageAnalyticsTokensSchema = lazyZodSchema(() => z.strictObject({
+  ...UsageObservationTokensSchema.shape,
+  measured: z.optional(z.strictObject({ total: NonNegativeNumberSchema, fromParts: z.literal(true) })),
+}));
+export type UsageAnalyticsTokens = z.infer<typeof UsageAnalyticsTokensSchema>;
+
 export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(USAGE_ANALYTICS_COST_MODES));
 
 export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
@@ -242,7 +249,7 @@ export const UsageAnalyticsTotalsSchema = lazyZodSchema(() => z.strictObject({
   eventCount: z.number().check(z.int(), z.minimum(0)),
   /** Number of admitted inference requests; omitted for legacy/personal responses. */
   requestCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   cost: UsageObservationCostSchema,
   context: z.optional(UsageObservationContextSchema),
 }));
@@ -253,7 +260,7 @@ export const UsageAnalyticsSeriesBucketSchema = lazyZodSchema(() => z.strictObje
   bucketEndMs: z.number().check(z.int(), z.minimum(0)),
   eventCount: z.number().check(z.int(), z.minimum(0)),
   requestCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   cost: UsageObservationCostSchema,
   context: z.optional(UsageObservationContextSchema),
 }));
@@ -264,7 +271,7 @@ export const UsageAnalyticsBreakdownEntrySchema = lazyZodSchema(() => z.strictOb
   label: z.optional(z.string().check(z.trim(), z.minLength(1))),
   eventCount: z.number().check(z.int(), z.minimum(0)),
   requestCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   cost: UsageObservationCostSchema,
   context: z.optional(UsageObservationContextSchema),
   latestContextUsedTokens: z.optional(NonNegativeNumberSchema),
@@ -329,7 +336,7 @@ export type UsageAnalyticsSourceContext = z.infer<typeof UsageAnalyticsSourceCon
 export const UsageAnalyticsTimelineSourceSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(UsageAnalyticsSourceContextSchema, {
   source: z.string().check(z.trim(), z.minLength(1)),
   eventCount: z.number().check(z.int(), z.minimum(0)),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   cost: UsageObservationCostSchema,
 })));
 export type UsageAnalyticsTimelineSource = z.infer<typeof UsageAnalyticsTimelineSourceSchema>;
@@ -338,7 +345,7 @@ const UsageAnalyticsLeaderSchema = lazyZodSchema(() => z.strictObject({
   key: z.string().check(z.trim(), z.minLength(1)),
   label: z.optional(z.string().check(z.trim(), z.minLength(1))),
   eventCount: z.number().check(z.int(), z.minimum(0)),
-  tokens: z.optional(UsageObservationTokensSchema),
+  tokens: z.optional(UsageAnalyticsTokensSchema),
   cost: z.optional(UsageObservationCostSchema),
   /** Only timeline leaders carry source partitions; older responses may omit them. */
   sources: z.optional(z.array(UsageAnalyticsTimelineSourceSchema)),
@@ -418,7 +425,7 @@ export const UsageAnalyticsCostFactValueSchema = lazyZodSchema(() => z.strictObj
   kind: UsageAnalyticsCostFactKindSchema,
   currency: z.string().check(z.trim(), z.minLength(1)),
   amountUsd: z.nullable(NonNegativeNumberSchema),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   eventCount: z.number().check(z.int(), z.minimum(0)),
   asOfMs: z.number().check(z.int(), z.minimum(0)),
   complete: z.boolean(),
@@ -500,7 +507,7 @@ export const UsagePricingPopulationSchema = lazyZodSchema(() => z.strictObject({
   modelId: z.nullable(z.string()), categories: z.nullable(UsageObservationTokensSchema),
   categoryUnits: z.record(z.string(), UsageExactDecimalSchema), cost: UsageObservationCostSchema,
   costUnits: z.record(z.string(), UsageExactDecimalSchema),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   contributionCount: z.number().check(z.int(), z.nonnegative()), eventCount: z.number().check(z.int(), z.nonnegative()),
   asOfMs: z.number(), complete: z.boolean(),
   selection: z.strictObject({ auto: UsagePricingSelectionStateSchema, reported: UsagePricingSelectionStateSchema,
@@ -527,7 +534,9 @@ export const UsageAnalyticsSummarySchema = lazyZodSchema(() => z.strictObject({
       contributionCount: z.number().check(z.int(), z.nonnegative()), pricedContributionCount: z.number().check(z.int(), z.nonnegative()),
       apiEquivalentUsd: z.nullable(NonNegativeNumberSchema), pricingSources: z.array(z.string().check(z.minLength(1))) })) }),
   execution: z.strictObject({ coverage: z.enum(['complete', 'partial', 'unknown']), totalTokens: z.nullable(NonNegativeNumberSchema),
+    tokensFromParts: z.optional(z.literal(true)),
     groups: z.array(z.strictObject({ execution: UsageAnalyticsExecutionSchema, tokens: z.nullable(NonNegativeNumberSchema),
+      tokensFromParts: z.optional(z.literal(true)),
       share: z.nullable(NonNegativeNumberSchema) })) }),
 }));
 export type UsageAnalyticsSummary = z.infer<typeof UsageAnalyticsSummarySchema>;

@@ -135,6 +135,7 @@ const originalLabels: PublicUsageOriginalLabels = {
     methodBody: 'Published methods only',
   },
   period: 'Shared period',
+  tokensFromParts: 'Includes measured parts only',
 };
 
 function render(
@@ -271,6 +272,25 @@ describe('HappierPublicProfile', () => {
       } finally { mounts.forEach(mounted => mounted.unmount()); }
     }
   });
+  it.each([true, false])('labels original public token floors without changing exact figures: %s', tokensFromParts => {
+    const view = projectPublicProfile({ context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+      policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1,
+      snapshot: PublicProfileSnapshotV1Schema.parse({ ...snapshot, facts: { tokens: 2000, ...(tokensFromParts ? { tokensFromParts: true } : {}) } }),
+      layout: PublicProfileLayoutV1Schema.parse({ v: 1, items: [{ kind: 'widget', id: 'original', title: 'Totals', size: 'wide',
+        frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] }) });
+    if (!view) throw new Error('Expected public token fixture');
+    const mounted = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(HappierPublicProfile, { view, labels, usage: { width: 900,
+        paint: { accent: '#007aff', paper: '#ffffff', dark: false }, agent: id => ({ id, name: id, color: '#007aff' }),
+        labels: { chartLabel: () => 'Totals', unavailable: 'Not recorded', original: originalLabels } } }) }));
+    try {
+      const text = mounted.container.querySelector('[data-testid="public-profile-block-original"]')?.textContent;
+      expect(text).toContain('2000');
+      expect(text?.includes('Includes measured parts only')).toBe(tokensFromParts);
+    } finally { mounted.unmount(); }
+  });
+
   it('keeps a public figure the period did not record in its slot as a dash, with the reason quiet beneath', () => {
     const view = projectPublicProfile({
       context, metadata: {}, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,

@@ -1,5 +1,5 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { addUsageCost, aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
+import { addUsageCost, aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, addUsageMeasuredTokens, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
 import { hasUnresolvedUsageReportedTotalScope, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
@@ -167,7 +167,7 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
             partition.costs ??= createUsageCostAccumulator(partition.group.cost);
             partition.costs.add(raw);
             const group = partition.group;
-            group.tokens = addUsageTokens(group.tokens, row.tokens);
+            group.tokens = addUsageMeasuredTokens(group.tokens, row.tokens);
             group.categories = categories && group.categories ? addUsageTokens(group.categories, categories) : categories;
             group.contributionCount++;
             group.eventCount += row.eventCount ?? 1;
@@ -215,7 +215,7 @@ export function mergeUsagePricingPopulations(populations: readonly UsagePricingP
         const categories = previous.categories && group.categories
             ? addUsageTokens(restore(previous.categories, previous.categoryUnits), restore(group.categories, group.categoryUnits)) : null;
         grouped.set(key, { ...previous, cost, costUnits: costUnits(cost), categories,
-            categoryUnits: categories ? units(categories, tokenFields) : {}, tokens: addUsageTokens(previous.tokens, group.tokens),
+            categoryUnits: categories ? units(categories, tokenFields) : {}, tokens: addUsageMeasuredTokens(previous.tokens, group.tokens),
             contributionCount: previous.contributionCount + group.contributionCount, eventCount: previous.eventCount + group.eventCount,
             asOfMs: Math.min(previous.asOfMs, group.asOfMs), complete: previous.complete && group.complete });
     }

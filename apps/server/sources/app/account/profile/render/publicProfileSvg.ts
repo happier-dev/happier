@@ -58,17 +58,21 @@ export async function renderPublicProfileSvg(result: PublicProfileReadResultV1, 
     return root(width, height, title, `${autoThemeStyle(themes.length > 1)}<defs><clipPath id="frame"><rect width="${width}" height="${height}" rx="${options.kind === 'card' ? 14 : 0}"/></clipPath></defs><g clip-path="url(#frame)">${layers.join('')}</g>`);
 }
 
-function metrics(result: PublicProfileReadResultV1): ReadonlyArray<Readonly<{ metric: PublicProfileAssetMetric; value: number }>> {
+function metrics(result: PublicProfileReadResultV1): ReadonlyArray<Readonly<{ metric: PublicProfileAssetMetric; value: number; tokensFromParts: boolean }>> {
     if (result.kind !== 'published') return [];
     const facts = result.view.snapshot.facts;
-    return metricFields.flatMap(([metric, field]) => facts[field] === undefined ? [] : [{ metric, value: facts[field] }]);
+    return metricFields.flatMap(([metric, field]) => facts[field] === undefined ? [] : [{ metric, value: facts[field], tokensFromParts: metric === 'tokens' && facts.tokensFromParts === true }]);
+}
+
+function formatMetric(item: Readonly<{ metric: PublicProfileAssetMetric; value: number; tokensFromParts: boolean }>, labels: PublicProfileAssetLabels): string {
+    return `${item.tokensFromParts ? '≥ ' : ''}${labels.formatMetric(item.metric, item.value)}`;
 }
 
 function describe(result: PublicProfileReadResultV1, labels: PublicProfileAssetLabels): string {
     if (result.kind === 'unavailable') return `${labels.brand} · ${labels.unavailable}`;
     if (result.kind === 'paused') return `${result.identity.name ?? `@${result.handle}`} · ${labels.paused}`;
     const view = result.view;
-    const figures = metrics(result).slice(0, 3).map(item => `${labels.formatMetric(item.metric, item.value)} ${labels.metricLabel(item.metric)}`);
+    const figures = metrics(result).slice(0, 3).map(item => `${formatMetric(item, labels)} ${labels.metricLabel(item.metric)}`);
     return [view.identity.name ?? `@${view.handle}`, `@${view.handle} · ${view.service.displayName}`,
         ...figures, labels.period(view.snapshot.period), labels.synced(view.snapshot.computedAtMs)].join(' · ');
 }
@@ -95,7 +99,7 @@ async function renderSummary(result: PublicProfileReadResultV1, options: PublicP
     if (card) {
         const column = (width - 48) / 3;
         for (const [index, item] of figures.entries()) {
-            parts.push(await glyph(labels.formatMetric(item.metric, item.value), { x: 24 + index * column, y: 94,
+            parts.push(await glyph(formatMetric(item, labels), { x: 24 + index * column, y: 94,
                 size: 20, maxWidth: column - 16, color: palette.foreground, face: 'semiBold' }));
             parts.push(await glyph(labels.metricLabel(item.metric), { x: 24 + index * column, y: 119,
                 size: 11, maxWidth: column - 16, color: palette.secondary }));
@@ -103,7 +107,7 @@ async function renderSummary(result: PublicProfileReadResultV1, options: PublicP
         parts.push(await glyph([labels.period(result.view.snapshot.period), labels.synced(result.view.snapshot.computedAtMs)].join(' · '),
             { x: 24, y: height - 30, size: 10, maxWidth: width - 48, color: palette.secondary }));
     } else {
-        const line = figures.length ? figures.map(item => `${labels.formatMetric(item.metric, item.value)} ${labels.metricLabel(item.metric)}`).join(' · ') : labels.empty;
+        const line = figures.length ? figures.map(item => `${formatMetric(item, labels)} ${labels.metricLabel(item.metric)}`).join(' · ') : labels.empty;
         parts.push(await glyph(line, { x: width / 2, y: 292, size: 30, maxWidth: width - 96, color: palette.foreground, face: 'semiBold', center: true }));
         parts.push(await glyph(labels.period(result.view.snapshot.period), { x: width / 2, y: 342, size: 20, maxWidth: width - 96, color: palette.secondary, center: true }));
         parts.push(await glyph(labels.brand, { x: 48, y: height - 50, size: 20, maxWidth: width - 96, color: palette.foreground, face: 'semiBold' }));
@@ -150,7 +154,7 @@ export function publicProfileBadgeMessage(result: PublicProfileReadResultV1, met
     if (!metricFields.some(([kind]) => kind !== 'active-days' && kind === metric)) return { message: labels.unavailable, isError: true };
     const item = metrics(result).find(item => item.metric !== 'active-days' && item.metric === metric);
     if (result.kind === 'paused') return { message: labels.paused, isError: false };
-    return item ? { message: `${labels.formatMetric(item.metric, item.value)} ${labels.metricLabel(item.metric)}`, isError: false }
+    return item ? { message: `${formatMetric(item, labels)} ${labels.metricLabel(item.metric)}`, isError: false }
         : { message: labels.unavailable, isError: true };
 }
 

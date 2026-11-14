@@ -565,6 +565,23 @@ describe('one selected money basis across Usage bodies', () => {
     if (previousTokens === 0) expect(comparison).toBeUndefined();
     else expect(comparison).toMatchObject({ value: previousTokens === 100 ? '▲ 228×' : '▲ 14%' });
   });
+  it('does not compare a reported Period total against a prior mixed measured floor', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, period: { startMs: day, endMs: 2 * day }, metric: 'tokens' });
+    const accounting = { ...props.slice.accounting!, totals: { ...props.slice.accounting!.totals,
+      tokens: { ...tokens, total: 22_804 } } };
+    const priorQuery = resolveUsageComparisonQuery(query)!;
+    const previousTokens = { ...tokens, total: 100, measured: { total: 1800, fromParts: true as const } };
+    const previous = { ...accounting, totals: { ...accounting.totals, tokens: previousTokens } };
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
+      { query, status: 'available', value: accounting }, { query: priorQuery, status: 'available', value: previous },
+    ] }).results[0]!;
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
+      id="usage_period_summary" testID="floor-comparison" />);
+    const hero = screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'floor-comparison.hero')!;
+    expect(hero.props.value).toBe(22_804);
+    expect(hero.props.comparison).toBeUndefined();
+  });
   it('says the Period cost once in Cost mode: the hero is the cost, so its column shows the tokens (R135 N2)', async () => {
     const props = mountedCosts(true);
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} id="usage_period_summary" testID="summary" />);
