@@ -193,11 +193,12 @@ export function useProjectsListModel() {
      * A tree leaf (visible or hidden) opens its exact accepted checkout, resolved by full address; an Environment row
      * opens that Environment on the checkout's Project Deployments page.
      */
-    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV1, environmentId?: string) => {
+    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV1, environmentId?: string, database?: string) => {
         if (!address || address.workspaceId !== refId) return;
         const resolution = resolveWorkspaceRefByAddress(treeRefs, address);
         if (resolution.kind !== 'resolved') return;
-        if (environmentId) void openProject(resolution.ref.id, { workspaceAddress: workspaceAddressFromRefV1(resolution.ref), environmentId });
+        if (environmentId) void openProject(resolution.ref.id, { workspaceAddress: workspaceAddressFromRefV1(resolution.ref), environmentId,
+            ...(database ? { database } : {}) });
         else openWorkspace(resolution.ref);
     }, [openProject, openWorkspace, treeRefs]);
     const setProjectHidden = React.useCallback(async (project: QualifiedProjectKeyV1 | WorkspaceRefV1, hidden: boolean) => {

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { destinationRowTestId, useColumnDestinations } from '@/components/appShell/destinations/ColumnDestinationRows';
@@ -26,6 +26,7 @@ import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import { useProjectsTreeEnvironments, useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
+import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
 const NO_KEYS: ReadonlySet<string> = new Set();
@@ -111,17 +112,21 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     // Each Project's Environments join its row (pfc-redesign dProject tree): the Project → Environment link.
     const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
     const openEnvironmentId = useProjectsTreeOpenEnvironmentId();
+    // What each opened Environment runs (services, databases), read only while it is open.
+    const [environmentChildren, publishEnvironmentChildren] = useProjectsTreeEnvironmentChildren();
+    const router = useRouter();
+    const openHref = React.useCallback((href: string) => { router.push(href as never); }, [router]);
     const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     // Structural rows only: a checkout's live facts are read by its Project's own tree section, so a fact
     // change never re-renders this column or the other rows.
     const rows = React.useMemo(
-        () => buildProjectsTreeRows({ projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys }),
-        [collapsedKeys, expandedKeys, openId, openEnvironmentId, projects],
+        () => buildProjectsTreeRows({ projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys, environmentChildren }),
+        [collapsedKeys, environmentChildren, expandedKeys, openId, openEnvironmentId, projects],
     );
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);
     const live = React.useMemo(
-        () => ({ source: factsSource, projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys }),
-        [collapsedKeys, expandedKeys, factsSource, openId, openEnvironmentId, projects],
+        () => ({ source: factsSource, projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys, environmentChildren }),
+        [collapsedKeys, environmentChildren, expandedKeys, factsSource, openId, openEnvironmentId, projects],
     );
     const toggle = React.useCallback((key: string) => {
         const open = rows.find((row) => row.key === key)?.expanded === true;
@@ -193,6 +198,8 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
 
     return (
         <View testID="projects-column" style={styles.column}>
+            <ProjectsTreeEnvironmentReads projects={projects} expandedKeys={expandedKeys} collapsedKeys={collapsedKeys}
+                onChildren={publishEnvironmentChildren} />
             <CollectionList
                 testID="projects-column:list"
                 surface="plane"
@@ -243,6 +250,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         live={live}
                         onToggle={toggle}
                         onOpenRef={openRef}
+                        onOpenHref={openHref}
                         hrefForRef={hrefForRef}
                         renderRowMenu={renderRowMenu}
                         hidden={hidden}

@@ -4,8 +4,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HAPPIER_COLLECTION_LIST_METRICS,
     resolveHappierCollectionTreeChildIndentPx,
-    useHappierTreeInteraction,
-    type HappierTreeNode,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
@@ -13,6 +11,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { CollectionListGroupLabel, CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
+import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import {
     ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX,
     ITEM_SUBTITLE_TEXT_METRICS,
@@ -32,9 +31,11 @@ import {
     buildProjectsTreeRows,
     projectsTreeCheckoutKey,
     projectsTreeGlyphIcon,
+    projectsTreeRowChild,
     projectsTreeRowEnvironment,
     projectsTreeRowOpenTarget,
     projectsTreeRowSubtitle,
+    type ProjectsTreeEnvironmentChild,
     type ProjectsTreeProject,
     type ProjectsTreeRow,
 } from './projectsTreeRows';
@@ -42,87 +43,25 @@ import { useProjectsTreeCheckoutFactsFor, type ProjectsTreeCheckoutFactsSource }
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 /**
- * The Projects tree's keyboard and semantics through the shared tree owner (`useHappierTreeInteraction`):
- * treeitem levels and expanded state, one roving tab stop, arrows/Home/End move, Right/Left/Space
- * disclose, Enter activates (a row opens what its press opens; a machine row toggles). Focus repairs to the
- * nearest visible ancestor when a branch closes or a Project is hidden. The column and the phone list
- * both bind their rows through it — there is no Projects-specific keyboard engine.
+ * Opens a checkout; with an Environment, that Environment on the checkout's Project Deployments page; with a database
+ * too, that database in its Environment.
  */
-export function useProjectsTreeKeyboard(rows: readonly ProjectsTreeRow[], handlers: Readonly<{
-    onToggle: (key: string) => void;
-    onOpenRow: (row: ProjectsTreeRow) => void;
-    /** A windowed list brings the row at this visible index into view, so focus can land on it once it mounts. */
-    onRevealIndex?: (index: number) => void;
-}>) {
-    const visibleNodes = React.useMemo((): HappierTreeNode[] => {
-        const ancestors: ProjectsTreeRow[] = [];
-        return rows.map((row) => {
-            while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.level >= row.level) ancestors.pop();
-            const node: HappierTreeNode = {
-                key: row.key,
-                parentKey: ancestors[ancestors.length - 1]?.key ?? null,
-                depth: row.level,
-                kind: row.expandable ? 'branch' : 'leaf',
-                expanded: row.expanded,
-            };
-            if (row.expandable) ancestors.push(row);
-            return node;
-        });
-    }, [rows]);
-    const rowsRef = React.useRef(rows);
-    rowsRef.current = rows;
-    const handlersRef = React.useRef(handlers);
-    handlersRef.current = handlers;
-    const [focusedKey, setFocusedKey] = React.useState<string | null>(null);
-    const tree = useHappierTreeInteraction({
-        visibleNodes,
-        focusedKey,
-        onFocus: setFocusedKey,
-        onExpandedChange: (key, expanded) => {
-            const row = rowsRef.current.find((candidate) => candidate.key === key);
-            if (row && row.expanded !== expanded) handlersRef.current.onToggle(key);
-        },
-        onActivate: (key) => {
-            const row = rowsRef.current.find((candidate) => candidate.key === key);
-            if (row) handlersRef.current.onOpenRow(row);
-        },
-        onRevealIndex: (index) => handlersRef.current.onRevealIndex?.(index),
-    });
-    const { activeKey, bindFocusTarget, onFocusChange, onKeyDown, positionOf } = tree;
-    const getRowPropsForActiveKey = React.useCallback((row: ProjectsTreeRow, rowActiveKey: string | null): NonNullable<React.ComponentProps<typeof CollectionNavigationRow>['treeItem']> => {
-        // Where the row stands in the whole tree: a windowed list builds only some rows, out of order.
-        const position = positionOf(row.key);
-        return {
-            webRole: 'treeitem',
-            webTabIndex: row.key === rowActiveKey ? 0 : -1,
-            accessibilityLevel: row.level + 1,
-            ...(position ? { accessibilityPositionInSet: position.positionInSet, accessibilitySetSize: position.setSize } : {}),
-            accessibilityExpanded: row.expandable ? row.expanded : undefined,
-            pressableRef: (target) => bindFocusTarget(row.key, target?.focus ? { focus: () => target.focus?.() } : null),
-            onFocus: () => onFocusChange(row.key, true),
-            onBlur: () => onFocusChange(row.key, false),
-            onKeyDown: (event) => {
-                const key = event.nativeEvent?.key ?? event.key;
-                if (key && onKeyDown(row.key, key, event)) event.preventDefault?.();
-            },
-        };
-    }, [bindFocusTarget, onFocusChange, onKeyDown, positionOf]);
-    const getRowProps = React.useCallback((row: ProjectsTreeRow) => getRowPropsForActiveKey(row, activeKey), [activeKey, getRowPropsForActiveKey]);
-    return { activeKey, getRowProps, getRowPropsForActiveKey, positionOf };
-}
-
-/** Opens a checkout; with an Environment, that Environment on the checkout's Project Deployments page. */
-export type ProjectsTreeOpenRef = (refId: string, address?: WorkspaceAddressV1, environmentId?: string) => void;
+export type ProjectsTreeOpenRef = (refId: string, address?: WorkspaceAddressV1, environmentId?: string, database?: string) => void;
 
 /**
  * Where a row's press (or Enter) lands: a leaf opens its exact checkout, a Project opens on its lead checkout, an
- * Environment opens on its Project's Deployments page, and only a row with nothing to open (a machine) opens or
- * closes in place. The one press owner for the column and the phone list.
+ * Environment (or one of its databases) opens on its Project's Deployments page, a service opens its page on its
+ * Machine, and only a row with nothing to open (a machine) opens or closes in place. The one press owner for the
+ * column and the phone list.
  */
-export function openProjectsTreeRow(row: ProjectsTreeRow, onOpenRef: ProjectsTreeOpenRef, onToggle: (key: string) => void) {
+export function openProjectsTreeRow(row: ProjectsTreeRow, onOpenRef: ProjectsTreeOpenRef, onToggle: (key: string) => void,
+    onOpenHref?: ((href: string) => void) | null) {
+    const child = projectsTreeRowChild(row);
+    if (child?.kind === 'href') { onOpenHref?.(child.href); return; }
     const target = projectsTreeRowOpenTarget(row);
     const environment = projectsTreeRowEnvironment(row);
-    if (target && environment) onOpenRef(target.refId, target.workspaceAddress, environment.environmentId);
+    if (target && environment && child?.kind === 'database') onOpenRef(target.refId, target.workspaceAddress, environment.environmentId, child.database);
+    else if (target && environment) onOpenRef(target.refId, target.workspaceAddress, environment.environmentId);
     else if (target) onOpenRef(target.refId, target.workspaceAddress);
     else if (row.expandable) onToggle(row.key);
 }
@@ -135,6 +74,8 @@ export type ProjectsTreeLiveCheckoutsInput = Readonly<{
     openEnvironmentId?: string | null;
     expandedKeys: ReadonlySet<string>;
     collapsedKeys?: ReadonlySet<string>;
+    /** What each opened Environment runs, by Environment id (`useProjectsTreeEnvironmentChildren`). */
+    environmentChildren?: ReadonlyMap<string, readonly ProjectsTreeEnvironmentChild[]>;
 }>;
 type ProjectsTreeLiveCheckouts = ProjectsTreeLiveCheckoutsInput & Readonly<{ projectsByKey: ReadonlyMap<string, ProjectsTreeProject> }>;
 
@@ -151,6 +92,8 @@ type ProjectsTreeProps = Readonly<{
     live?: ProjectsTreeLiveCheckoutsInput | null;
     onToggle: (key: string) => void;
     onOpenRef: ProjectsTreeOpenRef;
+    /** A service row under an Environment: its page on its Machine. */
+    onOpenHref?: ((href: string) => void) | null;
     /** A row's own menu (New session here, Save as a source, Hide project). */
     renderRowMenu?: ((row: ProjectsTreeRow) => React.ReactNode) | null;
     hrefForRef?: ((refId: string, address?: WorkspaceAddressV1) => string | null) | null;
@@ -187,23 +130,25 @@ const projectsTreeItemKey = (item: ProjectsTreeItem) => item.key;
 function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: number) => void) {
     const { theme } = useUnistyles();
     const testID = props.testID ?? 'projects-tree';
-    const { onOpenRef, onToggle } = props;
-    const keyboard = useProjectsTreeKeyboard(props.rows, {
+    const { onOpenRef, onToggle, onOpenHref } = props;
+    const keyboard = useCollectionTreeKeyboard(props.rows, {
         onToggle,
-        onOpenRow: (row) => openProjectsTreeRow(row, onOpenRef, onToggle),
+        onOpenRow: (row) => openProjectsTreeRow(row, onOpenRef, onToggle, onOpenHref),
         ...(onRevealIndex ? { onRevealIndex } : {}),
     });
     const liveInput = props.live;
     const live = React.useMemo((): ProjectsTreeLiveCheckouts | null => liveInput ? {
         ...liveInput,
         projectsByKey: new Map(liveInput.projects.map((project) => [project.key, project] as const)),
-    } : null, [liveInput?.source, liveInput?.projects, liveInput?.openRefId, liveInput?.openEnvironmentId, liveInput?.expandedKeys, liveInput?.collapsedKeys]);
-    const handlersRef = React.useRef({ onOpenRef, onToggle });
-    handlersRef.current = { onOpenRef, onToggle };
+    } : null, [liveInput?.source, liveInput?.projects, liveInput?.openRefId, liveInput?.openEnvironmentId, liveInput?.expandedKeys, liveInput?.collapsedKeys, liveInput?.environmentChildren]);
+    const handlersRef = React.useRef({ onOpenRef, onToggle, onOpenHref });
+    handlersRef.current = { onOpenRef, onToggle, onOpenHref };
     // These callbacks run on user intent; changing a parent's closure does not change any row's presentation.
-    const openRef = React.useCallback<ProjectsTreeOpenRef>((refId, address, environmentId) => (environmentId === undefined
-        ? handlersRef.current.onOpenRef(refId, address) : handlersRef.current.onOpenRef(refId, address, environmentId)), []);
+    const openRef = React.useCallback<ProjectsTreeOpenRef>((refId, address, environmentId, database) => (environmentId === undefined
+        ? handlersRef.current.onOpenRef(refId, address) : database === undefined ? handlersRef.current.onOpenRef(refId, address, environmentId)
+            : handlersRef.current.onOpenRef(refId, address, environmentId, database)), []);
     const toggle = React.useCallback((key: string) => handlersRef.current.onToggle(key), []);
+    const openHref = React.useCallback((href: string) => handlersRef.current.onOpenHref?.(href), []);
     const rowListProps = React.useMemo((): ProjectsTreeRowListProps => ({
         testID,
         getRowProps: keyboard.getRowPropsForActiveKey,
@@ -211,7 +156,8 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
         hrefForRef: props.hrefForRef,
         onOpenRef: openRef,
         onToggle: toggle,
-    }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle]);
+        onOpenHref: openHref,
+    }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle, openHref]);
     const { saved, hidden } = props;
     const items = React.useMemo((): ProjectsTreeItem[] => {
         const next: ProjectsTreeItem[] = projectRuns(props.rows).map((run) => ({ kind: 'project', key: `project:${run[0]!.key}`, rows: run }));
@@ -370,11 +316,12 @@ export const ProjectsTreeList = React.memo(function ProjectsTreeList(props: Proj
 
 type ProjectsTreeRowListProps = Readonly<{
     testID: string;
-    getRowProps: ReturnType<typeof useProjectsTreeKeyboard>['getRowPropsForActiveKey'];
+    getRowProps: ReturnType<typeof useCollectionTreeKeyboard<ProjectsTreeRow>>['getRowPropsForActiveKey'];
     renderRowMenu?: ((row: ProjectsTreeRow) => React.ReactNode) | null;
     hrefForRef?: ((refId: string, address?: WorkspaceAddressV1) => string | null) | null;
     onOpenRef: ProjectsTreeOpenRef;
     onToggle: (key: string) => void;
+    onOpenHref: (href: string) => void;
 }>;
 
 /**
@@ -398,7 +345,8 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                     <CollectionNavigationRow
                         key={row.key}
                         testID={`${props.testID}-row-${row.key}`}
-                        href={target && !row.environment ? props.hrefForRef?.(target.refId, target.workspaceAddress) ?? null : null}
+                        href={row.child?.kind === 'href' ? row.child.href
+                            : target && !row.environment ? props.hrefForRef?.(target.refId, target.workspaceAddress) ?? null : null}
                         title={row.title}
                         titleQualifier={row.titleQualifier}
                         subtitle={projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')) ?? undefined}
@@ -419,7 +367,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         treeItem={props.getRowProps(row, props.activeKey)}
                         accessibilityLabel={row.titleQualifier ? `${row.title}, ${row.titleQualifier}` : row.title}
                         rightElement={props.renderRowMenu?.(row) ?? null}
-                        onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle)}
+                        onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
                     />
                 );
             })}
@@ -461,8 +409,9 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
             openEnvironmentId: live.openEnvironmentId,
             expandedKeys: live.expandedKeys,
             collapsedKeys: live.collapsedKeys,
+            environmentChildren: live.environmentChildren,
         })
-        : props.rows, [project, facts, live.openRefId, live.openEnvironmentId, live.expandedKeys, live.collapsedKeys, props.rows]);
+        : props.rows, [project, facts, live.openRefId, live.openEnvironmentId, live.expandedKeys, live.collapsedKeys, live.environmentChildren, props.rows]);
     return <ProjectsTreeRowList rows={rows} activeKey={props.activeKey} {...props.rowList} />;
 }, (previous, next) => {
     if (previous.rowList !== next.rowList || previous.activeKey !== next.activeKey || previous.live.source !== next.live.source) return false;
@@ -479,7 +428,10 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     if (selectedEnvironment(previous.live.openEnvironmentId) !== selectedEnvironment(next.live.openEnvironmentId)) return false;
     const sameDisclosure = (rowKey: string) => previous.live.expandedKeys.has(rowKey) === next.live.expandedKeys.has(rowKey)
         && (previous.live.collapsedKeys?.has(rowKey) === true) === (next.live.collapsedKeys?.has(rowKey) === true);
-    return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${checkout.machineId}`));
+    // An Environment's disclosure and what it runs belong to its Project alone.
+    return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${checkout.machineId}`))
+        && (project.environments ?? []).every(environment => sameDisclosure(`${key}/environment/${environment.environmentId}`)
+            && previous.live.environmentChildren?.get(environment.environmentId) === next.live.environmentChildren?.get(environment.environmentId));
 });
 
 /** The tree's leading anatomy: the row's mark on the column's text edge, in the row's glyph box. */

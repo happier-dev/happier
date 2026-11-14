@@ -65,6 +65,8 @@ export function useProjectsTreeEnvironments(
       const id = project.source?.source.id;
       if (id && !projectBySource.has(id)) projectBySource.set(id, project);
     }
+    // The Machine each Environment runs on, as the read says: an opened Environment reads what runs there.
+    const machineByEnvironment = new Map(items.map((item) => [item.environment.id, item.environment.controllerMachineId] as const));
     const bySource = new Map<string, ProjectsTreeEnvironment[]>();
     for (const part of parts) {
       const project = projectBySource.get(part.projectSourceId);
@@ -83,6 +85,7 @@ export function useProjectsTreeEnvironments(
             ? 'working'
             : null,
         needsYouStatus: part.needsYouStatus,
+        machineId: machineByEnvironment.get(part.environmentId) ?? null,
       };
       const list = bySource.get(part.projectSourceId);
       if (list) list.push(environment);
@@ -115,7 +118,7 @@ export function useProjectsTreeEnvironments(
     });
     previous.current = { input: projects, output };
     return output;
-  }, [parts, projects]);
+  }, [items, parts, projects]);
 }
 
 const selectOpenEnvironmentId = (params: Readonly<Record<string, string | string[] | undefined>>): string | null =>

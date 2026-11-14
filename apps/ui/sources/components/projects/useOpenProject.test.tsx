@@ -331,6 +331,11 @@ describe('useOpenProject', () => {
         const href = new URL(routerPush.mock.calls[0][0], 'https://happier.invalid');
         expect(href.pathname).toBe('/projects/wr_1/deployments');
         expect(Object.fromEntries(href.searchParams)).toMatchObject({ serverId: serverIdA, deploymentEnvironment: 'env-prod' });
+        // One of its databases opens in that Environment, on the same page.
+        expect(await hook.getCurrent()('wr_1', { serverId: serverIdA, environmentId: 'env-prod', database: 'billing-db' })).toBe(true);
+        const database = new URL(routerPush.mock.calls[1][0], 'https://happier.invalid');
+        expect(database.pathname).toBe('/projects/wr_1/deployments');
+        expect(Object.fromEntries(database.searchParams)).toMatchObject({ deploymentEnvironment: 'env-prod', deploymentService: 'billing-db' });
     });
 
     it('restores the selected Home qualified preference despite duplicate bare ids', async () => {

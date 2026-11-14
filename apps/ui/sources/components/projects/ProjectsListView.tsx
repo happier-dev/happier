@@ -21,13 +21,16 @@ import { HappierTreeDisclosure } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
-import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
+import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
+import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
-import { ProjectsTree, openProjectsTreeRow, useProjectsTreeKeyboard } from './ProjectsTree';
+import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
+import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
@@ -63,6 +66,9 @@ export const ProjectsListView = React.memo(() => {
     const [query, setQuery] = React.useState('');
     // The same Environments the column lists under each Project (pfc-redesign dProject tree).
     const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
+    const [environmentChildren, publishEnvironmentChildren] = useProjectsTreeEnvironmentChildren();
+    const router = useRouter();
+    const openHref = React.useCallback((href: string) => { router.push(href as never); }, [router]);
     const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     const projectGroupsByKey = React.useMemo(() => new Map([...groups.projectGroups, ...groups.hiddenProjectGroups]
         .map(group => [group.projectKey.projectKey, group] as const)), [groups.projectGroups, groups.hiddenProjectGroups]);
@@ -93,8 +99,8 @@ export const ProjectsListView = React.memo(() => {
     // Saved, not open (lab p-projects TREEp): the same composition as the column's.
     const { saved } = model;
     const rows = React.useMemo(
-        () => buildPhoneRows(projects, expandedKeys, collapsedKeys),
-        [collapsedKeys, expandedKeys, projects],
+        () => buildPhoneRows(projects, expandedKeys, collapsedKeys, environmentChildren),
+        [collapsedKeys, environmentChildren, expandedKeys, projects],
     );
     const projectOfRow = React.useMemo(() => {
         const byKey = new Map(projects.map(project => [project.key, project] as const));
@@ -114,11 +120,11 @@ export const ProjectsListView = React.memo(() => {
     }, []);
     // The column's press owner: a Project opens on its lead checkout, a checkout opens itself.
     const openRow = React.useCallback((row: ProjectsTreeRow) => {
-        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded));
-    }, [model.openTreeRef, toggle]);
+        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded), openHref);
+    }, [model.openTreeRef, openHref, toggle]);
     const toggleRow = React.useCallback((row: ProjectsTreeRow) => toggle(row.key, row.expanded), [toggle]);
     // The phone rows are the same tree items as the column's, through the same shared tree owner.
-    const keyboard = useProjectsTreeKeyboard(rows, {
+    const keyboard = useCollectionTreeKeyboard(rows, {
         onToggle: (key) => toggle(key, rows.find((row) => row.key === key)?.expanded === true),
         onOpenRow: openRow,
     });
@@ -156,7 +162,9 @@ export const ProjectsListView = React.memo(() => {
                 <ProjectRowsStaleLine testID="projects-list:stale" asOf={model.staleRows.asOf} />
             ) : null}
 
-            {/* The rows are the tree's treeitems (`useProjectsTreeKeyboard`), so the tree contains them, as in the column. */}
+            {/* The rows are the tree's treeitems (`useCollectionTreeKeyboard`), so the tree contains them, as in the column. */}
+            <ProjectsTreeEnvironmentReads projects={projects} expandedKeys={expandedKeys} collapsedKeys={collapsedKeys}
+                onChildren={publishEnvironmentChildren} />
             {rows.length > 0 ? (
                 <View testID="projects-list:tree" {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
                     <ItemGroup>
@@ -168,6 +176,7 @@ export const ProjectsListView = React.memo(() => {
                                 source={factsSource}
                                 expandedKeys={expandedKeys}
                                 collapsedKeys={collapsedKeys}
+                                environmentChildren={environmentChildren}
                                 model={model}
                                 rowCreation={rowCreation}
                                 refsById={refsById}
@@ -209,12 +218,14 @@ function buildPhoneRows(
     projects: readonly ProjectsTreeProject[],
     expandedKeys: ReadonlySet<string>,
     collapsedKeys: ReadonlySet<string>,
+    environmentChildren: ReadonlyMap<string, readonly ProjectsTreeEnvironmentChild[]>,
 ): ProjectsTreeRow[] {
     return buildProjectsPhoneTreeRows({
         projects,
         openRefId: null,
         expandedKeys,
         collapsedKeys,
+        environmentChildren,
         describe: {
             checkoutCount: (count) => t('projects.sources.checkoutWorktrees', { count }),
             machineCount: (count) => t('projects.identity.machineCount', { count }),
@@ -234,12 +245,13 @@ function ProjectsListRow(props: Readonly<{
     source: ProjectsTreeCheckoutFactsSource;
     expandedKeys: ReadonlySet<string>;
     collapsedKeys: ReadonlySet<string>;
+    environmentChildren: ReadonlyMap<string, readonly ProjectsTreeEnvironmentChild[]>;
     model: ReturnType<typeof useProjectsListModel>;
     rowCreation: ReturnType<typeof useProjectRowCreationActions>;
     refsById: ReadonlyMap<string, WorkspaceRefV1>;
     /** The Project's group when this is its Project row (what Hide acts on). */
     hideGroup: ReturnType<typeof useProjectsListModel>['groups']['projectGroups'][number] | undefined;
-    rowProps: ReturnType<ReturnType<typeof useProjectsTreeKeyboard>['getRowProps']>;
+    rowProps: ReturnType<ReturnType<typeof useCollectionTreeKeyboard<ProjectsTreeRow>>['getRowProps']>;
     onOpenRow: (row: ProjectsTreeRow) => void;
     /** Only the chevron discloses: the row itself opens the Project. */
     onToggleRow: (row: ProjectsTreeRow) => void;
@@ -255,7 +267,7 @@ function ProjectsListRow(props: Readonly<{
     const factsByKey = new Map(owned.map((checkout, index) => [projectsTreeCheckoutKey(checkout), facts[index] ?? null] as const));
     const row = buildPhoneRows(
         [applyProjectsTreeCheckoutFacts(props.project, checkout => factsByKey.get(projectsTreeCheckoutKey(checkout)) ?? null)],
-        props.expandedKeys, props.collapsedKeys,
+        props.expandedKeys, props.collapsedKeys, props.environmentChildren,
     ).find(candidate => candidate.key === props.row.key) ?? props.row;
     const ref = row.workspaceAddress ? props.refsById.get(JSON.stringify(row.workspaceAddress)) ?? null : null;
     const attentionLabel = ref ? model.workspaceAttentionLabel(ref) : null;
@@ -327,7 +339,7 @@ function ProjectsListRow(props: Readonly<{
             icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
             rightElement={trailing}
-            style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX } : undefined}
+            style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX * row.level } : undefined}
             dimmed={row.offline}
             showDivider={props.showDivider}
             {...props.rowProps}

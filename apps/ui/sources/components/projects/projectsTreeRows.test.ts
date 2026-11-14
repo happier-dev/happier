@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowEnvironment, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeEnvironment, type ProjectsTreeProject } from './projectsTreeRows';
+import { buildProjectsTreeEnvironmentChildren, buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowChild, projectsTreeRowEnvironment, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeEnvironment, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject } from './projectsTreeRows';
 
 const checkout = (refId: string, machineId: string, label: string, extra: Partial<ProjectsTreeCheckout> = {}): ProjectsTreeCheckout => ({
     refId, machineId, machineName: machineId === 'devbox' ? 'devbox' : machineId === 'mbp' ? 'MacBook Pro' : machineId,
@@ -249,6 +249,55 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             describe: { checkoutCount: String, machineCount: String, offlineCount: String } });
         expect(shape(phone)).toEqual(['billing-api v', '  Production', '  Staging']);
         expect(phone[0]).toMatchObject({ refId: 'b1', subtitle: 'MacBook Pro · main' });
+    });
+
+    it('discloses an Environment on a Machine into what runs there and its databases, folded until opened (lab rdProj tree)', () => {
+        const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod', title: 'Production',
+            titleQualifier: null, subtitle: 'hetzner-fsn1', attention: null, machineId: 'fsn1' };
+        const staging: ProjectsTreeEnvironment = { ...production, environmentId: 'stg', title: 'Staging', machineId: null };
+        const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]), environments: [production, staging] };
+        const environmentKey = 'billing-api/environment/prod';
+        const children = new Map<string, readonly ProjectsTreeEnvironmentChild[]>([['prod', [
+            { key: 'api', title: 'api', kind: 'service', subtitle: null, opens: { kind: 'href', href: '/machines/fsn1/services?page=service&service=i1%2Fapi' } },
+            { key: 'billing-db', title: 'billing-db', kind: 'database', subtitle: 'PostgreSQL 16', opens: { kind: 'database', database: 'billing-db' } },
+        ]]]);
+        // Folded by default: an Environment on a Machine discloses; one with no Machine has nothing beneath it.
+        const folded = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']), environmentChildren: children });
+        expect(shape(folded)).toEqual(['billing-api v', '  Production >', '  Staging']);
+        // Opened before its read lands, it shows nothing yet; then its services and databases one level under it.
+        expect(shape(buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api', environmentKey]) })))
+            .toEqual(['billing-api v', '  Production v', '  Staging']);
+        const open = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api', environmentKey]), environmentChildren: children });
+        expect(shape(open)).toEqual(['billing-api v', '  Production v', '    api', '    billing-db', '  Staging']);
+        expect(open.slice(2, 4).map(row => [row.kind, row.glyph, row.subtitle])).toEqual([['service', 'service', null], ['database', 'database', 'PostgreSQL 16']]);
+        // A service opens its Machine's service page; a database opens on its Project's Deployments page, in its Environment.
+        expect(projectsTreeRowChild(open[2]!)).toEqual({ kind: 'href', href: '/machines/fsn1/services?page=service&service=i1%2Fapi' });
+        expect(projectsTreeRowChild(open[3]!)).toEqual({ kind: 'database', database: 'billing-db' });
+        expect(projectsTreeRowOpenTarget(open[3]!)).toEqual({ refId: 'b1' });
+        expect(projectsTreeRowEnvironment(open[3]!)).toMatchObject({ environmentId: 'prod' });
+        // The phone tree discloses the same way.
+        expect(shape(buildProjectsPhoneTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api', environmentKey]),
+            environmentChildren: children, describe: { checkoutCount: String, machineCount: String, offlineCount: String } })))
+            .toEqual(['billing-api v', '  Production v', '    api', '    billing-db', '  Staging']);
+    });
+
+    it('names what an Environment runs from its Machine\'s services and its declared databases, services first', () => {
+        const children = buildProjectsTreeEnvironmentChildren({
+            services: [
+                { serviceId: 'i1/billing-db', composeService: 'billing-db', name: 'billing-db' },
+                { serviceId: 'i1/api', composeService: 'api', name: 'api' },
+                { serviceId: 'i1/worker', composeService: null, name: 'worker' },
+            ],
+            databases: [{ service: 'billing-db', engine: 'PostgreSQL 16' }, { service: 'cache', engine: 'Redis 7' }],
+            serviceHref: (serviceId) => `/machines/fsn1/services?page=service&service=${encodeURIComponent(serviceId)}`,
+        });
+        expect(children.map(child => [child.title, child.kind, child.subtitle, child.opens])).toEqual([
+            ['api', 'service', null, { kind: 'href', href: '/machines/fsn1/services?page=service&service=i1%2Fapi' }],
+            ['worker', 'service', null, { kind: 'href', href: '/machines/fsn1/services?page=service&service=i1%2Fworker' }],
+            // A declared database is a database whether or not its service is running yet.
+            ['billing-db', 'database', 'PostgreSQL 16', { kind: 'database', database: 'billing-db' }],
+            ['cache', 'database', 'Redis 7', { kind: 'database', database: 'cache' }],
+        ]);
     });
 });
 

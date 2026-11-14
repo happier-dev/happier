@@ -35,6 +35,8 @@ export type OpenProjectOptions = Readonly<{
     initialResource?: Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; find?: FindSeed }> | Readonly<{ kind: 'commit'; sha: string }>;
     /** Open one of this Project's Environments on its Deployments page (the Projects tree's Environment rows). */
     environmentId?: string;
+    /** With `environmentId`: one of that Environment's databases, in place (the tree's database rows). */
+    database?: string;
 }>;
 
 /** Opens an existing project through the shared persisted surface/worktree policy. */
@@ -94,7 +96,8 @@ export function useOpenProject(): OpenProject {
         if (options?.environmentId) {
             return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
                 segment: 'deployments', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
-                routeParams: { deploymentEnvironment: options.environmentId } }));
+                routeParams: { deploymentEnvironment: options.environmentId,
+                    ...(options.database ? { deploymentService: options.database } : {}) } }));
         }
         if (options?.initialResource) {
             const resource = options.initialResource;
