@@ -49,6 +49,8 @@ test('admission pushes post once per slot without rerunning source graphs', asyn
   controller.abort();
   await watching;
   assert.equal(posts.length, 1, 'repeated producer observations announce the slot once');
+  assert.match(String(posts[0]).split('\n')[0], / → Systemic \(overruns\) — ASK — admission overrun /,
+    'an overrun is a broker-owner flag, never an ALL-leads URGENT');
   assert.equal(graphLoads, 1, 'admission-only pushes perform zero additional source graph loads');
 });
 

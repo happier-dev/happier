@@ -201,8 +201,9 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
 
 function formatPost(graph, state, details, notice) {
   const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
-  if (state === 'overrun') return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ALL leads — URGENT — admission overrun [${process.pid}:${notice}]\n`
-    + '- Inspect the named admitted slot and cancel through its execution handle if needed; the broker leaves it running.\n'
+  // Only the broker owner can map a slot to its caller, so an overrun is its flag, not a fleet alarm.
+  if (state === 'overrun') return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → Systemic (overruns) — ASK — admission overrun [${process.pid}:${notice}]\n`
+    + '- Systemic: inspect the named admitted slot and route it to its caller; the broker leaves it running.\n'
     + `${details}\n`;
   // Board readers remember whole headings; distinguish same-minute transitions.
   return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ${state === 'broken' ? 'ALL leads' : 'ORCH-TOP'} — ${state === 'broken' ? 'URGENT' : 'RESULT'} — ${graph} ${state} [${process.pid}:${notice}]\n`
