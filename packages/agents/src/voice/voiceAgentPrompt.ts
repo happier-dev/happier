@@ -2,7 +2,6 @@ import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceTo
 import { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
 import { VOICE_ACTION_FUNCTION_NAME } from '@happier-dev/protocol/voice/actions';
-import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 import type { PromptBlockV1 } from '@happier-dev/protocol/voice/prompt';
 
 import {
@@ -276,6 +275,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
     .filter((name): name is string => typeof name === 'string' && name.length > 0));
   const discoveryLines = buildVoiceDiscoveryChecklistLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
+    includeAllTools: !availableToolNames.has('searchActionSpecs'),
   });
   const toolLines = buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
@@ -385,8 +385,8 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             '- Your reply is spoken to the user.',
             ...(nativeActions ? [
             `- Trigger Actions with the native ${VOICE_ACTION_FUNCTION_NAME} function using {t, args}. Do not emit Action JSON in assistant text.`,
-            '- End the turn after queuing Actions. A queued acknowledgement is not execution or success.',
-            `- After the UI runs Actions, a follow-up user message starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and report the actual outcome or error.`,
+            '- Native Actions execute during this turn and return their canonical result directly.',
+            '- Report the settled result in this turn after the function returns. approval_request_created is pending approval, not execution or success. Do not wait for a separate Voice tool-results message or repeat a successful Action to obtain its result.',
             '- Always include sessionId internally when the action accepts it.',
             '- These Actions run through the Happier Voice host. Use this function for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
             `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,

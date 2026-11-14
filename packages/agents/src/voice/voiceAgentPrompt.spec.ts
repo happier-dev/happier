@@ -271,7 +271,9 @@ describe('voiceAgentPrompt', () => {
       sessionId: 's1',
     });
 
-    expect(prompt).toContain(VOICE_TOOL_RESULTS_JSON_PREFIX);
+    expect(prompt).not.toContain(VOICE_TOOL_RESULTS_JSON_PREFIX);
+    expect(prompt).toContain('Report the settled result in this turn');
+    expect(prompt).not.toContain('End the turn after queuing Actions');
     expect(prompt).toContain('happier_voice_action');
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
