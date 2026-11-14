@@ -106,6 +106,9 @@ async function resolveTimeout(path: string, options: DaemonControlRequestOptions
   // Source reconciliation may await current Account rules and Home reads.
   // Its operation lifetime, not the generic control wait, bounds completion.
   if (path === '/session-activity-changed') return null;
+  // Turn marker custody must settle before the runner publishes its Turn.
+  // The Session/caller lifetime owns this write, not the generic control wait.
+  if (path === '/connected-service-turn-lifecycle') return null;
   // Applied Account/currentness reads serve the containing Session or Run
   // operation. A generic control wait is not evidence of retired authority.
   if (path === '/connected-service-run/applied-parent-selection'
