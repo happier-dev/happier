@@ -1,5 +1,26 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVitestRnShim } from '../../../../ui/sources/dev/vitestRnShim';
+
+installVitestRnShim();
+
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesRuntime } = await import('../../../../ui/sources/dev/testkit/runtime/unistylesRuntime');
+  return createUnistylesRuntime();
+});
+vi.mock('@shopify/react-native-skia', async () => {
+  const { createReactNativeSkiaMock } = await import('../../../../ui/sources/dev/testkit/mocks/reactNativeSkia');
+  return createReactNativeSkiaMock();
+});
+vi.mock('expo-updates', async () => {
+  const { createExpoUpdatesMock } = await import('../../../../ui/sources/dev/testkit/mocks/expoUpdates');
+  return createExpoUpdatesMock();
+});
+// Load the real UI graph during collection, after its native boundaries are installed.
+const { formatWorkflowRunOutcomeSentence } = await import('../../../../ui/sources/components/workflows/run/workflowRunDetailPresentation');
+const { describeWorkflowRunProgress } = await import('../../../../ui/sources/components/workflows/presentation/workflowRunProgress');
+const { t } = await import('../../../../ui/sources/text');
+
 import axios from 'axios';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { logger } from '@/ui/logger';
@@ -1145,7 +1166,8 @@ describe('production workflow coordinator', () => {
       participants: [{ kind: 'model', launch: { executionTarget: { serverId: 'server-1', machineId },
         directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         modelSelection: { v: 1, updatedAt: 0, ref: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), providerConnectionId: null, modelId: 'gpt-6-luna' } },
-        configuration: { options: { reasoning_effort: { value: 'low', updatedAtMs: 0 } } },
+        configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+          permissionIntent: { value: null, updatedAtMs: 0 }, options: { reasoning_effort: { value: 'low', updatedAtMs: 0 } } },
       } }],
     } }) : {};
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
@@ -1198,14 +1220,16 @@ describe('production workflow coordinator', () => {
       createPublisherHeader: async () => 'signed-publisher' });
     const inputs: string[] = [];
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
-      execution: productionExecution({
+      execution: { ...productionExecution({
         enqueue: async request => {
           const localId = deriveWorkflowSessionInputLocalIdV2(request.workflow);
           inputs.push(localId);
           return { status: 'accepted', localId };
         },
         observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } }),
-      }),
+      }), action: { executor: createActionExecutor({}),
+        buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+        observeRun: async () => { throw new Error('Storage must refuse admission before Action execution'); } } },
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
@@ -1806,9 +1830,6 @@ describe('production workflow coordinator', () => {
     const run = listed.runs[0]!;
     const expected = branch === 'all_taken' ? { completed: 2, skipped: 0, total: 2 } : { completed: 1, skipped: 1, total: 2 };
     expect(run.stepProgress).toMatchObject(expected);
-    const { formatWorkflowRunOutcomeSentence } = await import('../../../../ui/sources/components/workflows/run/workflowRunDetailPresentation');
-    const { describeWorkflowRunProgress } = await import('../../../../ui/sources/components/workflows/presentation/workflowRunProgress');
-    const { t } = await import('../../../../ui/sources/text');
     const coverage = { observedLeafCounts: { completed: expected.completed, failed: 0, attention: 0 },
       coverage: 'complete' as const, knownFailure: false };
     expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: true })).toBe(branch === 'all_taken'

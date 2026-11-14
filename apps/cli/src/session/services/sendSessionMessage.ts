@@ -27,7 +27,7 @@ import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@h
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
-import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import type { SessionMessageReplyOutcomeV1, SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
 import {
   readSessionExplicitStopV1FromMetadata,
@@ -627,6 +627,11 @@ type CurrentPromptDeliveryOutcome =
 
 type FulfilledReplyObservation = Readonly<{ kind: 'fulfilled'; outcome: SessionMessageReplyOutcomeV1 }>;
 
+function isPublishedWorkflowDiscussionAnswer(progress: SessionMessageReplyProgressV1): boolean {
+  return Boolean(progress.workflow && progress.discussion
+    && progress.outcome?.kind === 'answer' && 'publicationRef' in progress.outcome);
+}
+
 async function readOriginalReply(params: Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
@@ -701,7 +706,10 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
           params.signal?.throwIfAborted();
           // Pre-provider failure/cancellation can settle original Pending custody
           // without ever producing a committed transcript input or answer.
-          if (outcome && !('result' in outcome)) return { kind: 'fulfilled', outcome };
+          if (outcome && !('result' in outcome)
+            && !(original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress))) {
+            return { kind: 'fulfilled', outcome };
+          }
         } catch {
           // Unavailable custody is not completion; reuse the input change wait.
           params.signal?.throwIfAborted();
@@ -1010,8 +1018,7 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           requiresDiscussionReplyOutcome = original.status === 'available'
             && Boolean(original.progress.workflow && original.progress.discussion);
           replyOutcome = original.status === 'available' ? original.progress.outcome : undefined;
-          publishedDiscussionAnswer = requiresDiscussionReplyOutcome
-            && replyOutcome?.kind === 'answer' && 'publicationRef' in replyOutcome;
+          publishedDiscussionAnswer = original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress);
           acceptedTurnId = original.status === 'available' && (!replyOutcome || replyOutcome.kind === 'failed' || publishedDiscussionAnswer)
             ? original.progress.acceptedTurnId : undefined;
           if (replyOutcome) {

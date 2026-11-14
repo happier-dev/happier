@@ -74,8 +74,7 @@ describe('workflow Action leaves', () => {
       homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
       targets: { kind: 'literal', value: [{ homeId: 'home', machineId: workspace.machineId,
         desiredRevision: 0, recipePlans: [], sources: [
-        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
-        { kind: 'direct', setup: {} },
+        { kind: 'direct', setup: { scripts: [{ body: 'echo retained', affects: 'none' }] } },
       ] }] },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
@@ -734,7 +733,7 @@ describe('workflow Action leaves', () => {
     const invocation = store.list()[0]!;
     const actionRequestId = `immediate/${invocation.logicalInvocationRecordId ?? invocation.recordId}/0`;
     expect(writes).toEqual([{ sessionId: 'origin', status: 'complete', actionRequestId,
-      context: { surface: 'cli', authority: 'account_automation', actionRequestId } }]);
+      context: expect.objectContaining({ surface: 'cli', authority: 'account_automation', actionRequestId }) }]);
     expect(store.list()[0]).toMatchObject({ blockKind: 'action', lifecycle: 'completed', result: { ok: true },
       execution: { kind: 'action', actionId: 'session.goal.set', actionRequestId: expect.any(String) } });
   });

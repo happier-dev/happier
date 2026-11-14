@@ -941,7 +941,7 @@ describe('workflow Run startup/reconnect recovery', () => {
       }
     });
 
-  it.each(['cancelled_input', 'other_input', 'handled_input', 'unknown_launch', 'deleted_session', 'failed_detached', 'failed_quiet', 'cancelled_quiet', 'startup_queued', 'startup_discard_lost', 'startup_wrong_birth',
+  it.each(['cancelled_input', 'discarded_failed_quiet', 'other_input', 'handled_input', 'unknown_launch', 'deleted_session', 'failed_detached', 'failed_quiet', 'cancelled_quiet', 'startup_queued', 'startup_discard_lost', 'startup_wrong_birth',
     'missing_text', 'typed_no_result', 'late_typed_no_result', 'terminal_missing_text', 'cancelled_missing_text', 'cancelled_typed_no_result',
     'cancelled_discussion_refused_missing_text', 'cancelled_discussion_unavailable_missing_text',
     'cancelled_discussion_misbound_missing_text', 'cancelled_discussion_pending_missing_text',
@@ -960,7 +960,7 @@ describe('workflow Run startup/reconnect recovery', () => {
     const retryPublication = scenario.endsWith('discussion_retry_missing_text');
     const completedPublication = scenario.startsWith('completed_discussion_');
     const missingResult = scenario.endsWith('missing_text') || scenario.endsWith('typed_no_result');
-    const quiet = scenario === 'failed_quiet' || scenario === 'cancelled_quiet' || missingResult;
+    const quiet = scenario === 'failed_quiet' || scenario === 'discarded_failed_quiet' || scenario === 'cancelled_quiet' || missingResult;
     const startup = scenario.startsWith('startup_');
     const workflowInvocation = { runId, invocationRecordId: childId };
     const localId = quiet || startup ? deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation', ...workflowInvocation }) : 'exact-workflow-input';
@@ -1055,7 +1055,7 @@ describe('workflow Run startup/reconnect recovery', () => {
       if (url.pathname.startsWith(`/v2/sessions/${sessionId}/messages/by-local-id/`)) return quiet
         ? reply({ message: hostInput }) : reply({ error: 'Message not found' }, 404);
       if (quiet && url.pathname === `/v1/sessions/${sessionId}/turns`) return reply({ v: 1, sessionId, updatedAt: 200,
-        turns: [parseStoredSessionTurn({ turnId: 'quiet-turn', status: !replyAvailable ? 'in_progress' : missingResult ? 'completed' : scenario === 'failed_quiet' ? 'failed' : 'cancelled',
+        turns: [parseStoredSessionTurn({ turnId: 'quiet-turn', status: !replyAvailable ? 'in_progress' : missingResult ? 'completed' : scenario.endsWith('failed_quiet') ? 'failed' : 'cancelled',
           startedAt: 100, updatedAt: 200, terminalAt: 200, initiator: 'workflow', workDepth: 1,
           ...(missingResult ? { transcriptAnchorsJson: JSON.stringify({
             startUserMessageSeq: wrongTurn ? 2 : 1, userMessageSeqs: [wrongTurn ? 2 : 1],
@@ -1066,7 +1066,9 @@ describe('workflow Run startup/reconnect recovery', () => {
         if (startup) return reply({ pending: [{ localId, status: discarded ? 'discarded' : 'queued',
           deliveryStatus: discarded ? { status: 'discarded', reason: 'session_input_cancelled' }
             : { status: 'delivering', phase: 'awaiting_acceptance' }, discardedAt: discarded ? 1 : null }] });
-        return reply({ pending: url.searchParams.get('includeDiscarded') === 'true' ? [{
+        // e36e7551d897: exact Pending withdrawal precedes transcript custody.
+        // Native-turn cases have no withdrawal; cancelled_input covers that authority.
+        return reply({ pending: (!quiet || scenario === 'discarded_failed_quiet') && url.searchParams.get('includeDiscarded') === 'true' ? [{
           localId: scenario === 'other_input' ? 'different-input' : localId,
           status: 'discarded', deliveryStatus: { status: 'discarded', reason: scenario === 'handled_input' ? 'manual_handled' : 'session_input_cancelled' }, discardedAt: 1,
         }] : [] });
@@ -1145,6 +1147,14 @@ describe('workflow Run startup/reconnect recovery', () => {
         expect(discarded).toBe(scenario !== 'startup_wrong_birth');
         expect(kit.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: scenario === 'startup_wrong_birth' ? 'pending' : 'settled' });
         expect(kit.rowById(childId)?.index.lifecycle).toBe(scenario === 'startup_wrong_birth' ? 'cancel_requested' : 'cancelled');
+        return;
+      }
+      if (scenario === 'discarded_failed_quiet') {
+        expect(kit.rowById(childId)?.index.lifecycle).toBe('cancelled');
+        expect(kit.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' });
+        const writer = createWorkflowInvocationRecoveryFactWriter({ accountId, run: kit.run(), parentAttempt: 0, storage: kit,
+          encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } } });
+        expect((await writer.readInvocation(childId))?.progress.reason).toEqual({ code: 'session_input_cancelled' });
         return;
       }
       if (completedPublication) {
