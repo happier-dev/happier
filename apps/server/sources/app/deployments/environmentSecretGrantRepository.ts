@@ -1,6 +1,7 @@
+import { z } from 'zod/mini';
 import { createHash } from 'node:crypto';
-import { MachineSecretGrantV1Schema, machineSecretGrantSubjectKey,
-    type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+import { MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, machineSecretGrantSubjectKey,
+    type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantSubjectStoredReadV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
 import type { EnvironmentSecretRequiredUseV1 } from '@happier-dev/deployments';
 import type { Tx } from '@/storage/inTx';
 import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
@@ -14,7 +15,7 @@ function invalidGrant(): never {
 }
 
 /** Index encoding only; the public canonical subject remains the grant identity. */
-function storageKey(grant: MachineSecretGrantSubjectV1): string {
+function storageKey(grant: MachineSecretGrantSubjectStoredReadV1): string {
     return createHash('sha256').update(machineSecretGrantSubjectKey(grant)).digest('hex');
 }
 
@@ -67,10 +68,14 @@ export async function readMachineConnectorSecretGrantInTx(tx: Tx,
 function storedGrant(row: GrantRow): MachineSecretGrantV1 {
     const common = { v: 1, kind: row.kind, machineId: row.machineId,
         installationId: row.installationId, sealedContent: row.contentEnvelope };
-    const parsed = MachineSecretGrantV1Schema.safeParse(row.kind === 'secret'
+    const parsed = MachineSecretGrantStoredReadV1Schema.safeParse(row.kind === 'secret'
         ? { ...common, environmentId: row.environmentId, resourceId: row.resourceId, resourceRevision: row.resourceRevision }
         : row.kind === 'environmentValues'
-            ? { ...common, environmentId: row.environmentId, binding: { purpose: 'variable', phase: row.phase, name: row.name } }
+            // UUID references and legacy env identifiers have disjoint syntax. Reads
+            // preserve old name subjects; new writes accept only the opaque arm.
+            ? { ...common, environmentId: row.environmentId, binding: { purpose: 'variable', phase: row.phase,
+                ...(EnvironmentVariableBindingGrantReferenceV1Schema.safeParse(row.name).success
+                    ? { grantRef: row.name } : { name: row.name }) } }
             : { ...common, provider: row.providerPluginId === null
                 ? { kind: 'builtin', id: row.providerLocalId }
                 : { pluginId: row.providerPluginId, localId: row.providerLocalId }, connectorId: row.connectorId });
@@ -78,14 +83,15 @@ function storedGrant(row: GrantRow): MachineSecretGrantV1 {
     return parsed.data;
 }
 
-function grantRow(grant: MachineSecretGrantV1) {
+function grantRow(grant: z.infer<typeof MachineSecretGrantV1Schema>) {
     return {
         subjectKey: storageKey(grant), kind: grant.kind, machineId: grant.machineId, installationId: grant.installationId,
         environmentId: grant.kind === 'connectorToken' ? null : grant.environmentId,
         resourceId: grant.kind === 'secret' ? grant.resourceId : null,
         resourceRevision: grant.kind === 'secret' ? grant.resourceRevision : null,
         phase: grant.kind === 'environmentValues' ? grant.binding.phase : null,
-        name: grant.kind === 'environmentValues' ? grant.binding.name : null,
+        // No plaintext environment-variable name is stored in the grant row.
+        name: grant.kind === 'environmentValues' ? grant.binding.grantRef : null,
         // A null plugin id distinguishes a built-in reference in the existing columns.
         providerPluginId: grant.kind === 'connectorToken' && !('kind' in grant.provider) ? grant.provider.pluginId : null,
         providerLocalId: grant.kind === 'connectorToken'
@@ -105,7 +111,7 @@ export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
     admitMutation?: () => Promise<DeploymentFailure | null>;
 }>): Promise<boolean | null | DeploymentFailure> {
     let changed = false;
-    const desired = new Map<string, MachineSecretGrantV1>();
+    const desired = new Map<string, z.infer<typeof MachineSecretGrantV1Schema>>();
     for (const grant of input.grants) {
         const parsed = MachineSecretGrantV1Schema.safeParse(grant);
         if (!parsed.success || parsed.data.kind === 'connectorToken' || parsed.data.environmentId !== input.environmentId) return invalidGrant();
@@ -162,7 +168,7 @@ export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
 export async function readEnvironmentMachineSecretGrantsInTx(tx: Tx, input: Readonly<{
     environmentId: string;
     secret?: Readonly<{ resourceId: string; resourceRevision: number }>;
-} & ({ machineId: string; installationId: string } | { machineId?: never; installationId?: never })>): Promise<readonly MachineSecretGrantV1[]> {
+} & ({ machineId: string; installationId: string } | { machineId?: never; installationId?: never })>): Promise<MachineSecretGrantV1[]> {
     const { secret, ...subject } = input;
     return (await tx.machineSecretGrant.findMany({ where: { ...subject, ...(secret ? { kind: 'secret', ...secret } : {}) },
         orderBy: { subjectKey: 'asc' } })).map(storedGrant);

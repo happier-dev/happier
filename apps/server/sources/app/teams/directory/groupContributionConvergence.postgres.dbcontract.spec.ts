@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -55,7 +56,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("G
         const team = await db.team.create({ data: { name: `Contributions ${randomUUID()}` } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "owner" } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: person.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Engineering", nameKey: "engineering" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering")} });
         const provider = await db.identityProviderInstance.create({ data: { ownerTeamId: team.id, kind: "workos_sso",
             enabled: true, displayName: "Company", config: { v: 1, kind: "workos_sso" } } });
         const connection = await db.teamIdentityConnection.create({ data: { teamId: team.id, providerInstanceId: provider.id,

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { WorkOS } from "@workos-inc/node";
 
@@ -972,7 +973,7 @@ describe("directory source administration", () => {
             throw new Error("expected managed membership");
         }
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: f.team.id, name: "Operators", nameKey: "operators" },
+            data: { teamId: f.team.id, name: storedPlainPrivateLabel("Operators")},
         });
         await db.teamGroupMembership.create({
             data: {

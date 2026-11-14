@@ -1,5 +1,5 @@
 import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1, type ActionExecuteResult } from '@happier-dev/protocol';
-import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineRolesMutationResultV1Schema, machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineRoles, dispatchLocalManagedMachineRoles } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
@@ -10,7 +10,7 @@ import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolati
 
 /** One signed creation child on the exact enrolled guest: remote continuation or the original local host path. */
 async function dispatchEnrollmentPolicyChild<TInput extends Readonly<{ machineId: string }>>(input: ManagedMachineAcquisitionDriverInput,
-    machine: ManagedMachineV1, options: ManagedMachineExecutionOptions, request: TInput,
+    machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions, request: TInput,
     dispatch: Readonly<{
         remote: (params: Omit<Parameters<typeof dispatchManagedMachineAdminAccess>[0], 'input'> & Readonly<{ input: TInput }>) => Promise<ActionExecuteResult>;
         local: (params: Omit<Parameters<typeof dispatchLocalManagedMachineAdminAccess>[0], 'input'> & Readonly<{ input: TInput }>) => Promise<ActionExecuteResult>;
@@ -36,7 +36,7 @@ async function dispatchEnrollmentPolicyChild<TInput extends Readonly<{ machineId
         isCurrent: async () => !options.signal?.aborted });
 }
 
-async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
     const policy = resolveManagedMachineEnrollmentAdminAccessV1(machine.enrollmentIdentity);
     if (!policy) return;
     options.context?.operationProgress?.update({ phase: 'machines.setup.adminAccess.set', label: 'Configuring administrator access' });
@@ -61,7 +61,7 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
 }
 
 /** Seeds the owner-approved role set for this install type over the missing field (OWNER-RULINGS 2026-11-12). */
-async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
     const policy = resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity);
     if (!policy) return;
     options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
@@ -83,7 +83,7 @@ async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput
 
 /** Enrollment owns creation; an optional roles seed cannot turn its success into a bootstrap failure. */
 export async function initializeManagedMachineEnrollmentPolicies(input: ManagedMachineAcquisitionDriverInput,
-    machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+    machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
     await recordEnrollmentAdministratorAccess(input, machine, options);
     try {
         await recordEnrollmentRoles(input, machine, options);

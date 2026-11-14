@@ -8,6 +8,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
@@ -69,12 +70,16 @@ export const TeamCredentialLimitsEditorSection = React.memo(function TeamCredent
         filter: 'all',
         enabled: subjects.some((limit) => limit.subjectKind === 'team_member' && limit.subjectId !== ''),
     });
+    const groupDisplayNames = useTeamGroupDisplayNames({ scope: context.scope, groups: groups.rows });
     const resolveSubjectName = (limit: TeamCredentialLimitDraft) => {
+        const group = limit.subjectKind === 'team_group'
+            ? groups.rows.find((row) => row.id === limit.subjectId)
+            : undefined;
         const membership = limit.subjectKind === 'team_member'
             ? members.rows.find((row) => row.accountId === limit.subjectId)
             : undefined;
         return (limit.subjectKind === 'team_group'
-            ? groups.rows.find((row) => row.id === limit.subjectId)?.name
+            ? group === undefined ? null : groupDisplayNames.get(group.id) ?? null
             : membership ? formatAccountDisplayName(membership.account) : null)
             ?? pickedNames.get(`${limit.subjectKind}:${limit.subjectId}`)
             ?? null;
@@ -82,13 +87,23 @@ export const TeamCredentialLimitsEditorSection = React.memo(function TeamCredent
     const subjectLabel = (limit: TeamCredentialLimitDraft) => {
         const name = resolveSubjectName(limit);
         if (name !== null) return name;
+        const subjectExists = limit.subjectKind === 'team_group'
+            ? groups.rows.some((row) => row.id === limit.subjectId)
+            : limit.subjectKind === 'team_member'
+                ? members.rows.some((row) => row.accountId === limit.subjectId)
+                : false;
+        if (subjectExists) return t('teams.credentials.limits.unknownSubject');
         const roster = limit.subjectKind === 'team_group' ? groups : members;
         return roster.status !== 'error' && (roster.status !== 'ready' || roster.hasMore)
             ? t('common.loading')
             : t('teams.credentials.limits.unknownSubject');
     };
-    const missingGroups = subjects.some((limit) => limit.subjectKind === 'team_group' && limit.subjectId !== '' && resolveSubjectName(limit) === null);
-    const missingMembers = subjects.some((limit) => limit.subjectKind === 'team_member' && limit.subjectId !== '' && resolveSubjectName(limit) === null);
+    const missingGroups = subjects.some((limit) => limit.subjectKind === 'team_group'
+        && limit.subjectId !== ''
+        && !groups.rows.some((row) => row.id === limit.subjectId));
+    const missingMembers = subjects.some((limit) => limit.subjectKind === 'team_member'
+        && limit.subjectId !== ''
+        && !members.rows.some((row) => row.accountId === limit.subjectId));
     // Continue the authorized directory only until the saved targets are found.
     // A failed page waits for explicit retry rather than starting a retry loop.
     React.useEffect(() => {

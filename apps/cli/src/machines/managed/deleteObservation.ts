@@ -1,4 +1,4 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachineControllerError, ManagedMachineNativeObservationFailure } from './controllerErrors';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
@@ -13,15 +13,15 @@ export function assertManagedDeleteNativeResult(result: ReturnType<typeof Machin
 }
 
 /** Positive pending evidence, never an ambiguous delivery of a fresh destroy. */
-export function canObserveAcceptedManagedDelete(machine: ManagedMachineV1,
+export function canObserveAcceptedManagedDelete(machine: ManagedMachineFullV1,
     result: ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse>): boolean {
     return machine.submittedNativeEffect?.intent === 'delete' && (result.kind === 'accepted' || result.kind === 'pending');
 }
 
 /** One admitted Delete observes its exact resource or continues its retained native cleanup handle. */
-export async function observeAcceptedManagedDelete(params: ManagedMachineReconciliationInput, observed: ManagedMachineV1,
-    observe: (machine: ManagedMachineV1, outstanding: NonNullable<ManagedMachineV1['submittedNativeEffect']>) => Promise<ManagedMachineV1>,
-): Promise<ManagedMachineV1> {
+export async function observeAcceptedManagedDelete(params: ManagedMachineReconciliationInput, observed: ManagedMachineFullV1,
+    observe: (machine: ManagedMachineFullV1, outstanding: NonNullable<ManagedMachineFullV1['submittedNativeEffect']>) => Promise<ManagedMachineFullV1>,
+): Promise<ManagedMachineFullV1> {
     let machine = observed;
     const wait = createManagedNativeObservationWait(params.options.signal);
     let changed = false;

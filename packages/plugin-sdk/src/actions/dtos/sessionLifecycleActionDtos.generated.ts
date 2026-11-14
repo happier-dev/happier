@@ -179,8 +179,8 @@ export type SessionLifecycleActionInputById = {
     };
     readonly "session.fork": {
         requestId?: string | undefined;
-        strategy?: 'acp_fork_latest' | 'auto' | 'native' | 'provider_native' | 'replay' | undefined;
         approvalProfileId?: null | string | undefined;
+        strategy?: 'acp_fork_latest' | 'auto' | 'native' | 'provider_native' | 'replay' | undefined;
         replaySummaryRunner?: unknown;
         replayMaxSeedChars?: number | undefined;
         sessionId?: string | undefined;
@@ -434,7 +434,7 @@ export type SessionLifecycleActionInputById = {
         machineSetupPlanInput?: undefined | {
             homeId: string;
             machineId: string;
-            sources?: unknown;
+            sources?: undefined | unknown[];
             exclusions?: undefined | {
                 ref: {
                     pluginId: string;
@@ -1529,6 +1529,10 @@ export type SessionLifecycleActionInputById = {
                 };
                 maximumObservationAgeMs: null | number;
                 enabled: boolean;
+                automationDisplay?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -1596,8 +1600,8 @@ export type SessionLifecycleActionInputById = {
                 enabled: boolean;
             } | {
                 kind: 'sessionLifecycle';
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 enabled: boolean;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 policy: {
                     kind: 'everyMatch';
                 } | {
@@ -1965,13 +1969,17 @@ export type SessionLifecycleActionInputById = {
                 kind: 'workflow';
                 ref: string;
             };
+            display?: undefined | {
+                name: string;
+                description: null | string;
+            };
+            approvalProfileId?: null | string | undefined;
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            inputs?: Record<string, unknown> | undefined;
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -3284,6 +3292,7 @@ export type SessionLifecycleActionResultById = {
             failureCause?: undefined | {
                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                actionCause?: ActionFailureCauseV1 | undefined;
                 code?: string | undefined;
                 retryable?: boolean | undefined;
                 requestId?: string | undefined;

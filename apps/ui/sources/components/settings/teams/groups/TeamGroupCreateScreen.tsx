@@ -5,6 +5,7 @@ import {
     validateTeamGroupDescriptionV1,
     validateTeamGroupNameV1,
 } from '@happier-dev/protocol/teams';
+import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -13,6 +14,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { randomUUID } from '@/platform/randomUUID';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { sealTeamGroupName } from '@/sync/ops/teams/teamGroupLabels';
 import { createTeamGroup } from '@/sync/ops/teams/teamGroupOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
@@ -22,6 +25,14 @@ import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
 import { teamGroupDetailPath } from '../teamsRoutes';
+
+type CreateSubmissionIdentity = Readonly<{
+    name: string;
+    description: string | null;
+    groupId: string;
+    requestKey: string;
+    sealedName: PrivateLabelStoredV1 | null;
+}>;
 
 const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
     context: TeamSectionContext;
@@ -41,12 +52,10 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
         submitInFlightRef.current = false;
     }, []);
 
-    // One retry identity per submission; a lost response must not create two
-    // Groups, and it is regenerated only when the payload changes.
-    const requestKey = React.useRef(randomUUID());
-    React.useEffect(() => {
-        requestKey.current = randomUUID();
-    }, [name, description]);
+    // One retry identity and cipher binding per exact payload. A lost response
+    // must not create two Groups, and retries cannot reseal a new ciphertext
+    // against the same server-side payload digest.
+    const submissionRef = React.useRef<CreateSubmissionIdentity | null>(null);
 
     const nameValidation = validateTeamGroupNameV1(name);
     const descriptionValidation = validateTeamGroupDescriptionV1(description);
@@ -82,14 +91,47 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
         submitInFlightRef.current = true;
         setSubmitting(true);
         setError(null);
+        const canonicalName = nameValidation.name;
+        const canonicalDescription = descriptionValidation.description;
+        let submission = submissionRef.current;
+        if (!submission
+            || submission.name !== canonicalName
+            || submission.description !== canonicalDescription) {
+            submission = {
+                name: canonicalName,
+                description: canonicalDescription,
+                groupId: randomUUID(),
+                requestKey: randomUUID(),
+                sealedName: null,
+            };
+            submissionRef.current = submission;
+        }
+        let sealedName = submission.sealedName;
+        if (!sealedName) {
+            sealedName = await sealTeamGroupName({
+                client: createPrivateLabelClient(context.scope),
+                teamId: context.address.teamId,
+                groupId: submission.groupId,
+                value: submission.name,
+            });
+            if (!sealedName) {
+                submitInFlightRef.current = false;
+                setSubmitting(false);
+                setError(t('teams.errors.generic'));
+                return;
+            }
+            submission = { ...submission, sealedName };
+            submissionRef.current = submission;
+        }
         let outcome: Awaited<ReturnType<typeof createTeamGroup>>;
         try {
             outcome = await createTeamGroup({
                 scope: context.scope,
                 address: context.address,
-                name: nameValidation.name,
-                description: descriptionValidation.description,
-                requestKey: requestKey.current,
+                groupId: submission.groupId,
+                name: sealedName,
+                description: submission.description,
+                requestKey: submission.requestKey,
                 onApprovalSucceeded: openCreatedGroup,
                 onApprovalFailed: () => setError(t('teams.errors.generic')),
             });
@@ -113,11 +155,7 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
             openCreatedGroup(outcome.value);
             return;
         }
-        // A name collision inside this Team is the one failure worth naming
-        // precisely; the form is preserved either way.
-        setError(outcome.failure.kind === 'conflict'
-            ? t('teams.groups.nameTaken')
-            : outcome.failure.kind === 'invalid'
+        setError(outcome.failure.kind === 'invalid'
                 ? t('teams.errors.invalidName')
                 : teamMutationFailureLabel(outcome.failure));
     }, [context, nameValidation, descriptionValidation, openCreatedGroup]);

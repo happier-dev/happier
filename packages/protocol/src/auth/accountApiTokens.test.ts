@@ -17,14 +17,47 @@ import {
 const CREDENTIAL_ID = '2c67deea-5ae7-4706-9ad6-b5b992df1cba';
 const PAT = `hap_v1_${CREDENTIAL_ID}_${'A'.repeat(43)}`;
 
+function plainStoredLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipients: [] };
+}
+
+function plainReadLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipientEnvelope: null };
+}
+
 describe('API token encryption credentials', () => {
+  it('carries private labels as stored writes and reader-only projections', () => {
+    const stored = { content: { t: 'plain' as const, v: 'Staging CI' }, recipients: [] };
+    const read = { content: stored.content, recipientEnvelope: null };
+    const input = { tokenId: CREDENTIAL_ID, label: stored };
+    const summary = {
+      tokenId: CREDENTIAL_ID,
+      label: read,
+      displayPrefix: 'hap_v1_2c67deea',
+      createdAt: '2026-08-22T12:00:00.000Z',
+      lastUsedAt: null,
+      expiresAt: null,
+      hasEncryptionAccess: false,
+      hasUnattendedTeamAccess: false,
+      grant: API_TOKEN_FULL_GRANT_V1,
+      parentTokenId: null,
+      activeChildCount: 0,
+      embedConfig: null,
+    };
+
+    expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(input).success).toBe(true);
+    expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse({ ...input, label: 'Staging CI' }).success).toBe(false);
+    expect(tokens.AccountApiTokenSummaryV1Schema.safeParse(summary).success).toBe(true);
+    expect(tokens.AccountApiTokenSummaryV1Schema.safeParse({ ...summary, label: stored }).success).toBe(false);
+  });
+
   it('admits deployment Automatic or Ask intent without accepting caller-authored consent', () => {
     const grant = { ...API_TOKEN_FULL_GRANT_V1,
       actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
       targets: { sessions: [], machines: [], environments: ['staging'] },
     };
     const deployment = { serverId: 'srv_home', environmentId: 'staging', deployApproval: 'automatic' };
-    const create = { tokenId: CREDENTIAL_ID, label: 'Staging CI', grant, deployment };
+    const create = { tokenId: CREDENTIAL_ID, label: plainStoredLabel('Staging CI'), grant, deployment };
     expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(create).success).toBe(true);
     expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse({ tokenId: CREDENTIAL_ID,
       deployment: { ...deployment, deployApproval: 'ask' },
@@ -45,7 +78,7 @@ describe('API token encryption credentials', () => {
       targets: { sessions: [], machines: [], environments: ['staging'] },
       deployApproval: 'automatic',
     };
-    const create = { tokenId: CREDENTIAL_ID, label: 'Staging CI', grant };
+    const create = { tokenId: CREDENTIAL_ID, label: plainStoredLabel('Staging CI'), grant };
     expect(tokens.AccountApiTokensCreateActionInputV1Schema.parse(create).grant).toEqual(grant);
     for (const changed of [
       { ...grant, actions: null }, { ...grant, approve: true },
@@ -109,7 +142,7 @@ describe('API token encryption credentials', () => {
   it('admits only atomic UUIDv4 creation and fixed-size wrapping records', () => {
     const input = {
       tokenId: CREDENTIAL_ID,
-      label: 'SDK',
+      label: plainStoredLabel('SDK'),
       authorizeUnattendedTeamAccess: true,
       encryption: {
         access: { v: 1, serverIdentityId: payload.serverIdentityId,
@@ -132,7 +165,7 @@ describe('API token encryption credentials', () => {
   it('uses one strict list projection with required capability metadata', () => {
     const summary = {
       tokenId: CREDENTIAL_ID,
-      label: 'SDK',
+      label: plainReadLabel('SDK'),
       displayPrefix: 'hap_v1_2c67deea',
       createdAt: '2026-08-22T12:00:00.000Z',
       lastUsedAt: null,
@@ -186,7 +219,7 @@ describe('auth/accountApiTokens PAT introspection', () => {
   it('uses a truthful non-secret display prefix from the minted bearer format', () => {
     expect(AccountApiTokenSummaryV1Schema.parse({
       tokenId: CREDENTIAL_ID,
-      label: 'Build automation',
+      label: plainReadLabel('Build automation'),
       displayPrefix: 'hap_v1_2c67deea',
       grant: API_TOKEN_FULL_GRANT_V1,
       parentTokenId: null,
@@ -201,7 +234,7 @@ describe('auth/accountApiTokens PAT introspection', () => {
 
     expect(AccountApiTokenSummaryV1Schema.safeParse({
       tokenId: CREDENTIAL_ID,
-      label: 'Build automation',
+      label: plainReadLabel('Build automation'),
       displayPrefix: 'hap_2c67deea',
       createdAt: '2026-08-22T12:00:00.000Z',
       lastUsedAt: null,

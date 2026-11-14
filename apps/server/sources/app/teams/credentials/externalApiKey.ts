@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import * as privacyKit from "privacy-kit";
 import {
     TeamCredentialExternalApiKeyCreateInputV1Schema,
@@ -24,10 +24,18 @@ import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } 
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { publishTeamChangedInTx } from "../teamChanges";
 import { resolveTeamCredentialEntitlementInTx } from "./resourceAccess";
-import { recordTeamCredentialActivityInTx, type TeamCredentialActivityActor } from "./resourceActivity";
+import {
+    recordTeamCredentialExternalApiKeyActivityInTx,
+    type TeamCredentialActivityActor,
+} from "./resourceActivity";
 import { createSha256SecretDigest, sha256SecretDigestMatches } from "../../auth/secretDigest";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { admitTeamCredentialWithdrawalInTx } from "./resourceWithdrawalAdmission";
+import {
+    prepareTeamCredentialExternalApiKeyLabelForWriteInTx,
+    projectTeamCredentialExternalApiKeyLabelForRecipient,
+    readTeamCredentialExternalApiKeyLabelStored,
+} from './privateLabels';
 
 const EXTERNAL_API_KEY_SECRET_BYTES = 32;
 
@@ -54,11 +62,11 @@ const SUMMARY_SELECT = {
 
 export type CreateTeamCredentialExternalApiKeyResult =
     | Readonly<{ ok: true; token: string; key: TeamCredentialExternalApiKeyCreateOutputV1["key"] }>
-    | Readonly<{ ok: false; error: "invalid_resource_input" | "resource_not_found" | "resource_forbidden" | "member_not_eligible" | "session_policy_incompatible" | "resource_changed" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
+    | Readonly<{ ok: false; error: "invalid_resource_input" | "resource_not_found" | "resource_forbidden" | "member_not_eligible" | "session_policy_incompatible" | "resource_changed" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
 export type ListTeamCredentialExternalApiKeysResult =
     | Readonly<{ ok: true; keys: TeamCredentialExternalApiKeyListOutputV1["keys"] }>
-    | Readonly<{ ok: false; error: "invalid_resource_input" | "resource_not_found" | "resource_forbidden" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
+    | Readonly<{ ok: false; error: "invalid_resource_input" | "resource_not_found" | "resource_forbidden" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
 export type RevokeTeamCredentialExternalApiKeyResult =
     | Readonly<{ ok: true; keyId: string; revoked: boolean }>
@@ -79,7 +87,6 @@ export type VerifyTeamCredentialExternalApiKeyResult =
         custodianAccountId: string;
         brokerMachineId: string | null;
         brokerPoolId: string | null;
-        label: string;
         expiresAt: Date | null;
     }>
     | Readonly<{ ok: false; reason: "invalid_token" }>;
@@ -98,7 +105,6 @@ export type CurrentTeamCredentialExternalApiKeyAuthorityResult =
         resourceRevision: number;
         sourceBindingJson: string;
         currentBrokerOperationJson: string | null;
-        label: string;
         expiresAt: Date | null;
     }>
     | Readonly<{ ok: false; reason: "operation_not_current" | "resource_forbidden" }>;
@@ -111,7 +117,7 @@ function digestMatches(storedDigest: string, suppliedSecret: string): boolean {
     return sha256SecretDigestMatches(storedDigest, suppliedSecret);
 }
 
-async function project(tx: Tx, row: ExternalApiKeyRow, actorAccountId: string, env = process.env): Promise<TeamCredentialExternalApiKeySummaryV1> {
+async function project(tx: Tx, row: ExternalApiKeyRow, actorAccountId: string, env = process.env): Promise<TeamCredentialExternalApiKeySummaryV1 | null> {
     const qualification = await qualifyTeamAuthenticationInTx(tx, {
         env, team: row.resource.team, accountId: row.membership.accountId,
         verifiedCredentialEvidence: parseAuthenticationEvidenceSnapshot(row.authenticationEvidence)?.evidence,
@@ -120,11 +126,16 @@ async function project(tx: Tx, row: ExternalApiKeyRow, actorAccountId: string, e
     const entitlement = row.membership.accountId === actorAccountId
         ? await resolveTeamCredentialEntitlementInTx(tx, { resourceId: row.resourceId, accountId: actorAccountId })
         : null;
+    const label = projectTeamCredentialExternalApiKeyLabelForRecipient({
+        serialized: row.label,
+        recipientAccountId: actorAccountId,
+    });
+    if (label === null) return null;
     return TeamCredentialExternalApiKeySummaryV1Schema.parse({
         keyId: row.id,
         resourceId: row.resourceId,
         teamMembershipId: row.teamMembershipId,
-        label: row.label,
+        label,
         displayPrefix: row.displayPrefix,
         createdAt: row.createdAt.toISOString(),
         lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
@@ -222,13 +233,23 @@ export async function createTeamCredentialExternalApiKeyInTx(
     }
     const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: resource.id, accountId: membership.accountId });
     if (!entitlement.ok || !entitlement.mayBroker) return { ok: false, error: "member_not_eligible" };
+    const label = await prepareTeamCredentialExternalApiKeyLabelForWriteInTx({
+        tx,
+        ownerAccountId: actorAccountId,
+        teamId: resource.teamId,
+        label: parsed.data.label,
+    });
+    if (label.kind !== 'ready') return { ok: false, error: 'invalid_resource_input' };
 
     const evidence = membership.accountId === actorAccountId
         ? await resolveCurrentAuthenticationEvidenceInTx(tx, {
             env: authentication.env ?? process.env, accountId: actorAccountId, evidence: authentication.authenticationEvidence,
         }) : [];
 
-    const keyId = randomUUID();
+    const keyId = parsed.data.keyId;
+    if (await tx.teamCredentialExternalApiKey.findUnique({ where: { id: keyId }, select: { id: true } })) {
+        return { ok: false, error: 'resource_changed' };
+    }
     const secret = privacyKit.encodeBase64(new Uint8Array(randomBytes(EXTERNAL_API_KEY_SECRET_BYTES)), "base64url").replace(/=+$/u, "");
     const displayPrefix = createTeamCredentialExternalApiKeyDisplayPrefixV1(keyId);
     const row = await tx.teamCredentialExternalApiKey.create({
@@ -236,7 +257,7 @@ export async function createTeamCredentialExternalApiKeyInTx(
             id: keyId,
             resourceId: resource.id,
             teamMembershipId: membership.id,
-            label: parsed.data.label.trim(),
+            label: label.serialized,
             displayPrefix,
             secretDigest: digestSecret(secret),
             createdAt: now,
@@ -245,12 +266,18 @@ export async function createTeamCredentialExternalApiKeyInTx(
         },
         select: SUMMARY_SELECT,
     });
-    await recordTeamCredentialActivityInTx(tx, {
-        teamId: resource.teamId, resourceId: resource.id, kind: "external_key_created",
-        actor: { kind: "account", accountId: actorAccountId }, subjectDisplayName: row.label,
+    await recordTeamCredentialExternalApiKeyActivityInTx(tx, {
+        teamId: resource.teamId,
+        resourceId: resource.id,
+        externalApiKeyId: keyId,
+        kind: "external_key_created",
+        actor: { kind: "account", accountId: actorAccountId },
+        label: label.label,
     });
     await publishTeamChangedInTx(tx, { teamId: resource.teamId, additionalAccountIds: [resource.custodianAccountId, actorAccountId, membership.accountId] });
-    return { ok: true, token: formatTeamCredentialExternalApiKeyV1({ keyId, secret }), key: await project(tx, row, actorAccountId, authentication.env) };
+    const key = await project(tx, row, actorAccountId, authentication.env);
+    if (key === null) throw new Error('Validated external API-key label failed recipient projection');
+    return { ok: true, token: formatTeamCredentialExternalApiKeyV1({ keyId, secret }), key };
 }
 
 /** Lists safe key metadata only; plaintext and digest never cross this boundary. */
@@ -275,7 +302,10 @@ export async function listTeamCredentialExternalApiKeysInTx(
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: SUMMARY_SELECT,
     });
-    return { ok: true, keys: await Promise.all(rows.map(row => project(tx, row, input.actorAccountId, input.authentication.env))) };
+    const keys = await Promise.all(rows.map(row => project(tx, row, input.actorAccountId, input.authentication.env)));
+    return keys.some((key) => key === null)
+        ? { ok: false, error: 'resource_corrupt' }
+        : { ok: true, keys: keys.filter((key): key is TeamCredentialExternalApiKeySummaryV1 => key !== null) };
 }
 
 /** The exact assignee replaces only the key's qualification snapshot, never its bearer. */
@@ -317,7 +347,8 @@ export async function authorizeTeamCredentialExternalApiKeyInTx(
         select: SUMMARY_SELECT,
     });
     await publishTeamChangedInTx(tx, { teamId: row.resource.team.id, additionalAccountIds: [actorAccountId] });
-    return { ok: true, key: await project(tx, updated, actorAccountId, authentication.env) };
+    const key = await project(tx, updated, actorAccountId, authentication.env);
+    return key === null ? { ok: false, error: 'resource_corrupt' } : { ok: true, key };
 }
 
 export async function revokeTeamCredentialExternalApiKeyInTx(
@@ -330,14 +361,24 @@ export async function revokeTeamCredentialExternalApiKeyInTx(
     if (managed.status === "missing") return { ok: false, error: "resource_not_found" };
     if (managed.status === "forbidden") return { ok: false, error: "resource_forbidden" };
     if (managed.status === "unqualified") return { ok: false, error: managed.error };
-    const key = await tx.teamCredentialExternalApiKey.findFirst({ where: { id: input.keyId, resourceId: input.resourceId }, select: { label: true } });
+    const key = await tx.teamCredentialExternalApiKey.findFirst({
+        where: { id: input.keyId, resourceId: input.resourceId },
+        select: { id: true, label: true },
+    });
     if (!key) return { ok: true, keyId: input.keyId, revoked: false };
     const deleted = await tx.teamCredentialExternalApiKey.deleteMany({ where: { id: input.keyId, resourceId: input.resourceId } });
     if (deleted.count !== 1) return { ok: true, keyId: input.keyId, revoked: false };
-    await recordTeamCredentialActivityInTx(tx, {
-        teamId: managed.resource.teamId, resourceId: managed.resource.id, kind: "external_key_revoked",
-        actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: key.label,
-    });
+    const label = readTeamCredentialExternalApiKeyLabelStored(key.label);
+    if (label !== null) {
+        await recordTeamCredentialExternalApiKeyActivityInTx(tx, {
+            teamId: managed.resource.teamId,
+            resourceId: managed.resource.id,
+            externalApiKeyId: key.id,
+            kind: "external_key_revoked",
+            actor: { kind: "account", accountId: input.actorAccountId },
+            label,
+        });
+    }
     await publishTeamChangedInTx(tx, { teamId: managed.resource.teamId, additionalAccountIds: [managed.resource.custodianAccountId, input.actorAccountId] });
     return { ok: true, keyId: input.keyId, revoked: true };
 }
@@ -352,14 +393,21 @@ export async function revokeAllTeamCredentialExternalApiKeysInTx(
     if (managed.status === "missing") return { ok: false, error: "resource_not_found" };
     if (managed.status === "forbidden") return { ok: false, error: "resource_forbidden" };
     if (managed.status === "unqualified") return { ok: false, error: managed.error };
-    const keys = await tx.teamCredentialExternalApiKey.findMany({ where: { resourceId: input.resourceId }, select: { label: true } });
+    const keys = await tx.teamCredentialExternalApiKey.findMany({ where: { resourceId: input.resourceId }, select: { id: true, label: true } });
     if (keys.length === 0) return { ok: true, resourceId: input.resourceId, revokedCount: 0 };
     const deleted = await tx.teamCredentialExternalApiKey.deleteMany({ where: { resourceId: input.resourceId } });
     for (const key of keys) {
-        await recordTeamCredentialActivityInTx(tx, {
-            teamId: managed.resource.teamId, resourceId: managed.resource.id, kind: "external_key_revoked",
-            actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: key.label,
-        });
+        const label = readTeamCredentialExternalApiKeyLabelStored(key.label);
+        if (label !== null) {
+            await recordTeamCredentialExternalApiKeyActivityInTx(tx, {
+                teamId: managed.resource.teamId,
+                resourceId: managed.resource.id,
+                externalApiKeyId: key.id,
+                kind: "external_key_revoked",
+                actor: { kind: "account", accountId: input.actorAccountId },
+                label,
+            });
+        }
     }
     await publishTeamChangedInTx(tx, { teamId: managed.resource.teamId, additionalAccountIds: [managed.resource.custodianAccountId, input.actorAccountId] });
     return { ok: true, resourceId: input.resourceId, revokedCount: deleted.count };
@@ -375,10 +423,17 @@ export async function revokeTeamCredentialExternalApiKeysForMembershipInTx(
         select: { id: true, label: true, resourceId: true },
     });
     for (const key of keys) {
-        await recordTeamCredentialActivityInTx(tx, {
-            teamId: input.teamId, resourceId: key.resourceId, kind: "external_key_revoked",
-            actor: input.actor, subjectDisplayName: key.label,
-        });
+        const label = readTeamCredentialExternalApiKeyLabelStored(key.label);
+        if (label !== null) {
+            await recordTeamCredentialExternalApiKeyActivityInTx(tx, {
+                teamId: input.teamId,
+                resourceId: key.resourceId,
+                externalApiKeyId: key.id,
+                kind: "external_key_revoked",
+                actor: input.actor,
+                label,
+            });
+        }
     }
     const deleted = await tx.teamCredentialExternalApiKey.deleteMany({
         where: { id: { in: keys.map((key) => key.id) } },
@@ -424,7 +479,7 @@ export async function resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(
     const row = await tx.teamCredentialExternalApiKey.findUnique({
         where: { id: keyId },
         select: {
-            id: true, resourceId: true, teamMembershipId: true, label: true, secretDigest: true,
+            id: true, resourceId: true, teamMembershipId: true, secretDigest: true,
             expiresAt: true, authenticationEvidence: true, currentBrokerOperationJson: true,
             resource: {
                 select: {
@@ -476,7 +531,6 @@ export async function resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(
         resourceRevision: row.resource.revision,
         sourceBindingJson: row.resource.sourceBindingJson,
         currentBrokerOperationJson: row.currentBrokerOperationJson,
-        label: row.label,
         expiresAt: row.expiresAt,
     };
 }

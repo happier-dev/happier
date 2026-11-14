@@ -33,16 +33,25 @@ import {
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
 import { TeamCredentialBrokerPlacementSection } from './teamCredentialEditorDraft';
+import {
+    useOpenedTeamCredentialBrokerPoolNames,
+    useOpenedTeamCredentialDisplayNames,
+} from './teamCredentialPrivateLabels';
 
 function SourceBrokerPlacementEditor(props: Readonly<{
     scope: ServerAccountScope;
     row: TeamCredentialSourceResourceAdministrationV1;
+    displayName: string;
     pending: boolean;
     disabled: boolean;
     onSave: (placement: TeamCredentialBrokerPlacementV1 | null, expectedRevision: number) => Promise<boolean>;
     onCancel: () => void;
 }>) {
     const [draft, setDraft] = React.useState<TeamCredentialBrokerPlacementV1 | null>(props.row.brokerPlacement);
+    const poolDisplayNames = useOpenedTeamCredentialBrokerPoolNames({
+        scope: props.scope,
+        brokerPresentation: props.row.brokerPresentation,
+    });
     const basisRevision = React.useRef(props.row.revision);
     const latestRevision = React.useRef(props.row.revision);
     latestRevision.current = props.row.revision;
@@ -61,10 +70,11 @@ function SourceBrokerPlacementEditor(props: Readonly<{
             <TeamCredentialBrokerPlacementSection
                 scope={props.scope}
                 testIDPrefix={`shared-with-teams:broker:${props.row.id}`}
-                title={`${t('teams.credentials.detail.brokerLabel')} · ${props.row.displayName}`}
+                title={`${t('teams.credentials.detail.brokerLabel')} · ${props.displayName}`}
                 brokerPresentation={props.row.brokerPresentation}
                 savedPlacement={props.row.brokerPlacement}
                 placement={draft}
+                poolDisplayNames={poolDisplayNames}
                 disabled={props.disabled}
                 onChange={chooseDraft}
             />
@@ -117,6 +127,11 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loadingMore, setLoadingMore] = React.useState(false);
     const [rowsCurrent, setRowsCurrent] = React.useState(false);
+    const openedDisplayNames = useOpenedTeamCredentialDisplayNames({
+        scope: props.scope,
+        resources: rows ?? [],
+        enabled: rows !== null,
+    });
     // Retained display rows cannot admit a new write while their reload is open.
     // The ref also withdraws admission before React commits the disabled controls.
     const rowsCurrentRef = React.useRef(false);
@@ -255,6 +270,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
 
     const renderRow = (row: TeamCredentialSourceResourceAdministrationV1) => {
         const busy = !rowsCurrent || pendingId === row.id || approval.approvalPending;
+        const displayName = openedDisplayNames[row.id] ?? t('teams.credentials.title');
         // A row's operations live in its ⋯ menu; the row itself names the Team share and its state.
         const actions: ItemAction[] = [
             ...(row.capabilities.updateBrokerPlacement ? [{ id: `shared-with-teams:broker-location:${row.id}`,
@@ -278,11 +294,11 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
             <Item
                 key={row.id}
                 testID={`shared-with-teams:resource:${row.id}`}
-                title={row.displayName}
+                title={displayName}
                 subtitle={credentialDirectExportFailureMessage(row.directExportFailure) ?? (sharedState === null ? resourceStateLabel(row.readiness) : undefined)}
                 showChevron={false}
                 rightElement={actions.length > 0 ? (
-                    <ItemRowActions title={row.displayName} actions={actions} overflowOnly
+                    <ItemRowActions title={displayName} actions={actions} overflowOnly
                         overflowTriggerTestID={`shared-with-teams:more:${row.id}`} />
                 ) : undefined}
                 rightElementOutsidePressable
@@ -315,6 +331,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 key={editing.id}
                 scope={props.scope}
                 row={editing}
+                displayName={openedDisplayNames[editing.id] ?? t('teams.credentials.title')}
                 pending={pendingId === editing.id || approval.approvalPending}
                 disabled={!rowsCurrent || pendingId === editing.id || approval.approvalPending}
                 onSave={(brokerPlacement, expectedRevision) => update(editing, { brokerPlacement }, expectedRevision)}

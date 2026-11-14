@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import axios from '@/api/client/credentialAxios';
+import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { fixture, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
@@ -212,6 +215,38 @@ describe('Session placement on a managed target (driver)', () => {
         const before = h.calls.length;
         await expect(target.exec('true', new AbortController().signal)).rejects.toMatchObject({ code: 'managed_target_access_unavailable' });
         expect(h.calls.length).toBe(before);
+    });
+
+    it('opens the opaque preset context before placing the Session holder and preserves the structural policy census', async () => {
+        const h = harness({ guest: true });
+        const provisioner = h.native.manifest.contributes.machineProvisioners[0]!;
+        const launch = machine.launch!;
+        const row = ManagedOpaquePresetMachineV1Schema.parse({ id: machine.id, homeId, custodianAccountId: 'owner',
+            controller: machine.controller, preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'private-target', launch,
+            reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+                retentionCapabilities: provisioner.retention, retention: row.retention, wakeOnAcceptedMessage: false },
+            nativeResult: { kind: 'bound', resource: machine.resource } }) };
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        let contexts = 0;
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url) => {
+            expect(String(url)).toBe('https://home.example/v1/machines/managed/controller/context');
+            contexts++;
+            return { status: 200, data: { machine: row, presetContent: { content, recipients: [] }, requestId: 'creation' } };
+        });
+        try {
+            const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null },
+                readPolicyCurrent: async () => row });
+            const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 's1', requesterAccountId: 'owner',
+                lifetime: new AbortController().signal, holder });
+            expect(target.platform.os).toBe('linux');
+            expect(h.calls).toContain('exec');
+            expect(contexts).toBeGreaterThan(0);
+            expect(row).not.toHaveProperty('launch');
+            expect(row).not.toHaveProperty('resource');
+        } finally { post.mockRestore(); }
     });
 
     it('sends target commands as the provider exec input, never in its argv (host and guest process lists)', async () => {

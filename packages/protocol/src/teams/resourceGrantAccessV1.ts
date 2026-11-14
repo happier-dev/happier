@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PrincipalRefV1Schema } from './principal.js';
+import { TeamGroupNameProjectionV1Schema } from './groupLabel.js';
 import { ContentPublicKeyFingerprintSchema } from '../machines/identity/contentPublicKeyFingerprint.js';
 import { SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -16,6 +17,8 @@ export const ResourceAccessGrantRowV1Schema = lazyZodSchema(() => z.strictObject
   createdByAccountId: z.string().check(z.minLength(1)),
   createdAt: z.number().check(z.int(), z.nonnegative()),
   display: z.strictObject({ name: z.nullable(z.string()), username: z.optional(z.nullable(z.string())) }),
+  /** Present only for Group principals; server text stays sealed in this projection. */
+  groupName: z.optional(TeamGroupNameProjectionV1Schema),
 }));
 export type ResourceAccessGrantRowV1 = z.infer<typeof ResourceAccessGrantRowV1Schema>;
 export const ResourceRecipientKeyEnvelopeInputV1Schema = lazyZodSchema(() => z.strictObject({

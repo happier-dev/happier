@@ -9,7 +9,7 @@ import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protoco
 import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { projectSessionOwnerDisplayV1, sealSessionOwnerDisplayEnvelopeV1, validateSessionDisplayProjectionV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-import { AccountEncryptionMigrateReviewCommentsDirectiveSchema, type AccountEncryptionMigrateArtifactsDirective, type AccountEncryptionMigrateMachinesDirective, type AccountEncryptionMigrateReviewCommentsDirective, type AccountEncryptionMigrateSessionsDirective, type AccountEncryptionMigrateSessionOrganizationDirective, type AccountEncryptionMigrateTodosDirective, type AccountEncryptionMigrateWorkspaceDirective, type AccountEncryptionMigrateAutomationsDirective, type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AccountEncryptionMigrateReviewCommentsDirectiveSchema, type AccountEncryptionMigrateArtifactsDirective, type AccountEncryptionMigrateMachinesDirective, type AccountEncryptionMigratePrivateLabelsDirectiveV1, type AccountEncryptionMigrateReviewCommentsDirective, type AccountEncryptionMigrateSessionsDirective, type AccountEncryptionMigrateSessionOrganizationDirective, type AccountEncryptionMigrateTodosDirective, type AccountEncryptionMigrateWorkspaceDirective, type AccountEncryptionMigrateAutomationsDirective, type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol/workspace/workspaceTabsV1';
 import { classifyAccountJsonKvKey } from '@happier-dev/protocol/account/accountJsonKv';
 import type { ReviewCommentAccountEncryptionMigrationInventoryResponseV1 } from '@happier-dev/protocol/reviews/comments/content';
@@ -52,7 +52,14 @@ import type { SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/accoun
 import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { buildAccountEncryptionSavedSecretResourcesDirective } from './buildAccountEncryptionSavedSecretResourcesDirective';
 import { buildAccountEncryptionTodosDirective } from './buildAccountEncryptionTodosDirective';
+import {
+    buildAccountEncryptionPrivateLabelsDirective,
+    type AccountEncryptionMigrationPrivateLabelCandidate,
+} from './buildAccountEncryptionPrivateLabelsDirective';
 import type { ResourceAccessRecipientCensusV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import type { AccountEncryptionMigrateManagedMachinePresetsDirectiveV1,
+    ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { buildAccountEncryptionManagedMachinePresetsDirective } from './buildAccountEncryptionManagedMachinePresetsDirective';
 
 export type AccountEncryptionMigrationMachineRow = Readonly<{
     id: string;
@@ -107,6 +114,8 @@ export type AccountEncryptionMigrationStorageDirectives = Readonly<{
         AccountEncryptionMigrateSessionOrganizationDirective;
     pets: Readonly<{ action: 'assert_empty' }>;
     savedSecretResources?: AccountEncryptionMigrateSavedSecretResourcesDirectiveV1;
+    privateLabels?: AccountEncryptionMigratePrivateLabelsDirectiveV1;
+    managedMachinePresets?: AccountEncryptionMigrateManagedMachinePresetsDirectiveV1;
 }>;
 
 function requireEncryption(
@@ -709,6 +718,9 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         stageArtifactBlob?: (artifactId: string, blobId: string, content: ArtifactBlobStoredContentV1) => Promise<ArtifactBlobAccountEncryptionStageV1>;
         /** The owner's Saved Secret materials read for this exact transition. */
         savedSecretResources?: readonly SavedSecretResourceMaterialV1[];
+        /** Account-owned opaque labels enumerated by their ordinary read routes. */
+        privateLabels?: readonly AccountEncryptionMigrationPrivateLabelCandidate[];
+        managedMachinePresetsInventory?: ManagedMachinePresetAccountEncryptionMigrationInventoryV1;
     }>,
 ): Promise<AccountEncryptionMigrationStorageDirectives> {
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
@@ -813,9 +825,33 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         })
         : undefined;
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
+    const privateLabels = params.privateLabels
+        ? await buildAccountEncryptionPrivateLabelsDirective({
+            accountId: params.scope.scope.accountId,
+            fromMode: params.fromMode,
+            toMode: params.toMode,
+            candidates: params.privateLabels,
+            sourceEncryption: params.sourceEncryption,
+            targetEncryption: params.targetEncryption,
+            scope: params.scope,
+        })
+        : undefined;
+    assertAccountEncryptionMigrationScopeCurrent(params.scope);
+    const managedMachinePresets = params.managedMachinePresetsInventory
+        ? await buildAccountEncryptionManagedMachinePresetsDirective({
+            accountId: params.scope.scope.accountId, fromMode: params.fromMode, toMode: params.toMode,
+            inventory: params.managedMachinePresetsInventory,
+            openSourceDataKey: async envelope => params.sourceEncryption
+                ? await params.sourceEncryption.decryptEncryptionKey(envelope, params.scope.scope)
+                : null,
+            targetContentPublicKey: params.targetEncryption?.contentDataKey ?? null,
+        }) : undefined;
+    assertAccountEncryptionMigrationScopeCurrent(params.scope);
     return {
         ...(automations ? { automations } : {}),
         ...(savedSecretResources ? { savedSecretResources } : {}),
+        ...(privateLabels ? { privateLabels } : {}),
+        ...(managedMachinePresets ? { managedMachinePresets } : {}),
         ...(params.discussionsInventory ? { discussions: await buildAccountEncryptionDiscussionsDirective({
             inventory: params.discussionsInventory, fromMode: params.fromMode, toMode: params.toMode,
             sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption, scope: params.scope,

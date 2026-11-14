@@ -8,6 +8,7 @@ export type AccountDirectoryErrorCode =
     | "preferred_home_not_found"
     | "directory_link_conflict"
     | "descriptor_revision_conflict"
+    | "label_mode_mismatch"
     | "invalid_assertion"
     | "assertion_expired"
     | "assertion_clock_skew"
@@ -30,6 +31,7 @@ const STATUS_BY_CODE = {
     preferred_home_not_found: 404,
     directory_link_conflict: 409,
     descriptor_revision_conflict: 409,
+    label_mode_mismatch: 409,
     invalid_assertion: 401,
     assertion_expired: 401,
     assertion_clock_skew: 401,
@@ -84,6 +86,7 @@ export const ACCOUNT_DIRECTORY_PROTOCOL_ERROR_BY_CODE: Readonly<
     preferred_home_not_found: ACCOUNT_DIRECTORY_ERROR_CODES_V1.directoryUnavailable,
     directory_link_conflict: ACCOUNT_DIRECTORY_ERROR_CODES_V1.invalidRequest,
     descriptor_revision_conflict: ACCOUNT_DIRECTORY_ERROR_CODES_V1.descriptorRevisionConflict,
+    label_mode_mismatch: ACCOUNT_DIRECTORY_ERROR_CODES_V1.labelModeMismatch,
     invalid_assertion: ACCOUNT_DIRECTORY_ERROR_CODES_V1.invalidAssertionSignature,
     assertion_expired: ACCOUNT_DIRECTORY_ERROR_CODES_V1.assertionExpired,
     assertion_clock_skew: ACCOUNT_DIRECTORY_ERROR_CODES_V1.assertionClockSkew,

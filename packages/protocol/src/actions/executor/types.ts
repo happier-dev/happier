@@ -647,6 +647,8 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Exact host-local Preset selection for initial Pool binding; never Action/RPC input or admission authority. */
+  managedPresetOrigin?: import('../../machines/managed/managedMachinePresetV1.js').ManagedMachinePresetAcquireOriginV1;
   /** Mounted recipient-catalog facts, scoped to their Home. Host-only presentation; never Action/RPC input. */
   teamCredentialPresentation?: Readonly<{ serverId: string;
     sources: readonly import('../specs/teamCredentialApproval.js').TeamCredentialApprovalSource[] }>;
@@ -656,6 +658,9 @@ export type ActionExecutorContext = Readonly<{
       /** Keep a mounted engine's private delivery ports; the parent executor still derives ordinary child admission. */
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
     }>) => Promise<ActionExecuteResult>;
+  /** Re-enters the owning executor from an already issued reviewed child. Host-only; never Action/RPC input. */
+  executeHostReviewedChildAction?: (actionId: ActionId, input: unknown,
+    context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   /** Host-stamped native Realtime input: ordinary Actions only, never approval decisions. Not Action/RPC input. */
   nativeRealtimeInput?: true;
   /** Exact dependency census retained from this host's reviewed Delete click; never Action input or execution authority. */
@@ -3122,6 +3127,15 @@ export type ActionExecutorDeps = Readonly<{
     preparedRequest?: import('../../account/publicProfilePublication.js').PublicProfilePreparedRequestV1;
     /** Section aggregate members re-enter ordinary archive admission. */
     archiveSession?: (sessionId: string) => Promise<ActionExecuteResult>;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+  /**
+   * The keyholding client builds a credential-usage file from the Home's
+   * recipient-only projection. Plain labels never enter the Action input.
+   */
+  teamCredentialUsageExport?: (args: Readonly<{
+    input: import('../../teams/credentials/usageExportV1.js').TeamCredentialUsageExportInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;

@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type LocalDaemonServicesActionInputById = {
     readonly "machines.local.service.status": {
@@ -130,12 +130,7 @@ export type LocalDaemonServicesActionInputById = {
             protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
-            buildMachineId?: string | undefined;
             projectSourceId?: string | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -147,6 +142,11 @@ export type LocalDaemonServicesActionInputById = {
                     teamId: string;
                 };
             };
+            deployerPrincipals?: undefined | {
+                principalKind: 'account' | 'teamGroup';
+                principalId: string;
+            }[];
+            buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -174,6 +174,7 @@ export type LocalDaemonServicesActionInputById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
+            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
@@ -345,6 +346,7 @@ export type LocalDaemonServicesActionResultById = {
             };
             nameResolution?: 'unresolved_environment' | undefined;
             unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            failureCause?: ActionFailureCauseV1 | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';
                 readiness: 'not_ready' | 'not_reported' | 'ready';
@@ -479,6 +481,7 @@ export type LocalDaemonServicesActionResultById = {
             };
             nameResolution?: 'unresolved_environment' | undefined;
             unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            failureCause?: ActionFailureCauseV1 | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';
                 readiness: 'not_ready' | 'not_reported' | 'ready';
@@ -992,6 +995,7 @@ export type LocalDaemonServicesActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
+                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';

@@ -5,6 +5,7 @@ import { AccountEncryptionMigrateExternalAuthBindingDigestV1Schema } from '@happ
 import { AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS, AuthTokenProvenanceSchema, AuthTokenProvenanceV2Schema, readAuthTokenProvenance, AuthTokenAuthenticationEvidenceSnapshotV1Schema, type AuthTokenAuthority, type AuthTokenKind, type AuthTokenProvenanceAny, type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { parseAccountApiTokenBearerV1, AccountApiTokenCreateEncryptionV1Schema, AccountApiTokenEncryptionAccessV1Schema, type AccountApiTokenCreateEncryptionV1, type AccountApiTokenEncryptionAccessV1, type AccountApiTokenEncryptionAccessResponseV1, type ParsedAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { projectPrivateLabelForRecipientV1, serializePrivateLabelStoredV1, type PrivateLabelReadV1, type PrivateLabelStoredV1 } from '@happier-dev/protocol';
 import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectDeploymentNativeAdmissionV1,
     isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
@@ -53,6 +54,7 @@ import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandof
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readWorkspaceSyncAdmissionInTx } from './workspaceSyncAdmission';
 import type { WorkflowExternalActionAdmission } from './externalActionExecutionAuthorization';
+import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
 
 interface TokenGeneratorLike {
     new: (payload: Readonly<{
@@ -201,7 +203,7 @@ export type CreatedApiToken = Readonly<{
     tokenId: string;
     /** Plaintext is returned only from this mint result and is never persisted. */
     token: string;
-    label: string;
+    label: PrivateLabelReadV1;
     displayPrefix: string;
     createdAt: Date;
     expiresAt: Date | null;
@@ -215,7 +217,7 @@ export type CreatedApiToken = Readonly<{
 
 export type ApiTokenSummary = Readonly<{
     tokenId: string;
-    label: string;
+    label: PrivateLabelReadV1;
     displayPrefix: string;
     createdAt: Date;
     lastUsedAt: Date | null;
@@ -229,7 +231,7 @@ export type ApiTokenSummary = Readonly<{
 }>;
 
 export class ApiTokenOperationError extends Error {
-    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_changed" | "target_unavailable",
+    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "api_token_label_invalid" | "api_token_label_mode_mismatch" | "api_token_label_recipient_envelope_rejected" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_changed" | "target_unavailable",
         readonly grantReason?: ApiTokenGrantDenialReasonV1,
         readonly details?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['details'],
         readonly failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['failureCause']) {
@@ -313,8 +315,36 @@ function readApiTokenEmbedConfig(value: unknown): EmbedConfigV1 | null {
     return value == null ? null : StoredEmbedConfigV1Schema.parse(value);
 }
 
+function requireAdmittedApiTokenLabel(
+    admitted: Awaited<ReturnType<typeof admitAccountPrivateLabelWriteInTx>>,
+): PrivateLabelStoredV1 {
+    if (admitted.kind === "available") {
+        return admitted.stored;
+    }
+    if (admitted.kind === "mode_mismatch") throw new ApiTokenOperationError("api_token_label_mode_mismatch");
+    if (admitted.kind === "recipient_envelope_rejected") {
+        throw new ApiTokenOperationError("api_token_label_recipient_envelope_rejected");
+    }
+    throw new ApiTokenOperationError("api_token_label_invalid");
+}
+
+function projectApiTokenLabelForAccount(params: Readonly<{
+    serialized: string;
+    mode: "plain" | "e2ee";
+    accountId: string;
+}>): PrivateLabelReadV1 {
+    const projected = projectAccountPrivateLabelForRecipientV1({
+        serialized: params.serialized,
+        mode: params.mode,
+        recipientAccountId: params.accountId,
+    });
+    if (projected.kind === "available") return projected.label;
+    if (projected.kind === "mode_mismatch") throw new ApiTokenOperationError("api_token_label_mode_mismatch");
+    throw new ApiTokenOperationError("api_token_label_invalid");
+}
+
 type CreateApiTokenParams = Readonly<{
-    accountId: string; tokenId: string; label: string; expiresAt?: Date | null;
+    accountId: string; tokenId: string; label: PrivateLabelStoredV1; expiresAt?: Date | null;
     encryption?: AccountApiTokenCreateEncryptionV1;
     authenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
     grant?: ApiTokenGrantV1; embedConfig?: EmbedConfigV1;
@@ -1067,7 +1097,7 @@ class AuthModule {
 
     async createChildApiToken(params: Readonly<{
         principal: VerifiedApiTokenPrincipal;
-        tokenId: string; label: string; expiresAt: Date; grant: ApiTokenGrantV1;
+        tokenId: string; label: PrivateLabelStoredV1; expiresAt: Date; grant: ApiTokenGrantV1;
         requireCreatedByChildTokenId?: string;
         resolveSessionMachine?: (sessionId: string) => Promise<string | null>;
     }>): Promise<CreatedApiToken> {
@@ -1086,12 +1116,8 @@ class AuthModule {
         resolveSessionMachine?: (sessionId: string) => Promise<string | null>;
     }>): Promise<CreatedApiToken> {
         const accountId = params.accountId.trim();
-        const label = params.label.trim();
         if (!accountId) {
             throw new Error("Cannot create an API token without an account id");
-        }
-        if (!label) {
-            throw new Error("Cannot create an API token without a label");
         }
         if ((params.authenticationEvidence?.length ?? 0) > AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS) {
             throw new ApiTokenOperationError("credential_authentication_evidence_limit");
@@ -1135,13 +1161,18 @@ class AuthModule {
         const transactionOptions = child
             ? { isolationLevel: "Serializable" as const }
             : undefined;
-        const row = await inTx(async (tx) => {
+        const created = await inTx(async (tx) => {
             // A child is derived content under its root credential: Account
             // authority changes must still exclude it, while ordinary Session
             // metadata publication must not serialize every frame credential mint.
             await acquireAccountSessionOwnerMetadataFenceInTx(tx, accountId, child ? "content" : "exclusive");
-            const admission = await tx.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true } });
+            const admission = await tx.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, encryptionMode: true } });
             assertAccountActive(admission.status);
+            const label = requireAdmittedApiTokenLabel(await admitAccountPrivateLabelWriteInTx(tx, {
+                accountId,
+                mode: admission.encryptionMode,
+                stored: params.label,
+            }));
             if (child) {
                 const parent = await tx.accountApiToken.findFirst({
                     where: { id: child.parentTokenId, accountId },
@@ -1200,13 +1231,13 @@ class AuthModule {
             const authenticationEvidenceSnapshot = authenticationEvidence.length > 0
                 ? AuthTokenAuthenticationEvidenceSnapshotV1Schema.parse({ v: 1, evidence: authenticationEvidence })
                 : null;
-            return await tx.accountApiToken.create({
+            const row = await tx.accountApiToken.create({
                 data: {
                     id: tokenId,
                     accountId,
                     displayPrefix,
                     secretDigest,
-                    label,
+                    label: serializePrivateLabelStoredV1(label),
                     createdAt: now,
                     expiresAt,
                     accessGrant: grant,
@@ -1224,20 +1255,24 @@ class AuthModule {
                     authenticationEvidence: true,
                 },
             });
+            return {
+                row,
+                label: projectPrivateLabelForRecipientV1({ stored: label, recipientAccountId: accountId }),
+            };
         }, transactionOptions).catch((error: unknown) => {
             if (isPrismaErrorCode(error, "P2002")) throw new ApiTokenOperationError("api_token_id_conflict");
             throw error;
         });
 
         return {
-            tokenId: row.id,
+            tokenId: created.row.id,
             token: createApiTokenBearer(tokenId, secret),
-            label: row.label,
-            displayPrefix: row.displayPrefix,
-            createdAt: row.createdAt,
-            expiresAt: row.expiresAt,
+            label: created.label,
+            displayPrefix: created.row.displayPrefix,
+            createdAt: created.row.createdAt,
+            expiresAt: created.row.expiresAt,
             hasEncryptionAccess: encryption !== null,
-            hasUnattendedTeamAccess: parseAuthenticationEvidenceSnapshot(row.authenticationEvidence) !== null,
+            hasUnattendedTeamAccess: parseAuthenticationEvidenceSnapshot(created.row.authenticationEvidence) !== null,
             grant,
             parentTokenId: child?.parentTokenId ?? null,
             activeChildCount: 0,
@@ -1247,8 +1282,14 @@ class AuthModule {
 
     /** Summaries deliberately omit the bearer secret and its stored digest. */
     async listApiTokens(accountId: string, options: Readonly<{ includeChildren?: boolean; tokenId?: string }> = {}): Promise<readonly ApiTokenSummary[]> {
+        const ownerAccountId = accountId.trim();
+        const owner = await db.account.findUnique({
+            where: { id: ownerAccountId },
+            select: { encryptionMode: true },
+        });
+        if (!owner) return [];
         const rows = await db.accountApiToken.findMany({
-            where: { accountId: accountId.trim(), ...(options.includeChildren === true ? {} : { parentTokenId: null }),
+            where: { accountId: ownerAccountId, ...(options.includeChildren === true ? {} : { parentTokenId: null }),
                 ...(options.tokenId === undefined ? {} : { id: options.tokenId }) },
             orderBy: { createdAt: "desc" },
             select: {
@@ -1266,7 +1307,11 @@ class AuthModule {
         });
         return rows.map((row) => ({
             tokenId: row.id,
-            label: row.label,
+            label: projectApiTokenLabelForAccount({
+                serialized: row.label,
+                mode: owner.encryptionMode,
+                accountId: ownerAccountId,
+            }),
             displayPrefix: createApiTokenDisplayPrefix(row.id),
             createdAt: row.createdAt,
             lastUsedAt: row.lastUsedAt,
@@ -1281,7 +1326,7 @@ class AuthModule {
     }
 
     async updateApiToken(params: Readonly<{
-        accountId: string; tokenId: string; label?: string; grant?: ApiTokenGrantV1; embedConfig?: EmbedConfigV1 | null;
+        accountId: string; tokenId: string; label?: PrivateLabelStoredV1; grant?: ApiTokenGrantV1; embedConfig?: EmbedConfigV1 | null;
         authenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
         deployment?: AccountApiTokenDeploymentInputV1 | null;
     }>): Promise<Readonly<{ apiToken: ApiTokenSummary; revokedTokenIds: readonly string[]; grantChanged: boolean; embedConfigChanged: boolean;
@@ -1299,6 +1344,16 @@ class AuthModule {
                 ...(evidenceOnly ? {} : { parentTokenId: null }) },
                 select: { accessGrant: true, embedConfig: true, authenticationEvidence: true } });
             if (!row) throw new ApiTokenOperationError("invalid_token");
+            const label = params.label === undefined ? undefined : requireAdmittedApiTokenLabel(
+                await admitAccountPrivateLabelWriteInTx(tx, {
+                    accountId: params.accountId,
+                    mode: (await tx.account.findUniqueOrThrow({
+                        where: { id: params.accountId },
+                        select: { encryptionMode: true },
+                    })).encryptionMode,
+                    stored: params.label,
+                }),
+            );
             const authenticationEvidence = params.authenticationEvidence === undefined ? undefined
                 : await resolveCurrentAuthenticationEvidenceInTx(tx, {
                     env: process.env, accountId: params.accountId, evidence: params.authenticationEvidence,
@@ -1327,7 +1382,7 @@ class AuthModule {
                 ...(authenticationEvidenceSnapshot === undefined ? {} : {
                     authenticationEvidence: authenticationEvidenceSnapshot,
                 }),
-                ...(params.label !== undefined ? { label: params.label.trim() } : {}),
+                ...(label !== undefined ? { label: serializePrivateLabelStoredV1(label) } : {}),
                 ...(grant !== undefined ? { accessGrant: grant } : {}),
                 ...(embedConfig !== undefined ? { embedConfig: embedConfig === null
                     ? getActivePrismaRuntime().DbNull : embedConfig } : {}),

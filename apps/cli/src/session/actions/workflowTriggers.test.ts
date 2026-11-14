@@ -99,7 +99,13 @@ describe('CLI workflow trigger Account codec', () => {
     const written = await actions.add({ target: { kind: 'inline', definition }, project: { machineId: 'machine', directory: '/work' }, trigger });
     expect(written.set.health).toBe('available');
     expect(written.set.context).toMatchObject({ inlineDefinition: definition, executionTarget: { kind: 'session' } });
-    expect(network.create.mock.calls[0]?.[0].input.executionRecipe.workflow).toMatchObject({ t: 'plain', v: { workspace: { directory: '/work' } } });
+    expect(network.create.mock.calls[0]?.[0].input).toMatchObject({
+      name: 'Automation', description: null,
+      executionRecipe: { workflow: { t: 'plain', v: {
+        workspace: { directory: '/work' },
+        display: { name: 'Workflow triggers', description: null },
+      } } },
+    });
   });
   it('opens real E2EE context only while the Account mode and key witness match', async () => {
     const secret = new Uint8Array(32).fill(7);

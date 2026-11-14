@@ -36,6 +36,7 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { withAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { machinesRoutes } from './machinesRoutes';
 import { invalidateManagedMachineInTx } from '@/app/machines/managed/managedRows';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 vi.mock('axios', async importOriginal => {
     const actual = await importOriginal<typeof import('axios')>();
@@ -786,7 +787,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
             installationId: `installation-${randomUUID()}`, installationPublicKey: new Uint8Array(installationKeys.publicKey),
         } });
-        const issued = await auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: 'Machine access continuation' });
+        const issued = await auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, 'Machine access continuation') });
         const principal = (await auth.verifyTokenForRoute(issued.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Missing authenticated fixture principal');
         const target = { kind: 'machine' as const, machineId: executor.id };
@@ -848,7 +849,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
             installationId: `installation-${randomUUID()}`, installationPublicKey: new Uint8Array(installationKeys.publicKey),
         } });
-        const issued = await auth.createApiToken({ accountId: manager.id, tokenId: randomUUID(), label: 'Foreign Machine Manager continuation' });
+        const issued = await auth.createApiToken({ accountId: manager.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(manager.id, 'Foreign Machine Manager continuation') });
         const principal = (await auth.verifyTokenForRoute(issued.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Missing authenticated fixture principal');
         const target = { kind: 'machine' as const, machineId: executor.id };

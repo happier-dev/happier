@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../../actions/externalActionExecutionAuthorization.js';
 
 import * as protocol from './managedConfigurationV1.js';
+import { sealManagedMachinePresetContentV1, openManagedMachinePresetContentV1, createManagedMachinePresetAcquireOverrideV1, replaceManagedMachinePresetLaunchNameV1 } from './managedMachinePresetContentV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, ManagedErrorV1Schema, resolveManagedAcquireReviewV1 } from './actionsV1.js';
@@ -24,18 +25,34 @@ describe('managed preset executable selection', () => {
     expect(facts).toMatchObject({ launch, reviewedEffectDigest: effectReview.reviewedEffectDigest });
     expect(facts).not.toHaveProperty('effectReview');
     expect(facts.launch.choices).not.toHaveProperty('reviewedEffectDigest');
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
+      v: 1, name: launch.name, launch,
+    } });
+    const projection = { content: sealed.content, recipientEnvelope: null };
+    const override = createManagedMachinePresetAcquireOverrideV1({ presetId: 'preset', mode: 'plain', projection,
+      enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } });
+    if (!override) throw new Error('Expected private acquisition identity');
     const request = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
-      retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage,
-      enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, reviewedFacts: facts });
-    expect(request.reviewedFacts).toMatchObject({ reviewedEffectDigest: effectReview.reviewedEffectDigest });
+      retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage, presetContentOverride: override });
+    const captured = replaceManagedMachinePresetLaunchNameV1({ presetId: 'preset', mode: 'plain',
+      content: override.content, launchName: launch.name, reviewedFacts: facts });
+    if (!captured) throw new Error('Expected locally reviewed snapshot');
+    const opened = openManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: captured });
+    expect(opened?.reviewedFacts).toMatchObject({ reviewedEffectDigest: effectReview.reviewedEffectDigest });
+    expect(replaceManagedMachinePresetLaunchNameV1({ presetId: 'preset', mode: 'plain', content: captured,
+      launchName: launch.name, reviewedFacts: { ...facts, reviewedEffectDigest: 'b'.repeat(64) } })).toBeNull();
+    expect(request).not.toHaveProperty('reviewedFacts');
+    expect(request).not.toHaveProperty('enrollmentIdentity');
     const key = tweetnacl.sign.keyPair();
     const approval = { authorizationToken: 'original-acquisition', actionId: 'machines.managed.acquire',
       target: { kind: 'machine' as const, machineId: 'controller' }, input: request };
     const signature = signExternalActionApprovalInputV1({ ...approval, privateKey: key.secretKey });
     expect(verifyExternalActionApprovalInputV1({ ...approval, signature, publicKey: key.publicKey })).toBe(true);
+    const tampered = createManagedMachinePresetAcquireOverrideV1({ presetId: 'preset', mode: 'plain', projection,
+      enrollmentIdentity: { kind: 'existingUser', role: 'personal' } });
+    if (!tampered) throw new Error('Expected changed private acquisition identity');
     expect(verifyExternalActionApprovalInputV1({ ...approval, input: { ...request,
-      reviewedFacts: { ...facts, reviewedEffectDigest: 'b'.repeat(64) } },
-      signature, publicKey: key.publicKey })).toBe(false);
+      presetContentOverride: tampered }, signature, publicKey: key.publicKey })).toBe(false);
   });
   it('captures native option facts for an already authored launch through the shared receipt builder', () => {
     const launchSchema = { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } },
@@ -65,7 +82,14 @@ describe('managed preset executable selection', () => {
     const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
     const policy = { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } as const;
     const oneOff = { selection: { kind: 'one-off', homeId: 'home', launch, ...policy }, enrollmentIdentity };
-    const preset = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, ...policy, enrollmentIdentity };
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
+      v: 1, name: launch.name, launch,
+    } });
+    const override = createManagedMachinePresetAcquireOverrideV1({ presetId: 'preset', mode: 'plain',
+      projection: { content: sealed.content, recipientEnvelope: null }, enrollmentIdentity });
+    if (!override) throw new Error('Expected private acquisition identity');
+    const preset = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, ...policy,
+      presetContentOverride: override };
     for (const input of [oneOff, preset]) {
       const admitted = ManagedAcquireInputV1Schema.parse(input);
       expect(resolveManagedAcquireReviewV1(admitted)).toEqual({ homeId: 'home', ...policy });
@@ -269,8 +293,14 @@ describe('reviewed managed configuration facts', () => {
     expect(resolveManagedAcquireReviewV1(request)).toMatchObject({ homeId: selection.homeId,
       controller, retention: selection.retention, wakeOnAcceptedMessage: false });
     expect(ManagedAcquireInputV1Schema.safeParse({ selection, controller }).success).toBe(false);
-    const preset = { enrollmentIdentity, selection: { kind: 'preset', homeId: 'home-a', id: 'preset', revision: 4 },
-      controller, retention: selection.retention, wakeOnAcceptedMessage: false };
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
+      v: 1, name: launch.name, launch,
+    } });
+    const override = createManagedMachinePresetAcquireOverrideV1({ presetId: 'preset', mode: 'plain',
+      projection: { content: sealed.content, recipientEnvelope: null }, enrollmentIdentity });
+    if (!override) throw new Error('Expected private acquisition identity');
+    const preset = { selection: { kind: 'preset', homeId: 'home-a', id: 'preset', revision: 4 },
+      controller, retention: selection.retention, wakeOnAcceptedMessage: false, presetContentOverride: override };
     expect(ManagedAcquireInputV1Schema.safeParse(preset).success).toBe(true);
     expect(ManagedAcquireInputV1Schema.safeParse({ selection: preset.selection }).success).toBe(false);
   });

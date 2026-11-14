@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
-import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
+import { createDirectoryHttpFixture, toAccountDirectoryHomeWire } from './accountDirectoryTestFixtures';
 import { provisionAuthenticatedHomeLink, revokeAuthenticatedHomeLink } from './provisionAuthenticatedHomeLink';
 
 const boundary = vi.hoisted(() => ({ request: vi.fn(), acquire: vi.fn(), release: vi.fn(async () => {}) }));
 vi.mock('@/sync/http/client', () => ({ createServerFetchAtEndpoint: () => boundary.request }));
 vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({ acquireIrohHomeRuntimeOrigin: (...args: unknown[]) => boundary.acquire(...args) }));
-vi.mock('@/utils/platform/desktopHost', () => ({ desktopHostKind: () => 'tauri', isDesktopHost: () => true }));
+vi.mock('@/utils/platform/desktopHost', () => ({
+    desktopHostKind: () => 'tauri', isDesktopHost: () => true,
+    invokeDesktopHost: vi.fn(async () => undefined),
+}));
+const realisticJWT = (subject: string) => `header.${btoa(JSON.stringify({ sub: subject }))}.signature`;
 
 describe('provisionAuthenticatedHomeLink', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
@@ -24,7 +28,7 @@ describe('provisionAuthenticatedHomeLink', () => {
         fixture = createDirectoryHttpFixture();
         homeStatus = 200;
         await TokenStorage.accountDirectoryAuthCredentials.set(
-            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: 'directory-token' },
+            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: fixture.token },
         );
         session = new AccountDirectorySession(
             { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId },
@@ -34,14 +38,15 @@ describe('provisionAuthenticatedHomeLink', () => {
         await TokenStorage.setCredentialsForServerUrl(fixture.home.canonicalServerUrl, { serverId: fixture.home.homeServerIdentityId }, { token: fixture.token });
         boundary.request.mockImplementation(async (path: string, init?: RequestInit) => {
             if (path === '/v1/account-directory/me') return json({
-                v: 1, accountId: 'directory-subject', displayName: null, avatar: null, linkedAuthenticationMethods: [],
+                v: 1, accountId: 'directory-subject', encryptionMode: 'plain', displayName: null, avatar: null, linkedAuthenticationMethods: [],
             });
             if (path.startsWith('/v1/account/directory-links/')) return json(homeStatus === 200 ? {
                 v: 1, issuerServerIdentityId: fixture.service.serverIdentityId, issuerSubjectId: 'directory-subject',
                 issuerSigningKeyId: fixture.service.capability.homeLoginAssertion.keyId,
                 issuerSigningPublicKeyBase64Url: fixture.service.capability.homeLoginAssertion.publicKeyBase64Url,
             } : { error: 'invalid_request' }, homeStatus);
-            if (path.startsWith('/v1/account-directory/homes/')) return json(fixture.home);
+            if (path === '/v1/account-directory/private-labels/recipient-census') return json({ contentEncryptionMode: 'plain', recipients: [] });
+            if (path.startsWith('/v1/account-directory/homes/')) return json(toAccountDirectoryHomeWire(fixture.home));
             return fixture.request(fixture.service.endpointUrl, path, init);
         });
     });
@@ -59,6 +64,8 @@ describe('provisionAuthenticatedHomeLink', () => {
         expect(boundary.request.mock.calls.map(([path]) => path)).toEqual([
             '/v1/account-directory/me',
             '/v1/account/directory-links/' + fixture.service.serverIdentityId,
+            '/v1/account-directory/me',
+            '/v1/account-directory/private-labels/recipient-census',
             '/v1/account-directory/homes/' + fixture.home.homeServerIdentityId,
         ]);
     });
@@ -118,7 +125,7 @@ describe('provisionAuthenticatedHomeLink', () => {
         const result = provisionAuthenticatedHomeLink(input());
         await vi.waitFor(() => expect(release).toBeTypeOf('function'));
         await TokenStorage.accountDirectoryAuthCredentials.set(
-            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: 'replacement' },
+            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: realisticJWT('replacement-account') },
         );
         release();
         expect(await result).toMatchObject({ kind: 'failed' });

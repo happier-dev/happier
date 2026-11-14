@@ -234,7 +234,7 @@ describe('S0 deployment wire contracts', () => {
     });
 
     it('admits exact shared Saved Secret revisions and rejects personal refs and purpose-less rows', () => {
-        const binding = { purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-a', resourceRevision: 2 } };
+        const binding = { purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(), source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-a', resourceRevision: 2 } };
         expect(EnvironmentSecretBindingV1Schema.parse(binding)).toEqual(binding);
         expect(EnvironmentSecretBindingV1Schema.safeParse({ ...binding, source: { ...binding.source, ref: 'personal-a' } }).success).toBe(false);
         expect(EnvironmentSecretBindingV1Schema.safeParse({ ...binding, source: { ...binding.source, resourceRevision: 0 } }).success).toBe(false);
@@ -246,12 +246,12 @@ describe('S0 deployment wire contracts', () => {
     it('rejects conflicting sources at one variable phase/name while allowing explicit build and runtime rows', () => {
         const environment = createDeploymentEnvironmentV1();
         if (environment.content.t !== 'plain') throw new Error('Expected opened fixture content');
-        const runtime = { purpose: 'variable', name: 'TOKEN', phase: 'runtime',
+        const runtime = { purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(),
             source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-a', resourceRevision: 1 } };
         expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content.v,
             bindings: [runtime, { ...runtime, source: { kind: 'value', value: 'shadow' } }] }).success).toBe(false);
         expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content.v,
-            bindings: [runtime, { ...runtime, phase: 'build' }] }).success).toBe(true);
+            bindings: [runtime, { ...runtime, phase: 'build', grantRef: crypto.randomUUID() }] }).success).toBe(true);
     });
 
     it('requires immutable repository SHA and keeps stored snapshots independent of repository selectors', () => {

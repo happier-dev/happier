@@ -1,16 +1,14 @@
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
+import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedAdmissionOutputV1Schema, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
-import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedControllerAccessV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionOperationActionInputSchemasV1, ActionOperationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createManagedMachineActionClient, ManagedMachineActionError } from './managedMachineActions';
@@ -23,11 +21,15 @@ import { bindManagedPresetAcquireOriginV1, ManagedMachineControllerError } from 
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { executeUiManagedAccountAcquire, executeUiManagedAccountRecovery } from './managedMachineAccountAcquire';
 import { executeUiManagedAccountControl } from './managedMachineAccountControl';
+import { createUiManagedAccountHomeRequest } from './managedMachineAccountHome';
+import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1,
     readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
     SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
 
@@ -42,6 +44,10 @@ type ManagedMachineNativeActionParams = Readonly<{
     /** The receiving Machine's carried review this in-flow confirmation answers. */
     reviewDigest?: string;
     retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
+    /** Exact local structural origin for a newly selected Preset; never sent to Home. */
+    presetOrigin?: Parameters<typeof bindManagedPresetAcquireOriginV1>[0]['preset'];
+    /** The mounted UI Action executor's canonical Pool route. */
+    resolvePresetPool?: (input: MachinePoolResolveInputV1) => Promise<ActionExecuteResult>;
     signal?: AbortSignal;
     /** Optional host strategy for transferring the actual guest payload bytes. */
     installNativePayload?: UiManagedMachineEnrollmentDependencies['installNativePayload'];
@@ -87,6 +93,36 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             : readManagedMachineActionOutputV1(actionId, execution.result);
         return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
     };
+    let scopedControllerAccess: ManagedControllerAccessV1 | undefined;
+    const presetOrigin = params.presetOrigin ?? context.managedPresetOrigin;
+    if (actionId === 'machines.managed.acquire' && presetOrigin) {
+        let poolFailure: Extract<ActionExecuteResult, { ok: false }> | undefined;
+        const bound = await bindManagedPresetAcquireOriginV1({
+            input: ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input),
+            preset: presetOrigin,
+            requestKey: requestId,
+            resolveExact: async exactInput => {
+                const response = await account.request(MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(exactInput),
+                    ...(params.signal ? { signal: params.signal } : {}),
+                }, { includeAuth: true, retry: 'none' });
+                return await response.json();
+            },
+            resolvePool: async poolInput => {
+                const result = await (params.resolvePresetPool?.(poolInput) ?? Promise.resolve(failure('admission_unavailable')));
+                if (result.ok) return result.result;
+                poolFailure = result;
+                return null;
+            },
+        });
+        params.signal?.throwIfAborted();
+        account.assertCurrent();
+        if (poolFailure) return poolFailure;
+        if (bound.kind === 'refused') return failure(bound.code);
+        input = bound.input;
+        review = resolveManagedAcquireReviewV1(bound.input);
+        scopedControllerAccess = bound.controllerAccess;
+    }
     if (isOrdinaryMachineSetupNativeActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId)) {
         const selected = ManagedMachineActionInputSchemasV1[actionId].parse(input);
         const addressedContext = { ...context, externalActionTarget: context.externalActionTarget?.kind === 'machine'
@@ -121,47 +157,14 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             ...(params.signal ? { signal: params.signal } : {}) }));
     }
     let controller = review?.controller ?? ('controller' in input ? input.controller : undefined);
-    let scopedControllerAccess: ManagedControllerAccessV1 | undefined;
-    if (actionId === 'machines.managed.acquire') {
-        const acquire = ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input);
-        if (acquire.selection.kind === 'preset') {
-            const response = await account.request(machinePresetActionEndpointPathV1('machines.presets.get'), {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ homeId, id: acquire.selection.id }), ...(params.signal ? { signal: params.signal } : {}),
-            }, { includeAuth: true, retry: 'none' });
-            let payload: unknown;
-            try { payload = await response.json(); } catch { return failure('managed_response_invalid'); }
-            const projected = ManagedMachinePresetGetResultV1Schema.safeParse(payload);
-            account.assertCurrent();
-            if (!projected.success) return failure('managed_response_invalid');
-            if (projected.data.kind === 'refused') return failure(projected.data.code);
-            if (!response.ok) return failure('admission_unavailable');
-            const bound = await bindManagedPresetAcquireOriginV1({ input: acquire, preset: projected.data.preset, requestKey: requestId,
-                resolvePool: async body => {
-                    const resolved = await account.request(machinePoolActionEndpointPathV1('machines.pools.resolve'), {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-                        ...(params.signal ? { signal: params.signal } : {}),
-                    }, { includeAuth: true, retry: 'none' });
-                    let payload: unknown;
-                    try { payload = await resolved.json(); } catch { return undefined; }
-                    account.assertCurrent();
-                    return payload;
-                } });
-            if (bound.kind === 'refused') return failure(bound.code);
-            input = bound.input;
-            review = resolveManagedAcquireReviewV1(bound.input);
-            controller = review.controller;
-            scopedControllerAccess = bound.controllerAccess;
-        }
-    }
     const managedId = managedObservation?.managedId ?? ('managedId' in input ? input.managedId
         : 'managedMachineId' in input ? input.managedMachineId : undefined);
     let foreignManagedCustody = false;
-    let retainedMachine: ManagedMachineActionOutputV1<'machines.managed.get'> | undefined;
+    let retainedMachine: ManagedMachineV1 | undefined;
     if (managedId) {
-        let row: ManagedMachineActionOutputV1<'machines.managed.get'>;
+        let read: ManagedMachineActionOutputV1<'machines.managed.get'>;
         try {
-            row = params.retainedMachine ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+            read = params.retainedMachine ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
                 homeId, managedId,
             }, { signal: params.signal });
         } catch (error) {
@@ -175,11 +178,11 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             throw error;
         }
         account.assertCurrent();
+        const row = unwrapManagedMachineReadV1(read);
         if (row.id !== managedId || row.homeId !== homeId) return failure('managed_response_invalid');
         retainedMachine = row;
         foreignManagedCustody = row.custodianAccountId !== account.accountId;
-        if ((actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.inspect'
-            || actionId === 'machines.managed.delete' || operationActionId)
+        if ((actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.delete' || operationActionId)
             && row.enrollmentAccountId === account.accountId) {
             if (foreignManagedCustody && !row.controllerAccess) return failure('controller_unavailable');
             scopedControllerAccess = row.controllerAccess;
@@ -189,9 +192,10 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         if (actionId !== 'machines.managed.controller.update') controller = row.controller;
     }
     if (!controller && actionId === 'machines.managed.acquire') {
+        const acquire = ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input);
         try {
             return validateExecution({ ok: true, result: await executeUiManagedAccountAcquire({
-                account, context, requestId, input: ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input),
+                account, context, requestId, input: acquire,
                 signal: params.signal, installNativePayload: params.installNativePayload,
             }) });
         } catch (error) {
@@ -220,9 +224,10 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             expectedRevision: canceled.machine.intentRevision, reviewedDependencies: true,
         } });
         if (!deletion.ok) return deletion;
-        const machine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+        const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
             homeId: canceled.machine.homeId, managedId: canceled.machine.id,
         }, { signal: params.signal });
+        const machine = unwrapManagedMachineReadV1(read);
         return validateExecution({ ok: true, result: { machine } });
     }
     if (!controller && actionId === 'machines.managed.delete') {
@@ -239,6 +244,19 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
                 return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
             }
+            throw error;
+        }
+    }
+    if (actionId === MANAGED_RETIRE_ACTION_ID_V1) {
+        try {
+            const output = await createUiManagedAccountHomeRequest(params)('admit-control',
+                { action: actionId, input, requestId }, ManagedAdmissionOutputV1Schema);
+            return validateExecution({ ok: true, result: 'presetContent' in output
+                ? { machine: output.machine, presetContent: projectManagedMachinePresetForRecipientV1({
+                    ...output.presetContent, recipientAccountId: account.accountId }) }
+                : output.machine });
+        } catch (error) {
+            if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
             throw error;
         }
     }

@@ -51,6 +51,7 @@ import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from '@/testkit/privateLabelFixture';
 import { eventRouter } from './connectionEventRouter';
 import { buildNewMessageUpdate } from './eventPayloadBuilders';
 import * as sessionAccessOwner from '@/app/session/access/sessionAccess';
@@ -177,7 +178,14 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
         }
         await db.accessKey.create({ data: { accountId: owner.id, sessionId: session.id, machineId: machine.id, data: 'test' } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const pat = await auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: 'follow harness' });
+        const patId = crypto.randomUUID();
+        const pat = await auth.createApiToken({
+            accountId: owner.id,
+            tokenId: patId,
+            label: sessionKey
+                ? await prepareE2eeAccountApiTokenLabel(owner.id, patId, 'follow harness')
+                : await preparePlainAccountApiTokenLabel(owner.id, 'follow harness'),
+        });
         const serverIdentityId = await getOrCreateServerIdentityId();
         const raw = Fastify();
         enableSchemaValidation(raw);

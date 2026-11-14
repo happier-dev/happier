@@ -243,7 +243,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       keyId: '123e4567-e89b-42d3-a456-426614174000',
       resourceId: 'resource-1',
       teamMembershipId: 'membership-1',
-      label: 'CI runner',
+      label: { content: { t: 'plain', v: 'CI runner' }, recipientEnvelope: null },
       displayPrefix: 'hapek_v1_123e4567',
       createdAt: '2026-09-14T10:00:00.000Z',
       lastUsedAt: null,
@@ -267,7 +267,8 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     await expect(executor.execute('teams.credentials.externalKeys.create', {
       resourceId: 'resource-1',
       teamMembershipId: 'membership-1',
-      label: 'CI runner',
+      keyId: key.keyId,
+      label: { content: { t: 'plain', v: 'CI runner' }, recipients: [] },
       expiresAt: null,
     }, {
       surface: 'ui',

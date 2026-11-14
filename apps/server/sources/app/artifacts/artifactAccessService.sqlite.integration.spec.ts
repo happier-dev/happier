@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Socket } from "socket.io";
@@ -105,7 +106,7 @@ describe("Artifact document grants (real SQLite)", () => {
             ? { kind: 'team', teamId: foreign.id }
             : kind === 'account' ? { kind: 'account', accountId: member.id }
             : { kind: 'group', teamId: foreign.id, groupId: (await db.teamGroup.create({ data: {
-                teamId: foreign.id, name: 'Empty foreign group', nameKey: 'empty-foreign-group',
+                teamId: foreign.id, name: storedPlainPrivateLabel('Empty foreign group'),
             } })).id };
         expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: actor.id, artifactId: artifact.id,
             principal: outside,
@@ -328,7 +329,7 @@ describe("Artifact document grants (real SQLite)", () => {
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
         const other = await plainAccount();
         const otherMember = await db.teamMembership.create({ data: { teamId: team.id, accountId: other.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Coverage Group', nameKey: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Coverage Group') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: member.id, nativeContribution: true } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
@@ -1189,7 +1190,7 @@ describe("Artifact document grants (real SQLite)", () => {
         const team = await db.team.create({ data: { name: "Self-revocation team" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: admin.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Administrators", nameKey: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Administrators") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
             nativeContribution: true } });
         const principal = kind === "account" ? { kind, accountId: admin.id }
@@ -1405,7 +1406,7 @@ describe("Artifact document grants (real SQLite)", () => {
         const team = await db.team.create({ data: { name: "Document team" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Editors", nameKey: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Editors") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
             nativeContribution: true } });
         const artifact = await plainArtifact(owner.id);

@@ -19,11 +19,13 @@ import {
 const keyId = '550e8400-e29b-41d4-a716-446655440000';
 const secret = 'A'.repeat(43);
 const bearer = `${TEAM_CREDENTIAL_EXTERNAL_API_KEY_PREFIX_V1}_${keyId}_${secret}`;
+const storedLabel = { content: { t: 'plain' as const, v: 'CI runner' }, recipients: [] };
+const readLabel = { content: { t: 'plain' as const, v: 'CI runner' }, recipientEnvelope: null };
 const summary = {
   keyId,
   resourceId: 'resource-1',
   teamMembershipId: 'membership-1',
-  label: 'CI runner',
+  label: readLabel,
   displayPrefix: `hapek_v1_${keyId.slice(0, 8)}`,
   createdAt: '2026-09-07T10:00:00.000Z',
   lastUsedAt: null,
@@ -53,8 +55,8 @@ describe('Team credential external API key v1', () => {
 
   it('keeps lifecycle inputs and outputs resource and immutable membership scoped', () => {
     expect(TeamCredentialExternalApiKeyCreateInputV1Schema.parse({
-      resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CI runner', expiresAt: null,
-    })).toEqual({ resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CI runner', expiresAt: null });
+      resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId, label: storedLabel, expiresAt: null,
+    })).toEqual({ resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId, label: storedLabel, expiresAt: null });
     expect(TeamCredentialExternalApiKeySummaryV1Schema.parse(summary)).toEqual(summary);
     expect(TeamCredentialExternalApiKeyCreateOutputV1Schema.parse({ token: bearer, key: summary }).key).toEqual(summary);
     expect(TeamCredentialExternalApiKeyListOutputV1Schema.parse({ keys: [summary] }).keys).toHaveLength(1);
@@ -74,7 +76,10 @@ describe('Team credential external API key v1', () => {
     expect(TeamCredentialExternalApiKeySummaryV1Schema.safeParse({ ...summary, secretDigest: 'digest' }).success).toBe(false);
     expect(TeamCredentialExternalApiKeySummaryV1Schema.safeParse({ ...summary, token: bearer }).success).toBe(false);
     expect(TeamCredentialExternalApiKeyCreateInputV1Schema.safeParse({
-      resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CI runner', unexpected: true,
+      resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId, label: storedLabel, unexpected: true,
+    }).success).toBe(false);
+    expect(TeamCredentialExternalApiKeyCreateInputV1Schema.safeParse({
+      resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId, label: 'CI runner',
     }).success).toBe(false);
   });
 });

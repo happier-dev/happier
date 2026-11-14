@@ -72,6 +72,7 @@ import { measure } from './managedProjectionVolume.testkit';
 import { eventRouter } from '@/app/events/eventRouter';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('finite managed wake original Action authority (real storage)', () => {
     let harness: LightSqliteHarness | undefined;
@@ -1078,7 +1079,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const test = await setup();
         const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['projects.script.run' as const] },
             targets: { sessions: [], machines: [test.guest.id] } };
-        const pat = await auth.createApiToken({ accountId: test.account.id, tokenId: randomUUID(), label: 'original finite', grant });
+        const pat = await auth.createApiToken({ accountId: test.account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(test.account.id, 'original finite'), grant });
         const origin = await auth.mintExternalActionExecutionAuthorization({ accountId: test.account.id,
             principalId: test.account.id, credentialId: pat.tokenId, grant, serverIdentityId: homeId, machineId: test.guest.id,
             actionId: 'projects.script.run', requestId: test.requestId, requestEnvelopeDigest: 'b'.repeat(43),
@@ -1274,7 +1275,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const actionId = 'daemon.filesystem.listDirectory' as const;
         const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] },
             targets: { sessions: [], machines: [test.guest.id] } };
-        const pat = await auth.createApiToken({ accountId: requester.id, tokenId: randomUUID(), label: 'passive only', grant });
+        const pat = await auth.createApiToken({ accountId: requester.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(requester.id, 'passive only'), grant });
         const envelope = { ...sealExternalActionRequestV2({
             binding: { serverIdentityId: homeId, accountId: requester.id, credentialId: pat.tokenId,
                 actionId, requestId: test.requestId, target: { kind: 'machine', machineId: test.guest.id } },

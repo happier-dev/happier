@@ -1,5 +1,7 @@
 import { withTeamSessionAccessEffectsInTx } from "../memberships/sessionAccessEffects";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+
+import type { PrivateLabelStoredV1 } from "@happier-dev/protocol/crypto/privateLabelV1";
 
 import type {
     TeamErrorCodeV1,
@@ -17,11 +19,9 @@ import {
     encodeTeamGroupMembersCursorV1,
     encodeTeamGroupsCursorV1,
     teamGroupMembersQueryKeyV1,
-    teamGroupNameKeyV1,
     teamGroupsQueryKeyV1,
     teamMemberGroupsQueryKeyV1,
     validateTeamGroupDescriptionV1,
-    validateTeamGroupNameV1,
 } from "@happier-dev/protocol/teams";
 import { resolveGrantableTeamGroupsForActorInTx } from "./grantableGroups";
 
@@ -52,6 +52,7 @@ import {
     projectTeamGroupManagementV1,
     type TeamGroupRow,
 } from "./project";
+import { prepareTeamGroupNameForHumanWriteInTx } from "./privateLabels";
 
 /**
  * The authorized flat-Group operations.
@@ -183,6 +184,7 @@ async function projectGroupInTx(
     ]);
     return projectTeamGroupV1({
         row: input.row,
+        recipientAccountId: input.context.actorAccountId,
         memberCount,
         manageGroups: input.context.teamCapabilities.manageGroups,
         teamArchivedAt: input.context.team.archivedAt,
@@ -210,6 +212,7 @@ async function projectGroupPageInTx(
     const countByGroup = new Map(counts.map((count) => [count.teamGroupId, count._count._all]));
     return input.rows.map((row) => projectTeamGroupV1({
         row,
+        recipientAccountId: input.context.actorAccountId,
         memberCount: countByGroup.get(row.id) ?? 0,
         manageGroups: input.context.teamCapabilities.manageGroups,
         teamArchivedAt: input.context.team.archivedAt,
@@ -243,7 +246,7 @@ export async function listTeamGroupsForActorInTx(
         teamId: input.teamId,
         archived: input.archived,
     });
-    let after: Readonly<{ nameKey: string; id: string }> | null = null;
+    let after: Readonly<{ id: string }> | null = null;
     if (input.cursor) {
         const decoded = decodeTeamGroupsCursorV1(input.cursor, queryKey);
         if (decoded.status !== "ok") return denied("invalid_team_cursor");
@@ -255,16 +258,9 @@ export async function listTeamGroupsForActorInTx(
         where: {
             teamId: input.teamId,
             archivedAt: input.archived === "archived" ? { not: null } : null,
-            ...(after
-                ? {
-                    OR: [
-                        { nameKey: { gt: after.nameKey } },
-                        { nameKey: after.nameKey, id: { gt: after.id } },
-                    ],
-                }
-                : {}),
+            ...(after ? { id: { gt: after.id } } : {}),
         },
-        orderBy: [{ nameKey: "asc" }, { id: "asc" }],
+        orderBy: { id: "asc" },
         take: limit + 1,
         select: TEAM_GROUP_ROW_SELECT,
     });
@@ -278,7 +274,7 @@ export async function listTeamGroupsForActorInTx(
         value: {
             items,
             nextCursor: last
-                ? encodeTeamGroupsCursorV1({ queryKey, nameKey: last.nameKey, id: last.id })
+                ? encodeTeamGroupsCursorV1({ queryKey, id: last.id })
                 : null,
         },
     };
@@ -322,7 +318,7 @@ export async function listTeamMemberGroupsForActorInTx(
         teamId: input.teamId,
         membershipId: input.membershipId,
     });
-    let after: Readonly<{ nameKey: string; id: string }> | null = null;
+    let after: Readonly<{ id: string }> | null = null;
     if (input.cursor) {
         const decoded = decodeTeamGroupsCursorV1(input.cursor, queryKey);
         if (decoded.status !== "ok") return denied("invalid_team_cursor");
@@ -334,16 +330,9 @@ export async function listTeamMemberGroupsForActorInTx(
         where: {
             teamId: input.teamId,
             memberships: { some: { teamMembershipId: input.membershipId } },
-            ...(after
-                ? {
-                    OR: [
-                        { nameKey: { gt: after.nameKey } },
-                        { nameKey: after.nameKey, id: { gt: after.id } },
-                    ],
-                }
-                : {}),
+            ...(after ? { id: { gt: after.id } } : {}),
         },
-        orderBy: [{ nameKey: "asc" }, { id: "asc" }],
+        orderBy: { id: "asc" },
         take: limit + 1,
         select: TEAM_GROUP_ROW_SELECT,
     });
@@ -356,7 +345,7 @@ export async function listTeamMemberGroupsForActorInTx(
         value: {
             items,
             nextCursor: last
-                ? encodeTeamGroupsCursorV1({ queryKey, nameKey: last.nameKey, id: last.id })
+                ? encodeTeamGroupsCursorV1({ queryKey, id: last.id })
                 : null,
         },
     };
@@ -384,9 +373,13 @@ function groupCreateRequestKey(actorAccountId: string, teamId: string, requestKe
     return `teams.groups.create:${actorAccountId}:${teamId}:${requestKey}`;
 }
 
-function groupCreatePayloadDigest(input: Readonly<{ name: string; description: string | null }>): string {
+function groupCreatePayloadDigest(input: Readonly<{
+    groupId: string;
+    name: PrivateLabelStoredV1;
+    description: string | null;
+}>): string {
     return createHash("sha256")
-        .update(JSON.stringify([input.name, input.description]))
+        .update(JSON.stringify([input.groupId, input.name, input.description]))
         .digest("base64url");
 }
 
@@ -403,7 +396,8 @@ export async function createTeamGroupForActorInTx(
     input: Readonly<{
         teamId: string;
         actorAccountId: string;
-        name: string;
+        groupId: string;
+        name: PrivateLabelStoredV1;
         description?: string | null;
         requestKey: string;
         authentication?: TeamOperationAuthenticationContext;
@@ -420,14 +414,13 @@ export async function createTeamGroupForActorInTx(
     const qualified = await qualifyTeamViewerInTx(tx, { context, authentication: input.authentication });
     if (!qualified.ok) return qualified;
 
-    const name = validateTeamGroupNameV1(input.name);
-    if (name.status !== "ok") return denied("invalid_team_input");
     const description = validateTeamGroupDescriptionV1(input.description);
     if (description.status !== "ok") return denied("invalid_team_input");
 
     const dedupeKey = groupCreateRequestKey(context.actorAccountId, input.teamId, input.requestKey);
     const digest = groupCreatePayloadDigest({
-        name: name.name,
+        groupId: input.groupId,
+        name: input.name,
         description: description.description,
     });
     const now = await readTransactionDatabaseTime(tx);
@@ -440,24 +433,30 @@ export async function createTeamGroupForActorInTx(
         return { ok: true, value: await projectGroupInTx(tx, { context, row: replayed }) };
     }
 
-    const nameKey = teamGroupNameKeyV1(name.name);
-    const proposedId = randomUUID();
-    const created = await tx.teamGroup.upsert({
-        where: { teamId_nameKey: { teamId: input.teamId, nameKey } },
-        create: {
-            id: proposedId,
+    const name = await prepareTeamGroupNameForHumanWriteInTx({
+        tx,
+        authorAccountId: input.actorAccountId,
+        teamId: input.teamId,
+        label: input.name,
+    });
+    if (name.kind !== "ready") return denied("invalid_team_input");
+    // The client minted this id before sealing, so it is the exact cipher
+    // binding. An improbable reused id is a visible retry conflict, not a
+    // label-derived uniqueness decision.
+    const existing = await tx.teamGroup.findUnique({
+        where: { id: input.groupId },
+        select: { id: true },
+    });
+    if (existing) return denied("team_conflict");
+    const created = await tx.teamGroup.create({
+        data: {
+            id: input.groupId,
             teamId: input.teamId,
-            name: name.name,
-            nameKey,
+            name: name.serialized,
             ...(description.description === null ? {} : { description: description.description }),
         },
-        update: {},
         select: TEAM_GROUP_ROW_SELECT,
     });
-    // The in-Team name key is unique, and an archived Group still holds its
-    // name. The proposed id tells us whether this request inserted the row or
-    // atomically observed somebody else's without relying on a caught P2002.
-    if (created.id !== proposedId) return denied("group_name_taken");
 
     await saveRepeatKey(tx, dedupeKey, `${digest}:${created.id}`, defaultRepeatKeyExpiresAt(now));
     await publishTeamChangedInTx(tx, { teamId: input.teamId });
@@ -504,7 +503,7 @@ export async function updateTeamGroupForActorInTx(
         teamId: string;
         actorAccountId: string;
         groupId: string;
-        name?: string;
+        name?: PrivateLabelStoredV1;
         description?: string | null;
         authentication?: TeamOperationAuthenticationContext;
     }>,
@@ -521,19 +520,16 @@ export async function updateTeamGroupForActorInTx(
     const qualified = await qualifyTeamViewerInTx(tx, { context, authentication: input.authentication });
     if (!qualified.ok) return qualified;
 
-    const data: { name?: string; nameKey?: string; description?: string | null } = {};
+    const data: { name?: string; description?: string | null } = {};
     if (input.name !== undefined) {
-        const name = validateTeamGroupNameV1(input.name);
-        if (name.status !== "ok") return denied("invalid_team_input");
-        data.name = name.name;
-        // Renaming never changes identity or resource grants; only the display
-        // name and the in-Team uniqueness key move.
-        data.nameKey = teamGroupNameKeyV1(name.name);
-        const collision = await tx.teamGroup.findFirst({
-            where: { teamId: input.teamId, nameKey: data.nameKey, id: { not: row.id } },
-            select: { id: true },
+        const name = await prepareTeamGroupNameForHumanWriteInTx({
+            tx,
+            authorAccountId: input.actorAccountId,
+            teamId: input.teamId,
+            label: input.name,
         });
-        if (collision) return denied("group_name_taken");
+        if (name.kind !== "ready") return denied("invalid_team_input");
+        data.name = name.serialized;
     }
     if (input.description !== undefined) {
         const description = validateTeamGroupDescriptionV1(input.description);
@@ -541,9 +537,8 @@ export async function updateTeamGroupForActorInTx(
         data.description = description.description;
     }
 
-    // A concurrent same-name rename is allowed to abort the transaction rather
-    // than catching P2002 and attempting to commit an already-aborted PostgreSQL
-    // transaction. The normal collision path above remains a typed refusal.
+    // Group labels have no server-side text uniqueness. The immutable Group ID
+    // remains the update target, so no label-collision recovery branch is needed.
     const updated = await tx.teamGroup.update({
         where: { id: row.id },
         data,

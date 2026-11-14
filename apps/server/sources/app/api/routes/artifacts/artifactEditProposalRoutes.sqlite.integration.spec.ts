@@ -19,6 +19,7 @@ import { eventRouter } from '@/app/events/eventRouter';
 import { enableAuthentication } from '../../utils/enableAuthentication';
 import { enableErrorHandlers } from '../../utils/enableErrorHandlers';
 import { artifactsRoutes } from './artifactsRoutes';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 const encoded = encodePlainArtifactStoredContent;
@@ -98,7 +99,7 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
 
     it('refuses automation and caller-supplied authority without any writes or update events', async () => {
         const f = await fixture();
-        const pat = await auth.createApiToken({ accountId: f.owner.id, tokenId: crypto.randomUUID(), label: 'Cannot decide' });
+        const pat = await auth.createApiToken({ accountId: f.owner.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(f.owner.id, 'Cannot decide') });
         const events = vi.spyOn(eventRouter, 'emitUpdate');
         const before = await db.accountChange.count({ where: { accountId: f.owner.id } });
         try {

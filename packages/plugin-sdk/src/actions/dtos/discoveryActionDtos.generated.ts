@@ -4737,7 +4737,20 @@ export type DiscoveryActionResultById = {
                     sourceOwnerDisplayName: null | string;
                     id: string;
                     teamId: string;
-                    displayName: string;
+                    displayName: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
                     resourceRevision: number;
                     readiness: {
                         kind: 'available';

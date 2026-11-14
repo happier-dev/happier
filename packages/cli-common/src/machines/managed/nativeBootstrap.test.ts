@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder } from './nativeBootstrap.js';
 import { openManagedNativeChannel } from './nativeChannel.js';
 import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMachineEnrollment.js';
 import type { ManagedNativeInvocationIO } from './reconcile.js';
 
-const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ homeId: 'home', managedId: 'managed', requestId: 'request',
+const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ homeId: 'home', managedId: 'managed', requestId: 'request',
     expectedIntentRevision: 0, controller: { machineId: 'controller', installationId: 'installation' },
     resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'same-resource' } } });
 

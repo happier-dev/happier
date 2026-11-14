@@ -197,9 +197,9 @@ export function registerAutomationV3Routes(
                 loadAutomationLastRunAtProjections(accountId, rows.map(row => row.id)),
                 'details' in query ? loadAutomationScheduleOccurrences(accountId, rows.map(row => row.id)) : undefined,
             ]);
+            const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
+            if (!accountCurrentness) return sendStoredContentFailure(reply);
             if ('details' in query) {
-                const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
-                if (!accountCurrentness) return sendStoredContentFailure(reply);
                 return AutomationDefinitionDetailsResponseSchema.parse({
                     automations: rows.map(row => ({ ...toAutomationDefinitionDetailApiDto(row, accountCurrentness, lastRunAt.get(row.id) ?? null,
                         eventProjections, lifecycleProjections.get(row.id)), scheduleOccurrences: scheduleOccurrences?.get(row.id) ?? [] })),
@@ -215,6 +215,7 @@ export function registerAutomationV3Routes(
                     lastRunAt.get(row.id) ?? null,
                     eventProjections,
                     lifecycleProjections.get(row.id),
+                    accountCurrentness,
                 )),
                 nextCursor: page.nextCursor,
             });

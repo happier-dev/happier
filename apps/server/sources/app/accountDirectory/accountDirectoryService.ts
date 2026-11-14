@@ -42,9 +42,11 @@ import {
     verifyHomeLoginAssertionSignature,
 } from "./accountDirectorySigner";
 import { ACCOUNT_DIRECTORY_MAX_HOME_LOGIN_CREDENTIAL_PLAINTEXT_BYTES, createHomeCredentialDestinationDigestV1, createHomeLoginAssertionSigningBytesV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { serializePrivateLabelStoredV1, type PrivateLabelStoredV1 } from '@happier-dev/protocol';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { isValidBoxBundlePublicKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
 
 const HOME_DIRECTORY_ENTRY_SELECT = {
     homeServerIdentityId: true,
@@ -111,13 +113,41 @@ function mapDescriptor(value: unknown): HomeConnectionDescriptorV1 {
     return parsed.data;
 }
 
-function mapHomeRow(row: HomeDirectoryEntryRow, preferredHomeServerIdentityId: string | null) {
+function requireAdmittedHomeLabel(
+    admitted: Awaited<ReturnType<typeof admitAccountPrivateLabelWriteInTx>>,
+): PrivateLabelStoredV1 {
+    if (admitted.kind === "available") {
+        return admitted.stored;
+    }
+    if (admitted.kind === "mode_mismatch") {
+        throw new AccountDirectoryError("label_mode_mismatch", "Home label encryption mode does not match the Account");
+    }
+    throw new AccountDirectoryError("invalid_request", "Invalid Home label");
+}
+
+function mapHomeRow(
+    row: HomeDirectoryEntryRow,
+    preferredHomeServerIdentityId: string | null,
+    account: Readonly<{ id: string; encryptionMode: "plain" | "e2ee" }>,
+) {
     const descriptor = mapDescriptor(row.connectionDescriptor);
+    const label = row.label === "" ? null : (() => {
+        const projected = projectAccountPrivateLabelForRecipientV1({
+            serialized: row.label,
+            mode: account.encryptionMode,
+            recipientAccountId: account.id,
+        });
+        if (projected.kind === "available") return projected.label;
+        if (projected.kind === "mode_mismatch") {
+            throw new AccountDirectoryError("label_mode_mismatch", "Stored Home label encryption mode does not match the Account");
+        }
+        throw new AccountDirectoryError("invalid_request", "Invalid stored Home label");
+    })();
     const mapped = {
         v: 1 as const,
         homeServerIdentityId: row.homeServerIdentityId,
         canonicalServerUrl: row.canonicalServerUrl,
-        label: row.label,
+        label,
         connectionDescriptor: descriptor,
         createdAtMs: row.createdAt.getTime(),
         updatedAtMs: row.updatedAt.getTime(),
@@ -150,6 +180,7 @@ export async function readAccountDirectoryMe(accountId: string): Promise<Account
     return AccountDirectoryMeResponseSchema.parse({
         v: 1,
         accountId: user.id,
+        encryptionMode: user.encryptionMode,
         displayName,
         avatar: (() => {
             const avatar = user.avatar;
@@ -175,7 +206,11 @@ export async function readAccountDirectoryMe(accountId: string): Promise<Account
 
 export async function listAccountHomeDirectory(accountId: string) {
     return inReadSnapshot(async (tx) => {
-        const account = await tx.account.findUnique({ where: { id: accountId }, select: { preferredHomeServerIdentityId: true } });
+        const account = await tx.account.findUnique({ where: { id: accountId }, select: {
+            id: true,
+            encryptionMode: true,
+            preferredHomeServerIdentityId: true,
+        } });
         if (!account) throw new AccountDirectoryError("not_found", "Account not found");
         const rows = await tx.accountHomeDirectoryEntry.findMany({
             where: { accountId },
@@ -185,7 +220,7 @@ export async function listAccountHomeDirectory(accountId: string) {
         return AccountDirectoryHomesResponseV1Schema.parse({
             v: 1 as const,
             preferredHomeServerIdentityId: account.preferredHomeServerIdentityId ?? null,
-            homes: rows.map((row) => mapHomeRow(row, account.preferredHomeServerIdentityId ?? null)),
+            homes: rows.map((row) => mapHomeRow(row, account.preferredHomeServerIdentityId ?? null, account)),
         });
     });
 }
@@ -195,7 +230,7 @@ async function upsertAccountHomeDirectoryEntryInTx(
     params: Readonly<{
         accountId: string;
         homeServerIdentityId: string;
-        label: string;
+        label: PrivateLabelStoredV1 | null;
         preserveExistingLabel?: boolean;
         connectionDescriptor: HomeConnectionDescriptorV1;
     }>,
@@ -203,7 +238,11 @@ async function upsertAccountHomeDirectoryEntryInTx(
     // All directory writers share this admission before reading descriptor
     // revisions, first-Home predicates, or the current preference.
     await acquireAccountSessionOwnerMetadataFencesInTx(tx, [params.accountId], "exclusive");
-    const account = await tx.account.findUnique({ where: { id: params.accountId }, select: { preferredHomeServerIdentityId: true } });
+    const account = await tx.account.findUnique({ where: { id: params.accountId }, select: {
+        id: true,
+        encryptionMode: true,
+        preferredHomeServerIdentityId: true,
+    } });
     if (!account) throw new AccountDirectoryError("not_found", "Account not found");
     const where = { accountId_homeServerIdentityId: { accountId: params.accountId, homeServerIdentityId: params.homeServerIdentityId } };
     const existing = await tx.accountHomeDirectoryEntry.findUnique({
@@ -212,7 +251,15 @@ async function upsertAccountHomeDirectoryEntryInTx(
     });
     const label = params.preserveExistingLabel && existing
         ? existing.label
-        : params.label;
+        : params.label === null
+            ? ""
+            : serializePrivateLabelStoredV1(requireAdmittedHomeLabel(
+                await admitAccountPrivateLabelWriteInTx(tx, {
+                    accountId: params.accountId,
+                    mode: account.encryptionMode,
+                    stored: params.label,
+                }),
+            ));
     const data = {
         canonicalServerUrl: params.connectionDescriptor.canonicalServerUrl,
         label,
@@ -268,13 +315,13 @@ async function upsertAccountHomeDirectoryEntryInTx(
             preferredHomeServerIdentityId = refreshed?.preferredHomeServerIdentityId ?? null;
         }
     }
-    return mapHomeRow(row, preferredHomeServerIdentityId);
+    return mapHomeRow(row, preferredHomeServerIdentityId, account);
 }
 
 export async function upsertAccountHomeDirectoryEntry(params: Readonly<{
     accountId: string;
     homeServerIdentityId: string;
-    label: string;
+    label: PrivateLabelStoredV1;
     connectionDescriptor: unknown;
 }>): Promise<ReturnType<typeof mapHomeRow>> {
     const body = AccountDirectoryHomePutRequestSchema.parse({
@@ -572,7 +619,10 @@ export async function ensureSameServiceHomeEntryInTx(
     const home = await upsertAccountHomeDirectoryEntryInTx(tx, {
         accountId: params.accountId,
         homeServerIdentityId: preparation.serverIdentityId,
-        label: "Home",
+        // Bootstrap runs before an E2EE client key may exist. The empty stored
+        // representation is projected as `null`, leaving clients to render
+        // their neutral Home fallback or later seal an intentional label.
+        label: null,
         preserveExistingLabel: true,
         connectionDescriptor: preparation.homeConnectionDescriptor,
     });

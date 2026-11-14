@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { verifySparseSessionListing } from "./sparseListing.test-support";
 import { verifyFolderSessionListing } from "./folderListing.test-support";
 import { verifySessionSpaceMembershipListing } from "./spaceMembership.test-support";
@@ -1124,8 +1125,7 @@ describe("Session listing predicate composition (SQLite)", () => {
         const groupName = randomUUID();
         const group = await db.teamGroup.create({ data: {
             teamId: team.id,
-            name: groupName,
-            nameKey: groupName,
+            name: storedPlainPrivateLabel(groupName),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,

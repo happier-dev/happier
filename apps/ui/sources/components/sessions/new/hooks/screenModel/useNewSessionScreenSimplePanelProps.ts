@@ -1,3 +1,4 @@
+import { readManagedMachineSelectionName } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { useNewSessionSimplePanelProps } from '@/components/sessions/new/hooks/useNewSessionSimplePanelProps';
 import type { MachinePoolSelectionOriginV1} from '@happier-dev/protocol/machines/pools/v1';
@@ -6,7 +7,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { describeExecutionTargetDestination } from '@/components/sessions/new/hooks/temporaryComputerTargetPresentation';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import type { ManagedSessionPlacementV1, ResolvedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { t } from '@/text';
 import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 
@@ -131,7 +132,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         managedMachineSelection?: ManagedMachineSelectionDraft | null;
         managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
         /** The managed layer that placed the preset; a Team or Group default says so in the chip. */
-        managedPlacementSource?: 'policy' | 'explicit' | 'group' | 'team' | 'home' | 'none' | null;
+        managedPlacementSource?: ResolvedManagedSessionDefaults['placement']['source'] | null;
         /** The placed preset's name once its record is read; the chip says "New machine" until then. */
         managedPlacementPresetName?: string | null;
         destination?: Readonly<{
@@ -165,7 +166,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     // A chosen destination (a machine being created, a Temporary computer) is named even before it exists.
     const noMachineYet = hasMachine === false && !executionTarget && !selectedMachine && !managedMachineSelection && !managedPlacementPreset;
     const temporaryComputerName = describeExecutionTargetDestination(executionTarget);
-    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? managedMachineSelection?.receipt.launch.name
+    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? readManagedMachineSelectionName(managedMachineSelection)
         ?? (managedPlacementPreset ? managedPlacementPresetName || t('managedMachines.picker.newMachine') : undefined);
     const destinationParts = machineName ? [machineName] : [];
     // A preset the member did not pick says which default placed it; picking anything else replaces both parts.

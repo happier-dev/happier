@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -14,7 +15,7 @@ describe("Machine sharing relational constraints (real SQLite)", () => {
         const recipient = await db.account.create({ data: {} });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
         const team = await db.team.create({ data: { name: "Machine schema" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Group", nameKey: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Group") } });
         for (const [principalKind, principalColumn, principalId] of [
             ["account", "accountId", recipient.id],
             ["team", "teamId", team.id],

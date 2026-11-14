@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { decodeTeamKeysetCursorV1, encodeTeamKeysetCursorV1, readTeamKeysetIdV1, readTeamKeysetTimeV1 } from '@happier-dev/protocol/teams';
-import { TeamCredentialActivityKindV1Schema, type TeamCredentialActivityKindV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import {
+    TeamCredentialActivityKindV1Schema,
+    type TeamCredentialActivityKindV1,
+    type TeamCredentialResourceActivityEventV1,
+} from '@happier-dev/protocol/teams/credentials/resourceV1';
+import {
+    PrivateLabelStoredV1Schema,
+    serializePrivateLabelStoredV1,
+    type PrivateLabelStoredV1,
+} from '@happier-dev/protocol/crypto/privateLabelV1';
+import { TeamCredentialExternalApiKeyIdV1Schema } from '@happier-dev/protocol/teams/credentials/externalApiKeyV1';
 import type { Tx } from "@/storage/inTx";
 import { resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
 import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
@@ -11,8 +21,57 @@ import { admitSavedSecretDisclosureInTx as admitSavedSecretResourceDisclosureInT
 import { SavedSecretDisclosureOutcomeV1Schema, SavedSecretCopyOutcomeV1Schema, SavedSecretDisclosureHistoryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1, savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
+import {
+    projectTeamCredentialExternalApiKeyLabelForRecipient,
+    projectTeamCredentialResourceDisplayNameForRecipient,
+} from './privateLabels';
 
 type ActivityCursor = Readonly<{ createdAt: number; id: string }>;
+type TeamCredentialExternalApiKeyActivitySnapshotV1 = Readonly<{
+    v: 1;
+    kind: 'team_credential_external_api_key_label_snapshot';
+    externalApiKeyId: string;
+    label: PrivateLabelStoredV1;
+}>;
+
+/**
+ * This is intentionally a distinct persisted audit subject: a key-label
+ * ciphertext is bound to the key id, whereas credential-resource snapshots
+ * are bound to the resource id. There is no raw-label compatibility arm.
+ */
+function readTeamCredentialExternalApiKeyActivitySnapshotV1(
+    serialized: string,
+): TeamCredentialExternalApiKeyActivitySnapshotV1 | null {
+    try {
+        const value = JSON.parse(serialized) as unknown;
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+        const record = value as Record<string, unknown>;
+        const keys = Object.keys(record);
+        if (keys.length !== 4
+            || !['v', 'kind', 'externalApiKeyId', 'label'].every((key) => keys.includes(key))
+            || record.v !== 1
+            || record.kind !== 'team_credential_external_api_key_label_snapshot') return null;
+        const externalApiKeyId = TeamCredentialExternalApiKeyIdV1Schema.safeParse(record.externalApiKeyId);
+        const label = PrivateLabelStoredV1Schema.safeParse(record.label);
+        return externalApiKeyId.success && label.success
+            ? { v: 1, kind: 'team_credential_external_api_key_label_snapshot', externalApiKeyId: externalApiKeyId.data, label: label.data }
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function serializeTeamCredentialExternalApiKeyActivitySnapshotV1(input: Readonly<{
+    externalApiKeyId: string;
+    label: PrivateLabelStoredV1;
+}>): string {
+    return JSON.stringify({
+        v: 1,
+        kind: 'team_credential_external_api_key_label_snapshot',
+        externalApiKeyId: TeamCredentialExternalApiKeyIdV1Schema.parse(input.externalApiKeyId),
+        label: PrivateLabelStoredV1Schema.parse(input.label),
+    } satisfies TeamCredentialExternalApiKeyActivitySnapshotV1);
+}
 
 function directDeliveryActivityId(resourceId: string, recipientAccountId: string): string {
     const digest = createHash("sha256")
@@ -42,13 +101,8 @@ function decodeActivityCursor(value: string, resourceId: string, ownerAccountId?
 }
 
 export type ReadTeamCredentialActivityResult =
-    | Readonly<{ ok: true; page: { items: readonly Readonly<{
-        kind: TeamCredentialActivityKindV1;
-        actorDisplayName: string | null;
-        subjectDisplayName: string;
-        createdAt: string;
-    }>[]; nextCursor: string | null } }>
-    | Readonly<{ ok: false; error: "resource_not_found" | "resource_forbidden" | "invalid_resource_input" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
+    | Readonly<{ ok: true; page: { items: readonly TeamCredentialResourceActivityEventV1[]; nextCursor: string | null } }>
+    | Readonly<{ ok: false; error: "resource_not_found" | "resource_forbidden" | "invalid_resource_input" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
 /** Reads the narrow metadata history through the same Team capability owner as mutations. */
 export async function readTeamCredentialActivityInTx(
@@ -95,14 +149,31 @@ export async function readTeamCredentialActivityInTx(
         },
     });
     const page = rows.slice(0, limit);
-    const items = page.map(row => ({
-        kind: TeamCredentialActivityKindV1Schema.parse(row.kind),
-        actorDisplayName: row.actorAccount
+    const items: TeamCredentialResourceActivityEventV1[] = [];
+    for (const row of page) {
+        const kind = TeamCredentialActivityKindV1Schema.parse(row.kind);
+        const actorDisplayName = row.actorAccount
             ? resolveAccountDisplayLabelV1(row.actorAccount)
-            : null,
-        subjectDisplayName: row.subjectDisplayName,
-        createdAt: row.createdAt.toISOString(),
-    }));
+            : null;
+        const createdAt = row.createdAt.toISOString();
+        if (kind === 'external_key_created' || kind === 'external_key_revoked') {
+            const snapshot = readTeamCredentialExternalApiKeyActivitySnapshotV1(row.subjectDisplayName);
+            if (snapshot === null) return { ok: false, error: 'resource_corrupt' };
+            const subjectDisplayName = projectTeamCredentialExternalApiKeyLabelForRecipient({
+                serialized: serializePrivateLabelStoredV1(snapshot.label),
+                recipientAccountId: input.actorAccountId,
+            });
+            if (subjectDisplayName === null) return { ok: false, error: 'resource_corrupt' };
+            items.push({ kind, actorDisplayName, externalApiKeyId: snapshot.externalApiKeyId, subjectDisplayName, createdAt });
+            continue;
+        }
+        const subjectDisplayName = projectTeamCredentialResourceDisplayNameForRecipient({
+            serialized: row.subjectDisplayName,
+            recipientAccountId: input.actorAccountId,
+        });
+        if (subjectDisplayName === null) return { ok: false, error: 'resource_corrupt' };
+        items.push({ kind, actorDisplayName, subjectDisplayName, createdAt });
+    }
     const last = page[page.length - 1];
     const nextCursor = rows.length > limit && last
         ? encodeActivityCursor({ createdAt: last.createdAt.getTime(), id: last.id }, input.resourceId)
@@ -116,8 +187,8 @@ export type TeamCredentialActivityActor =
     | Readonly<{ kind: "account"; accountId: string }>
     | Readonly<{ kind: "system" }>;
 
-/** Records only public administrative context in the transaction that changes it. */
-export async function recordTeamCredentialActivityInTx(
+/** Writes an already-serialized opaque subject snapshot for the activity wrappers below. */
+async function recordTeamCredentialActivitySerializedSubjectInTx(
     tx: Tx,
     input: Readonly<{
         teamId: string;
@@ -137,6 +208,47 @@ export async function recordTeamCredentialActivityInTx(
     } });
 }
 
+/** Resource events store a sealed display-name snapshot bound to the resource. */
+export async function recordTeamCredentialResourceActivityInTx(
+    tx: Tx,
+    input: Readonly<{
+        teamId: string;
+        resourceId: string;
+        kind: Exclude<TeamCredentialActivityKindV1, 'external_key_created' | 'external_key_revoked'>;
+        actor: TeamCredentialActivityActor;
+        subjectDisplayName: PrivateLabelStoredV1;
+    }>,
+): Promise<void> {
+    await recordTeamCredentialActivitySerializedSubjectInTx(tx, {
+        ...input,
+        subjectDisplayName: serializePrivateLabelStoredV1(input.subjectDisplayName),
+    });
+}
+
+/** External-key history stores a sealed snapshot bound to its immutable key id. */
+export async function recordTeamCredentialExternalApiKeyActivityInTx(
+    tx: Tx,
+    input: Readonly<{
+        teamId: string;
+        resourceId: string;
+        externalApiKeyId: string;
+        kind: Extract<TeamCredentialActivityKindV1, 'external_key_created' | 'external_key_revoked'>;
+        actor: TeamCredentialActivityActor;
+        label: PrivateLabelStoredV1;
+    }>,
+): Promise<void> {
+    await recordTeamCredentialActivitySerializedSubjectInTx(tx, {
+        teamId: input.teamId,
+        resourceId: input.resourceId,
+        kind: input.kind,
+        actor: input.actor,
+        subjectDisplayName: serializeTeamCredentialExternalApiKeyActivitySnapshotV1({
+            externalApiKeyId: input.externalApiKeyId,
+            label: input.label,
+        }),
+    });
+}
+
 /**
  * Records the first irreversible disclosure for one resource recipient.
  * The existing Activity primary key is the idempotency owner, so concurrent
@@ -148,7 +260,7 @@ export async function recordTeamCredentialDirectDeliveryActivityInTx(
         teamId: string;
         resourceId: string;
         recipientAccountId: string;
-        subjectDisplayName: string;
+        subjectDisplayName: PrivateLabelStoredV1;
     }>,
 ): Promise<void> {
     await tx.teamCredentialActivityEvent.upsert({
@@ -161,7 +273,7 @@ export async function recordTeamCredentialDirectDeliveryActivityInTx(
             resourceId: input.resourceId,
             kind: "direct_delivered",
             actorAccountId: input.recipientAccountId,
-            subjectDisplayName: input.subjectDisplayName,
+            subjectDisplayName: serializePrivateLabelStoredV1(input.subjectDisplayName),
         },
     });
 }

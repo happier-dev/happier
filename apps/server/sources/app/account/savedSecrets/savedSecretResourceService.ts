@@ -11,9 +11,9 @@ import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectS
 import type { SavedSecretBackupRekeyRequiredV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
-import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
+import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretOpaquePresetRewritesV1Schema, SavedSecretPersonalPromotionsV1Schema,
     type SavedSecretReferenceCensusV1, type SavedSecretPromoteReferenceCensusV1, type SavedSecretCatalogMutationsV1,
-    type SavedSecretCatalogRevisionsV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+    type SavedSecretCatalogRevisionsV1, type SavedSecretOpaquePresetRewritesV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deriveSavedSecretImportResourceIdV1, listAccountSettingsSavedSecretReferences,
     rewriteSavedSecretReferenceCatalogsV1,
     type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
@@ -27,12 +27,13 @@ import { type ProfileTransferControlV1 } from '@happier-dev/protocol/profiles/pr
 import { listTransferredProfileIdsV1, loadAiLaunchProfileArtifacts, removeTransferredProfileSourcesV1, resolveProfileCatalogAuthorityV1 } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { readLaunchProfileArtifactForReferenceCensusV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
-import { parseSavedSecretRefV1, listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { RemoteHostCatalogRowMutationV1Schema, isCompleteRetainedRemoteHostCatalogV1, readRetainedRemoteHostCatalogV1, type RemoteHostCatalogRowMutationV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
-import { MachineSetupV1ReadSchema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { invalidatePresetInTx, readMachinePresetPublicationAudienceInTx } from '@/app/machines/managed/machinePresetService';
-import { invalidateManagedMachineInTx, readManagedMachinePublicationAudienceInTx } from '@/app/machines/managed/managedRows';
+import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { rewriteMachinePresetContentInTx } from '@/app/machines/managed/machinePresetService';
+import { invalidateManagedMachineInTx, ManagedMachineError, readManagedJsonEqualityOperand } from '@/app/machines/managed/managedRows';
+import { readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from '@/app/machines/managed/managedMachineProjection';
 import { readRemoteHostCatalogRowInTx, mutateRemoteHostCatalogRowInTx, validateRemoteHostReferenceCensusInTx } from '@/app/account/remoteHosts/remoteHostRows';
 import { NotificationChannelCatalogMutationV1Schema, readLegacyNotificationChannelInventoryV1, isCompleteLegacyNotificationChannelSourceV1,
     type NotificationChannelCatalogMutationV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -50,6 +51,7 @@ import { openPlainAccountSettingsDbValue } from '@/app/encryption/accountSetting
 import { advanceProfileReferenceGuardInTx, mutateProfileRowsInTx, validateProfileReferenceCensusInTx } from '@/app/account/profiles/profileRows';
 import { readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferControl';
 import { readArtifactForCallerInTx, projectPlainArtifactSharingResourceV1 } from '@/app/artifacts/artifactAccessService';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { readMcpServerCatalogRowInTx, mutateMcpServerCatalogRowInTx } from '@/app/account/mcp/serverRows';
@@ -62,6 +64,15 @@ import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@h
 import { readPromptLibraryRowInTx, mutatePromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
 import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
+import {
+    RESOURCE_RECIPIENT_ACCOUNT_SELECT,
+    projectSavedSecretRecipientEnvelopeCensusRecipientsV1,
+    readResourceRecipientEnvelopeRejectionV1,
+    readTargetOwnerRecipientEnvelopeRejectionV1,
+    resolveSavedSecretAudienceAccountIdsInTx,
+    type ResourceRecipientAccountRow,
+    type ResourceRecipientEnvelopeRejectionV1,
+} from "@/app/encryption/savedSecretRecipientEnvelopeCensus";
 import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx } from "@/app/teams/shareEligibility";
 import {
     qualifyTeamOperationAuthenticationsInTx,
@@ -277,13 +288,6 @@ function authorizedSavedSecretRowSelect(accountId: string) {
         },
     } as const;
 }
-
-type SavedSecretRecipientAccountRow = Readonly<{
-    publicKey: string | null;
-    encryptionMode: string | null;
-    contentPublicKey: Uint8Array | null;
-    contentPublicKeySig: Uint8Array | null;
-}>;
 
 /**
  * Which of these Teams the caller's exact credential currently qualifies for.
@@ -533,41 +537,6 @@ async function listAuthorizedAccountIdsForResourceInTx(tx: Tx, resourceId: strin
     return listAuthorizedAccountIdsForResourcesInTx(tx, [resourceId]);
 }
 
-async function resolveSavedSecretAudienceAccountIdsInTx(
-    tx: Tx,
-    input: Readonly<{
-        ownerAccountId: string;
-        accountIds: readonly string[];
-        teamIds: readonly string[];
-        groupIds: readonly string[];
-    }>,
-): Promise<readonly string[]> {
-    const [teamMembers, groupMembers] = await Promise.all([
-        input.teamIds.length === 0 ? [] : tx.teamMembership.findMany({
-            where: {
-                teamId: { in: [...input.teamIds] },
-                ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
-                team: { archivedAt: null },
-            },
-            select: { accountId: true, role: true },
-        }),
-        input.groupIds.length === 0 ? [] : tx.teamGroupMembership.findMany({
-            where: {
-                teamGroupId: { in: [...input.groupIds] },
-                group: { archivedAt: null, team: { archivedAt: null } },
-                teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE,
-            },
-            select: { teamMembership: { select: { accountId: true } } },
-        }),
-    ]);
-    return [...new Set([
-        input.ownerAccountId,
-        ...input.accountIds,
-        ...teamMembers.filter((member) => isTeamPrincipalRoleV1(member.role)).map((member) => member.accountId),
-        ...groupMembers.map((member) => member.teamMembership.accountId),
-    ])];
-}
-
 /** Resolve before any Account subset or resource lock; growth uses the existing transaction replay. */
 async function acquireSavedSecretPublicationAccountsInTx(tx: Tx, accountId: string,
     read: () => Promise<readonly string[]>, intent: AccountAdmissionIntent = 'content'): Promise<() => Promise<void>> {
@@ -613,7 +582,6 @@ type SavedSecretCreationAudience = Pick<CreateSavedSecretResourceInput, 'account
 export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Readonly<{
     accountId: string;
     resources: readonly SavedSecretCreationAudience[];
-    promotedPersonalSecretIds?: readonly string[];
     connectedAccountCredentialMutation?: PromoteSavedSecretResourceInput['connectedAccountCredentialMutation'];
 }>): Promise<() => Promise<void>> {
     return acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => {
@@ -624,23 +592,6 @@ export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Read
         })));
         if (input.connectedAccountCredentialMutation) {
             audiences.push([...await readAccountCredentialSourceTeamAdmissionAccountIdsInTx(tx, input)]);
-        }
-        const sources = input.promotedPersonalSecretIds ?? [];
-        if (sources.length > 0) {
-            const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
-            const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } } });
-            for (const preset of presets) {
-                if (!sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(preset.setup, { secretId }).length > 0)) continue;
-                audiences.push(await readMachinePresetPublicationAudienceInTx(tx, preset.teamId
-                    ? { kind: 'team', teamId: preset.teamId } : { kind: 'account', accountId: preset.custodianAccountId ?? '' }));
-            }
-            const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId } });
-            for (const machine of machines) {
-                const setup = machine.machineSetup;
-                if (setup === null || typeof setup !== 'object' || Array.isArray(setup) || !('setup' in setup)
-                    || !sources.some(secretId => listSavedSecretReferenceCarrierPathsV1(setup.setup, { secretId }).length > 0)) continue;
-                audiences.push(await readManagedMachinePublicationAudienceInTx(tx, { homeId: machine.homeId, managedId: machine.id }));
-            }
         }
         return [...new Set([input.accountId, ...audiences.flat()])];
     }, input.connectedAccountCredentialMutation ? 'exclusive' : 'content');
@@ -686,12 +637,7 @@ type SavedSecretRecipientEnvelopeInput = Readonly<{
     recipientContentPublicKeyFingerprint: string;
 }>;
 
-type SavedSecretRecipientEnvelopeRejection =
-    | "duplicate_recipient"
-    | "unknown_recipient"
-    | "key_unavailable"
-    | "fingerprint_mismatch"
-    | "malformed_envelope";
+type SavedSecretRecipientEnvelopeRejection = ResourceRecipientEnvelopeRejectionV1;
 
 /**
  * One answer to "is this submitted envelope material current, verified and
@@ -705,21 +651,16 @@ type SavedSecretRecipientEnvelopeRejection =
  */
 function readSavedSecretRecipientEnvelopeRejection(
     envelopes: readonly SavedSecretRecipientEnvelopeInput[],
-    recipientsById: ReadonlyMap<string, SavedSecretRecipientAccountRow>,
+    recipientsById: ReadonlyMap<string, ResourceRecipientAccountRow>,
 ): SavedSecretRecipientEnvelopeRejection | null {
-    const recipientIds = envelopes.map((envelope) => envelope.recipientAccountId);
-    if (new Set(recipientIds).size !== recipientIds.length) return "duplicate_recipient";
-    for (const envelope of envelopes) {
-        const recipient = recipientsById.get(envelope.recipientAccountId);
-        if (!recipient) return "unknown_recipient";
-        const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(recipient);
-        if (readiness.status !== "available") return "key_unavailable";
-        if (readiness.binding.contentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint) {
-            return "fingerprint_mismatch";
-        }
-        if (parseEncryptedDataKeyEnvelopeV1(envelope.encryptedDataKey) === null) return "malformed_envelope";
-    }
-    return null;
+    return readResourceRecipientEnvelopeRejectionV1({
+        envelopes: envelopes.map((envelope) => ({
+            accountId: envelope.recipientAccountId,
+            encryptedDataKey: envelope.encryptedDataKey,
+            recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
+        })),
+        recipientsById,
+    });
 }
 
 /** The one idempotent recipient-envelope write, shared by every admitting owner. */
@@ -750,13 +691,7 @@ async function upsertSavedSecretResourceKeyEnvelopesInTx(
     }
 }
 
-const SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT = {
-    id: true,
-    publicKey: true,
-    encryptionMode: true,
-    contentPublicKey: true,
-    contentPublicKeySig: true,
-} as const;
+const SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT = RESOURCE_RECIPIENT_ACCOUNT_SELECT;
 
 export type SavedSecretResourceServiceError =
     | "invalid_resource"
@@ -955,7 +890,7 @@ function projectRow(
                 teamId: grant.teamGroup.team.id,
                 teamName: grant.teamGroup.team.name,
                 groupId: grant.teamGroup.id,
-                name: grant.teamGroup.name,
+                name: projectTeamGroupNameForRecipient({ serialized: grant.teamGroup.name, recipientAccountId: accountId }),
             })),
         ],
         audience: isOwner ? {
@@ -970,7 +905,7 @@ function projectRow(
                 teamId: grant.teamGroup.team.id,
                 teamName: grant.teamGroup.team.name,
                 groupId: grant.teamGroup.id,
-                name: grant.teamGroup.name,
+                name: projectTeamGroupNameForRecipient({ serialized: grant.teamGroup.name, recipientAccountId: accountId }),
             })),
         } : null,
         ownerAccountId: row.ownerAccountId,
@@ -1115,11 +1050,7 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
     const accounts = await tx.account.findMany({
         where: { id: { in: pageIds }, status: "active" },
         select: {
-            ...ACCOUNT_DISPLAY_PROFILE_SELECT,
-            publicKey: true,
-            encryptionMode: true,
-            contentPublicKey: true,
-            contentPublicKeySig: true,
+            ...RESOURCE_RECIPIENT_ACCOUNT_SELECT,
             savedSecretResourceKeyEnvelopes: {
                 where: { resourceId: input.resourceId },
                 select: { encryptedDataKey: true, recipientContentPublicKeyFingerprint: true },
@@ -1127,33 +1058,13 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
         },
         orderBy: { id: "asc" },
     });
-    const recipients = accounts.map((account): SavedSecretResourceEnvelopeCensusRecipientV1 => {
-        const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
-        const envelope = account.savedSecretResourceKeyEnvelopes[0] ?? null;
-        const usableEnvelope = readUsableRecipientEnvelope(envelope);
-        const envelopeStatus = !envelope
-            ? "missing" as const
-            : !usableEnvelope
-                ? "invalid" as const
-                : readiness.status === "available"
-                    && readiness.binding.contentPublicKeyFingerprint === usableEnvelope.recipientContentPublicKeyFingerprint
-                    ? "prepared" as const
-                    : "stale" as const;
-        return {
-            account: {
-                kind: "account",
-                accountId: account.id,
-                ...projectAccountDisplayProfileV1(account),
-            },
-            readiness: readiness.status === "available"
-                ? {
-                    status: "available",
-                    contentPublicKey: privacyKit.encodeBase64(readiness.binding.contentPublicKey),
-                    contentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint,
-                }
-                : readiness,
-            envelopeStatus,
-        };
+    const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({
+        accounts,
+        envelopes: accounts.flatMap((account) => account.savedSecretResourceKeyEnvelopes.map((envelope) => ({
+            accountId: account.id,
+            encryptedDataKey: envelope.encryptedDataKey,
+            recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
+        }))),
     });
     return {
         ok: true,
@@ -1450,6 +1361,8 @@ export type PromoteSavedSecretResourceInput = CreateSavedSecretResourceInput & R
     catalogMutations?: SavedSecretCatalogMutationsV1;
     additionalSavedSecretResources?: readonly Omit<CreateSavedSecretResourceInput, 'accountId' | 'authentication'>[];
     personalSecretPromotions?: SavedSecretPersonalPromotionsV1;
+    /** Client-opened exact Preset/snapshot replacements for a personal-source promotion. */
+    opaquePresetRewrites?: SavedSecretOpaquePresetRewritesV1;
     remoteHostMutation?: RemoteHostCatalogRowMutationV1;
     notificationChannelMutation?: NotificationChannelCatalogMutationV1;
     /** The Connected Account credential that references the created resources; same rollback boundary. */
@@ -1783,25 +1696,28 @@ export async function updateSavedSecretResourceInTx(
     const authorizedAccountIds = await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId);
     if (converting && nextMode === "e2ee") {
         if (accountMode !== "e2ee") return { ok: false, error: "recipient_mode_unsupported" };
-        // The owner must keep its own access, exactly as at creation; the
-        // remaining recipients are prepared by the existing census/repair pass.
-        if (!envelopes.some((envelope) => envelope.recipientAccountId === input.accountId)) {
-            return { ok: false, error: "invalid_resource" };
-        }
         const authorized = new Set(authorizedAccountIds);
         if (envelopes.some((envelope) => !authorized.has(envelope.recipientAccountId))) {
             return { ok: false, error: "invalid_resource" };
         }
         if (transition) {
-            // The owner's persisted binding is still the source one; its
-            // envelope is checked against the verified target content key.
-            const [ownerEnvelope] = envelopes;
-            if (envelopes.length !== 1 || !ownerEnvelope
-                || ownerEnvelope.recipientContentPublicKeyFingerprint !== transition.ownerContentPublicKeyFingerprint
-                || parseEncryptedDataKeyEnvelopeV1(ownerEnvelope.encryptedDataKey) === null) {
+            if (transition.ownerContentPublicKeyFingerprint === null || readTargetOwnerRecipientEnvelopeRejectionV1({
+                ownerAccountId: input.accountId,
+                ownerContentPublicKeyFingerprint: transition.ownerContentPublicKeyFingerprint,
+                envelopes: envelopes.map((envelope) => ({
+                    accountId: envelope.recipientAccountId,
+                    encryptedDataKey: envelope.encryptedDataKey,
+                    recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
+                })),
+            }) !== null) {
                 return { ok: false, error: "invalid_resource" };
             }
         } else {
+            // The owner must keep its own access, exactly as at creation; the
+            // remaining recipients are prepared by the existing census/repair pass.
+            if (!envelopes.some((envelope) => envelope.recipientAccountId === input.accountId)) {
+                return { ok: false, error: "invalid_resource" };
+            }
             const recipientRows = await tx.account.findMany({
                 where: { id: { in: envelopes.map((envelope) => envelope.recipientAccountId) } },
                 select: SAVED_SECRET_RECIPIENT_ACCOUNT_SELECT,
@@ -2230,9 +2146,14 @@ export async function deleteSavedSecretResourceInTx(
         return { ok: false, error: 'resource_in_use' };
     }
     if (census.value.notificationChannelResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
-    const presets = await tx.managedMachinePreset.findMany({ select: { setup: true } });
-    if (presets.some(preset => listSavedSecretReferenceCarrierPathsV1(preset.setup, { secretId: referenceCandidate }).length > 0)
-        || census.value.remoteHostResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
+    if (census.value.remoteHostResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
+    // Preset and retained Managed Machine bodies are opaque at Home. A
+    // keyholding caller's complete capture can still refuse a destructive
+    // delete without asking this service to parse either carrier.
+    if ((input.referenceCensus.opaquePresetReferences?.presets.length ?? 0) > 0
+        || (input.referenceCensus.opaquePresetReferences?.snapshots.length ?? 0) > 0) {
+        return { ok: false, error: 'resource_in_use' };
+    }
     // Plain references are derived from the real stored payload, never the
     // caller's projection. E2EE is opened and classified by the captured client.
     if (input.referenceCensus.accountMode === 'plain') {
@@ -2330,6 +2251,7 @@ async function validateNotificationPromotionReferencesInTx(tx: Tx, input: Promot
 async function validatePersonalPromotionSourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput, removesSettingsSources = false,
     catalogs?: SavedSecretCatalogReferenceFacets, savedSecretRefs?: ReadonlyMap<string, string>): Promise<boolean> {
     if (!input.personalSecretPromotions?.length && !removesSettingsSources) return true;
+    if (input.personalSecretPromotions?.length && input.opaquePresetRewrites === undefined) return false;
     const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId, "content");
     if (fence.status !== 'ready') return false;
     // Encrypted Settings remain the admitted client's captured source declaration.
@@ -2359,30 +2281,150 @@ async function validatePersonalPromotionSourcesInTx(tx: Tx, input: PromoteSavedS
                 || !sameStrictJsonValue(proposed.v.value, rewritten.registrySources)) return false;
         }
     }
-    const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
-    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } }, select: { setup: true } });
-    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId }, select: { machineSetup: true } });
-    const snapshots = machines.map(machine => machine.machineSetup);
-    const carriers = [...presets.map(preset => preset.setup), ...snapshots];
-    if (removed.some(secretId => carriers.some(value => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0))) return false;
-    const snapshotSetups = snapshots.map(setup => setup !== null && typeof setup === 'object' && !Array.isArray(setup)
-        && 'setup' in setup ? setup.setup ?? null : null);
-    if (snapshots.some((setup, index) => [...mapped].some(secretId =>
-        listSavedSecretReferenceCarrierPathsV1(setup, { secretId }).length !== listSavedSecretReferenceCarrierPathsV1(snapshotSetups[index], { secretId }).length))) return false;
-    const setupDefinitions = [...presets.map(preset => preset.setup), ...snapshotSetups];
-    return setupDefinitions.every(value => isPromotedMachineSetupRewritable(value, [...mapped]));
+    // Preset/setup content remains opaque here. Its keyholding caller supplies
+    // exact replacement carriers; the transaction applies them below.
+    return true;
+}
+
+/**
+ * The caller has already opened and resealed private bodies. This transaction
+ * owns only their currentness, authority, recipient admission, and atomic
+ * persistence; it never discovers or interprets a sealed reference itself.
+ */
+async function rewritePromotedOpaquePresetReferencesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<void> {
+    const rewrites = input.opaquePresetRewrites;
+    if (!rewrites) return;
+    for (const source of rewrites.presets) {
+        let result: Awaited<ReturnType<typeof rewriteMachinePresetContentInTx>>;
+        try {
+            result = await rewriteMachinePresetContentInTx(tx, {
+                context: { accountId: input.accountId, ...(input.authentication ? { authentication: input.authentication } : {}) },
+                presetId: source.presetId,
+                expectedRevision: source.expectedRevision,
+                replacement: source.replacement,
+            });
+        } catch (error) {
+            if (error instanceof ManagedMachineError) throw new SavedSecretResourceTransactionAbort('references_invalid');
+            throw error;
+        }
+        if (result.kind === 'not_found' || result.kind === 'conflict') {
+            throw new SavedSecretResourceTransactionAbort('references_conflict');
+        }
+        // Capture produces changed-only source bodies. A no-op means the
+        // submitted private mapping was not the exact body the caller opened.
+        if (result.revision !== source.expectedRevision + 1) {
+            throw new SavedSecretResourceTransactionAbort('references_invalid');
+        }
+    }
+    if (rewrites.snapshots.length === 0) return;
+
+    const rows = await tx.managedMachine.findMany({ where: {
+        id: { in: rewrites.snapshots.map((rewrite) => rewrite.managedId) },
+        custodianAccountId: input.accountId,
+    } });
+    if (rows.length !== rewrites.snapshots.length) throw new SavedSecretResourceTransactionAbort('references_conflict');
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
+    for (const snapshot of rewrites.snapshots) {
+        const row = rowsById.get(snapshot.managedId);
+        if (!row || row.presetId !== snapshot.presetId) throw new SavedSecretResourceTransactionAbort('references_conflict');
+        let stored: ReturnType<typeof readStoredOpaquePresetLaunch>;
+        let projection: ReturnType<typeof projectManagedMachinePresetForRecipientV1>;
+        try {
+            stored = readStoredOpaquePresetLaunch(row.launch);
+            projection = projectManagedMachinePresetForRecipientV1({
+                content: stored.content,
+                recipients: stored.recipients,
+                recipientAccountId: input.accountId,
+            });
+        } catch {
+            throw new SavedSecretResourceTransactionAbort('references_invalid');
+        }
+        if (stored.contentEncryptionMode !== snapshot.expectedContentEncryptionMode
+            || !sameStrictJsonValue(projection.content, snapshot.expectedContent)
+            || !sameStrictJsonValue(projection.recipientEnvelope, snapshot.expectedRecipientEnvelope)) {
+            throw new SavedSecretResourceTransactionAbort('references_conflict');
+        }
+        let launch: ReturnType<typeof storeOpaquePresetLaunch>;
+        try {
+            launch = storeOpaquePresetLaunch({
+                contentEncryptionMode: stored.contentEncryptionMode,
+                content: snapshot.replacementContent,
+                recipients: stored.recipients,
+                ...(stored.controllerPoolId === undefined ? {} : { controllerPoolId: stored.controllerPoolId }),
+            });
+        } catch {
+            throw new SavedSecretResourceTransactionAbort('references_invalid');
+        }
+        const updated = await tx.managedMachine.updateMany({ where: {
+            id: row.id,
+            custodianAccountId: input.accountId,
+            launch: { equals: readManagedJsonEqualityOperand(row.launch) },
+        }, data: { launch } });
+        if (updated.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
+        await invalidateManagedMachineInTx(tx, row);
+    }
+}
+
+/** Retry proof reads only the exact opaque envelopes committed by the first attempt. */
+async function provePromotedOpaquePresetReferencesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<SavedSecretResourceServiceResult<null>> {
+    const rewrites = input.opaquePresetRewrites;
+    if (!rewrites) return { ok: true, value: null };
+    const [sourceRows, snapshotRows] = await Promise.all([
+        rewrites.presets.length === 0 ? [] : tx.managedMachinePreset.findMany({ where: {
+            id: { in: rewrites.presets.map((rewrite) => rewrite.presetId) },
+        } }),
+        rewrites.snapshots.length === 0 ? [] : tx.managedMachine.findMany({ where: {
+            id: { in: rewrites.snapshots.map((rewrite) => rewrite.managedId) },
+            custodianAccountId: input.accountId,
+        } }),
+    ]);
+    if (sourceRows.length !== rewrites.presets.length || snapshotRows.length !== rewrites.snapshots.length) {
+        return { ok: false, error: 'references_conflict' };
+    }
+    const sourcesById = new Map(sourceRows.map((row) => [row.id, row]));
+    for (const source of rewrites.presets) {
+        const row = sourcesById.get(source.presetId);
+        if (!row || row.revision !== source.expectedRevision + 1) return { ok: false, error: 'references_conflict' };
+        try {
+            const stored = readStoredOpaquePresetLaunch(row.launch);
+            if (!sameStrictJsonValue(stored.content, source.replacement.content)
+                || !sameStrictJsonValue(stored.recipients, source.replacement.recipients)) {
+                return { ok: false, error: 'references_conflict' };
+            }
+        } catch {
+            return { ok: false, error: 'references_conflict' };
+        }
+    }
+    const snapshotsById = new Map(snapshotRows.map((row) => [row.id, row]));
+    for (const snapshot of rewrites.snapshots) {
+        const row = snapshotsById.get(snapshot.managedId);
+        if (!row || row.presetId !== snapshot.presetId) return { ok: false, error: 'references_conflict' };
+        try {
+            const stored = readStoredOpaquePresetLaunch(row.launch);
+            const projection = projectManagedMachinePresetForRecipientV1({
+                content: stored.content,
+                recipients: stored.recipients,
+                recipientAccountId: input.accountId,
+            });
+            if (stored.contentEncryptionMode !== snapshot.expectedContentEncryptionMode
+                || !sameStrictJsonValue(stored.content, snapshot.replacementContent)
+                || !sameStrictJsonValue(projection.recipientEnvelope, snapshot.expectedRecipientEnvelope)) {
+                return { ok: false, error: 'references_conflict' };
+            }
+        } catch {
+            return { ok: false, error: 'references_conflict' };
+        }
+    }
+    return { ok: true, value: null };
 }
 
 async function createSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<void> {
-    const promoted = new Map<string, Readonly<{ ref: string; revision: number }>>();
     for (const resource of savedSecretPromotionResources(input)) {
         const result = await createSavedSecretResourceInTx(tx, resource);
         if (!result.ok) throw new SavedSecretResourceTransactionAbort(result.error);
         if (result.value.revision !== 1) throw new SavedSecretResourceTransactionAbort('resource_changed');
-        const source = input.personalSecretPromotions?.find(promotion => promotion.resourceId === result.value.resourceId);
-        if (source) promoted.set(source.personalSecretId, { ref: formatSharedSavedSecretRefV1(result.value.resourceId), revision: result.value.revision });
     }
-    await rewritePromotedMachineReferencesInTx(tx, input.accountId, promoted);
+    await rewritePromotedOpaquePresetReferencesInTx(tx, input);
 }
 
 /** A lost-response receipt can inspect existing resources, never create while proving a prior commit. */
@@ -2397,6 +2439,8 @@ async function proveSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSave
         if (!result.ok) return result;
         if (result.value.revision !== 1) return { ok: false, error: 'resource_changed' };
     }
+    const opaqueReferences = await provePromotedOpaquePresetReferencesInTx(tx, input);
+    if (!opaqueReferences.ok) return opaqueReferences;
     return { ok: true, value: null };
 }
 
@@ -2509,58 +2553,6 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
         ...(connectedAccountCredential ? { connectedAccountCredential } : {}) } };
 }
 
-function isPromotedMachineSetupRewritable(value: unknown, sourceIds: readonly string[]): boolean {
-    const reached = sourceIds.filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
-    if (reached.length === 0) return true;
-    const parsed = MachineSetupV1ReadSchema.safeParse(value);
-    return parsed.success && parsed.data.secretRefs !== undefined && reached.every(secretId =>
-        listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length === listSavedSecretReferenceCarrierPathsV1(parsed.data, { secretId }).length);
-}
-
-function rewritePromotedMachineSetup(value: unknown, promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Prisma.InputJsonObject | null {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-    const source = value as Prisma.JsonObject;
-    const reached = [...promotions.keys()].filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
-    if (reached.length === 0) return null;
-    const parsed = MachineSetupV1ReadSchema.safeParse(value);
-    if (!parsed.success || !parsed.data.secretRefs || !isPromotedMachineSetupRewritable(value, reached)) {
-        throw new SavedSecretResourceTransactionAbort('references_invalid');
-    }
-    const bindings = Object.fromEntries(Object.entries(parsed.data.secretRefs.bindings).map(([key, binding]) => {
-        const promoted = promotions.get(binding.ref);
-        return [key, promoted ? { ref: promoted.ref, revision: promoted.revision } : binding];
-    }));
-    return { ...source, secretRefs: { ...parsed.data.secretRefs, bindings } };
-}
-
-/** Personal ids are scoped to the controller/custodian Account, including Team-owned presets. */
-async function rewritePromotedMachineReferencesInTx(tx: Tx, accountId: string,
-    promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Promise<void> {
-    if (promotions.size === 0) return;
-    const controllers = await tx.machine.findMany({ where: { accountId }, select: { id: true } });
-    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } } });
-    for (const preset of presets) {
-        const setupDefinition = rewritePromotedMachineSetup(preset.setup, promotions);
-        if (!setupDefinition) continue;
-        const changed = await tx.managedMachinePreset.updateMany({ where: { id: preset.id, revision: preset.revision },
-            data: { setup: setupDefinition, revision: { increment: 1 } } });
-        if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
-        await invalidatePresetInTx(tx, await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } }));
-    }
-    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: accountId } });
-    for (const machine of machines) {
-        const setup = machine.machineSetup;
-        if (setup === null || typeof setup !== 'object' || Array.isArray(setup)
-            || !('setup' in setup) || setup.setup === undefined) continue;
-        const setupDefinition = rewritePromotedMachineSetup(setup.setup, promotions);
-        if (!setupDefinition) continue;
-        const changed = await tx.managedMachine.updateMany({ where: { id: machine.id, machineSetup: { equals: setup } },
-            data: { machineSetup: { ...setup, setup: setupDefinition } } });
-        if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
-        await invalidateManagedMachineInTx(tx, await tx.managedMachine.findUniqueOrThrow({ where: { id: machine.id } }));
-    }
-}
-
 /** Creates resources and any paired catalog, private-reference or Settings changes in one rollback boundary. */
 export async function promoteSavedSecretResourceInTx(
     tx: Tx,
@@ -2569,8 +2561,16 @@ export async function promoteSavedSecretResourceInTx(
     const parsedPromotionCensus = SavedSecretPromoteReferenceCensusV1Schema.safeParse(candidate.referenceCensus);
     const parsedCatalogMutations = SavedSecretCatalogMutationsV1Schema.safeParse(candidate.catalogMutations ?? {});
     const parsedSources = SavedSecretPersonalPromotionsV1Schema.safeParse(candidate.personalSecretPromotions ?? []);
+    const parsedOpaquePresetRewrites = candidate.opaquePresetRewrites === undefined
+        ? null
+        : SavedSecretOpaquePresetRewritesV1Schema.safeParse(candidate.opaquePresetRewrites);
     const destinationIds = new Set(savedSecretPromotionResources(candidate).map(resource => resource.resourceId));
-    if (!parsedSources.success || parsedSources.data.some(source => !destinationIds.has(source.resourceId))) return { ok: false, error: 'references_invalid' };
+    if (!parsedSources.success
+        || parsedSources.data.some(source => !destinationIds.has(source.resourceId))
+        || parsedSources.data.length > 0 && (parsedOpaquePresetRewrites === null || !parsedOpaquePresetRewrites.success)
+        || parsedSources.data.length === 0 && parsedOpaquePresetRewrites !== null) {
+        return { ok: false, error: 'references_invalid' };
+    }
     const parsedRemote = candidate.remoteHostMutation ? RemoteHostCatalogRowMutationV1Schema.safeParse(candidate.remoteHostMutation) : null;
     if (parsedRemote && !parsedRemote.success) return { ok: false, error: 'references_invalid' };
     const parsedNotification = candidate.notificationChannelMutation ? NotificationChannelCatalogMutationV1Schema.safeParse(candidate.notificationChannelMutation) : null;
@@ -2579,16 +2579,20 @@ export async function promoteSavedSecretResourceInTx(
     if (!Array.isArray(candidate.profileMutations)) return { ok: false, error: 'references_invalid' };
     await acquireSavedSecretCreationAccountsInTx(tx, { accountId: candidate.accountId,
         resources: savedSecretPromotionResources(candidate),
-        connectedAccountCredentialMutation: candidate.connectedAccountCredentialMutation,
-        promotedPersonalSecretIds: parsedSources.data.map(source => source.personalSecretId) });
+        connectedAccountCredentialMutation: candidate.connectedAccountCredentialMutation });
     if ('scope' in parsedPromotionCensus.data) {
+        if (parsedSources.data.length !== 0 || parsedOpaquePresetRewrites !== null) {
+            return { ok: false, error: 'references_invalid' };
+        }
         return promoteCatalogOnlySavedSecretResourcesInTx(tx, { ...candidate,
             ...(parsedRemote?.success ? { remoteHostMutation: parsedRemote.data } : {}),
             ...(parsedNotification?.success ? { notificationChannelMutation: parsedNotification.data } : {}) }, parsedPromotionCensus.data, parsedCatalogMutations.data);
     }
     if (candidate.expectedSettingsVersion === undefined) return { ok: false, error: 'references_invalid' };
     const input = { ...candidate, expectedSettingsVersion: candidate.expectedSettingsVersion,
-        referenceCensus: parsedPromotionCensus.data };
+        referenceCensus: parsedPromotionCensus.data,
+        ...(parsedOpaquePresetRewrites?.success ? { opaquePresetRewrites: parsedOpaquePresetRewrites.data } : {}),
+    };
     if (parsedNotification?.success && input.referenceCensus.notificationChannels?.revision !== parsedNotification.data.expectedRevision)
         return { ok: false, error: 'references_invalid' };
     if (parsedNotification?.success && parsedNotification.data.expectedRevision === 'absent'

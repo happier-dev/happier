@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment, type ManagedNativeBootstrapIO } from './managedMachineEnrollment.js';
 
 const resource = { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } };
 const correlation = { homeId: 'srv_managed_home', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
   controller: { machineId: 'controller-1', installationId: 'installation-1' }, resource };
-const machine = ManagedMachineV1Schema.parse({ id: correlation.managedId, homeId: correlation.homeId, custodianAccountId: 'account-1',
+const machine = ManagedMachineFullV1Schema.parse({ id: correlation.managedId, homeId: correlation.homeId, custodianAccountId: 'account-1',
   launch: { provider: resource.contributionRef, schemaVersion: 1, name: 'Guest', choices: {} }, controller: correlation.controller,
   allocation: 'bound', creationState: 'active', resource, desired: 'start', desiredWhen: 'now', intentRevision: 1,
   retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'same-machine',

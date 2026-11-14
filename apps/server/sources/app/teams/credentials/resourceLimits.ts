@@ -22,16 +22,17 @@ import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveG
 import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from '../actorContext';
 import { resolveTeamCredentialCapabilities } from '../capabilities';
 import { publishTeamChangedInTx } from '../teamChanges';
-import { recordTeamCredentialActivityInTx } from './resourceActivity';
+import { recordTeamCredentialResourceActivityInTx } from './resourceActivity';
 import { canonicalUsageLimitMaximum, projectTeamCredentialUsageLimitsInTx, type TeamCredentialUsageLimitRow } from './teamCredentialUsageLimits';
 import { resolveTeamCredentialEntitlementInTx } from './resourceAccess';
 import { qualifyTeamCredentialOperationInTx } from './resourceRead';
 import { resolveCurrentTeamCredentialUsageCapabilitiesForResource } from './usageCapabilities';
 import { admitTeamCredentialWithdrawalInTx } from './resourceWithdrawalAdmission';
+import { readTeamCredentialResourceDisplayNameStored } from './privateLabels';
 
 type LimitError = 'invalid_limit' | 'not_found_or_not_visible' | 'forbidden' | 'resource_changed'
     | 'limit_identity_immutable' | 'subject_not_in_team' | 'token_limit_unavailable' | 'cost_limit_unavailable'
-    | 'team_authentication_required' | 'team_authentication_policy_unavailable';
+    | 'resource_corrupt' | 'team_authentication_required' | 'team_authentication_policy_unavailable';
 
 async function resolveManagerResourceInTx(
     tx: Tx,
@@ -41,6 +42,8 @@ async function resolveManagerResourceInTx(
 ) {
     const resource = await tx.teamCredentialResource.findUnique({ where: { id: resourceId } });
     if (!resource) return { ok: false as const, error: 'not_found_or_not_visible' as const };
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (displayName === null) return { ok: false as const, error: 'resource_corrupt' as const };
     const actor = await resolveTeamActorContextInTx(tx, { teamId: resource.teamId, actorAccountId });
     if (!actor) return { ok: false as const, error: 'not_found_or_not_visible' as const };
     if (actor.accountStatus !== AccountStatus.active) return { ok: false as const, error: 'forbidden' as const };
@@ -48,7 +51,7 @@ async function resolveManagerResourceInTx(
     if (!caps.manageCredentials) return { ok: false as const, error: 'forbidden' as const };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, authentication);
     if (!qualification.ok) return qualification;
-    return { ok: true as const, resource };
+    return { ok: true as const, resource, displayName };
 }
 
 async function resolveReadableResourceInTx(
@@ -289,7 +292,7 @@ export async function upsertTeamCredentialUsageLimitInTx(
             resourceId: auth.resource.id, subjectKind: body.limit.subjectKind, subjectId: body.limit.subjectId,
             period: body.limit.period, metric: body.limit.metric, maximum, enabled: body.limit.enabled,
         } });
-    await recordTeamCredentialActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.resource.displayName });
+    await recordTeamCredentialResourceActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.displayName });
     await publishTeamChangedInTx(tx, { teamId: auth.resource.teamId, additionalAccountIds: [auth.resource.custodianAccountId, input.actorAccountId] });
     const projection = await projectTeamCredentialUsageLimitsInTx(tx, {
         resourceId: auth.resource.id,
@@ -330,7 +333,7 @@ export async function deleteTeamCredentialUsageLimitInTx(
     if (updated.count !== 1) return { ok: false, error: 'resource_changed' };
     await tx.teamCredentialUsageLimit.delete({ where: { id: row.id } });
     await deleteTeamCredentialUsageCountersInTx(tx, auth.resource.custodianAccountId, row.id);
-    await recordTeamCredentialActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.resource.displayName });
+    await recordTeamCredentialResourceActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.displayName });
     await publishTeamChangedInTx(tx, { teamId: auth.resource.teamId, additionalAccountIds: [auth.resource.custodianAccountId, input.actorAccountId] });
     return { ok: true, resourceId: auth.resource.id, revision: parsed.data.expectedRevision + 1 };
 }

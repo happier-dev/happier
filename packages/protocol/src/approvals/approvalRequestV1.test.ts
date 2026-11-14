@@ -1901,7 +1901,8 @@ describe('requiresExactDaemonApprovalReplay', () => {
     // A standalone terminal's private input retains its live invocation.
     { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' } },
     { actionId: 'teams.credentials.externalKeys.create', input: {
-      resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CLI key',
+      resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId: '123e4567-e89b-42d3-a456-426614174000',
+      label: { content: { t: 'plain', v: 'CLI key' }, recipients: [] },
     } },
   ] as const)('keeps a blocking $actionId result in the original terminal invocation', ({ actionId, input }) => {
     const request = hostCliRequest(actionId, input);

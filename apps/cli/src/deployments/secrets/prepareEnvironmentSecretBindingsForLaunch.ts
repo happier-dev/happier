@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, type EnvironmentSecretBindingV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, type EnvironmentSecretBindingV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { openMachineSecretGrant, type MachineSecretGrantContentV1 } from './machineSecretGrant';
+import { openMachineSecretGrant, type MachineSecretGrantReadContentV1 } from './machineSecretGrant';
 import { configuration } from '@/configuration';
 import { createEnvironmentRegistryConfigForHost } from './environmentRegistryConfig';
 import { createEnvironmentBackupDestinationConfigForHost } from './environmentBackupDestinationConfig';
@@ -53,11 +53,11 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
 }>) {
     await input.assertCurrent();
     const bindings = input.bindings.map(binding => {
-        const parsed = EnvironmentSecretBindingV1Schema.safeParse(binding);
+        const parsed = EnvironmentSecretBindingStoredReadV1Schema.safeParse(binding);
         return parsed.success ? parsed.data : missing();
     });
     const admitUse = (value: EnvironmentSecretBindingV1) => {
-        const parsed = EnvironmentSecretBindingV1Schema.safeParse(value);
+        const parsed = EnvironmentSecretBindingStoredReadV1Schema.safeParse(value);
         if (!parsed.success || parsed.data.purpose === 'variable') return missing();
         const use = parsed.data;
         // A pushPull binding permits a narrower pull; a pull binding cannot
@@ -101,8 +101,8 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         selected = [...(input.phase ? bindings.filter(binding => binding.purpose === 'variable' && binding.phase === input.phase) : []), ...registryUses];
     }
     const grants = new Map(input.grants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
-    const openedGrants = new Map<string, MachineSecretGrantContentV1>();
-    const definitions = new Map<string, string>();
+    const openedGrants = new Map<string, MachineSecretGrantReadContentV1>();
+    const definitions = new Map<string, Readonly<{ name: string; value: string }>>();
     const referenceAddresses: DeploymentReferenceAddressV1[] = [];
     const refs: { resourceId: string; resourceRevision: number }[] = [];
     const env: Record<string, string> = Object.create(null);
@@ -159,19 +159,23 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         } else {
             if (binding.purpose !== 'variable') return missing();
             const subject = { ...base, kind: 'environmentValues' as const,
-                binding: { purpose: 'variable' as const, phase: binding.phase, name: binding.name } };
+                binding: { purpose: 'variable' as const, phase: binding.phase,
+                    ...(binding.grantRef ? { grantRef: binding.grantRef } : { name: binding.name }) } };
             const grant = grants.get(machineSecretGrantSubjectKey(subject));
             if (!grant) return missing();
             const opened = openMachineSecretGrant({ grant, machineId: input.machineId,
                 installationId: input.installationId, installationPrivateSeed: input.installationPrivateSeed });
-            if (!opened || opened.kind !== 'environmentValues' || !isDeepStrictEqual(opened.definition, binding.source)) return missing();
+            if (!opened || opened.kind !== 'environmentValues'
+                || !isDeepStrictEqual(opened.binding, { purpose: 'variable', phase: binding.phase,
+                    name: binding.name, ...(binding.grantRef ? { grantRef: binding.grantRef } : {}) })
+                || !isDeepStrictEqual(opened.definition, binding.source)) return missing();
             const resolved = opened.definition.kind === 'value' ? opened.definition.value
                 : input.resolveNonSecret ? await input.resolveNonSecret(opened.definition) : missing();
             const value = typeof resolved === 'string' ? resolved : resolved.value;
-            definitions.set(binding.name, value);
+            definitions.set(environmentSecretBindingIdentityV1(binding), { name: opened.binding.name, value });
             if (opened.definition.kind === 'reference') referenceAddresses.push({
-                machineId: input.machineId, installationId: input.installationId, phase: binding.phase,
-                name: binding.name, source: opened.definition, address: value,
+                machineId: input.machineId, installationId: input.installationId, phase: opened.binding.phase,
+                name: opened.binding.name, source: opened.definition, address: value,
                 ...(typeof resolved === 'string' ? {} : { route: resolved.route }),
             });
         }
@@ -197,10 +201,10 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             else operationalValues.set(environmentSecretBindingIdentityV1(binding), value);
             if (!secretValues.includes(value)) secretValues.push(value);
         } else if (binding.purpose === 'variable') {
-            const value = definitions.get(binding.name) ?? missing();
+            const definition = definitions.get(environmentSecretBindingIdentityV1(binding)) ?? missing();
             // A database operand never occupies the destination credential env,
             // including when its binding key happens to be an AWS/restic name.
-            if (!backupConfigRequested) env[binding.name] = value;
+            if (!backupConfigRequested) env[definition.name] = definition.value;
         }
         else return missing();
     }
@@ -240,7 +244,7 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     return {
         env, operationalValues, secretValues, refs, referenceAddresses,
         backupDatabases: new Map((input.backupDatabaseBindings ?? []).map(database =>
-            [database.name, definitions.get(database.name) ?? missing()] as const)),
+            [definitions.get(environmentSecretBindingIdentityV1(database))?.name ?? missing(), definitions.get(environmentSecretBindingIdentityV1(database))?.value ?? missing()] as const)),
         credentialFiles: backupConfig?.credentialFiles ?? [],
         async recheck() {
             if (disposed) return missing();

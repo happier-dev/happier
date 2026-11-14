@@ -2,10 +2,14 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectMemoryDemandV1Schema } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
-import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema } from '../managed/managedMachineV1.js';
-import { ManagedConfigurationFactsV1Schema } from '../managed/managedConfigurationV1.js';
-import { MachineProvisionerContributionV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema } from '../managed/managedMachineV1.js';
 import { ManagedRefusalCodeV1Schema } from '../managed/providerFactsV1.js';
+import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
+import {
+  PrivateLabelReadV1Schema,
+  PrivateLabelStoredV1Schema,
+  type PrivateLabelStoredV1,
+} from '../../crypto/privateLabelV1.js';
 
 /** Closed purpose model: automation and Boards remain own-Machine destinations. */
 export const MachineDestinationPurposeV1Schema = lazyZodSchema(() => z.enum([
@@ -52,14 +56,25 @@ export const MachinePoolSelectionOriginV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type MachinePoolSelectionOriginV1 = z.infer<typeof MachinePoolSelectionOriginV1Schema>;
 
-/**
- * Trimmed nonempty display text. Duplicate names are permitted: identity is the pool ID, never the
- * name, so no case-folding policy or unique-name index approximates identity here.
- */
+/** Client-side plaintext validation before a private Pool label is sealed. */
 export const MachinePoolNameV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
-/** Empty description text normalizes to null at the domain owner. */
+/** Client-side plaintext validation before an optional private Pool label is sealed. */
 export const MachinePoolDescriptionV1Schema = lazyZodSchema(() => z.string().check(z.trim()));
+
+/** Opaque label storage supplied to the server; no Pool label plaintext crosses this boundary. */
+export const MachinePoolPrivateLabelStoredV1Schema = PrivateLabelStoredV1Schema;
+export type MachinePoolPrivateLabelStoredV1 = PrivateLabelStoredV1;
+
+/**
+ * A recipient-only private-label projection. Invalid historical/foreign rows deliberately carry
+ * no content arm, so structural Pool routing remains available without reinterpreting old text.
+ */
+export const MachinePoolPrivateLabelProjectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('available'), label: PrivateLabelReadV1Schema }),
+  z.strictObject({ kind: z.literal('unavailable') }),
+]));
+export type MachinePoolPrivateLabelProjectionV1 = z.infer<typeof MachinePoolPrivateLabelProjectionV1Schema>;
 
 /**
  * A nonnegative ordinal compared by numeric order. The editor serializes contiguous ordinals; the
@@ -114,7 +129,7 @@ export const MachinePoolMemberV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type MachinePoolMemberV1 = z.infer<typeof MachinePoolMemberV1Schema>;
 
-/** The saved definition plus its current member projection. */
+/** The locally opened definition a client renders after its recipient projection is decrypted. */
 export const MachinePoolSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   id: MachinePoolIdV1Schema,
   name: MachinePoolNameV1Schema,
@@ -126,6 +141,19 @@ export const MachinePoolSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   members: z.array(MachinePoolMemberV1Schema),
 }));
 export type MachinePoolSummaryV1 = z.infer<typeof MachinePoolSummaryV1Schema>;
+
+/** The server wire definition: labels stay recipient-scoped until the client opens them. */
+export const MachinePoolPrivateSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: MachinePoolIdV1Schema,
+  name: MachinePoolPrivateLabelProjectionV1Schema,
+  description: z.nullable(MachinePoolPrivateLabelProjectionV1Schema),
+  revision: z.number().check(z.int(), z.nonnegative()),
+  createdAt: z.number().check(z.int(), z.nonnegative()),
+  updatedAt: z.number().check(z.int(), z.nonnegative()),
+  audience: z.optional(MachinePoolAudienceV1Schema),
+  members: z.array(MachinePoolMemberV1Schema),
+}));
+export type MachinePoolPrivateSummaryV1 = z.infer<typeof MachinePoolPrivateSummaryV1Schema>;
 
 /**
  * Reachability is an observation, not stored state. `connectedCount` counts enabled, current,
@@ -142,13 +170,49 @@ export const MachinePoolAvailabilityV1Schema = lazyZodSchema(() => z.discriminat
 ]));
 export type MachinePoolAvailabilityV1 = z.infer<typeof MachinePoolAvailabilityV1Schema>;
 
-/** What a client renders: one definition and its separately observed availability. */
+/** What a client renders after opening Pool labels: one definition and its observed availability. */
 export const MachinePoolViewV1Schema = lazyZodSchema(() => z.strictObject({
   pool: MachinePoolSummaryV1Schema,
   availability: MachinePoolAvailabilityV1Schema,
   access: z.optional(MachinePoolAccessV1Schema),
 }));
 export type MachinePoolViewV1 = z.infer<typeof MachinePoolViewV1Schema>;
+
+/** The opaque server response, deliberately distinct from the client-rendered Pool view. */
+export const MachinePoolPrivateViewV1Schema = lazyZodSchema(() => z.strictObject({
+  pool: MachinePoolPrivateSummaryV1Schema,
+  availability: MachinePoolAvailabilityV1Schema,
+  access: z.optional(MachinePoolAccessV1Schema),
+}));
+export type MachinePoolPrivateViewV1 = z.infer<typeof MachinePoolPrivateViewV1Schema>;
+
+/**
+ * The placement executor needs only persistent membership and current reachability. Derive this
+ * from the private wire owner and strip labels so routing never reads, retains, or validates them.
+ */
+export const MachinePoolRoutingViewV1Schema = lazyZodSchema(() => z.object({
+  pool: z.object(z.pick(MachinePoolPrivateSummaryV1Schema, { id: true, members: true }).shape),
+  availability: MachinePoolAvailabilityV1Schema,
+}));
+export type MachinePoolRoutingViewV1 = z.infer<typeof MachinePoolRoutingViewV1Schema>;
+
+/**
+ * A resolved Pool carries only the Preset facts needed to bind its structural controller route.
+ * Preset content, provisioner selection, setup, and reviewed configuration remain in the
+ * admission/context carrier and never pass through this server-readable Pool projection.
+ */
+export const MachinePoolManagedPresetProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  preset: z.strictObject({
+    id: z.string().check(z.trim(), z.minLength(1)),
+    revision: z.number().check(z.int(), z.nonnegative()),
+    contentEncryptionMode: AccountEncryptionModeSchema,
+  }),
+  controller: ManagedControllerV1Schema,
+  controllerAccess: ManagedControllerAccessV1Schema,
+  retention: z.optional(ReusableRetentionV1Schema),
+  wakeOnAcceptedMessage: z.optional(z.boolean()),
+}));
+export type MachinePoolManagedPresetProjectionV1 = z.infer<typeof MachinePoolManagedPresetProjectionV1Schema>;
 
 /**
  * The Home-local selection result. `machineId` alone is returned; the caller binds its own captured
@@ -160,9 +224,7 @@ export const MachinePoolResolveResultV1Schema = lazyZodSchema(() => z.discrimina
     poolId: MachinePoolIdV1Schema,
     machineId: z.string().check(z.minLength(1)),
     priorityTier: MachinePoolPriorityTierV1Schema,
-    managedPreset: z.optional(z.strictObject({ controller: ManagedControllerV1Schema,
-      controllerAccess: ManagedControllerAccessV1Schema, provisioner: MachineProvisionerContributionV1Schema,
-      reviewedFacts: ManagedConfigurationFactsV1Schema })),
+    managedPreset: z.optional(MachinePoolManagedPresetProjectionV1Schema),
   }),
   z.strictObject({
     kind: z.literal('unavailable'),
@@ -181,7 +243,7 @@ export type MachinePoolResolveResultV1 = z.infer<typeof MachinePoolResolveResult
 export const MachinePoolErrorV1Schema = lazyZodSchema(() => z.discriminatedUnion('code', [
   z.strictObject({ code: z.literal('invalid_request'), message: z.string().check(z.minLength(1)) }),
   z.strictObject({ code: z.literal('pool_not_found') }),
-  z.strictObject({ code: z.literal('pool_changed'), current: z.optional(MachinePoolViewV1Schema) }),
+  z.strictObject({ code: z.literal('pool_changed'), current: z.optional(MachinePoolPrivateViewV1Schema) }),
   z.strictObject({
     code: z.literal('member_machine_not_eligible'),
     machineIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
@@ -206,10 +268,16 @@ export const MachinePoolListInputV1Schema = lazyZodSchema(() => z.strictObject({
 export type MachinePoolListInputV1 = z.infer<typeof MachinePoolListInputV1Schema>;
 
 export const MachinePoolListOutputV1Schema = lazyZodSchema(() => z.strictObject({
-  pools: z.array(MachinePoolViewV1Schema),
+  pools: z.array(MachinePoolPrivateViewV1Schema),
   memberEligibility: z.optional(z.array(MachinePoolMemberEligibilityV1Schema)),
 }));
 export type MachinePoolListOutputV1 = z.infer<typeof MachinePoolListOutputV1Schema>;
+
+/** Client Action results use the same list contract after the label owner opens each Pool. */
+export const MachinePoolOpenedListOutputV1Schema = lazyZodSchema(() => z.extend(MachinePoolListOutputV1Schema, {
+  pools: z.array(MachinePoolViewV1Schema),
+}));
+export type MachinePoolOpenedListOutputV1 = z.infer<typeof MachinePoolOpenedListOutputV1Schema>;
 
 export const MachinePoolGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
@@ -223,8 +291,8 @@ export type MachinePoolGetInputV1 = z.infer<typeof MachinePoolGetInputV1Schema>;
  */
 export const MachinePoolCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
-  name: MachinePoolNameV1Schema,
-  description: z.optional(z.nullable(MachinePoolDescriptionV1Schema)),
+  name: MachinePoolPrivateLabelStoredV1Schema,
+  description: z.optional(z.nullable(MachinePoolPrivateLabelStoredV1Schema)),
   audience: z.optional(MachinePoolAudienceV1Schema),
   members: MachinePoolMembersInputV1Schema,
 }));
@@ -234,8 +302,8 @@ export type MachinePoolCreateInputV1 = z.infer<typeof MachinePoolCreateInputV1Sc
 export const MachinePoolUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
   expectedRevision: z.number().check(z.int(), z.nonnegative()),
-  name: MachinePoolNameV1Schema,
-  description: z.optional(z.nullable(MachinePoolDescriptionV1Schema)),
+  name: MachinePoolPrivateLabelStoredV1Schema,
+  description: z.optional(z.nullable(MachinePoolPrivateLabelStoredV1Schema)),
   audience: z.optional(MachinePoolAudienceV1Schema),
   members: MachinePoolMembersInputV1Schema,
 }));

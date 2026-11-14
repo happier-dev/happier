@@ -86,6 +86,8 @@ export function roleResult(localId: string): JsonValue {
 
 export function fixture(options: Readonly<{
     cold?: boolean; dangerous?: boolean; privateNative?: boolean;
+    /** Lets a composed caller prove that a host-reviewed child, not plugin surface access, admitted a native role. */
+    nativeActionSurfaces?: readonly ('cli' | 'plugin')[];
     nativeCommandArgs?: readonly string[];
     nativePreflightArgs?: readonly string[];
     nativeCommandTimeoutMs?: number;
@@ -115,6 +117,8 @@ export function fixture(options: Readonly<{
     platforms?: MachineProvisionerContributionV1['platforms'];
     onInspect?: (input: JsonValue | undefined, context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onNativeRole?: (role: NativeFixtureRole, input: JsonValue | undefined,
+        context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
+    onAction?: (localId: string, input: JsonValue | undefined,
         context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onOrdinary?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     fixtureManifest?: CanonicalPluginManifest;
@@ -156,7 +160,7 @@ export function fixture(options: Readonly<{
         sourceCustody: createManagedPluginSourceCustody('compute-generation-1'), localId,
         definition: {
             id: localId, dangerLevel: dangerLevel(localId),
-            scopes: ['global'], surfaces: options.privateNative ? ['plugin'] : ['cli', 'plugin'],
+            scopes: ['global'], surfaces: options.nativeActionSurfaces ?? (options.privateNative ? ['plugin'] : ['cli', 'plugin']),
             inputSchema: fixtureSchemasFor(localId)?.input.jsonSchema,
             resultSchema: fixtureSchemasFor(localId)?.result.jsonSchema,
             ...((options.nativeCommandArgs || options.credentialOwner) ? { hostAccessRequests: [
@@ -172,6 +176,7 @@ export function fixture(options: Readonly<{
         },
         handler: async (_input, context) => {
             effects += 1;
+            await options.onAction?.(localId, _input, context);
             if (localId === 'ordinary') await options.onOrdinary?.(context);
             if (localId === 'native-credential-apply') {
                 await options.onNativeCredentialApply?.(context);

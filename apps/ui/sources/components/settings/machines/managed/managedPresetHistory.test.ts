@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { t } from '@/text';
 import { buildManagedPresetHistory, findPresetLastSavedFacts } from './managedPresetHistory';
 
 function row(id: string, patch: Partial<ManagedMachineV1> = {}): ManagedMachineV1 {
@@ -10,6 +11,14 @@ function row(id: string, patch: Partial<ManagedMachineV1> = {}): ManagedMachineV
 }
 
 describe('buildManagedPresetHistory', () => {
+    it('retains an unreadable sealed resource in history with its public identity and generic label', () => {
+        const { launch: _launch, ...structural } = row('sealed');
+        const machine = { ...structural, preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' as const } };
+        const history = buildManagedPresetHistory({ serverId: 'home', homeId: 'home', presetId: 'preset', machines: [machine] });
+        expect(history).toMatchObject([{ managedId: 'sealed', presetRevision: 4, title: t('common.machine'),
+            href: '/settings/machines/managed/sealed?serverId=home' }]);
+    });
+
     it('links only real resources from the exact Home and preset, keeping original revision, name and archived recovery', () => {
         const admitted = row('pending');
         const enrolled = row('joined', { enrolledMachineId: 'actual-machine', archivedAt: 0, allocation: 'confirmed-absent' });

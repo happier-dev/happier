@@ -402,7 +402,20 @@ export type ProvidersActionInputById = {
         teamCredentialResources?: undefined | {
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';
@@ -790,7 +803,20 @@ export type ProvidersActionInputById = {
         teamCredentialResources?: undefined | {
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';
@@ -5481,7 +5507,20 @@ export type ProvidersActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';
@@ -6332,7 +6371,20 @@ export type ProvidersActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';

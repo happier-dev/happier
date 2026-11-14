@@ -45,6 +45,22 @@ const socketIo = vi.hoisted(() => vi.fn());
 // Genuine transport boundary; the exact-Machine codec and managed observation reader remain real.
 vi.mock('socket.io-client', () => ({ io: socketIo }));
 
+function opaquePresetRead(row: ManagedMachineV1) {
+  const { launch, resource, observation, reviewedFacts: _reviewedFacts, ...structural } = row;
+  if (!resource) throw new Error('workspace_sync_fixture_requires_resource');
+  return {
+    machine: { ...structural, preset: { id: `preset-${row.id}`, revision: 1, contentEncryptionMode: 'plain' as const } },
+    presetContent: { content: { t: 'plain' as const, v: {
+      v: 1 as const, name: launch.name, launch,
+      reviewedFacts: { launch, ...(row.controller ? { controller: row.controller } : {}), optionStatus: 'current' as const,
+        billing: { location: 'unknown' as const, stoppedBilling: 'unknown' as const }, prerequisites: [],
+        retentionCapabilities: { supportedIntents: ['start', 'stop'] as const }, retention: row.retention,
+        wakeOnAcceptedMessage: row.wakeOnAcceptedMessage, preset: { id: `preset-${row.id}`, revision: 1, name: launch.name } },
+      nativeResult: { kind: 'bound' as const, resource }, ...(observation ? { observation } : {}),
+    } }, recipientEnvelope: null },
+  };
+}
+
 import {
   computeWorkspaceSyncPolicyDigest,
   deriveWorkspaceSyncConflictOperationId,
@@ -1146,7 +1162,7 @@ describe('current child storage at the Sync authority', () => {
           happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier', ...(id === 'child' ? { devcontainerChild: projection } : {}) }) } } };
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
-      if (url.endsWith('/machines/managed/actions/get')) return { status: 200, data: retained };
+      if (url.endsWith('/machines/managed/actions/get')) return { status: 200, data: opaquePresetRead(retained) };
       if (url.endsWith('/machines/managed/actions/list')) {
         ownedListReads++;
         const query = ManagedListInputV1Schema.parse(raw);
@@ -1156,7 +1172,7 @@ describe('current child storage at the Sync authority', () => {
           launch: { provider: { pluginId: 'happier.cloud', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} } };
         const machines = [accountOwnedCloud, retained].filter(row => !query.enrolledMachineId || row.enrolledMachineId === query.enrolledMachineId);
         ownedListRows += machines.length;
-        return { status: 200, data: { machines } };
+        return { status: 200, data: { machines: machines.map(opaquePresetRead) } };
       }
       if (role === 'requester' && url.endsWith('/execution-authorization')) {
         const body = { envelope: ExternalActionRequestEnvelopeSchema.parse(raw !== null && typeof raw === 'object' ? Reflect.get(raw, 'envelope') : undefined) };
@@ -1194,7 +1210,8 @@ describe('current child storage at the Sync authority', () => {
               actorAccountId: 'requester', role: 'manage' as const, encryptionMode: 'plain' as const },
               verifyCurrent: async () => childCurrent } } : {}),
           credentials: { token: foreign ? `e30.${Buffer.from(JSON.stringify({ sub: role === 'controller' ? 'account' : 'requester', tokenEpoch: 1,
-            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature` : 'token',
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`
+            : `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`,
             encryption: null }, machineIds: ['child', 'machine-b'] }) }),
       flush: async (id: string) => { flushed.push(id); return { relationshipId: id, controllerMachineId: 'machine-a', state: 'watching' as const,
         alphaPath: '/parent/project', betaPath: '/peer/project', mode: 'keep_both_in_sync' as const, conflictCount: 0, lastCycleObservedAtMs: null,
@@ -1208,9 +1225,12 @@ describe('current child storage at the Sync authority', () => {
       if (role === 'controller') {
         const previousListReads = ownedListReads;
         const previousListRows = ownedListRows;
+        const previousManagedGetReads = post.mock.calls.filter(([url]) => String(url).endsWith('/machines/managed/actions/get')).length;
         await input.readCurrent();
         expect(ownedListReads - previousListReads).toBe(1); // One existing Account list for the whole endpoint batch.
         expect(ownedListRows - previousListRows).toBe(1); // Only the admitted child is projected from this Account's inventory.
+        expect(post.mock.calls.filter(([url]) => String(url).endsWith('/machines/managed/actions/get')).length)
+          .toBe(previousManagedGetReads); // Open the exact selected list recipient projection, never a newer GET carrier.
         childCurrent = false;
         await expect(input.readCurrent()).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
         childCurrent = true;

@@ -1,5 +1,5 @@
-import { MachinePoolCreateInputV1Schema, MachinePoolDeleteInputV1Schema, MachinePoolDeleteOutputV1Schema, MachinePoolErrorV1Schema, MachinePoolGetInputV1Schema, MachinePoolListInputV1Schema, MachinePoolListOutputV1Schema, MachinePoolResolveInputV1Schema, MachinePoolResolveResultV1Schema, MachinePoolUpdateInputV1Schema, MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools/v1';
-import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolCreateInputV1Schema, MachinePoolDeleteInputV1Schema, MachinePoolDeleteOutputV1Schema, MachinePoolErrorV1Schema, MachinePoolGetInputV1Schema, MachinePoolListInputV1Schema, MachinePoolListOutputV1Schema, MachinePoolResolveInputV1Schema, MachinePoolResolveResultV1Schema, MachinePoolUpdateInputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolWireOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { z } from "zod/mini";
 
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
@@ -52,7 +52,7 @@ export function registerMachinePoolRoutes(
     app.post(machinePoolActionEndpointPathV1("machines.pools.get"), {
         preHandler,
         attachValidation: true,
-        schema: { body: MachinePoolGetInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
+        schema: { body: MachinePoolGetInputV1Schema, response: { 200: MachinePoolWireOutputSchemasV1["machines.pools.get"], ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
         const result = await getMachinePool({ accountId: request.userId, poolId: request.body.poolId, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });
@@ -62,7 +62,7 @@ export function registerMachinePoolRoutes(
     app.post(machinePoolActionEndpointPathV1("machines.pools.create"), {
         preHandler,
         attachValidation: true,
-        schema: { body: MachinePoolCreateInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
+        schema: { body: MachinePoolCreateInputV1Schema, response: { 200: MachinePoolWireOutputSchemasV1["machines.pools.create"], ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
         const result = await createMachinePool({ accountId: request.userId, input: request.body, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });
@@ -72,7 +72,7 @@ export function registerMachinePoolRoutes(
     app.post(machinePoolActionEndpointPathV1("machines.pools.update"), {
         preHandler,
         attachValidation: true,
-        schema: { body: MachinePoolUpdateInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
+        schema: { body: MachinePoolUpdateInputV1Schema, response: { 200: MachinePoolWireOutputSchemasV1["machines.pools.update"], ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
         const result = await updateMachinePool({ accountId: request.userId, input: request.body, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });

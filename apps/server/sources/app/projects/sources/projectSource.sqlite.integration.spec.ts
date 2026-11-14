@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -312,7 +313,7 @@ describe('Source catalog real SQLite owner', () => {
         expect(await inTx(tx => readProjectSourceInTx(tx, member.id, input))).toMatchObject({ ok: true, canManage: true });
         expect(await inTx(tx => updateProjectSourceInTx(tx, member.id, { ...input, expectedRevision: row.revision, patch: { name: 'Managed' } }))).toMatchObject({ ok: true, source: { name: 'Managed' } });
         await db.teamMembership.update({ where: { id: membership.id }, data: { role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Contributors', nameKey: 'contributors' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Contributors') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const grouped = await source(owner.id, [{ principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view' }]);
         expect(await inTx(tx => readProjectSourceInTx(tx, member.id, { serverId, sourceId: grouped.id }))).toMatchObject({ ok: true });

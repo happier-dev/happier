@@ -1,11 +1,12 @@
 import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, parseSavedSecretRefV1,
     captureDeploymentBindingSavedSecretRevisionsV1,
-    type EnvironmentSecretBindingV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+    type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { environmentSecretBindingInstallationsV1, type EnvironmentSecretRequiredUseV1 } from './projectEnvironmentSecretBindingRequiredUsesV1.js';
 
 /** Compare the exact admitted binding vocabulary, independent of object property order. */
 function sameBinding(left: EnvironmentSecretBindingV1, right: EnvironmentSecretBindingV1): boolean {
     if (environmentSecretBindingIdentityV1(left) !== environmentSecretBindingIdentityV1(right)) return false;
+    if (left.purpose === 'variable' && (right.purpose !== 'variable' || left.grantRef !== right.grantRef)) return false;
     if (left.purpose === 'registry' && (right.purpose !== 'registry' || left.access !== right.access)) return false;
     const a = left.source, b = right.source;
     switch (a.kind) {
@@ -86,7 +87,9 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
     resolveSecret?: (binding: Extract<EnvironmentSecretBindingV1['source'], { kind: 'secret' }>) => Promise<string>;
     sealGrant: (input: Readonly<{ subject: MachineSecretGrantSubjectV1; installationPublicKey: Uint8Array;
         content: Readonly<{ kind: 'secret'; value: string }>
-            | Readonly<{ kind: 'environmentValues'; definition: Exclude<EnvironmentSecretBindingV1['source'], { kind: 'secret' }> }> }>) => MachineSecretGrantV1;
+            | Readonly<{ kind: 'environmentValues'; binding: Pick<EnvironmentVariableBindingV1,
+                'purpose' | 'phase' | 'name' | 'grantRef'>;
+                definition: Exclude<EnvironmentSecretBindingV1['source'], { kind: 'secret' }> }> }>) => MachineSecretGrantV1;
     /** Canonical admission rechecks principal, exact purpose owners, resources, installations and approval. */
     assertCurrent: () => Promise<void>;
 }>) {
@@ -109,13 +112,13 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
     const subjectFor = (binding: EnvironmentSecretBindingV1, installation: EnvironmentSecretInstallation): MachineSecretGrantSubjectV1 => {
         const common = { v: 1 as const, machineId: installation.machineId, installationId: installation.installationId, environmentId: input.environmentId };
         if (binding.source.kind === 'secret') return { ...common, kind: 'secret', resourceId: sharedResourceId(binding), resourceRevision: binding.source.resourceRevision };
-        if (binding.purpose !== 'variable') return refuse('secret_missing');
-        return { ...common, kind: 'environmentValues', binding: { purpose: 'variable', phase: binding.phase, name: binding.name } };
+        if (binding.purpose !== 'variable' || !binding.grantRef) return refuse('secret_missing');
+        return { ...common, kind: 'environmentValues', binding: { purpose: 'variable', phase: binding.phase, grantRef: binding.grantRef } };
     };
     const addUse = (uses: EnvironmentSecretBindingV1[], use: EnvironmentSecretBindingV1) => {
         if (!uses.some(existing => sameBinding(existing, use))) uses.push(use);
     };
-    for (const binding of input.previousBindings) for (const { installation, use } of destinationsFor(binding, previousDestinations, previousOperational)) {
+    for (const binding of input.previousBindings.filter(binding => binding.purpose !== 'variable' || binding.source.kind === 'secret' || binding.grantRef)) for (const { installation, use } of destinationsFor(binding, previousDestinations, previousOperational)) {
         const key = machineSecretGrantSubjectKey(subjectFor(use, installation));
         const uses = previousUses.get(key) ?? [];
         addUse(uses, use);
@@ -164,9 +167,10 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
                 grants.push(input.sealGrant({ subject, installationPublicKey: installation.publicKey, content: { kind: 'secret', value } }));
             } else if (subject.kind === 'environmentValues') {
                 const binding = uses[0];
-                if (binding.source.kind === 'secret') return refuse('secret_missing');
+                if (binding.source.kind === 'secret' || binding.purpose !== 'variable' || !binding.grantRef) return refuse('secret_missing');
                 grants.push(input.sealGrant({ subject, installationPublicKey: installation.publicKey,
-                    content: { kind: 'environmentValues', definition: binding.source } }));
+                    content: { kind: 'environmentValues', binding: { purpose: 'variable', phase: binding.phase,
+                        name: binding.name, grantRef: binding.grantRef }, definition: binding.source } }));
             }
         }
         await input.assertCurrent();

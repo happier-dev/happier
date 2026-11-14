@@ -444,7 +444,6 @@
     "../../packages/protocol/src/actions/executor/sessionTargets.ts",
     "../../packages/protocol/src/actions/executor/sessionVisualAdmission.ts",
     "../../packages/protocol/src/actions/executor/simulator.ts",
-    "../../packages/protocol/src/actions/executor/teamCredentialUsageExport.ts",
     "../../packages/protocol/src/actions/executor/types.ts",
     "../../packages/protocol/src/actions/executor/usageActions.ts",
     "../../packages/protocol/src/actions/executor/usageCoachActions.ts",

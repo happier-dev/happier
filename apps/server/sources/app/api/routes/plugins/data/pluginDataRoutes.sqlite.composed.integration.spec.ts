@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -1617,7 +1618,7 @@ describe("plugin collection UI query route", () => {
         const team = await db.team.create({ data: { name: "Collection team" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner, role: "owner" } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Editors", nameKey: "editors" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Editors") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true } });
         const address = { ownerAccountId: owner, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, rowId: "shared-row" };
         const principal = { kind: "account", accountId: recipient } as const;

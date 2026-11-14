@@ -1,3 +1,4 @@
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -423,7 +424,7 @@ describe("Team member administration (SQLite integration)", () => {
         await member(acme.id, owner.id, "owner");
         const membership = await member(acme.id, person.id, "member");
         await db.teamMembership.update({ where: { id: membership.teamMembershipId }, data: { status } });
-        const group = await db.teamGroup.create({ data: { teamId: acme.id, name: "Leave Group", nameKey: "leave-group" } });
+        const group = await db.teamGroup.create({ data: { teamId: acme.id, name: storedPlainPrivateLabel("Leave Group") } });
         await db.teamGroupMembership.create({ data: {
             teamId: acme.id, teamGroupId: group.id, teamMembershipId: membership.teamMembershipId, nativeContribution: true,
         } });
@@ -531,7 +532,7 @@ describe("Team member administration (SQLite integration)", () => {
         await member(acme.id, owner.id, "owner");
         const first = await member(acme.id, target.id, "member");
         const group = await db.teamGroup.create({
-            data: { teamId: acme.id, name: "Developers", nameKey: "developers" },
+            data: { teamId: acme.id, name: storedPlainPrivateLabel("Developers") },
         });
         await db.teamGroupMembership.create({
             data: {
@@ -702,15 +703,16 @@ describe("Team member administration (SQLite integration)", () => {
         const groups = [];
         const originalBindings = [];
         for (const [index, contribution] of ["sole", "native", "other_source"].entries()) {
+            const groupName = `Group ${index}`;
             const created = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-                teamId: acme.id, actorAccountId: owner.id, name: `Group ${index}`, requestKey: crypto.randomUUID(),
+                teamId: acme.id, actorAccountId: owner.id, groupId: crypto.randomUUID(), name: plainPrivateLabel(groupName), requestKey: crypto.randomUUID(),
             }));
             if (!created.ok) throw new Error(created.error);
             groups.push(created.value.id);
             for (const directorySource of contribution === "other_source" ? [source, nextSource] : [source]) {
                 await db.teamDirectoryGroup.create({ data: {
                     directorySourceId: directorySource.id, externalGroupId: created.value.id,
-                    externalDisplayName: created.value.name, state: "active",
+                    externalDisplayName: groupName, state: "active",
                 } });
                 await db.teamDirectoryGroupMember.create({ data: {
                     directorySourceId: directorySource.id, externalGroupId: created.value.id, externalUserId: "person",

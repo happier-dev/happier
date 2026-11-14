@@ -6,9 +6,8 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/machines/setup/composeMachineSetup';
 import { prepareMachineSetupPlanV1 } from '../../../../../../cli/src/machines/setup/prepareMachineSetupPlan';
 import { prepareMachineSetupSoftwareApplyInput } from './machineSetupSoftware';
-import { MachineSetupCombinedPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
-it('reuses the observed Software plan while reviewing deliberate inputs without a second current-state read', async () => {
+it('reads opaque current sources and effects-plans each deliberate Software input', async () => {
     const ref = { pluginId: 'example.software', recipeId: 'configured', revision: '1' };
     const recipe = PluginProjectedMachineRecipeEntryV1Schema.parse({ id: `${ref.pluginId}/${ref.recipeId}`,
         pluginId: ref.pluginId, pluginVersion: '1', definition: { id: ref.recipeId, revision: ref.revision, software: true,
@@ -35,23 +34,23 @@ it('reuses the observed Software plan while reviewing deliberate inputs without 
         readHostFacts: async () => ({ machines: [{ machineId: 'guest', online: true }] }), orchestrationDirectory: '.',
         startCombined: async () => { throw new Error('Review cannot start a Run'); },
         waitForRun: async () => { throw new Error('Review cannot wait for a Run'); },
+        readInvocations: async () => { throw new Error('Review cannot read Run invocations'); },
     });
     const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
     const context = { surface: 'ui' as const, authority: 'present_user' as const };
     const target = { homeId: 'home', machineId: 'guest' };
-    const observed = await executor.execute('machines.setup.plan', { ...target, targets: [target] }, context);
-    if (!observed.ok) throw new Error(observed.errorCode);
-    const currentPlan = MachineSetupCombinedPlanResultV1Schema.parse(observed.result);
     for (const config of [{}, { reviewed: true }]) {
-        const request = { executeAction: executor.execute, context, ...target, targets: [target], currentPlan,
-            setup: { items: [{ kind: 'softwareRecipe' as const, selection: { ref, inputs: { config } } }] }, isCurrent: () => true };
-        const prepared = await prepareMachineSetupSoftwareApplyInput(request);
+        const prepared = await prepareMachineSetupSoftwareApplyInput({ executeAction: executor.execute, context,
+            ...target, targets: [target],
+            setup: { items: [{ kind: 'softwareRecipe' as const, selection: { ref, inputs: { config } } }] }, isCurrent: () => true });
         expect(prepared).toMatchObject({ ok: true, input: { targets: [{ sources: [{ kind: 'direct', setup: {
             items: [{ selection: { ref, inputs: { config } } }],
         } }] }] } });
     }
-    // One current-state read serves both reviews. Each edit gets its own effects Plan, never an Apply.
-    expect(modes).toEqual([undefined, 'effects', 'effects']);
+    // Each explicit review reads current opaque sources, then asks the daemon
+    // for its effects Plan. Reusing a stale current Plan would skip the second
+    // structural read; UI never receives a plaintext preset body to cache.
+    expect(modes).toEqual([undefined, 'effects', undefined, 'effects']);
 });
 
 it('removes direct desired Software while preserving shared items and requiring opt-in for native uninstall', async () => {
@@ -63,7 +62,7 @@ it('removes direct desired Software while preserving shared items and requiring 
     const shared = item('shared');
     const foreign = item('foreign');
     const sources = [
-        { kind: 'accountPreset' as const, presetId: 'shared-tools', presetRevision: 1, setup: { items: [shared] } },
+        { kind: 'bundledPreset' as const, ref: { pluginId: 'example.software', localId: 'shared-tools', revision: '1' }, setup: { items: [shared] } },
         { kind: 'direct' as const, setup: { items: [owned, preExisting, shared, foreign], scripts: [{ body: 'echo retained\r\n' }] } },
     ];
     const sourceFacts = { direct: { firstPresence: {
@@ -101,6 +100,7 @@ it('removes direct desired Software while preserving shared items and requiring 
         readHostFacts: async () => ({ machines: [{ machineId: 'guest', online: true }] }), orchestrationDirectory: '.',
         startCombined: async () => { throw new Error('Review cannot start a Run'); },
         waitForRun: async () => { throw new Error('Review cannot wait for a Run'); },
+        readInvocations: async () => { throw new Error('Review cannot read Run invocations'); },
     });
     const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
     const request = { executeAction: executor.execute, context: { surface: 'ui' as const, authority: 'present_user' as const },

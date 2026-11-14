@@ -5,6 +5,10 @@ import type {
     TeamCredentialUsageQueryResultV1,
 } from './usageV1.js';
 import { TeamCredentialUsageQueryInputV1Schema } from './usageV1.js';
+import type { ActionExecuteFailure } from '../../actions/actionExecutionResult.js';
+import type { PrivateLabelBindingV1, PrivateLabelReadV1 } from '../../crypto/privateLabelV1.js';
+import { teamCredentialExternalApiKeyLabelPrivateLabelBindingV1 } from './externalApiKeyV1.js';
+import { teamCredentialDisplayNamePrivateLabelBindingV1 } from './resourceV1.js';
 
 import {
     buildUsageCsvDocument,
@@ -16,12 +20,96 @@ import { resolveEffectiveUsageCostUsd, type UsageCostMode } from '../../usage/us
 
 export const TeamCredentialUsageExportInputV1Schema = lazyZodSchema(() => z.strictObject({
     query: TeamCredentialUsageQueryInputV1Schema,
-    /** Display-only title; it never selects or authorizes a resource. */
-    resourceName: z.string().check(z.minLength(1)),
     /** Explicit ranked-row selection, preserving the UI's loaded-page scope. */
     breakdownRowCount: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 export type TeamCredentialUsageExportInputV1 = z.output<typeof TeamCredentialUsageExportInputV1Schema>;
+
+/** The keyholding host owns the authorized Home read; this core owns page composition only. */
+export type TeamCredentialUsageExportPageReaderV1 = (
+    query: TeamCredentialUsageExportInputV1['query'],
+) => Promise<TeamCredentialUsageQueryResultV1 | ActionExecuteFailure>;
+
+/** The keyholding host opens one recipient-only label under the supplied persisted binding. */
+export type TeamCredentialUsageExportLabelOpenerV1 = (input: Readonly<{
+    binding: PrivateLabelBindingV1;
+    label: PrivateLabelReadV1 | null | undefined;
+    signal?: AbortSignal;
+}>) => Promise<string | null>;
+
+function isActionFailure(
+    value: TeamCredentialUsageQueryResultV1 | ActionExecuteFailure,
+): value is ActionExecuteFailure {
+    return 'ok' in value && value.ok === false;
+}
+
+function exportFailure(errorCode: 'content_unavailable'): ActionExecuteFailure {
+    return { ok: false, errorCode, error: errorCode };
+}
+
+/**
+ * Builds a local usage file from the Home's recipient-only pages. UI, CLI, and
+ * Agent hosts supply their already-admitted Home reader and keyholder opener;
+ * neither plaintext label crosses that Home reader boundary.
+ */
+export async function buildTeamCredentialUsageExportFromRecipientProjectionV1(input: Readonly<{
+    input: TeamCredentialUsageExportInputV1;
+    readPage: TeamCredentialUsageExportPageReaderV1;
+    openLabel: TeamCredentialUsageExportLabelOpenerV1;
+    signal?: AbortSignal;
+}>): Promise<UsageFileResult | ActionExecuteFailure> {
+    const readPage = async (query: TeamCredentialUsageExportInputV1['query']) => {
+        input.signal?.throwIfAborted();
+        const page = await input.readPage(query);
+        input.signal?.throwIfAborted();
+        return page;
+    };
+
+    const first = await readPage(input.input.query);
+    if (isActionFailure(first)) return first;
+
+    let result = first;
+    while (input.input.query.breakdown !== undefined && input.input.breakdownRowCount !== undefined
+        && (result.breakdown?.length ?? 0) < input.input.breakdownRowCount && result.nextCursor !== null) {
+        const page = await readPage({ ...input.input.query, cursor: result.nextCursor });
+        if (isActionFailure(page)) return page;
+        result = mergeTeamCredentialUsagePages(result, page);
+    }
+
+    let resourceName = 'Team credential usage';
+    if (input.input.query.resourceId !== undefined) {
+        const opened = await input.openLabel({
+            binding: teamCredentialDisplayNamePrivateLabelBindingV1(input.input.query.resourceId),
+            label: result.resourceDisplayName,
+            ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (opened === null) return exportFailure('content_unavailable');
+        resourceName = opened;
+    }
+
+    const rows = result.breakdown ?? [];
+    const selected = input.input.breakdownRowCount === undefined ? rows : rows.slice(0, input.input.breakdownRowCount);
+    const breakdown = await Promise.all(selected.map(async (entry) => {
+        if (input.input.query.breakdown !== 'external_api_key' || entry.privateLabel === undefined) return entry;
+        const opened = await input.openLabel({
+            binding: teamCredentialExternalApiKeyLabelPrivateLabelBindingV1(entry.key),
+            label: entry.privateLabel,
+            ...(input.signal ? { signal: input.signal } : {}),
+        });
+        return opened === null ? entry : { ...entry, label: opened };
+    }));
+
+    input.signal?.throwIfAborted();
+    return buildTeamCredentialUsageFileResult({
+        resourceName,
+        result: { ...result, breakdown },
+        startMs: input.input.query.startMs,
+        endMs: input.input.query.endMs,
+        breakdown: input.input.query.breakdown ?? null,
+        breakdownComplete: input.input.query.cursor === undefined && result.nextCursor === null && selected.length === rows.length,
+        costMode: input.input.query.costMode,
+    });
+}
 
 /**
  * One shared credential's recorded usage, as a file.

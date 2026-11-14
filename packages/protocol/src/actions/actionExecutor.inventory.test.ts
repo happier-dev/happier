@@ -765,7 +765,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
       {
         resourceId: 'resource-1',
         teamMembershipId: 'membership-1',
-        label: 'CI runner',
+        keyId: '123e4567-e89b-42d3-a456-426614174000',
+        label: { content: { t: 'plain', v: 'CI runner' }, recipients: [] },
         expiresAt: null,
       },
       { surface: 'api' },
@@ -1199,6 +1200,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       ok: false,
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
       error: 'Provider preflight failed before spawning.',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, httpStatus: null },
     });
   });
 
@@ -1215,7 +1217,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionSpawnNew).toHaveBeenCalledOnce();
   });
 
-  it('prefers protocol-owned errorCode over generic thrown code fields', async () => {
+  it('preserves the first declared producer code when an exception also carries an errorCode', async () => {
     const deps = createDeps();
     deps.sessionSpawnNew = vi.fn(async () => {
       const error = new Error('Provider preflight failed before spawning.');
@@ -1229,8 +1231,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res).toEqual({
       ok: false,
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorCode: 'ERR_BAD_RESPONSE',
       error: 'Provider preflight failed before spawning.',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'ERR_BAD_RESPONSE', httpStatus: null },
     });
   });
 
@@ -1428,8 +1431,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('routes detached review discovery to the Machine while retaining Session discovery placement', () => {
     const spec = getActionSpec('review.engines.list');
-    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: null, machineId: 'machine-review' })).toBe('machine');
-    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: 'session-review' })).toBe('session');
+    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: null, machineId: 'machine-review' }, undefined, 'ui')).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: 'session-review' }, undefined, 'ui')).toBe('session');
   });
 
   it('resolves detached review engine picker options on the captured Machine', async () => {
@@ -1503,6 +1506,42 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const res = await executor.execute('agents.backends.list', { includeDisabled: false, limit: 2, machineId: 'm1' });
     expect(res.ok).toBe(true);
     expect(deps.agentsBackendsList).toHaveBeenCalledWith({ includeDisabled: false, limit: 2, machineId: 'm1' });
+  });
+
+  it('marks Agent backends by the Machine readiness the shared picker uses, composed with connected defaults', async () => {
+    const fact = (agentId: string, overrides: Record<string, unknown>) => ({
+      agentId, title: agentId, installed: true, version: '1', latestVersion: null,
+      update: { supported: false, command: null },
+      signIn: { status: 'signedIn', loginSupport: 'login_terminal' },
+      platform: { supported: true }, install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null },
+      dependencies: [], ...overrides,
+    });
+    const machinesAgentsList = vi.fn(async () => ({ items: [
+      fact('claude', { signIn: { status: 'signedOut', loginSupport: 'login_terminal' } }),
+      fact('codex', { installed: false }),
+      fact('gemini', { signIn: { status: 'signedOut', loginSupport: 'login_terminal' } }),
+    ] }));
+    const agentsConnectedDefaultRoutesRead = vi.fn(async () => ({ claude: 'connected' as const, codex: 'native' as const, gemini: 'native' as const }));
+    const deps = { ...createDeps(), machinesAgentsList, agentsConnectedDefaultRoutesRead };
+    (deps.agentsBackendsList as any).mockResolvedValue({ items: [
+      { targetKey: 'backend:claude', label: 'Claude', enabled: true },
+      { targetKey: 'backend:codex', label: 'Codex', enabled: true },
+      { targetKey: 'backend:gemini', label: 'Gemini', enabled: true },
+      { targetKey: 'backend:opencode', label: 'OpenCode', enabled: true },
+    ] });
+    const executor = createActionExecutor(deps);
+
+    const listed = await executor.execute('agents.backends.list', { machineId: 'm1' });
+    expect((listed as any).result.items.map((item: any) => [item.targetKey, item.readiness])).toEqual([
+      ['backend:claude', 'ready'], ['backend:codex', 'notInstalled'], ['backend:gemini', 'needsSignIn'], ['backend:opencode', undefined],
+    ]);
+
+    const options = await executor.execute('action.options.resolve', {
+      actionId: 'subagents.plan.start', fieldPath: 'backendTargetKeys', sessionId: 's1', machineId: 'm1',
+    });
+    const byLabel = Object.fromEntries((options as any).result.options.map((option: any) => [option.label, option.disabled === true]));
+    expect(byLabel).toEqual({ Claude: false, Codex: true, Gemini: true, OpenCode: false });
+    expect(agentsConnectedDefaultRoutesRead.mock.calls[0]?.[0]).toMatchObject({ agentIds: ['claude', 'codex', 'gemini'] });
   });
 
   it('routes agents.models.list to deps.agentsModelsList', async () => {
@@ -2177,7 +2216,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }
   });
 
-  it.each(['agent', 'mcp', 'cli', 'api'] as const)('keeps %s Browser discovery summaries usable while explicit detail retains its schema', async surface => {
+  it.each(['agent', 'mcp', 'cli', 'voice', 'api'] as const)('keeps %s Browser discovery summaries usable while explicit detail retains its schema', async surface => {
     const executor = createActionExecutor(createDeps());
     const search = await executor.execute('action.spec.search', { query: 'browser', limit: 50 }, { surface });
     expect(search.ok ? null : search).toBeNull();
@@ -2200,6 +2239,26 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(ActionDiscoveryDefinitionV1Schema.parse(fullDetail.result.actionSpec).outputSchema).toBeDefined();
   });
 
+  it('returns only discovery descriptors for the real Voice spawn search, with schemas available on demand', async () => {
+    const executor = createActionExecutor(createDeps());
+    const search = await executor.execute('action.spec.search', { query: 'session spawn new', limit: 5 }, { surface: 'voice' });
+    if (!search.ok) throw new Error('Voice discovery failed');
+    const descriptors = search.result.actionSpecs;
+    expect(descriptors.length).toBeGreaterThan(0);
+    expect(descriptors.length).toBeLessThanOrEqual(5);
+    expect(descriptors.some(spec => spec.id === 'session.spawn_new')).toBe(true);
+    for (const descriptor of descriptors) {
+      expect(descriptor).not.toHaveProperty('inputSchema');
+      expect(descriptor).not.toHaveProperty('outputSchema');
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(search.result)).byteLength;
+    console.info(JSON.stringify({ voiceSpawnSearch: { descriptors: descriptors.length, bytes } }));
+    const detail = await executor.execute('action.spec.get', { id: 'session.spawn_new' }, { surface: 'voice' });
+    if (!detail.ok) throw new Error('Voice schema discovery failed');
+    expect(detail.result.actionSpec.inputSchema).toBeDefined();
+    expect(detail.result.schemaSections?.length).toBeGreaterThan(0);
+  });
+
   it('reports an unavailable contributed catalog without disabling built-in Actions or confusing a settled empty catalog', async () => {
     let unavailable = true;
     const listContributedActionDefinitions = vi.fn(() => {
@@ -2220,6 +2279,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     ] as const) {
       await expect(executor.execute(actionId, input, { surface: 'api' })).resolves.toEqual({
         ok: false, errorCode: 'catalog_unavailable', error: 'catalog_unavailable',
+        failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'catalog_unavailable', httpStatus: null },
       });
     }
     expect(listContributedActionDefinitions).toHaveBeenCalledTimes(3);
@@ -3168,6 +3228,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       ok: false,
       errorCode: 'session_not_found',
       error: 'Session was not found.',
+      failureCause: { phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'session_not_found', httpStatus: null },
     });
   });
 });

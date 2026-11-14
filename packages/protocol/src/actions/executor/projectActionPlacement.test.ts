@@ -7,13 +7,14 @@ import type { ProjectManifestV1 } from '../../workspaces/projectSetup/projectMan
 import type { ProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { resolveProjectActionMachineV1, type ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';
 import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.js';
+import type { ManagedMachineReadV1 } from '../../machines/managed/actionsV1.js';
 
 const workspace = { serverId: 'home', workspaceId: 'checkout', machineId: 'source', rootPath: '/repo' };
 const native = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } as const;
 const exact = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } } as const satisfies ProjectExecutionChoiceV1;
 const pool = { kind: 'workers', destination: { kind: 'pool', poolId: '4e9648b6-6b2d-47dc-9e3f-d927a430102d', selection: 'automatic' } } as const satisfies ProjectExecutionChoiceV1;
 
-function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown, managed?: ManagedMachineV1) {
+function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown, managed?: ManagedMachineReadV1) {
   const bytes = JSON.stringify(manifest);
   const inspection = ProjectDefinitionInspectOutputSchema.parse({
     definition: manifest ? { basis: { kind: 'present', hash: createHash('sha256').update(bytes!).digest('hex') },
@@ -123,6 +124,23 @@ describe('Project Action declaration placement ceiling', () => {
         { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'unavailable' }, invalid);
       expect(await stale.place({ kind: 'named', name: 'check' }, exact)).toMatchObject({ ok: false });
     }
+  });
+  it('addresses an exact sleeping opaque preset target through its public read wrapper', async () => {
+    const machine = { id: 'managed', homeId: 'home', custodianAccountId: 'account',
+      preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' as const },
+      allocation: 'bound' as const, creationState: 'active' as const, enrolledMachineId: 'worker',
+      desired: 'stop' as const, desiredWhen: 'now' as const, intentRevision: 1,
+      retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: true,
+      observation: { observedAt: 1, availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const },
+    };
+    const presetContent = { content: { t: 'plain' as const, v: { private: 'private preset body' } }, recipientEnvelope: null };
+    const manifest: ProjectManifestV1 = { version: 1, scripts: { check: { execution: 'portable', source: native } } };
+    const unavailable = { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'unavailable' };
+    const h = sourceReads(manifest, unavailable, { machine, presetContent });
+    expect(await h.place({ kind: 'named', name: 'check' }, exact)).toEqual({ ok: true, machineId: 'worker' });
+    expect(h.reads).not.toContain('projects.worker.status');
+    const foreign = sourceReads(manifest, unavailable, { machine: { ...machine, homeId: 'other-home' }, presetContent });
+    expect(await foreign.place({ kind: 'named', name: 'check' }, exact)).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
   it.each([false, true])('retains exact copy-setup facts at the existing frontdoor and rejects stale Machine facts (stale=%s)', async stale => {
     const workerCopy = { serverId: 'home', sourceWorkspaceRefId: 'checkout', sourceMachineId: 'source', targetMachineId: stale ? 'another-worker' : 'worker' };

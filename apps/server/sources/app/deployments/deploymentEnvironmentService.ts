@@ -107,10 +107,10 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     const row = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId },
         include: { deployers: { select: { principalKind: true, principalId: true } },
             previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
-    if (!row) return deploymentFailure('deployment_unavailable');
+    if (!row) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.load', causeKind: 'not_found' });
     if (acceptedRead?.environmentId === row.id) {
         const custody = await readProjectSourceCustodyInTx(tx, row.projectSourceId);
-        if (!custody) return deploymentFailure('deployment_unavailable');
+        if (!custody) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.load.source_custody', causeKind: 'binding_missing' });
         return { ok: true as const, row, admission: { ...custody,
             canManage: false, canDeployMember: false, effectivePrincipals: [] } satisfies DeploymentSourceAdmission };
     }
@@ -123,11 +123,11 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
 export async function loadDeploymentEnvironmentCustodyInTx(tx: Tx, input: Readonly<{
     serverId: string; environmentId: string; includeRemoved?: boolean;
 }>) {
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.custody.server', causeKind: 'server_mismatch' });
     const row = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
-    if (!row || row.deletedAt && !input.includeRemoved) return deploymentFailure('deployment_unavailable');
+    if (!row || row.deletedAt && !input.includeRemoved) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.custody.load', causeKind: row?.deletedAt ? 'already_deleted' : 'not_found' });
     const custody = await readProjectSourceCustodyInTx(tx, row.projectSourceId);
-    if (!custody) return deploymentFailure('deployment_unavailable');
+    if (!custody) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.custody.source', causeKind: 'binding_missing' });
     return { ok: true as const, row, ...custody };
 }
 
@@ -295,7 +295,7 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         ? await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.copyFrom.environmentId, authentication)
         : undefined;
     if (copied && !copied.ok) return copied;
-    if (copied?.row.deletedAt) return deploymentFailure('deployment_unavailable');
+    if (copied?.row.deletedAt) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.copy.source', causeKind: 'already_deleted' });
     if (repeated) {
         const original = parseEnvironmentCreationRepeatValue(repeated);
         if (!original || original.digest !== digest) return deploymentFailure('deployment_conflict');
@@ -741,7 +741,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                         resourceRevision: binding.source.resourceRevision }));
                 } else if (binding.purpose === 'variable') {
                     requiredSubjects.add(machineSecretGrantSubjectKey({ ...common, kind: 'environmentValues',
-                        binding: { purpose: 'variable', phase: binding.phase, name: binding.name } }));
+                        binding: { purpose: 'variable', phase: binding.phase,
+                            ...(binding.grantRef ? { grantRef: binding.grantRef } : { name: binding.name }) } }));
                 }
             }
         }

@@ -13,6 +13,7 @@ import {
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useOpenedTeamCredentialDisplayNames } from './teamCredentialPrivateLabels';
 
 /**
  * One resource as the detail, editor, audience and activity destinations see it.
@@ -28,6 +29,8 @@ export type TeamCredentialResourceView = Readonly<{
     resource: TeamCredentialResourceSummaryV1 | null;
     /** Least-privilege row for a recipient who has no administration row. */
     catalogResource: TeamCredentialResourceCatalogEntryV1 | null;
+    /** Locally opened resource label; unavailable E2EE material remains unlabeled. */
+    displayName: string | null;
     viewer: TeamCredentialViewerCapabilitiesV1 | null;
     resolved: boolean;
     /** Whether an ordinary resource write may be offered on this screen. */
@@ -70,6 +73,13 @@ export function useTeamCredentialResourceView(params: Readonly<{
         () => catalog.resources.find((row) => row.id === resourceId && row.teamId === context.address.teamId) ?? null,
         [catalog.resources, context.address.teamId, resourceId],
     );
+    const labelCarrier = exact.resource ?? catalogResource;
+    const openedDisplayNames = useOpenedTeamCredentialDisplayNames({
+        scope: context.scope,
+        resources: labelCarrier === null ? [] : [labelCarrier],
+        enabled: featureEnabled,
+    });
+    const displayName = labelCarrier === null ? null : openedDisplayNames[labelCarrier.id] ?? null;
     const managesResources = exact.resource !== null && (
         exact.resource.capabilities.manageAudience
         || exact.resource.capabilities.managePolicy
@@ -96,6 +106,7 @@ export function useTeamCredentialResourceView(params: Readonly<{
         featureEnabled,
         resource: exact.resource,
         catalogResource,
+        displayName,
         viewer,
         // A recipient catalog row can render read-only detail, but it cannot
         // settle the independent administration read used by the editor and
@@ -107,5 +118,5 @@ export function useTeamCredentialResourceView(params: Readonly<{
         writesSuspended: context.approvalPending || !exact.isCurrent,
         error,
         reload,
-    }), [catalog.resolved, catalogResource, context.approvalPending, context.archived, context.mutationsAvailable, error, exact.isCurrent, exact.resolved, exact.resource, featureEnabled, managesResources, reload, viewer]);
+    }), [catalog.resolved, catalogResource, context.approvalPending, context.archived, context.mutationsAvailable, displayName, error, exact.isCurrent, exact.resolved, exact.resource, featureEnabled, managesResources, reload, viewer]);
 }

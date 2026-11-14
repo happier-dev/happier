@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { decodeBase64 } from "privacy-kit";
 import { PrismaClient, type Prisma } from "@prisma/client";
@@ -154,7 +155,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 role: "member", sessionAccessStartsAt: null,
             })) });
             await client.teamGroup.create({ data: {
-                id: `${prefix}-group`, teamId: teamIds[0], name: "Group", nameKey: "group",
+                id: `${prefix}-group`, teamId: teamIds[0], name: storedPlainPrivateLabel("Group"),
             } });
             await client.session.createMany({ data: sessionIds.map((id, i) => ({
                 id, accountId: i < ownedSessionCount ? accountId : `${prefix}-account-${(i % 199) + 1}`,

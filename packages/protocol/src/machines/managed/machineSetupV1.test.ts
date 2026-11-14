@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MachineSetupV1Schema, MachineSetupV1ReadSchema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1 } from './machineSetupV1.js';
 import { ManagedMachinePresetV1ReadSchema, ManagedMachinePresetCreateInputV1Schema } from './managedMachinePresetV1.js';
+import { ManagedMachinePresetContentV1Schema } from './managedMachinePresetContentV1.js';
 import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
 
 describe('MachineSetupV1', () => {
@@ -33,17 +34,26 @@ describe('MachineSetupV1', () => {
             .toEqual({ scripts: [{ body, affects: 'none', check }] });
     });
     it('captures both Presets scripts verbatim in source order through the one setup union', () => {
-        const base = { homeId: 'home', revision: 1, name: 'Source', owner: { kind: 'account', accountId: 'account' },
-            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-            controller: { machineId: 'controller', installationId: 'installation' } };
+        const base = { homeId: 'home', revision: 1, owner: { kind: 'account', accountId: 'account' },
+            contentEncryptionMode: 'plain' as const,
+            content: { t: 'plain' as const, v: { v: 1 as const, name: 'Source',
+                launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} } } },
+            recipients: [], controller: { machineId: 'controller', installationId: 'installation' } };
         const first = ManagedMachinePresetV1ReadSchema.parse({ ...base, id: 'first',
-            setup: { setupScript: '\r\necho first\r\n', setupScriptAffects: 'none' } });
+            content: { ...base.content, v: { ...base.content.v,
+                setup: { scripts: [{ body: '\r\necho first\r\n', affects: 'none' }] } } } });
         const check = { executable: '/usr/bin/test', args: ['-e', '/tmp/second'], unsatisfiedExitCodes: [1] };
         const second = ManagedMachinePresetV1ReadSchema.parse({ ...base, id: 'second',
-            setup: { setupScript: 'echo second\r\n', setupScriptCheck: check } });
+            content: { ...base.content, v: { ...base.content.v,
+                setup: { scripts: [{ body: 'echo second\r\n', check }] } } } });
+        if (first.content.t !== 'plain' || second.content.t !== 'plain') throw new Error('Expected Plain preset bodies');
+        const firstContent = ManagedMachinePresetContentV1Schema.parse(first.content.v);
+        const secondContent = ManagedMachinePresetContentV1Schema.parse(second.content.v);
         const sources = MachineSetupSourceV1Schema.parse([
-            { kind: 'accountPreset', presetId: first.id, presetRevision: first.revision, setup: first.setup },
-            { kind: 'accountPreset', presetId: second.id, presetRevision: second.revision, setup: second.setup },
+            { kind: 'accountPreset', presetId: first.id, presetRevision: first.revision,
+                contentEncryptionMode: first.contentEncryptionMode, setup: firstContent.setup },
+            { kind: 'accountPreset', presetId: second.id, presetRevision: second.revision,
+                contentEncryptionMode: second.contentEncryptionMode, setup: secondContent.setup },
             { kind: 'direct', setup: {} },
         ]);
         const captured = mergeMachineSetupsV1(sources.map(source => source.setup));
@@ -51,9 +61,10 @@ describe('MachineSetupV1', () => {
         expect(captured).toEqual({ ok: true, setup: { scripts } });
         if (!captured.ok) throw new Error('Expected captured setup');
         const { revision: _revision, ...creation } = base;
-        const created = ManagedMachinePresetCreateInputV1Schema.parse({ ...creation, id: 'captured', setup: captured.setup });
-        expect(ManagedMachinePresetV1ReadSchema.parse(JSON.parse(JSON.stringify({ ...created, revision: 1 }))).setup)
-            .toEqual({ scripts });
+        const created = ManagedMachinePresetCreateInputV1Schema.parse({ ...creation, id: 'captured',
+            content: { t: 'plain', v: { ...base.content.v, setup: captured.setup } } });
+        expect(ManagedMachinePresetV1ReadSchema.parse(JSON.parse(JSON.stringify({ ...created, revision: 1 }))).content)
+            .toEqual({ t: 'plain', v: { ...base.content.v, setup: { scripts } } });
     });
     it('retains inert Compose and pinned catalog app intent, never generated credentials or app references', () => {
         const base = { name: 'Dashboard', project: { kind: 'create' }, bindings: [

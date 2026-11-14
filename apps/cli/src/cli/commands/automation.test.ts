@@ -79,6 +79,39 @@ describe('handleAutomationCommand', () => {
     expect(listAutomationDefinitionsFn).toHaveBeenNthCalledWith(2, { token: 'token-1' });
   });
 
+  it('opens a current private Workflow display carrier before printing a list label', async () => {
+    const resolveAutomationEncryptionFn = vi.fn(async () => ({
+      kind: 'available' as const,
+      witness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null },
+    }));
+    const output = captureConsoleText();
+    try {
+      await handleAutomationCommand(['list'], {
+        readCredentialsFn: async () => ({ token: 'token-1' } as never),
+        listAutomationDefinitionsFn: async () => ({
+          automations: [{
+            id: 'automation-private', name: 'Automation', description: null,
+            enabled: true, targetType: null, existingSessionId: null, templateVersion: 1,
+            lastRunAt: null, createdAt: 1, updatedAt: 2, assignments: [], triggers: [],
+            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null,
+              workflow: { t: 'plain', v: {
+                workspace: { directory: '/workspace/project' }, executionTarget: { kind: 'session' },
+                display: { name: 'Nightly release review', description: 'Review the release branch' },
+              } } },
+          }],
+          nextCursor: null,
+        }),
+        createExecutorFn: vi.fn(),
+        resolveAutomationEncryptionFn,
+      });
+      expect(output.text()).toContain('Nightly release review');
+      expect(output.text()).not.toContain('\tAutomation\t');
+    } finally {
+      output.restore();
+    }
+    expect(resolveAutomationEncryptionFn).toHaveBeenCalledTimes(2);
+  });
+
   it('forwards the opaque list cursor and prints the exact continuation command', async () => {
     const listAutomationDefinitionsFn = vi.fn(async () => ({
       automations: [],

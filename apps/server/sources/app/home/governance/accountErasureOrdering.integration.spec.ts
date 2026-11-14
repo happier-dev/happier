@@ -14,6 +14,7 @@ import { homeGovernanceRoutes } from "@/app/api/routes/home/homeGovernanceRoutes
 import { registerAccountErasureRoute } from "@/app/api/routes/auth/registerAccountErasureRoute";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { TEAM_CHANGE_ENTITY_ID } from "@/app/teams/teamChanges";
 import { ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE } from "@/app/encryption/accountEncryptionTransitionCoordinator";
 
@@ -292,7 +293,7 @@ describe("Account erasure ordering against Home ownership", () => {
     it("retires and revokes the Account before the first object delete, then completes deletion", async () => {
         await createAccountWithBlob({ homeRole: "owner" });
         const { accountId, path } = await createAccountWithBlob({ homeRole: "owner" });
-        const pat = await auth.createApiToken({ accountId, tokenId: crypto.randomUUID(), label: "Before erasure" });
+        const pat = await auth.createApiToken({ accountId, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(accountId, "Before erasure") });
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({ status: "deleted" });
 
@@ -561,7 +562,7 @@ describe("Account erasure ordering against Home ownership", () => {
     it("completes an admitted self-erasure through its own credential revocation", async () => {
         await createAccountWithBlob({ homeRole: "owner" });
         const { accountId } = await createAccountWithBlob({ homeRole: "member" });
-        const pat = await auth.createApiToken({ accountId, tokenId: crypto.randomUUID(), label: "Self erasure" });
+        const pat = await auth.createApiToken({ accountId, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(accountId, "Self erasure") });
 
         // Phase A intentionally revokes this Account's own credentials. That
         // must not make the invocation it already admitted impossible to finish.

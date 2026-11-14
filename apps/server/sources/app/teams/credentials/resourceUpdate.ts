@@ -10,7 +10,7 @@ import { AccountStatus } from "@/storage/enums.generated";
 import { acquireTeamMutationLockInTx, resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { publishTeamChangedInTx } from "../teamChanges";
-import { recordTeamCredentialActivityInTx } from "./resourceActivity";
+import { recordTeamCredentialResourceActivityInTx } from "./resourceActivity";
 import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacementForSaveInTx } from "./brokerPlacementResolver";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
@@ -26,6 +26,10 @@ import {
     normalizeTeamCredentialRequestPolicyForPersistence,
     type TeamCredentialRequestPolicySupportEvidence,
 } from "./resourceRequestPolicySupport";
+import {
+    prepareTeamCredentialResourceDisplayNameForWriteInTx,
+    readTeamCredentialResourceDisplayNameStored,
+} from './privateLabels';
 
 export type UpdateTeamCredentialResourceInput = TeamCredentialResourceUpdateInputV1;
 
@@ -64,8 +68,9 @@ async function applyResourceReplacementInTx(
     const storedSessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(resource.sessionUsePolicy);
     const storedRequestPolicy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(storedPolicy);
     const storedPlacement = readTeamCredentialBrokerPlacement(resource);
+    const storedDisplayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
     if (!storedSource.success || !storedDelivery.success || !storedSessionPolicy.success
-        || !storedRequestPolicy.success || !storedPlacement.ok) {
+        || !storedRequestPolicy.success || !storedPlacement.ok || storedDisplayName === null) {
         return { ok: false, error: "resource_corrupt" };
     }
 
@@ -108,7 +113,7 @@ async function applyResourceReplacementInTx(
     // omitted fields from locked storage, never from those presentation values.
     const parsedReplacement = TeamCredentialResourceReplacementV1Schema.safeParse({
         enabled: input.replacement.enabled ?? resource.enabled,
-        displayName: input.replacement.displayName ?? resource.displayName,
+        displayName: input.replacement.displayName ?? storedDisplayName,
         sessionUsePolicy: input.replacement.sessionUsePolicy ?? storedSessionPolicy.data,
         requestPolicy: input.replacement.requestPolicy === undefined ? storedRequestPolicy.data : input.replacement.requestPolicy,
         allMembersAllowedRoutes: input.replacement.allMembersAllowedRoutes === undefined
@@ -131,7 +136,7 @@ async function applyResourceReplacementInTx(
             sortedAudience(requestedAudience.memberGrants, "teamMembershipId"),
         );
     const managerOwnedChanged = resource.enabled !== replacement.enabled
-        || resource.displayName !== replacement.displayName.trim()
+        || input.replacement.displayName !== undefined
         || resource.sessionUsePolicy !== replacement.sessionUsePolicy
         || !isDeepStrictEqual(storedRequestPolicy.data, replacement.requestPolicy)
         || audienceChanged
@@ -163,6 +168,15 @@ async function applyResourceReplacementInTx(
         const custodianQualification = await qualify();
         if (!custodianQualification.ok) return custodianQualification;
     }
+    const displayName = input.replacement.displayName === undefined
+        ? { kind: 'ready' as const, label: storedDisplayName, serialized: resource.displayName }
+        : await prepareTeamCredentialResourceDisplayNameForWriteInTx({
+            tx,
+            ownerAccountId: input.actorAccountId,
+            teamId: resource.teamId,
+            label: replacement.displayName,
+        });
+    if (displayName.kind !== 'ready') return { ok: false, error: 'invalid_resource_input' };
     const nextSource = custodianBlock?.source ?? storedSource.data;
     const nextDeliveryPolicy = custodianBlock?.deliveryPolicy ?? storedDelivery.data.policy;
     const deliveryPolicyChanged = !isDeepStrictEqual(storedDelivery.data.policy, nextDeliveryPolicy);
@@ -330,7 +344,7 @@ async function applyResourceReplacementInTx(
         where: { id: resource.id, revision: input.expectedRevision },
         data: {
             enabled: replacement.enabled,
-            displayName: replacement.displayName.trim(),
+            displayName: displayName.serialized,
             sourceBindingJson: JSON.stringify(nextSource),
             disclosureCeiling: JSON.stringify({ ...storedDelivery.data, policy: nextDeliveryPolicy }),
             sessionUsePolicy: replacement.sessionUsePolicy,
@@ -391,12 +405,12 @@ async function applyResourceReplacementInTx(
     } else if (nextAudienceChanged) {
         await retainEntitledTeamCredentialRecipientMaterialInTx(tx, { resourceId: resource.id });
     }
-    await recordTeamCredentialActivityInTx(tx, {
+    await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId,
         resourceId: resource.id,
         kind: "resource_updated",
         actor: { kind: "account", accountId: input.actorAccountId },
-        subjectDisplayName: replacement.displayName.trim(),
+        subjectDisplayName: displayName.label,
     });
     await publishTeamChangedInTx(tx, {
         teamId: resource.teamId,
@@ -418,7 +432,6 @@ export async function updateTeamCredentialResourceInTx(
     if (!parsedPatch.success) return { ok: false, error: "invalid_resource_input" };
     const patch = parsedPatch.data;
     if (!Number.isSafeInteger(patch.expectedRevision) || patch.expectedRevision < 0
-        || (patch.displayName !== undefined && (!patch.displayName.trim() || patch.displayName.trim().length > 120))
         || (patch.deliveryPolicy !== undefined && !TeamCredentialDeliveryPolicyV1Schema.safeParse(patch.deliveryPolicy).success)
         || (patch.sessionUsePolicy !== undefined && !TeamCredentialSessionUsePolicyV1Schema.safeParse(patch.sessionUsePolicy).success)
         || (patch.requestPolicy !== undefined && !z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(patch.requestPolicy).success)) {
@@ -485,6 +498,8 @@ export async function updateTeamCredentialResourceInTx(
     if (!qualification.ok) return qualification;
     const canManage = canManageStructurally && qualification.ok;
     if (resource.revision !== patch.expectedRevision) return { ok: false, error: "resource_changed" };
+    const storedDisplayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (storedDisplayName === null) return { ok: false, error: 'resource_corrupt' };
     const storedDelivery = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
     const sessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(patch.sessionUsePolicy ?? resource.sessionUsePolicy);
     const storedRequestPolicy = (() => {
@@ -605,6 +620,15 @@ export async function updateTeamCredentialResourceInTx(
             if (!placement.ok) return placement;
         }
     }
+    const displayName = patch.displayName === undefined
+        ? { kind: 'ready' as const, label: storedDisplayName, serialized: resource.displayName }
+        : await prepareTeamCredentialResourceDisplayNameForWriteInTx({
+            tx,
+            ownerAccountId: input.actorAccountId,
+            teamId: resource.teamId,
+            label: patch.displayName,
+        });
+    if (displayName.kind !== 'ready') return { ok: false, error: 'invalid_resource_input' };
     // See applyResourceReplacementInTx: only authority facts advance `revision`.
     const authorityChanged = (patch.enabled !== undefined && patch.enabled !== resource.enabled)
         || deliveryPolicyChanged
@@ -614,7 +638,7 @@ export async function updateTeamCredentialResourceInTx(
         || brokerPoolId !== resource.brokerPoolId;
     const nextRevision = authorityChanged ? patch.expectedRevision + 1 : patch.expectedRevision;
     const updated = await tx.teamCredentialResource.updateMany({ where: { id: resource.id, revision: patch.expectedRevision }, data: {
-        ...(patch.displayName === undefined ? {} : { displayName: patch.displayName.trim() }),
+        ...(patch.displayName === undefined ? {} : { displayName: displayName.serialized }),
         ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
         disclosureCeiling: JSON.stringify({ ...storedDelivery.data, policy: nextDeliveryPolicy }), sessionUsePolicy: sessionPolicy.data,
         requestPolicyJson: nextRequestPolicy === null ? null : JSON.stringify(nextRequestPolicy),
@@ -641,9 +665,9 @@ export async function updateTeamCredentialResourceInTx(
             data: { directSourceVersionsJson: null },
         });
     }
-    await recordTeamCredentialActivityInTx(tx, {
+    await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId, resourceId: resource.id, kind: "resource_updated",
-        actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: patch.displayName?.trim() ?? resource.displayName,
+        actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: displayName.label,
     });
     await publishTeamChangedInTx(tx, { teamId: resource.teamId, additionalAccountIds: [resource.custodianAccountId, input.actorAccountId] });
     return { ok: true, resourceId: resource.id, revision: nextRevision };

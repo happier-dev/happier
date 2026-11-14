@@ -33,6 +33,7 @@ import { admitWorkflowRun } from '@/app/workflows/workflowRunService';
 import { claimAutomationRun } from '@/app/automations/automationClaimService';
 import { fetchAutomationAccountCurrentnessWitnessTx } from '@/app/automations/automationAccountCurrentness';
 import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('spawn-reviewed Machine software setup HTTP authority', () => {
     let harness: LightSqliteHarness;
@@ -76,7 +77,7 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                 placement: admitSessionSpawnNewActionInputV2(canonical).organizationPlacement, connectedServices: canonical.connectedServices,
             } });
             const constrained = await auth.createApiToken({ accountId: f.account.id, tokenId: randomUUID(),
-                label: 'Public spawn creation ceiling', grant: creationGrant,
+                label: await preparePlainAccountApiTokenLabel(f.account.id, 'Public spawn creation ceiling'), grant: creationGrant,
                 authenticationEvidence: [{ kind: 'home_method', methodId: 'email_password' }] });
             const publicConstrained = await mint({ ...envelope, requestId: randomUUID() }, constrained.token);
             expect(publicConstrained.statusCode, publicConstrained.body).toBe(200);

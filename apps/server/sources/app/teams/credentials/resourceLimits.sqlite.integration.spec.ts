@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { db } from '@/storage/db';
@@ -47,10 +48,10 @@ describe('Team credential usage-limit administration', () => {
         });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: other.id, role: 'member' } });
         const currentGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: 'Current group', nameKey: 'current-group' },
+            data: { teamId: team.id, name: storedPlainPrivateLabel('Current group') },
         });
         const formerGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: 'Former group', nameKey: 'former-group' },
+            data: { teamId: team.id, name: storedPlainPrivateLabel('Former group') },
         });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,

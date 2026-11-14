@@ -1,5 +1,10 @@
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { managedMachineActionEndpointPathV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import { ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1, AccountDirectoryHomesResponseV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolListOutputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { AccountPetListResponseV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
 import {
@@ -107,6 +112,12 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
 export function createEmptyAccountMigrationCensusHttpResponse(path: string, init?: RequestInit): Response | null {
     const pathname = path.split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
+    if (method === 'POST' && pathname === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) {
+        return Response.json(AccountApiTokensListActionOutputV1Schema.parse({ tokens: [] }));
+    }
+    if (method === 'POST' && pathname === machinePoolActionEndpointPathV1('machines.pools.list')) {
+        return Response.json(MachinePoolListOutputV1Schema.parse({ pools: [] }));
+    }
     if (method === 'POST' && pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
         return Response.json(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [] }));
     }
@@ -114,6 +125,12 @@ export function createEmptyAccountMigrationCensusHttpResponse(path: string, init
         return Response.json(ProjectTrustListResponseV1Schema.parse({ rows: [] }));
     }
     if (method !== 'GET') return null;
+    if (pathname === ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1) {
+        return Response.json(AccountDirectoryHomesResponseV1Schema.parse({ v: 1, homes: [], preferredHomeServerIdentityId: null }));
+    }
+    if (pathname === '/v1/account/encryption/migrate/managed-machine-presets/inventory') {
+        return Response.json(ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema.parse({ presets: [], snapshots: [] }));
+    }
     if (pathname === '/v1/account/encryption/migrate/discussions/inventory') {
         return Response.json(DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [] }));
     }

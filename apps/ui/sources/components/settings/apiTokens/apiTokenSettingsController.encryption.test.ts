@@ -13,6 +13,7 @@ import {
 import {
     openApiTokenEncryptionAccessV1} from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { decodeBase64 } from '@/encryption/base64';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import {
     createApiTokenSettingsControllerHarness,
@@ -38,6 +39,26 @@ async function harness(options: ApiTokenSettingsControllerHarnessOptions = {}) {
 }
 
 describe('trusted token UI encryption lifecycle', () => {
+    it.each(['plain', 'e2ee'] as const)('opens a plain token-list label only for a persisted %s Account', async (mode) => {
+        const row = {
+            tokenId: '11111111-1111-4111-8111-111111111111',
+            label: { content: { t: 'plain', v: 'Build runner' }, recipientEnvelope: null },
+            displayPrefix: 'hap_v1_11111111', createdAt: '2026-09-06T00:00:00.000Z',
+            expiresAt: null, lastUsedAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
+            grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, activeChildCount: 0, embedConfig: null,
+        };
+        const { controller, requests } = await harness({ mode, rows: [row] });
+        await controller.refresh();
+        if (mode === 'plain') {
+            expect(controller.getState()).toMatchObject({ phase: 'ready', tokens: [{ ...row, label: 'Build runner' }] });
+        } else {
+            expect(controller.getState().tokens).toEqual([]);
+            expect(controller.getState().listError).toBe('unavailable');
+        }
+        expect(requests.some((request) => request.path.endsWith('/currentness'))).toBe(false);
+        controller.retire();
+    }, 180_000);
+
     it('never probes encryption currentness during ordinary list refresh', async () => {
         const { controller, requests, withdrawCurrentness } = await harness();
         await controller.refresh();
@@ -68,6 +89,22 @@ describe('trusted token UI encryption lifecycle', () => {
         await unavailable.controller.refreshEncryptionAvailability();
         expect(unavailable.controller.getState().encryptionAvailability).toBe('unavailable');
         unavailable.controller.retire();
+    }, 180_000);
+
+    it('seals an Account token label for the current Account and opens only the returned reader projection', async () => {
+        const { controller, requests, scope } = await harness({ mode: 'e2ee' });
+        controller.setCreateDraft({ label: 'Private deployment', expiryPreset: '90d', encryptionAccess: false });
+
+        await controller.createToken();
+
+        const request = requests.find((entry) => entry.path === '/v1/auth/api-tokens/create');
+        expect(request?.body.label).toMatchObject({
+            content: { t: 'encrypted' },
+            recipients: [expect.objectContaining({ accountId: scope.accountId })],
+        });
+        expect(JSON.stringify(request?.body.label)).not.toContain('Private deployment');
+        expect(controller.getState().reveal?.apiToken.label).toBe('Private deployment');
+        controller.retire();
     }, 180_000);
 
     it('withdraws stale encrypted readiness without blocking ordinary creation', async () => {

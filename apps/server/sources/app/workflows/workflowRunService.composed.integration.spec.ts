@@ -80,6 +80,7 @@ import { deriveWorkflowSessionInputLocalIdV2 } from "@happier-dev/protocol/sessi
 import { workflowDiscussionRoundPersistenceContracts } from './workflowDiscussionRound.testkit';
 import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 import {
     admitWorkflowInvocations as admitWorkflowInvocationsOwner,
@@ -1408,7 +1409,7 @@ describe("workflowRunService (integration)", () => {
             input: { runId: seeded.runId, invocationId: seeded.invocationId, expectedContentRevision: "1", mode: "use_result" } };
         const signedHeaders = caller === "signed_agent" ? await (async () => {
             await db.machine.update({ where: { id: seeded.machineId }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
-            const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: "Review completion" });
+            const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(seeded.accountId, "Review completion") });
             const principal = await auth.verifyPat(pat.token);
             if (!principal.ok) throw new Error("Expected current review PAT");
             const authorization = await auth.mintExternalActionExecutionAuthorization({
@@ -2155,7 +2156,7 @@ describe("workflowRunService (integration)", () => {
         await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
         const accountToken = await auth.createToken(seeded.accountId, undefined, { kind: "account", authority: "present_user" });
         const directoryToken = await auth.createToken(seeded.accountId, undefined, { kind: "account_directory", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: "Workflow qualification" });
+        const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(seeded.accountId, "Workflow qualification") });
         const runner = await createMaterializedEphemeralRunnerFixture();
         await expect(auth.verifyToken(runner.token)).resolves.toMatchObject({ authTokenKind: "ephemeral_session_runner" });
         const generator = await privacyKit.createPersistentTokenGenerator({ service: "handy", seed: String(process.env.HANDY_MASTER_SECRET) });
@@ -2193,7 +2194,7 @@ describe("workflowRunService (integration)", () => {
             metadata: encodePlainMachineStoredContent({}),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
-        const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: "External Workflow read" });
+        const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(seeded.accountId, "External Workflow read") });
         const principal = await auth.verifyPat(pat.token);
         if (!principal.ok) throw new Error("Expected current PAT fixture");
         const actionId = "workflow.run.get";

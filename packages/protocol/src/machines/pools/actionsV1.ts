@@ -9,7 +9,11 @@ import {
   MachinePoolDeleteOutputV1Schema,
   MachinePoolGetInputV1Schema,
   MachinePoolListInputV1Schema,
+  MachinePoolOpenedListOutputV1Schema,
   MachinePoolListOutputV1Schema,
+  MachinePoolPrivateViewV1Schema,
+  type MachinePoolPrivateViewV1,
+  type MachinePoolViewV1,
   MachinePoolResolveInputV1Schema,
   MachinePoolResolveResultV1Schema,
   MachinePoolUpdateInputV1Schema,
@@ -30,13 +34,39 @@ export const MachinePoolActionInputSchemasV1 = {
 } as const satisfies Record<MachinePoolActionIdV1, z.ZodMiniType>;
 
 export const MachinePoolActionOutputSchemasV1 = {
-  'machines.pools.list': MachinePoolListOutputV1Schema,
+  'machines.pools.list': MachinePoolOpenedListOutputV1Schema,
   'machines.pools.get': MachinePoolViewV1Schema,
   'machines.pools.create': MachinePoolViewV1Schema,
   'machines.pools.update': MachinePoolViewV1Schema,
   'machines.pools.delete': MachinePoolDeleteOutputV1Schema,
   'machines.pools.resolve': MachinePoolResolveResultV1Schema,
 } as const satisfies Record<MachinePoolActionIdV1, z.ZodMiniType>;
+
+/** HTTP responses remain recipient-scoped until the admitted client host opens them. */
+export const MachinePoolWireOutputSchemasV1 = {
+  ...MachinePoolActionOutputSchemasV1,
+  'machines.pools.list': MachinePoolListOutputV1Schema,
+  'machines.pools.get': MachinePoolPrivateViewV1Schema,
+  'machines.pools.create': MachinePoolPrivateViewV1Schema,
+  'machines.pools.update': MachinePoolPrivateViewV1Schema,
+} as const satisfies Record<MachinePoolActionIdV1, z.ZodMiniType>;
+
+export type MachinePoolWireOutputV1<TActionId extends MachinePoolActionIdV1 = MachinePoolActionIdV1> =
+  z.infer<typeof MachinePoolWireOutputSchemasV1[TActionId]>;
+
+/** Each host supplies its existing captured-Account opener; Action consumers see one opened result. */
+export async function openMachinePoolActionOutputV1(
+  output: MachinePoolWireOutputV1,
+  openPool: (view: MachinePoolPrivateViewV1) => MachinePoolViewV1 | null | Promise<MachinePoolViewV1 | null>,
+): Promise<MachinePoolActionOutputV1 | null> {
+  if ('pools' in output) {
+    const pools = await Promise.all(output.pools.map(openPool));
+    if (pools.some(pool => pool === null)) return null;
+    return { ...output, pools: pools.filter((pool): pool is MachinePoolViewV1 => pool !== null) };
+  }
+  if ('pool' in output) return await openPool(output);
+  return output;
+}
 
 export type MachinePoolActionInputV1<TActionId extends MachinePoolActionIdV1 = MachinePoolActionIdV1> =
   z.infer<typeof MachinePoolActionInputSchemasV1[TActionId]>;

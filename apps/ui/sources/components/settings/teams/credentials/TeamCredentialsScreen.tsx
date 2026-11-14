@@ -39,10 +39,11 @@ import { useTeamCredentialsProjection } from './useTeamCredentialsProjection';
 const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
     address: TeamAddress;
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1;
+    displayName: string | null;
     language: string;
 }>) {
     const router = useRouter();
-    const { address, resource } = props;
+    const { address, resource, displayName } = props;
     const registry = useProjectedConnectedServicesRegistry();
     // Whether the Home disclosed this resource's audience and policy to this
     // viewer is the resource's own `capabilities`, which the presentation owner
@@ -53,11 +54,11 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
     return (
         <Item
             testID={`team-credentials-row:${resource.id}`}
-            title={resource.displayName}
+            title={displayName ?? t('teams.credentials.title')}
             icon={<ConnectedServiceMark service={resource.sourcePresentation?.kind === 'connected_service' ? resource.sourcePresentation.service : null} legacyServiceId={resourceConnectedServiceMarkId(resource, registry)} size="row" />}
             subtitle={summaryLines.join('\n')}
             subtitleLines={0}
-            accessibilityLabel={resourceAccessibilityLabel(resource)}
+            accessibilityLabel={resourceAccessibilityLabel(resource, displayName)}
             onPress={() => router.push(teamCredentialDetailPath(address, resource.id))}
         />
     );
@@ -107,7 +108,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     const router = useRouter();
     const [search, setSearch] = React.useState('');
     const [filter, setFilter] = React.useState<TeamCredentialResourceListFilterV1>('all');
-    const { featureEnabled, projection, rows, recipientPending, error, settled, retry } = useTeamCredentialsProjection(context, search.trim() || undefined, filter);
+    const { featureEnabled, projection, rows, displayNames, recipientPending, error, settled, retry } = useTeamCredentialsProjection(context, search.trim() || undefined, filter);
     const showSearch = rows.length >= 10 || projection.hasMore || search.length > 0;
 
     if (!featureEnabled) {
@@ -232,6 +233,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                         key={resource.id}
                         address={context.address}
                         resource={resource}
+                        displayName={displayNames[resource.id] ?? null}
                         language={getPreferredLanguage()}
                     />
                 ))}

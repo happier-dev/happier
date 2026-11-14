@@ -1,9 +1,9 @@
 import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
-import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { applyEnvironmentSecretBindingsPatchV1, captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
@@ -27,8 +27,8 @@ import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonV
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1,
-    type DeploymentDomainContentV1,
-    type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentDomainContentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1,
+    type EnvironmentVariableBindingInputV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentTemplatePreparationErrorV1, prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -82,6 +82,16 @@ type TemplateAppliedResult = Extract<DeploymentTemplateInstantiateResultV1, { ki
 type TemplatePreparationResult = Exclude<DeploymentTemplateInstantiateResultV1, TemplateAppliedResult>
     | Omit<TemplateAppliedResult, 'targetLinkId'> & { targetLinkId?: string }
     | ActionExecuteFailure;
+function materializeTemplateBindings(current: readonly EnvironmentSecretBindingV1[],
+    bindings: readonly EnvironmentVariableBindingInputV1[]): EnvironmentVariableBindingV1[] {
+    const resolved = new Map(applyEnvironmentSecretBindingsPatchV1(current, { set: bindings, remove: [] }, randomUUID)
+        .map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+    return bindings.map(binding => {
+        const materialized = resolved.get(environmentSecretBindingIdentityV1(binding));
+        if (!materialized || materialized.purpose !== 'variable') return refuse('deployment_invalid');
+        return materialized;
+    });
+}
 function projectTemplateResult(result: TemplatePreparationResult): DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure {
     return 'kind' in result && result.kind === 'applied'
         ? { ...result, targetLinkId: result.targetLinkId ?? refuse('target_mismatch') } : result;
@@ -364,7 +374,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     }
                 }
             });
-            const finalPrepared = prepareDeploymentTemplateInstantiationV1({ ...plan.prepareInput, bindings });
+            const finalPreparedIntent = prepareDeploymentTemplateInstantiationV1({ ...plan.prepareInput, bindings });
+            const finalPrepared = { ...finalPreparedIntent,
+                bindings: materializeTemplateBindings(plan.content.bindings, finalPreparedIntent.bindings) };
             const defaults = plan.defaults;
             const storagePreparation = { creationDefaults: defaults, template: plan.review,
                 templateBindingCaptures: captureDeploymentBindingSavedSecretRevisionsV1(finalPrepared.bindings)
@@ -402,9 +414,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 const current = plan.current;
                 if (!current) throw deploymentUnavailableError('deployment.template.instantiate.repository_environment', 'incomplete');
                 environmentId = current.environment.id; revision = current.environment.revision;
-                const merged = new Map(current.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
-                for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
-                const content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: [...merged.values()] });
+                const content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content,
+                    bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
+                        { set: finalPrepared.bindings, remove: [] }, randomUUID) });
                 phase = 'bindings';
                 await commitBindings(content.bindings);
                 phase = 'metadata';
@@ -454,9 +466,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (selectedTarget && (!targetLinkId || !created.targetLinks.some(item => item.targetLink.id === targetLinkId
                 && item.targetLink.members.some(member => member.machineId === input.machineId && member.installationId === selectedTarget.installationId)))) return refuse('target_mismatch');
             phase = 'bindings';
-            const merged = new Map(content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
-            for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
-            content = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: [...merged.values()] });
+            content = DeploymentEnvironmentContentV1Schema.parse({ ...content,
+                bindings: applyEnvironmentSecretBindingsPatchV1(content.bindings,
+                    { set: finalPrepared.bindings, remove: [] }, randomUUID) });
             await commitBindings(content.bindings);
             if (input.environment.kind === 'existing') {
                 phase = 'metadata';

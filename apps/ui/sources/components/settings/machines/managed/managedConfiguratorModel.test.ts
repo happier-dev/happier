@@ -1,13 +1,11 @@
 import { readFileSync } from 'node:fs';
-import tweetnacl from 'tweetnacl';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { createDelegatedManagedPresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { z } from 'zod/mini';
 import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedCredentialSelectionV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { hasManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { TeamResourceConnectedServiceSelectionV2Schema } from '@happier-dev/protocol/connect/connectedServiceBindings';
+import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { normalizePluginActionInputHintsV2, PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
@@ -20,7 +18,7 @@ import { resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/pr
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN as HETZNER_PLUGIN, MACHINE_PROVISIONER as HETZNER_MACHINE_PROVISIONER } from '../../../../../../../packages/plugins/machine-hetzner/src/index';
-import { createManagedConfiguratorDraft, type ManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities, managedConfiguratorEnrollmentDefault, managedConfiguratorChoiceOwnsField } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, type ManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities, managedConfiguratorEnrollmentDefault, managedConfiguratorChoiceOwnsField, resolveManagedConfiguratorAcquireDraft } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
@@ -46,6 +44,17 @@ const fresh = (name = 'Guest') => createManagedConfiguratorDraft({ provisioner, 
 const small = () => selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), options), 'size', 'small');
 
 describe('managed configurator draft owner', () => {
+    it('keeps unedited own-preset creation on the sealed preset path after native checks', () => {
+        const native = { ...small(), check: { available: true, prerequisites: [] },
+            preset: { id: 'preset', revision: 1 } };
+        expect(managedConfiguratorFacts(native)?.optionStatus).toBe('current');
+        const presetContentOverride = { content: { t: 'plain' as const, v: { v: 1 as const, name: 'Preset',
+            launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Guest', choices: {} } } } };
+        const unchanged = resolveManagedConfiguratorAcquireDraft(native, managedConfiguratorFacts(native)!.launch, managedConfiguratorFacts(native)!.launch);
+        expect(managedConfiguratorAcquireInput(unchanged, 'home', presetContentOverride)).toMatchObject({
+            selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, presetContentOverride });
+        expect(managedConfiguratorAcquireInput({ ...native, optionStatus: 'unavailable' }, 'home', presetContentOverride)).toBeNull();
+    });
     it('lets a selected root assignment own nested form fields', () => {
         expect(managedConfiguratorChoiceOwnsField('image', 'image')).toBe(true);
         expect(managedConfiguratorChoiceOwnsField('image', 'image.kind')).toBe(true);
@@ -120,24 +129,6 @@ describe('managed configurator draft owner', () => {
         expect(validations).toBe(1);
         expect(managedConfiguratorFacts({ ...draft, selected: { ...draft.selected!, launch: { cpu: 0 } } })).toBeNull();
     });
-    it('creates only the exact delegated preset and its fixed policy without native options or credential choices', () => {
-        const preset = createDelegatedManagedPresetFixture({ preset: { id: 'team-preset', homeId: 'home', revision: 4, name: 'Team guest',
-            owner: { kind: 'team', teamId: 'team' }, controller, launch: { provider: provisioner.contribution, schemaVersion: 1,
-                name: 'Guest', choices: { cpu: 2 } }, retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' }, wakeOnAcceptedMessage: false },
-            descriptor, custodianAccountId: 'company',
-            installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
-        if (!hasManagedMachinePresetCreationV1(preset)) throw new Error('Expected a creation-bearing delegated preset fixture');
-        if (preset.delegatedAcquire?.kind !== 'ready') throw new Error('Expected the public delegated preset fixture');
-        const delegatedFacts = preset.delegatedAcquire.reviewedFacts;
-        const input = { provisioner, controller, name: preset.launch.name, enrollmentIdentity,
-            preset: { id: preset.id, revision: preset.revision, name: preset.name }, delegatedFacts };
-        const draft = createManagedConfiguratorDraft(input);
-        expect(managedConfiguratorFacts(draft)).toEqual(delegatedFacts);
-        expect(managedConfiguratorAcquireInput({ ...draft, override: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } }, 'home'))
-            .toMatchObject({ selection: { kind: 'preset', homeId: 'home', id: preset.id, revision: preset.revision },
-                retention: delegatedFacts.retention, wakeOnAcceptedMessage: false, reviewedFacts: delegatedFacts });
-        expect(managedConfiguratorFacts({ ...draft, controller: { ...controller, installationId: 'other' } })).toBeNull();
-    });
     it.each([
         ['server', 'linux', { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' }, undefined],
         ['server', 'darwin', { kind: 'existingUser', role: 'personal' }, 'dedicated_identity_requires_linux'],
@@ -211,7 +202,7 @@ describe('managed configurator draft owner', () => {
     it('keeps Lume macOS personal enrollment on the existing account through acquire admission', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(LUME_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
         const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
-            provisioner: { contribution: { pluginId: LUME_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'lume', descriptor },
+            provisioner: { contribution: { pluginId: LUME_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'lume', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Personal Mac',
         }), { base: { launch: { image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26-slim' }, storage: 'home',
             cpu: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 150 * 1024 ** 3 } }, dimensions: emptyDimensions() });
@@ -221,7 +212,7 @@ describe('managed configurator draft owner', () => {
     it('uses the declared Crabbox local-container role instead of its cloud server descriptor through acquire admission', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CRABBOX_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
         const create = () => createManagedConfiguratorDraft({ provisioner: {
-            contribution: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'crabbox', descriptor,
+            contribution: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'crabbox', acquireExecutionTarget: 'daemon' as const, descriptor,
         }, controller, name: 'Crabbox' });
         const localOptions = { base: { launch: { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux',
             nativeImageId: 'ubuntu:24.04', ttlSeconds: 3600, idleTimeoutSeconds: 900 } as const,
@@ -373,7 +364,7 @@ describe('managed configurator draft owner', () => {
             selectors = writeInputPath(selectors, field.path, values[field.path as keyof typeof values]);
         }
         const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
-            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', descriptor },
+            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Project child',
         }), selectors);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(values);
@@ -388,7 +379,7 @@ describe('managed configurator draft owner', () => {
         const fields = resolveEffectiveActionInputFields({ inputHints: normalizePluginActionInputHintsV2(action.inputHints) }, input);
         expect(fields.filter(field => field.visible).map(field => field.path)).toContain(`configuration.${configuration.kind === 'image' ? 'image' : 'config'}`);
         const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
-            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', descriptor },
+            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Project child',
         }), input);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(input);
@@ -400,7 +391,7 @@ describe('managed configurator draft owner', () => {
         const captured = MachineProvisionerOptionsResultV1Schema.parse(JSON.parse(readFileSync(new URL(
             './managedConfiguratorLumeOptions.fixture.json', import.meta.url), 'utf8')));
         let draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
-            provisioner: { contribution: { pluginId: LUME_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'lume', descriptor },
+            provisioner: { contribution: { pluginId: LUME_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'lume', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Lume',
         }), captured);
         draft = selectManagedConfiguratorDimension(draft, 'image', 'ghcr.io/trycua/macos:26', action.inputSchema!);
@@ -413,7 +404,7 @@ describe('managed configurator draft owner', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(CUA_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
-        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
+        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'cua', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Sandbox' });
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual({});
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({});
@@ -426,7 +417,7 @@ describe('managed configurator draft owner', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(projected.contributes.machineProvisioners.find((entry: { id: string }) => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(projected.contributes.actions.find((entry: { id: string }) => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
-        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: projected.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
+        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: projected.id, localId: descriptor.id }, occurrenceId: 'cua', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Sandbox' });
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({});
     });
@@ -594,14 +585,13 @@ describe('managed configurator draft owner', () => {
                 nativeLifetime: finite ? { kind: 'finite', durationSeconds: 7200 } : { kind: 'no-native-ttl' } });
             const retention = finite ? { supportedIntents: ['delete' as const], finiteOnly: true } : { supportedIntents: ['start' as const, 'stop' as const, 'delete' as const], finiteOnly: false };
             const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
-                provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor }, controller, name: 'BYOC', enrollmentIdentity,
+                provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', acquireExecutionTarget: 'daemon' as const, descriptor }, controller, name: 'BYOC', enrollmentIdentity,
                 preset: { id: 'saved', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
             }), { base: { launch, retention, ...(finite ? { nativeFacts: { duration: { id: '7200', title: '2 hours', afterMs: 7_200_000 } } } : {}) }, dimensions: emptyDimensions() });
             const facts = managedConfiguratorFacts(draft);
             expect(facts?.retentionCapabilities).toEqual(retention);
             expect(facts?.retention.kind).toBe(finite ? 'unused' : 'until-delete');
             expect(facts?.wakeOnAcceptedMessage).toBe(!finite);
-            expect(managedConfiguratorAcquireInput(draft, 'home')?.reviewedFacts?.retentionCapabilities).toEqual(retention);
             if (finite) expect(facts?.nativeFacts?.duration?.afterMs).toBe(7_200_000);
         }
     });
@@ -649,13 +639,43 @@ describe('managed configurator draft owner', () => {
     it('preserves qualified Account credentials through a saved launch refresh and a different size', () => {
         const credential = ManagedCredentialSelectionV1Schema.parse({ purpose: { consumer: provisioner.contribution, purpose: 'provision' },
             account: { service: { pluginId: 'custom.compute', localId: 'connection' }, accountId: 'selected-account' } });
-        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', credentials: [credential], enrollmentIdentity, preset: { id: 'saved', revision: 1 } }),
+        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', credentials: [credential], enrollmentIdentity,
+            preset: { id: 'saved', revision: 1, retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' }, wakeOnAcceptedMessage: false } }),
             selected: { id: 'preset:saved', title: 'Saved', launch: { cpu: 2 } } };
         const refreshed = refreshManagedConfiguratorOptions(saved, options);
         expect(managedConfiguratorFacts(refreshed)?.launch.credentials).toEqual([credential]);
-        const acquired = managedConfiguratorAcquireInput(selectManagedConfiguratorDimension(refreshed, 'size', 'large'), 'home');
-        expect(acquired?.selection).toEqual({ kind: 'preset', homeId: 'home', id: 'saved', revision: 1, name: 'Saved' });
+        const changed = selectManagedConfiguratorDimension(refreshed, 'size', 'large');
+        const edited = resolveManagedConfiguratorAcquireDraft(changed, managedConfiguratorFacts(refreshed)!.launch,
+            managedConfiguratorFacts(changed)!.launch);
+        const acquired = managedConfiguratorAcquireInput(edited, 'home');
+        expect(acquired?.selection).toMatchObject({ kind: 'one-off', homeId: 'home', launch: { choices: { cpu: 4 }, credentials: [credential] } });
         expect(acquired?.reviewedFacts?.launch).toMatchObject({ choices: { cpu: 4 }, credentials: [credential] });
+        expect(acquired?.selection).toMatchObject({ retention: saved.preset.retention, wakeOnAcceptedMessage: false });
+        const changedCredentials = { ...refreshed, credentials: undefined };
+        const credentialEdit = resolveManagedConfiguratorAcquireDraft(changedCredentials, managedConfiguratorFacts(refreshed)!.launch,
+            managedConfiguratorFacts(changedCredentials)!.launch);
+        const direct = managedConfiguratorAcquireInput(credentialEdit, 'home');
+        expect(direct?.selection.kind).toBe('one-off');
+        expect(direct?.reviewedFacts?.launch).not.toHaveProperty('credentials');
+    });
+
+    it.each(['direct', 'brokered'] as const)('retains only the exact Team %s selection through native review and acquisition', deliveryMode => {
+        const purpose = { consumer: provisioner.contribution, purpose: 'provision' };
+        const member = { service: { pluginId: 'custom.compute', localId: 'connection' }, accountId: 'shared-member' };
+        const selection = TeamResourceConnectedServiceSelectionV2Schema.parse({ source: 'team_resource', resourceId: 'team-compute', deliveryMode,
+            ...(deliveryMode === 'direct' ? { disclosedMember: member } : {}) });
+        const credential = QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema.parse({ purpose, teamId: 'engineering', selection });
+        const value = { teamId: 'engineering', selection };
+        const catalog = { ...provisioner, credentialPurposes: [{ purpose, options: [{ value, label: 'Compute' }] }] };
+        const draft = { ...small(), provisioner: catalog, credentials: [credential] };
+        expect(managedConfiguratorCredentialSelections(draft, catalog)).toEqual([credential]);
+        expect(managedConfiguratorAcquireInput(draft, 'home')?.selection).toMatchObject({ launch: { credentials: [credential] } });
+        const otherMode = deliveryMode === 'direct' ? 'brokered' as const : 'direct' as const;
+        const changed = { ...catalog, credentialPurposes: [{ purpose, options: [{ label: 'Compute', value: {
+            teamId: 'engineering', selection: TeamResourceConnectedServiceSelectionV2Schema.parse({ source: 'team_resource', resourceId: 'team-compute', deliveryMode: otherMode,
+                ...(otherMode === 'direct' ? { disclosedMember: member } : {}) }),
+        } }] }] };
+        expect(managedConfiguratorCredentialSelections(draft, changed)).toEqual([]);
     });
 
     it('uses current descriptor credential requirements without disclosing a waived Crabbox credential', () => {
@@ -663,7 +683,7 @@ describe('managed configurator draft owner', () => {
         const contribution = { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id };
         const credential = { purpose: { consumer: contribution, purpose: 'crabbox-coordinator' }, account: {
             service: { pluginId: contribution.pluginId, localId: 'coordinator' }, accountId: 'reviewed-coordinator' } };
-        const crabbox = { contribution, occurrenceId: 'crabbox', descriptor,
+        const crabbox = { contribution, occurrenceId: 'crabbox', acquireExecutionTarget: 'daemon' as const, descriptor,
             credentialPurposes: [{ purpose: credential.purpose, options: [{ value: credential.account, label: 'Coordinator' }] }] };
         const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
         const direct = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: crabbox, controller, name: 'Local', credentials: [credential], enrollmentIdentity }),

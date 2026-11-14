@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolicy";
@@ -70,8 +71,8 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
 
     it("persists managed defaults and patches one active Group without replacing sibling defaults", async () => {
         const { owner, teamId } = await ownedTeam();
-        const first = await db.teamGroup.create({ data: { teamId, name: "First", nameKey: "first" } });
-        const second = await db.teamGroup.create({ data: { teamId, name: "Second", nameKey: "second" } });
+        const first = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("First") } });
+        const second = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Second") } });
         const { source } = await addCurrentWorkosAdmissionEvidence(teamId);
         await db.teamExternalGroupBinding.create({ data: {
             teamId, teamGroupId: second.id, directorySourceId: source.id,
@@ -105,7 +106,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}" } });
         await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: owner.id,
             accessLevel: "view", createdByAccountId: custodian.id } });
-        const group = await db.teamGroup.create({ data: { teamId, name: "Engineering", nameKey: "engineering" } });
+        const group = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Engineering") } });
         const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId, accountId: member.id } } });
         await db.teamGroupMembership.create({ data: { teamId, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true, sessionAccessStartsAt: new Date() } });
         const values = { placement: { kind: "machine" as const, target: { serverId: "server-a", machineId: machine.id } } };
@@ -125,7 +126,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
         // Team grants give the member Use access, but intentionally exclude guests.
         await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
-        const group = await db.teamGroup.create({ data: { teamId, name: "Default audience", nameKey: "default-audience" } });
+        const group = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Default audience") } });
         for (const teamMembershipId of [membership.id, guestMembership.id]) {
             await db.teamGroupMembership.create({ data: {
                 teamId, teamGroupId: group.id, teamMembershipId,
@@ -150,8 +151,8 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
         const foreign = await ownedTeam();
-        const other = await db.teamGroup.create({ data: { teamId: foreign.teamId, name: "Foreign", nameKey: "foreign" } });
-        const archived = await db.teamGroup.create({ data: { teamId, name: "Archived", nameKey: "archived", archivedAt: new Date() } });
+        const other = await db.teamGroup.create({ data: { teamId: foreign.teamId, name: storedPlainPrivateLabel("Foreign") } });
+        const archived = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Archived"), archivedAt: new Date() } });
         const denied = { actorAccountId: member.id, teamId, managedDefaults: { team: {}, groups: {} } };
         expect(await inTx(tx => setTeamPolicyInTx(tx, denied))).toEqual({ ok: false, error: "team_forbidden" });
         for (const group of [other, archived]) {
@@ -164,7 +165,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
 
     it("retains unchanged archived Group defaults when the Team layer changes, but refuses archived edits", async () => {
         const { owner, teamId } = await ownedTeam();
-        const group = await db.teamGroup.create({ data: { teamId, name: "Retained", nameKey: "retained" } });
+        const group = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Retained") } });
         const groupDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" as const } };
         const initial = { actorAccountId: owner.id, teamId, managedDefaults: { team: {}, groups: { [group.id]: groupDefaults } } };
         expect((await inTx(tx => setTeamPolicyInTx(tx, initial))).ok).toBe(true);
@@ -183,8 +184,8 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const { owner, teamId } = await ownedTeam();
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const membership = await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
-        const own = await db.teamGroup.create({ data: { teamId, name: "Own", nameKey: "own" } });
-        const other = await db.teamGroup.create({ data: { teamId, name: "Other", nameKey: "other" } });
+        const own = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Own") } });
+        const other = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Other") } });
         await db.teamGroupMembership.create({ data: {
             teamId, teamGroupId: own.id, teamMembershipId: membership.id,
             nativeContribution: true, sessionAccessStartsAt: new Date(),

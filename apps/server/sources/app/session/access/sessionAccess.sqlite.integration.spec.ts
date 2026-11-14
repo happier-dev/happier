@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
@@ -210,7 +211,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const { owner, session } = await fixture("view");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         const other = await db.team.create({ data: { name: crypto.randomUUID() } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Visibility", nameKey: "visibility" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Visibility") } });
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: team.id } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
         const visible = (teamId = team.id) => inTx(tx => assertSessionTeamReadableGrantInTx({ tx, sessionId: session.id, teamId }));
@@ -319,7 +320,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const team = await db.team.create({ data: { name: "Applicable" } });
         const hidden = await db.team.create({ data: { name: "Unrelated" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "guest" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Exact", nameKey: "exact" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Exact") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: hidden.id, accessLevel: "view", effectiveAt: new Date() } });
@@ -358,8 +359,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         } });
         const group = await db.teamGroup.create({ data: {
             teamId: team.id,
-            name: "Audience snapshot group",
-            nameKey: "audience-snapshot-group",
+            name: storedPlainPrivateLabel("Audience snapshot group"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,
@@ -463,7 +463,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const membership = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: actor.id, role: "guest", sessionAccessStartsAt: new Date("2026-09-02"),
         } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "History", nameKey: "history" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("History") } });
         const cutoff = new Date("2026-09-01");
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: cutoff,
@@ -508,7 +508,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: cutoff,
         } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Developers", nameKey: "developers" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Developers") } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,
         } });
@@ -632,8 +632,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const groupName = crypto.randomUUID();
         const group = await db.teamGroup.create({ data: {
             teamId: guestTeam.id,
-            name: groupName,
-            nameKey: groupName,
+            name: storedPlainPrivateLabel(groupName),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: guestTeam.id,
@@ -1087,8 +1086,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         } });
         const group = await db.teamGroup.create({ data: {
             teamId: independentTeam.id,
-            name: "Independent",
-            nameKey: crypto.randomUUID(),
+            name: storedPlainPrivateLabel("Independent"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: independentTeam.id,

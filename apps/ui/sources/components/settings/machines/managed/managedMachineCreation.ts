@@ -10,13 +10,17 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import {
+    isDeferredManagedMachineAuthorPresetDraft,
+    type ManagedMachineAcquisitionDraft,
+    type ManagedMachineCreationIntent,
+} from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -27,6 +31,7 @@ import { supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machin
 import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
 import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { answerManagedCreationEstablish, answerManagedCreationPrompt } from './managedCreationPrompt';
+import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
 
 export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'idle' }>
@@ -36,7 +41,7 @@ export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'setup_pending'; managedId: string; machineId: string; state: 'pending' | 'running';
         machineSetup: NonNullable<ManagedMachineV1['machineSetup']>; operation?: ActionOperationSnapshotV1 }>
     | Readonly<{ kind: 'ready'; managedId: string; machineId: string }>
-    | Readonly<{ kind: 'failed'; code: string; managedId?: string; operation?: ActionOperationSnapshotV1;
+    | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string; managedId?: string; operation?: ActionOperationSnapshotV1;
         operationObservation?: ActionOperationObservation; retryInstallationAvailable?: boolean;
         machineSetup?: NonNullable<ManagedMachineV1['machineSetup']>; retrySetupAvailable?: boolean }>;
 
@@ -48,23 +53,37 @@ export type ManagedMachineCreationResult =
         NonNullable<NonNullable<ActionOperationSnapshotV1['error']>['details']>, { kind: 'managedAgentStart' }
     > }>;
 
+type ManagedMachineCreationDraft = ManagedMachineCreationIntent & Readonly<{
+    archiveEffect?: 'keep' | 'stop' | 'delete';
+}>;
+
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
 export function buildManagedMachineAcquireInput(
-    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>,
+    draft: ManagedMachineCreationDraft,
     agentStart?: ManagedAcquireAgentStartV1,
-): ManagedAcquireInputV1 {
-    const reviewed = draft.selection.kind === 'one-off'
-        ? { selection: draft.selection, reviewedFacts: draft.receipt }
-        : { selection: draft.selection, controller: draft.receipt.controller,
-            retention: draft.receipt.retention, wakeOnAcceptedMessage: draft.receipt.wakeOnAcceptedMessage,
-            reviewedFacts: draft.receipt };
-    return ManagedAcquireInputV1Schema.parse({ ...reviewed, enrollmentIdentity: draft.enrollmentIdentity,
-        ...(draft.archiveEffect && draft.archiveEffect !== 'keep' ? { creationScopeRetention: { effect: draft.archiveEffect } } : {}), ...(agentStart ? { agentStart } : {}) });
+): ManagedAcquireInputV1 | null {
+    const common = {
+        ...(draft.archiveEffect && draft.archiveEffect !== 'keep' ? { creationScopeRetention: { effect: draft.archiveEffect } } : {}),
+        ...(agentStart ? { agentStart } : {}),
+    };
+    const candidate = isDeferredManagedMachineAuthorPresetDraft(draft)
+        ? { ...common, selection: draft.selection, controller: draft.presetOrigin.controller,
+            ...(draft.presetOrigin.retention ? { retention: draft.presetOrigin.retention } : {}),
+            ...(draft.presetOrigin.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: draft.presetOrigin.wakeOnAcceptedMessage } : {}),
+            presetContentOverride: draft.presetContentOverride }
+        : draft.selection.kind === 'one-off'
+            ? draft.enrollmentIdentity ? { ...common, selection: draft.selection, reviewedFacts: draft.receipt,
+                enrollmentIdentity: draft.enrollmentIdentity } : null
+            : draft.presetContentOverride ? { ...common, selection: draft.selection, controller: draft.receipt.controller,
+                retention: draft.receipt.retention, wakeOnAcceptedMessage: draft.receipt.wakeOnAcceptedMessage,
+                presetContentOverride: draft.presetContentOverride } : null;
+    const parsed = candidate && ManagedAcquireInputV1Schema.safeParse(candidate);
+    return parsed?.success ? parsed.data : null;
 }
 
 /** Explicit Run/Send joins managed creation, then reads the actual enrolled target. */
 export async function runManagedMachineCreation(input: Readonly<{
-    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>;
+    draft: ManagedMachineCreationDraft;
     acquisition: ManagedMachineAcquisitionDraft;
     agentStart?: ManagedAcquireAgentStartV1;
     teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
@@ -84,9 +103,10 @@ export async function runManagedMachineCreation(input: Readonly<{
     let observedOperation: ActionOperationSnapshotV1 | undefined;
     let agentUpdate: SessionAgentUpdateNoticeV1 | undefined;
     let setupMachine: ManagedMachineV1 | undefined;
-    const fail = (code: string, retryInstallationAvailable?: boolean): ManagedMachineCreationResult => {
+    const fail = (code: string, retryInstallationAvailable?: boolean, diagnosticDetail?: string): ManagedMachineCreationResult => {
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
         if (input.isCurrent()) input.onProgress({ kind: 'failed', code,
+            ...(diagnosticDetail ? { diagnosticDetail } : {}),
             ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}),
             ...(observedOperation ? { operation: observedOperation } : {}),
             ...(retryInstallationAvailable !== undefined ? { retryInstallationAvailable } : {}),
@@ -101,15 +121,19 @@ export async function runManagedMachineCreation(input: Readonly<{
     const current = () => input.isCurrent() && !input.signal.aborted;
     if (!current()) return fail('continuation_retired');
     if (!sameStrictJsonValue(acquisition.selection, input.draft.selection)) return fail('request_conflict');
-    if (input.draft.archiveEffect && input.draft.archiveEffect !== 'keep' && !supportedMachineRetentionEffectsV1(input.draft.receipt.retentionCapabilities.supportedIntents).includes(input.draft.archiveEffect)) {
-        return fail('native_intent_unsupported');
+    const deferredAuthorPreset = isDeferredManagedMachineAuthorPresetDraft(input.draft);
+    if (!deferredAuthorPreset) {
+        if (input.draft.archiveEffect && input.draft.archiveEffect !== 'keep'
+            && !supportedMachineRetentionEffectsV1(input.draft.receipt.retentionCapabilities.supportedIntents).includes(input.draft.archiveEffect)) {
+            return fail('native_intent_unsupported');
+        }
+        if (!acquisition.managedId && (input.draft.receipt.optionStatus !== 'current'
+            || input.draft.receipt.prerequisites.some(item => item.status === 'unavailable'))) return fail('review_required');
     }
-    if (!acquisition.managedId && (input.draft.receipt.optionStatus !== 'current'
-        || input.draft.receipt.prerequisites.some(item => item.status === 'unavailable'))) return fail('review_required');
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
         teamCredentialPresentation: input.teamCredentialPresentation,
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId, signal: input.signal };
-    let controller = input.draft.receipt.controller;
+    let controller = deferredAuthorPreset ? input.draft.presetOrigin.controller : input.draft.receipt.controller;
     const withActionDispatch = (dispatch: FrontDoorActionExecute['confirmed']) => async (actionId: ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond', actionInput: unknown, nativeTarget?: string) =>
         awaitActionApprovalResult<unknown, { kind: 'completed'; value: unknown } | { kind: 'failed'; code: string }>({
             signal: input.signal,
@@ -142,8 +166,10 @@ export async function runManagedMachineCreation(input: Readonly<{
             readFailureCode = outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required';
             return null;
         }
-        const machine = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(outcome.result);
-        if (machine.id !== acquisition.managedId || machine.homeId !== acquisition.selection.homeId
+        const parsed = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(outcome.result);
+        const [machine] = await openManagedMachineReadSnapshots(input.scope, [parsed], input.signal);
+        if (!current()) return null;
+        if (!machine || machine.id !== acquisition.managedId || machine.homeId !== acquisition.selection.homeId
             || controller && !sameStrictJsonValue(machine.controller, controller)) { readFailureCode = 'managed_response_invalid'; return null; }
         return machine;
     };
@@ -152,34 +178,31 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (acquisition.managedId && !alreadyAdmitted) return fail(readFailureCode);
     if (alreadyAdmitted?.creationState !== undefined && alreadyAdmitted.creationState !== 'active') return fail('enrollment_retired');
     if (!alreadyAdmitted?.enrolledMachineId && (!acquisition.managedId || input.retryInstallation)) {
-        if (!acquisition.managedId && acquisition.selection.kind === 'preset') {
-            const selection = acquisition.selection;
-            const outcome = classifyHomeActionOutcome(await execute('machines.presets.get', { homeId: selection.homeId, id: selection.id }, context));
-            if (!current()) return fail('continuation_retired');
-            if (outcome.kind !== 'completed') return fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required');
-            const found = MachinePresetActionOutputSchemasV1['machines.presets.get'].parse(outcome.result);
-            if (found.kind === 'refused') return fail(found.code);
-            if (found.preset.homeId !== selection.homeId || found.preset.id !== selection.id
-                || controller && !sameStrictJsonValue(found.preset.controller, controller)) return fail('managed_response_invalid');
-            if (found.preset.delegatedAcquire?.kind === 'unavailable') return fail(found.preset.delegatedAcquire.code);
-        }
         if (input.retryInstallation && (!alreadyAdmitted?.resource || alreadyAdmitted.allocation !== 'bound')) return fail('installation_retry_unavailable');
         const actionId = input.retryInstallation ? 'machines.managed.bootstrap.retry' as const : 'machines.managed.acquire' as const;
         const actionInput = input.retryInstallation && alreadyAdmitted
             ? { homeId: alreadyAdmitted.homeId, managedId: alreadyAdmitted.id, expectedIntentRevision: alreadyAdmitted.intentRevision }
             : buildManagedMachineAcquireInput(input.draft, input.agentStart);
-        const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 } | { kind: 'failed'; code: string }>({
+        if (!actionInput) return fail('content_unavailable');
+        const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 } | { kind: 'failed'; code: string; diagnosticDetail?: string }>({
             signal: input.signal,
             execute: async callbacks => {
                 input.onProgress({ kind: 'acquiring', ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}) });
                 // New's Send/Run confirms this reviewed creation. Retain that
                 // confirmation rather than dropping it before Account dispatch.
                 const dispatch = input.retryInstallation ? execute : execute.confirmed;
-                const outcome = classifyHomeActionOutcome(await dispatch(actionId, actionInput, {
+                const result = await dispatch(actionId, actionInput, {
                     ...context, actionRequestId: input.retryInstallation ? `${acquisition.requestId}:bootstrap:${alreadyAdmitted?.intentRevision}` : acquisition.requestId,
+                    ...(actionId === 'machines.managed.acquire' && input.draft.presetOrigin
+                        ? { managedPresetOrigin: input.draft.presetOrigin } : {}),
                     ...(controller ? { executionRunTargetMachineId: controller.machineId } : {}),
-                }));
-                if (outcome.kind === 'failed') return { kind: 'failed' as const, code: homeDomainFailureCode(outcome.failure) };
+                });
+                const outcome = classifyHomeActionOutcome(result);
+                if (outcome.kind === 'failed') {
+                    const code = homeDomainFailureCode(outcome.failure);
+                    return { kind: 'failed' as const, code, diagnosticDetail: describeManagedActionFailureDiagnostic(code,
+                        result.ok ? undefined : result.details, result.ok ? acquisition.requestId : result.requestId ?? acquisition.requestId) };
+                }
                 if (outcome.kind === 'approval_pending') {
                     input.onProgress({ kind: 'approval' });
                     input.onApprovalPending(createActionApprovalContinuation<ManagedAcceptedV1, typeof actionId>({
@@ -190,10 +213,11 @@ export async function runManagedMachineCreation(input: Readonly<{
                 }
                 return { kind: 'accepted' as const, value: ManagedMachineActionOutputSchemasV1[actionId].parse(outcome.result) };
             },
-            succeeded: value => ({ kind: 'accepted', value }), failed: code => ({ kind: 'failed', code }),
+            succeeded: value => ({ kind: 'accepted', value }), failed: (code, failure) => ({ kind: 'failed', code,
+                diagnosticDetail: describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId ?? acquisition.requestId) }),
             aborted: () => ({ kind: 'failed', code: 'continuation_retired' }),
         });
-        if (accepted.kind === 'failed') return fail(accepted.code);
+        if (accepted.kind === 'failed') return fail(accepted.code, undefined, accepted.diagnosticDetail);
         if (acquisition.managedId && acquisition.managedId !== accepted.value.managedId) return fail('resource_mismatch');
         acquisition = { ...acquisition, managedId: accepted.value.managedId, operation: accepted.value.operation };
         // A retired draft must not write the accepted row into its replacement.
@@ -243,6 +267,7 @@ export async function runManagedMachineCreation(input: Readonly<{
             if (requesterMachine && question) {
                 const { taskId, ...prompt } = question;
                 const resource = { homeId: requesterMachine.homeId, managedId: requesterMachine.id };
+                const expectedIntentRevision = requesterMachine.intentRevision;
                 const correlation = { ...resource, serverId: input.scope.serverId, operationId: found.operation.operationId, taskId };
                 const answered = prompt.kind === 'administrator.establish'
                     ? await answerManagedCreationEstablish({ prompt, isCurrent: current,
@@ -250,7 +275,7 @@ export async function runManagedMachineCreation(input: Readonly<{
                             ...correlation, purpose: 'establish', promptId: prompt.promptId, password }),
                         // No answer means no administrator, so the paid creation is cancelled through its own Action.
                         decline: () => executeConfirmed('machines.managed.cancel', { ...resource,
-                            expectedIntentRevision: requesterMachine.intentRevision }),
+                            expectedIntentRevision }),
                     })
                     : prompt.kind === 'auth.approveRemoteProvisioning'
                     // The response owner consumes one private pairing delivery with

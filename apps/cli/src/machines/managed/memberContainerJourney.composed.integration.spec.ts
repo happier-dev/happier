@@ -5,6 +5,8 @@ import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -12,7 +14,7 @@ import { createDeploymentSocketHome } from '../../../../server/sources/testkit/d
 import { createSignedAccountContentBinding } from '../../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../../server/sources/storage/db';
 import { auth } from '../../../../server/sources/app/auth/auth';
-import { createMachinePreset } from '../../../../server/sources/app/machines/managed/machinePresetService';
+import { createMachinePreset, readMachinePresetRecipientCensus } from '../../../../server/sources/app/machines/managed/machinePresetService';
 import { createMachinePool } from '../../../../server/sources/app/machines/pools/machinePoolService';
 import type { MachineDaemonPresenceSocketServer } from '../../../../server/sources/app/machines/machineDaemonPresence';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
@@ -70,9 +72,10 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
     const poolId = randomUUID();
     const exactId = randomUUID();
     const pooledId = randomUUID();
-    const failurePresets = { 'missing-payload-root': randomUUID(), 'invalid-archive': randomUUID(), stderr: randomUUID() };
+    const failurePresets = { 'missing-payload-root': randomUUID(), 'invalid-archive': randomUUID(), stderr: randomUUID(), 'missing-native-option': randomUUID() };
     const controller = { machineId: home.machineId, installationId: home.installationId };
     const provider = { pluginId: 'acme.compute', localId: 'vm' };
+    const sealedPresets = new Map<string, ReturnType<typeof sealManagedMachinePresetContentV1>>();
     let installed = false;
     const controllerHome = { ...home, async prepareControllerProvisioner(raw: unknown) {
         if (installed) return;
@@ -82,17 +85,36 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
             input: { poolId, name: 'Team container controllers', audience: { kind: 'team', teamId: team.id },
                 members: [{ machineId: home.machineId, priorityTier: 0, enabled: true }] } })).toMatchObject({ ok: true });
         for (const id of [exactId, pooledId, ...Object.values(failurePresets)]) {
+            const target = id === pooledId ? { controllerPoolId: poolId } : { controller };
+            const census = await readMachinePresetRecipientCensus({ accountId: home.accountId,
+                authentication: { authenticationAuthority: 'present_user' },
+                input: { homeId: home.serverId, owner: { kind: 'team', teamId: team.id }, ...target } });
+            if (census.kind !== 'ready') throw new Error(`Preset census refused: ${census.code}`);
+            const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
+                content: { v: 1, name: 'Team container', launch: { provider, schemaVersion: 1, name: 'Member container', choices: {} } },
+                recipientCensus: census.recipients, randomBytes: nacl.randomBytes });
+            sealedPresets.set(id, sealed);
             expect(await createMachinePreset({ accountId: home.accountId,
                 authentication: { authenticationAuthority: 'present_user' }, input: {
-                    id, homeId: home.serverId, name: 'Team container', owner: { kind: 'team', teamId: team.id },
-                    launch: { provider, schemaVersion: 1, name: 'Member container', choices: {} },
+                    id, homeId: home.serverId, contentEncryptionMode: 'e2ee', content: sealed.content, recipients: sealed.recipients, owner: { kind: 'team', teamId: team.id },
                     ...(id === pooledId ? { controllerPoolId: poolId } : { controller }),
                     teamAcquireDelegated: true, simultaneousLimit: { maximum: 2 },
                     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
                 } })).toMatchObject({ kind: 'saved' });
         }
+        for (const id of [exactId, pooledId]) {
+            const response = await fetch(`${home.baseUrl}/v1/machines/presets/get`, { method: 'POST',
+                headers: { Authorization: `Bearer ${requester.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ homeId: home.serverId, id }) });
+            expect(response.status).toBe(200);
+            const result = await response.json();
+            expect(result).toMatchObject({ kind: 'found', preset: { teamAcquireDelegated: true, content: { t: 'encrypted' } } });
+            expect(result.preset).not.toHaveProperty('delegatedAcquire');
+        }
+        expect(await db.machineAccountGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
         installed = true;
     } };
+    await controllerHome.prepareControllerProvisioner(manifest);
     let currentAction: NonNullable<ActionExecutorDeps['managedMachineAction']>;
     const operationProtocolCapabilities = { externalActionExecutionAuthorization:
         CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1.externalActionExecutionAuthorization };
@@ -103,21 +125,32 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
     const successful: Array<{ guestId: string; nativeId: string;
         owner: Pick<typeof home, 'accountId' | 'token' | 'encryption'>; action: typeof currentAction }> = [];
     const fault = process.env.HAPPIER_MEMBER_JOURNEY_FAULT;
-    for (const scenario of ['missing-payload-root', 'invalid-archive', 'stderr', 'admin', 'exact', 'pool'] as const) {
+    for (const scenario of ['missing-native-option', 'missing-payload-root', 'invalid-archive', 'stderr', 'admin', 'exact', 'pool'] as const) {
         const owner = scenario === 'admin' ? home : requester;
         let terminal: ActionOperationSnapshotV1 | undefined;
         const nativeId = randomUUID();
         const commandLines: string[] = [];
-        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
+        const presetId = scenario === 'pool' ? pooledId : scenario in failurePresets
+            ? failurePresets[scenario as keyof typeof failurePresets] : exactId;
+        const sealed = sealedPresets.get(presetId)!;
+        const recipientEnvelope = sealed.recipients.find(recipient => recipient.accountId === owner.accountId)?.envelope;
+        if (!recipientEnvelope || !owner.encryption) throw new Error('Expected preset recipient');
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'e2ee',
+            projection: { content: sealed.content, recipientEnvelope }, accountId: owner.accountId, accountKey: owner.encryption.machineKey,
+            enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, randomBytes: nacl.randomBytes });
+        if (!presetContentOverride) throw new Error('Expected sealed acquisition choices');
+        const input = ManagedAcquireInputV1Schema.parse({ presetContentOverride,
             selection: { kind: 'preset', homeId: home.serverId,
-                id: scenario === 'pool' ? pooledId : scenario in failurePresets
-                    ? failurePresets[scenario as keyof typeof failurePresets] : exactId, revision: 0 },
+                id: presetId, revision: 0 },
             ...(scenario === 'pool' ? {} : { controller }), retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const injected = scenario === 'admin' ? fault : scenario;
         const journey = acquireEnrollmentJourneyGuest(controllerHome, { requester: owner,
             acquireInput: input, confirmWholeOperation: true, onSettled: operation => { terminal = operation; },
             native: { manifest, ...(injected === 'missing-payload-root' ? { payloadRoot: missingPayload } : {}),
                 async execute(role, body, _context, next) {
+                    if (role === 'acquire' && scenario === 'missing-native-option') return AcquireResultV1Schema.parse({
+                        kind: 'rejected', code: 'provider_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'not_found' },
+                    });
                     if (role === 'acquire') {
                         nativeContainers.add(nativeId);
                         return { kind: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { guest: nativeId } } };
@@ -163,8 +196,14 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
         if (scenario in failurePresets) {
             await expect(journey).rejects.toThrow('S0 acquisition failed');
             expect(terminal, JSON.stringify(terminal)).toMatchObject({ state: 'failed', error: { failureCause: {
-                phase: 'machines.managed.acquire', errorCode: scenario === 'missing-payload-root' ? 'guest_payload_missing' : 'remote_command_failed',
+                phase: 'machines.managed.acquire', errorCode: scenario === 'missing-native-option' ? 'provider_unavailable'
+                    : scenario === 'missing-payload-root' ? 'guest_payload_missing' : 'remote_command_failed',
             } } });
+            if (scenario === 'missing-native-option') {
+                expect(terminal?.requestId).toEqual(expect.any(String));
+                expect(terminal?.error).toMatchObject({ errorCode: 'provider_unavailable',
+                    details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'not_found' } } });
+            }
             if (scenario === 'stderr') {
                 expect(terminal?.error?.error).toContain('exit 42');
                 expect(terminal?.error?.error).toContain('code ERR_BAD_REQUEST');
@@ -186,6 +225,7 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
             if (scenario === 'exact') await verifyCapAndDelete();
         }
     }
+    expect(await db.machineAccountGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
     async function verifyCapAndDelete() {
         expect(payloadTransfers).toBeGreaterThan(0);
         const response = await fetch(`${home.baseUrl}/v1/machines`, { headers: { Authorization: `Bearer ${requester.token}` } });

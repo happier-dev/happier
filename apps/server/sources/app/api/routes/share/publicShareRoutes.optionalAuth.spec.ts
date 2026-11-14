@@ -5,6 +5,7 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock, matchesDbM
 import { isPrismaErrorCode } from '@/storage/prismaErrors';
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeConfigSnapshot.testkit';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 let auth: typeof import("@/app/auth/auth").auth;
 
@@ -709,7 +710,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         await dbMocks.db.account.create({ data: { id: "viewer-1", encryptionMode: "plain" } });
         const token = kind === "account"
             ? await auth.createToken("viewer-1", undefined, { kind: "account", authority: "present_user" })
-            : (await auth.createApiToken({ accountId: "viewer-1", tokenId: crypto.randomUUID(), label: "public-viewer" })).token;
+            : (await auth.createApiToken({ accountId: "viewer-1", tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel("viewer-1", "public-viewer") })).token;
         expect(await auth.verifyTokenDisposition(token, { allowLegacyHome: true })).toMatchObject({
             status: "verified", credential: { userId: "viewer-1", authTokenKind: kind },
         });

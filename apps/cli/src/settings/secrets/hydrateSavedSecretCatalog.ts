@@ -52,6 +52,7 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 import { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema,
   SharedSavedSecretCreateInputV1Schema, type SharedSavedSecretCreateInputV1,
   type SavedSecretReferenceCensusV1, type SavedSecretCatalogMutationsV1,
+  type SavedSecretOpaquePresetReferencesV1, type SavedSecretOpaquePresetRewritesV1,
 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -77,6 +78,7 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretLegacyImportResultV1 } from "./savedSecretCatalog";
+import { captureManagedMachinePresetSavedSecretPromotionRewritesForOperation } from './managedPresetSavedSecretPromotion';
 export { savedSecretOperationAdmissionStatus } from './savedSecretCatalog';
 export type { SavedSecretOperationAdmissionFailureReason } from './savedSecretCatalog';
 export type { SavedSecretLegacyImportResultV1 } from './savedSecretCatalog';
@@ -444,10 +446,12 @@ type SavedSecretPromotionPreparationV1 = Readonly<{
   kind: SharedSavedSecretPromoteInputV1['kind'];
   randomBytes?: (length: number) => Uint8Array;
   personalSecretId?: string;
+  opaquePresetRewrites?: SavedSecretOpaquePresetRewritesV1;
+  opaquePresetReferences?: SavedSecretOpaquePresetReferencesV1;
 }>;
 
 export type SavedSecretSourcePreparationV1 = Omit<SavedSecretPromotionPreparationV1,
-  'displayName' | 'kind' | 'randomBytes' | 'personalSecretId'> & Readonly<{
+  'displayName' | 'kind' | 'randomBytes' | 'personalSecretId' | 'opaquePresetRewrites' | 'opaquePresetReferences'> & Readonly<{
   source: Awaited<ReturnType<ReturnType<typeof createCliProfileStore>['readSourceSnapshot']>>;
   resources: ActiveAccountSettingsSnapshot;
   referenceCatalogs: SavedSecretReferenceCatalogsV1;
@@ -597,6 +601,9 @@ function prepareSavedSecretPromotion(input: SavedSecretPromotionPreparationV1, r
     || input.referenceCensus.accountMode !== input.accountMode) {
     throw new Error('saved_secret_account_mode_or_identity_changed');
   }
+  if (input.personalSecretId && (!input.opaquePresetRewrites || !input.opaquePresetReferences)) {
+    throw new Error('saved_secret_opaque_preset_capture_unavailable');
+  }
   const catalog = input.profileCatalog;
   const censusRows = [...catalog.records.map(row => ({ id: row.record.id, revision: row.revision })), ...(catalog.tombstones ?? [])];
   if (catalog.source === undefined || catalog.diagnostics.length > 0
@@ -668,9 +675,13 @@ function prepareSavedSecretPromotion(input: SavedSecretPromotionPreparationV1, r
     content: sealConnectedAccountCatalogContentV1({ ...storage, record: { key: 'purposes', value: promoted.connectedPurposes } }) };
   if (promoted.registrySources && changed('registrySources')) catalogMutations.registrySources = { ...capture('registrySources'),
     content: sealPromptLibraryContentV1({ ...storage, record: { key: 'registry-sources', value: promoted.registrySources } }) };
+  const referenceCensus = input.personalSecretId
+    ? { ...input.referenceCensus, opaquePresetReferences: input.opaquePresetReferences! }
+    : input.referenceCensus;
   return SharedSavedSecretPromoteInputV1Schema.parse({ ...preparedResource,
-      expectedSettingsVersion: input.expectedSettingsVersion, nextSettings, referenceCensus: input.referenceCensus, profileMutations,
-      ...(input.personalSecretId ? { personalSecretPromotions: [{ personalSecretId: input.personalSecretId, resourceId }] } : {}),
+      expectedSettingsVersion: input.expectedSettingsVersion, nextSettings, referenceCensus, profileMutations,
+      ...(input.personalSecretId ? { personalSecretPromotions: [{ personalSecretId: input.personalSecretId, resourceId }],
+        opaquePresetRewrites: input.opaquePresetRewrites! } : {}),
       ...(Object.keys(catalogMutations).length ? { catalogMutations } : {}) });
 }
 
@@ -857,10 +868,18 @@ async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
         { secretId: legacy.id, expectedUpdatedAt: legacy.updatedAt, sharedSecretRef: formatSharedSavedSecretRefV1(resourceId) },
         referenceCatalogs)
         : promoteLegacyInferenceSavedSecretReferenceV1(source.raw, { source: inference!.source, sharedSecretRef: formatSharedSavedSecretRefV1(resourceId) });
+      const opaquePresetCapture = legacy ? await captureManagedMachinePresetSavedSecretPromotionRewritesForOperation({
+        credentials, accountId, serverHttpBaseUrl: baseUrl,
+        rewrites: [{ personalSecretId: legacy.id, resourceId, resourceRevision: 1 }], signal: input.signal,
+      }) : null;
+      if (legacy && opaquePresetCapture?.kind !== 'ready') {
+        return { status: 'pending', reason: 'source-unavailable' };
+      }
       const mutation = prepareSavedSecretPromotion({ ...preparation,
         displayName: legacy?.name ?? inline?.credential.displayName ?? inference!.displayName,
         kind: legacy?.kind ?? inline?.credential.kind ?? inference!.kind,
-        ...(legacy ? { personalSecretId: legacy.id } : {}),
+        ...(legacy && opaquePresetCapture?.kind === 'ready' ? { personalSecretId: legacy.id,
+          opaquePresetRewrites: opaquePresetCapture.rewrites, opaquePresetReferences: opaquePresetCapture.opaquePresetReferences } : {}),
       }, resourceId, { ...promoted, value,
         profileRows: promoted.profileRecords?.map((record, index) => ({ record, revision: catalog.records[index]!.revision })) });
       const beforeDispatch = await store.readSourceSnapshot();

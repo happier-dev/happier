@@ -18,6 +18,7 @@ import { collectionRecipientEnvelopeStorageAdapter, resolveCollectionAudienceInT
 import { CollectionSharingError, collectionIdentityWhere, resolveCollectionSharingContextInTx, type CollectionSharingContext, type CollectionActorInput } from './sharingResourceService';
 import { mutatePluginCollectionInTx } from './mutation';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 
 async function readPrincipalGrant(tx: Tx, rowDbId: string, principal: PrincipalRefV1) {
     return principal.kind === 'account' ? tx.pluginCollectionGrant.findUnique({ where: { rowDbId_accountId: { rowDbId, accountId: principal.accountId } } })
@@ -53,7 +54,8 @@ export function listCollectionGrants(actorAccountId: string, input: PluginCollec
             ...teams.map(grant => ({ principal: { kind: 'team' as const, teamId: grant.teamId }, accessLevel: grant.accessLevel,
                 createdByAccountId: grant.createdByAccountId, createdAt: grant.createdAt.getTime(), display: { name: grant.team.name } })),
             ...groups.map(grant => ({ principal: { kind: 'group' as const, teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, accessLevel: grant.accessLevel,
-                createdByAccountId: grant.createdByAccountId, createdAt: grant.createdAt.getTime(), display: { name: grant.teamGroup.name } })),
+                createdByAccountId: grant.createdByAccountId, createdAt: grant.createdAt.getTime(), display: { name: null },
+                groupName: projectTeamGroupNameForRecipient({ serialized: grant.teamGroup.name, recipientAccountId: actorAccountId }) })),
         ] };
     });
 }

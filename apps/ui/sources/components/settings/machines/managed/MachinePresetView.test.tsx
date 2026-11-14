@@ -47,6 +47,7 @@ import {
   DaemonPluginActionSchemasReadResponseSchema,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { MachinePresetDetailModel } from './MachinePresetDetail';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
@@ -170,7 +171,7 @@ const resource = {
   id: 'resource',
   homeId: 'srv_history',
   custodianAccountId: 'owner',
-  preset: { id: 'preset', revision: 1 },
+  preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
   launch: { ...preset.launch, name: 'Original guest' },
   controller: preset.controller,
   resource: {
@@ -329,8 +330,11 @@ async function seed(machinePoolsEnabled?: boolean, teamsEnabled?: boolean) {
     serverIdentityId: 'srv_other',
     accountId: 'other',
   });
+  const sealed = createDelegatedManagedPresetFixture({ preset, descriptor: provisioner.descriptor,
+    custodianAccountId: 'owner', installationPublicKey: encodeBase64(
+      tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
   harness.answer(serverId, '/v1/machines/presets/get', {
-    body: { kind: 'found', preset },
+    body: { kind: 'found', preset: { ...sealed, teamAcquireDelegated: false } },
   });
   harness.answer(serverId, '/v1/machines/managed/actions/list', {
     select: (input) => ({
@@ -379,7 +383,7 @@ async function seedConfiguration(serverId: string) {
       select: (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         // The picker also asks the Account catalog for controller-free offers.
-        if (actionId === 'machines.provisioners.list' && request.target.kind !== 'machine') return {
+        if (actionId === 'machines.provisioners.list' && request.target?.kind !== 'machine') return {
           body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: { provisioners: [] } } },
         };
         expect(request.target).toEqual({
@@ -756,44 +760,7 @@ describe('reachable preset detail', () => {
       await hook.unmount();
     }
   });
-  it.each(['use', 'edit'] as const)('keeps a pool preset review unbound and preserves unknown prerequisites (%s)', async intent => {
-    const serverId = await seed();
-    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
-    const exact = createDelegatedManagedPresetFixture({ preset, descriptor: { ...provisioner.descriptor, enrollmentRole: 'sandbox' },
-      custodianAccountId: 'owner', installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
-    if (exact.delegatedAcquire?.kind !== 'ready') throw new Error('Expected public review');
-    const pooled = ManagedMachinePresetV1Schema.parse({ ...exact, controller: undefined,
-      ...(intent === 'edit' ? { launch: { ...exact.launch, credentials: [savedCredential] } } : {}),
-      controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198', delegatedAcquire: { ...exact.delegatedAcquire, controller: undefined,
-        reviewedFacts: { ...exact.delegatedAcquire.reviewedFacts, controller: undefined,
-          prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unknown' }] } } });
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: pooled } });
-    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...pooled, revision: pooled.revision + 1 } } });
-    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
-    const onUse = vi.fn();
-    const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-      provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)} presetId={preset.id}
-      {...(intent === 'edit' ? { presetOnly: true } : { onUse })} />);
-    const primary = intent === 'edit' ? 'managed-config.create' : 'managed-config.use';
-    await waitForHomeGovernance(() => expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.primary).toMatchObject({ disabled: false }));
-    expect(screen.findByTestId('managed-config.repair:systemTool:docker')).not.toBeNull();
-    await act(async () => screen.pressByTestId(primary));
-    if (intent === 'edit') {
-      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
-      expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: {
-        controllerPoolId: pooled.controllerPoolId, controller: null, launch: { credentials: [savedCredential] } } });
-    } else {
-      expect(onUse.mock.calls[0]?.[0]).toMatchObject({ selection: { kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision },
-        receipt: { prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unknown' }] } });
-      expect(onUse.mock.calls[0]?.[0].receipt.controller).toBeUndefined();
-    }
-    expect(harness.requests.filter(request => request.path.includes('machines.provisioners') || request.path.includes('pools/resolve'))).toHaveLength(0);
-    expect(boundary.rpc).not.toHaveBeenCalled();
-    await screen.unmount();
-  });
   it.each([
-    ['unavailable', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
-    ['options-unavailable', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
     ['fixed', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
     ['failing', 'template:fixture-missing-g1-options-1111'],
   ] as const)('keeps saved Lima launch facts in the expanded Summary before and after a typed use failure (%s)', async (_kind, image) => {
@@ -813,13 +780,10 @@ describe('reachable preset detail', () => {
         installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).publicKey, 'base64url'),
       });
       await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
-      const unavailable = _kind === 'unavailable' || _kind === 'options-unavailable';
-      const review = saved.delegatedAcquire;
-      if (review?.kind !== 'ready') throw new Error('Expected the saved review');
-      const returnedPreset = ManagedMachinePresetV1Schema.parse(_kind === 'unavailable'
-        ? { ...saved, delegatedAcquire: { kind: 'unavailable', code: 'controller_unavailable' } }
-        : _kind === 'options-unavailable' ? { ...saved, delegatedAcquire: { ...review, reviewedFacts: { ...review.reviewedFacts, optionStatus: 'unavailable' } } } : saved);
-      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: returnedPreset } });
+      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+      harness.answer(serverId, '/v1/machines/presets/resolve-acquire', {
+        body: { kind: 'resolved', controller: preset.controller, controllerAccess: saved.opened.controllerAccess },
+      });
       const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
       const teamRequest = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
       harness.answer(serverId, teamRequest.path, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: false }) }) });
@@ -835,19 +799,22 @@ describe('reachable preset detail', () => {
           } }) };
         },
       });
+      let acquireRequestId: string | undefined;
       harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
         select: value => {
           if (!value || typeof value !== 'object' || !('envelope' in value)) throw new Error('Expected signed preset use');
           const envelope = ExternalActionRequestEnvelopeSchema.parse(value.envelope);
+          acquireRequestId = envelope.requestId;
           return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: envelope.requestId,
-            execution: { ok: false, errorCode: 'controller_unavailable', error: 'Managing computer unavailable' } } };
+            execution: { ok: false, errorCode: 'provider_unavailable', error: 'Native option unavailable',
+              details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'not_found' } } } } };
         },
       });
       const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
         provisioner={buildQualifiedPluginContributionKey(lima.contribution)} presetId={preset.id} />,
       { wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider> });
-      if (!unavailable) await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-      else await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.summary')).not.toBeNull());
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      expect(screen.findByTestId('managed-config.unavailable')).toBeNull();
       await act(async () => screen.pressByTestId('managed-config.summary'));
       await waitForHomeGovernance(() => expect(screen.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(1));
       const expectSavedSummary = (rendered = screen) => {
@@ -864,17 +831,11 @@ describe('reachable preset detail', () => {
         expect(receipt.cost?.kind).toBe('local');
       };
       expectSavedSummary();
-      if (unavailable) {
-        if (_kind === 'unavailable') expect(screen.tree.findAll(node => node.props.testID === 'managed-config.error'
-          && node.props.diagnosticCode === 'controller_unavailable').length).toBeGreaterThan(0);
-        expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.primary?.disabled).toBe(true);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
-        await screen.unmount();
-        return;
-      }
       await act(async () => screen.pressByTestId('managed-config.create'));
       await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.error'
-        && node.props.diagnosticCode === 'controller_unavailable').length).toBeGreaterThan(0));
+        && node.props.diagnosticCode === 'provider_unavailable'
+        && node.props.diagnosticDetail?.includes('not_found')
+        && node.props.diagnosticDetail?.includes(acquireRequestId)).length).toBeGreaterThan(0));
       expectSavedSummary();
       await screen.unmount();
       // The saved preset detail consumes the same receipt projection without acquiring native metadata.
@@ -882,6 +843,7 @@ describe('reachable preset detail', () => {
         const detail = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
         await waitForHomeGovernance(() => expect(detail.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(1));
         expectSavedSummary(detail);
+        expect(detail.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
         await detail.unmount();
       }
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
@@ -893,13 +855,13 @@ describe('reachable preset detail', () => {
       viewport.mockRestore();
     }
   });
-  it.each([['use', undefined], ['create', 'Company builder']] as const)(
-    'admits current delegated reviewed facts with the live catalog disabled, without controller inventory or private probes (%s)',
-    async (intent, controllerDisplayName) => {
+  it.each([['use', undefined, 'exact'], ['create', 'Company builder', 'exact'], ['use', undefined, 'pool']] as const)(
+    'admits sealed delegated preset without controller inventory or private probes (%s, %s, %s)',
+    async (intent, controllerDisplayName, target) => {
       const serverId = await seed();
       const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
       await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
-      const delegated = createDelegatedManagedPresetFixture({
+      const delegatedReady = createDelegatedManagedPresetFixture({
         preset: {
           ...preset,
           owner: { kind: 'team', teamId: 'team-1' },
@@ -919,8 +881,14 @@ describe('reachable preset detail', () => {
           'base64url',
         ),
       });
+      const delegated = target === 'pool'
+        ? ManagedMachinePresetV1Schema.parse({ ...delegatedReady, controller: undefined, controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198' })
+        : delegatedReady;
       harness.answer(serverId, '/v1/machines/presets/get', {
         body: { kind: 'found', preset: delegated },
+      });
+      harness.answer(serverId, '/v1/machines/presets/resolve-acquire', {
+        body: { kind: 'resolved', controller: preset.controller, controllerAccess: delegatedReady.opened.controllerAccess },
       });
       const { bindHomeDomainActionHttpRequestV1 } =
         await import('@happier-dev/protocol/actions/homeDomainActionFamily');
@@ -984,7 +952,7 @@ describe('reachable preset detail', () => {
             },
             retention: delegated.retention,
             wakeOnAcceptedMessage: false,
-            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            presetContentOverride: expect.any(Object),
           });
           return {
             body: {
@@ -1016,31 +984,30 @@ describe('reachable preset detail', () => {
         expect(screen.findByTestId(actionTestId)?.props.disabled).toBe(false),
       );
       expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.facts).toContainEqual(
-        expect.objectContaining({ id: 'controller', value: controllerDisplayName ?? t('managedMachines.receipt.managingComputer') }),
+        expect.objectContaining({ id: 'controller', value: target === 'pool' ? expect.any(String) : controllerDisplayName ?? t('managedMachines.receipt.managingComputer') }),
       );
       await act(async () => screen.pressByTestId(actionTestId));
       if (intent === 'use')
         expect(onUse).toHaveBeenCalledWith(
           expect.objectContaining({
-            selection: {
+            selection: expect.objectContaining({
               kind: 'preset',
               homeId: preset.homeId,
               id: preset.id,
               revision: preset.revision,
-            },
-            receipt: expect.objectContaining({
-              retention: delegated.retention,
-              wakeOnAcceptedMessage: false,
             }),
-            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            deferredAuthorPreset: true,
+            presetContentOverride: expect.any(Object),
           }),
         );
       else
         await waitForHomeGovernance(() =>
-          expect(route.replace).toHaveBeenCalledWith(
+          expect(route.replace, JSON.stringify({ errors: screen.tree.findAll(node => node.props.testID === 'managed-config.error').map(node => ({ code: node.props.diagnosticCode, detail: node.props.diagnosticDetail })), paths: harness.requests.map(row => row.path) })).toHaveBeenCalledWith(
             `/settings/machines/managed/delegated-created?serverId=${encodeURIComponent(scopeId)}`,
           ),
         );
+      expect(harness.requestsFor('/v1/machines/presets/resolve-acquire')).toHaveLength(intent === 'create' ? 1 : 0);
+      expect(harness.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
       expect(
         harness.requests.filter((row) =>
           row.path.includes('/actions/machines.provisioners.'),
@@ -1062,74 +1029,6 @@ describe('reachable preset detail', () => {
               node.props.testID.startsWith('managed-config.connect:')),
         ),
       ).toHaveLength(0);
-      if (intent === 'use') {
-        harness.answer(serverId, '/v1/machines/presets/get', {
-          body: {
-            kind: 'found',
-            preset: {
-              ...delegated,
-              delegatedAcquire: {
-                kind: 'unavailable',
-                code: 'controller_unavailable',
-              },
-            },
-          },
-        });
-        const { publishHomeAccountChange } =
-          await import('@/sync/runtime/orchestration/homeAccountChange');
-        await act(async () => publishHomeAccountChange(scopeId));
-        await waitForHomeGovernance(() =>
-          expect(
-            screen.tree.findAll(
-              (node) =>
-                node.props.testID === 'managed-config.error' &&
-                node.props.diagnosticCode === 'controller_unavailable',
-            ).length,
-          ).toBeGreaterThan(0),
-        );
-        await waitForHomeGovernance(() =>
-          expect(
-            screen.findByTestId('managed-config.use')?.props.disabled,
-          ).toBe(true),
-        );
-        expect(
-          harness.requests.filter((row) =>
-            row.path.includes('/actions/machines.provisioners.'),
-          ),
-        ).toHaveLength(0);
-        harness.answer(serverId, '/v1/machines/presets/get', {
-          body: {
-            kind: 'found',
-            preset: {
-              ...delegated,
-              revision: delegated.revision + 1,
-              teamAcquireDelegated: false,
-              delegatedAcquire: {
-                kind: 'unavailable',
-                code: 'permission_denied',
-              },
-            },
-          },
-        });
-        await act(async () => publishHomeAccountChange(scopeId));
-        await waitForHomeGovernance(() =>
-          expect(
-            screen.tree.findAll(
-              (node) =>
-                node.props.testID === 'managed-config.error' &&
-                node.props.diagnosticCode === 'permission_denied',
-            ).length,
-          ).toBeGreaterThan(0),
-        );
-        expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(
-          true,
-        );
-        expect(
-          harness.requests.filter((row) =>
-            row.path.includes('/actions/machines.provisioners.'),
-          ),
-        ).toHaveLength(0);
-      }
       await screen.unmount();
     },
   );
@@ -1187,6 +1086,7 @@ describe('reachable preset detail', () => {
               node.props.diagnosticCode ===
                 'provider_unavailable · HTTP 4xx · forbidden',
           ).length,
+          JSON.stringify({ text: screen.getTextContent(), requests: harness.requests.map(request => request.path) }),
         ).toBeGreaterThan(0),
       );
       expect(
@@ -1215,6 +1115,7 @@ describe('reachable preset detail', () => {
           sizeControl(screen)?.props.sizes.some(
             (size: { id: string }) => size.id === 'large',
           ),
+          JSON.stringify({ text: screen.getTextContent(), requests: harness.requests.map(request => request.path) }),
         ).toBe(true),
       );
       await act(async () => sizeControl(screen)?.props.onChange('large'));
@@ -1228,6 +1129,7 @@ describe('reachable preset detail', () => {
       await waitForHomeGovernance(() =>
         expect(
           screen.findByTestId('managed-config.create')?.props.disabled,
+          screen.getTextContent(),
         ).toBe(false),
       );
       const retiredCreate = screen.findByTestId('managed-config.create')?.props
@@ -1507,37 +1409,30 @@ describe('reachable preset detail', () => {
     expect(listFailed.findByTestId('machine-preset.detail.createOne')).toBeNull();
     await listFailed.unmount();
   });
-  it('keeps E2EE delegated details neutral and presents the typed use-time failure', async () => {
+  it('keeps sealed delegated details neutral and enables creation without a readiness projection', async () => {
     const serverId = await seed(true, true);
     const scopeId = await seedConfiguration(serverId);
     const delegated = createDelegatedManagedPresetFixture({
-      preset: ManagedMachinePresetV1Schema.parse({
-        ...preset,
-        owner: { kind: 'team', teamId: 'team-1' },
-        controllerDisplayName: undefined,
-      }),
+      preset: { ...preset, owner: { kind: 'team', teamId: 'team-1' }, controllerDisplayName: undefined },
       descriptor: { ...provisioner.descriptor, enrollmentRole: 'sandbox' },
       custodianAccountId: 'custodian',
       installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'),
     });
-    const unavailable = ManagedMachinePresetV1Schema.parse({ ...delegated,
-      controllerDisplayName: undefined,
-      delegatedAcquire: { kind: 'unavailable', code: 'credential_unavailable' } });
+    const unavailable = delegated;
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: unavailable } });
+    const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    const teamRequest = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, teamRequest.path, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: false }) }) });
     await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
     const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
-    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.createOne')).not.toBeNull());
     const model = screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
     expect(model.receipt?.facts).toContainEqual(expect.objectContaining({
       id: 'controller', value: t('managedMachines.receipt.managingComputer'),
     }));
     expect(model.receipt?.facts).not.toContainEqual(expect.objectContaining({ id: 'controller', value: t('common.unknown') }));
     expect(model.controller?.row.title).toBe(t('managedMachines.receipt.managingComputer'));
-    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
-    const unavailableCard = screen.tree.findAll((node) => node.props.testID === 'machine-preset.configuration-unavailable')[0];
-    expect(unavailableCard?.props.diagnosticCode).toBe('credential_unavailable');
-    expect(unavailableCard?.props.title).toBe(t('session.startFailure.cause.credential_unavailable'));
-    expect(unavailableCard?.props.title).not.toBe(t('managedMachines.options.unavailable'));
+    expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
     await screen.unmount();
   });
   it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
@@ -2393,7 +2288,7 @@ describe('reachable preset detail', () => {
           const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
           if (actionId === 'machines.provisioners.options') await optionsGate;
           return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true,
-            result: actionId === 'machines.provisioners.options' ? options : request.target.kind === 'machine'
+            result: actionId === 'machines.provisioners.options' ? options : request.target?.kind === 'machine'
               ? { controller: preset.controller, provisioners: [editableProvisioner] } : { provisioners: [] },
           } } };
         } });
@@ -3106,7 +3001,6 @@ describe('reachable preset detail', () => {
     const screen = await renderSettingsView(
       <MachineProvisionerPicker
         serverId={scopeId}
-        scope={controllerScope.getCurrent()}
       />,
     );
     await flushHookEffects({ cycles: 3, turns: 3 });

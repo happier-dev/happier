@@ -6,7 +6,7 @@ import { EnvironmentDomainCredentialBindingV1Schema } from '@happier-dev/protoco
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from '../v1/ids.js';
-import { MachineConnectorSecretGrantSubjectV1Schema, MachineSecretGrantV1Schema } from './machineSecretGrantV1.js';
+import { MachineConnectorSecretGrantSubjectV1Schema, MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema } from './machineSecretGrantV1.js';
 
 /** Private installed-daemon transport, never an Action or public binding projection. */
 export const EnvironmentSecretLaunchAdmissionBodyV1Schema = z.strictObject({
@@ -58,7 +58,7 @@ export const EnvironmentSecretBindingPreparationV1Schema = z.strictObject({
         domains: z.array(z.strictObject({ domainId: id, installations: z.array(installation) })) })),
 });
 export const EnvironmentSecretLaunchAdmissionResultV1Schema = z.union([
-    z.strictObject({ ok: z.literal(true), grants: z.array(MachineSecretGrantV1Schema),
+    z.strictObject({ ok: z.literal(true), grants: z.array(MachineSecretGrantStoredReadV1Schema),
         bindingPreparation: z.optional(EnvironmentSecretBindingPreparationV1Schema),
         domainAdmission: z.optional(EnvironmentDomainSecretLaunchAdmissionV1Schema) }),
     DeploymentActionFailureV1Schema,

@@ -41,7 +41,7 @@ const viewer = { manageCredentials: true, offerOwnCredential: true };
 function credentialResource(id: string, teamId = 'team-1') {
     return TeamCredentialResourceSummaryV1Schema.parse({
         id, teamId, custodianAccountId: 'account',
-        displayName: 'Deep-linked credential', enabled: true, revision: 1,
+        displayName: { content: { t: 'plain', v: 'Deep-linked credential' }, recipientEnvelope: null }, enabled: true, revision: 1,
         deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
         source: null,
         sourcePresentation: {
@@ -320,7 +320,7 @@ describe('Team credential resource observations', () => {
         release();
     });
 
-    it('keys administration reads by filter while observing the recipient catalog once per Team', async () => {
+    it('keys administration reads by non-content filter while observing the recipient catalog once per Team', async () => {
         home.answer(scope.serverId, LIST, { body: { resources: [], nextCursor: null, viewer } });
         home.answer(scope.serverId, DISCOVER, { body: { resources: [], nextCursor: null, failures: [] } });
         const releaseCatalog = observeTeamCredentialResourceCatalog(scope, address);
@@ -330,11 +330,12 @@ describe('Team credential resource observations', () => {
             expect(getTeamCredentialResourceCatalogSnapshot(scope, address)?.status).toBe('ready');
         });
         releaseAll();
-        const releaseFiltered = observeTeamCredentialResources(scope, address, 'claude', 'brokered');
-        const filteredKey = teamCredentialResourcesQueryKeyV1({ teamId: address.teamId, search: 'claude', filter: 'brokered' });
+        const releaseFiltered = observeTeamCredentialResources(scope, address, 'brokered');
+        const filteredKey = teamCredentialResourcesQueryKeyV1({ teamId: address.teamId, filter: 'brokered' });
         await waitForHomeGovernance(() => expect(getTeamCredentialResourcesSnapshot(scope, address, filteredKey)?.status).toBe('ready'));
         expect(home.requestsFor(LIST)).toHaveLength(2);
-        expect(home.requestsFor(LIST)[1]?.input).toMatchObject({ search: 'claude', filter: 'brokered' });
+        expect(home.requestsFor(LIST)[1]?.input).toMatchObject({ filter: 'brokered' });
+        expect(home.requestsFor(LIST)[1]?.input).not.toHaveProperty('search');
         expect(home.requestsFor(DISCOVER)).toHaveLength(1);
         releaseFiltered();
         releaseCatalog();

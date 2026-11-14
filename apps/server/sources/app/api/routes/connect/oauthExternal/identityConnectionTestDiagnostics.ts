@@ -3,6 +3,7 @@ import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/
 import { db } from "@/storage/db";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/types";
 import { selectMatchingExternalGroupIds } from "@/app/teams/memberships/identityConnectionGroupRefresh";
+import { projectTeamGroupNameForRecipient } from "@/app/teams/groups/privateLabels";
 
 import type { OAuthSecurityBinding } from "./oauthExternalSchemas";
 
@@ -21,6 +22,7 @@ export async function describeIdentityConnectionTestDiagnostics(input: Readonly<
     env: NodeJS.ProcessEnv;
     profile: unknown;
     securityBinding: OAuthSecurityBinding;
+    recipientAccountId: string;
 }>): Promise<IdentityConnectionTestDiagnosticsV1 | null> {
     const describe = input.provider.describeIdentityTest;
     if (!describe) return null;
@@ -42,13 +44,14 @@ export async function describeIdentityConnectionTestDiagnostics(input: Readonly<
         },
         mappedGroups: observedGroups === null
             ? []
-            : await previewMappedGroups(input.securityBinding, observedGroups),
+            : await previewMappedGroups(input.securityBinding, observedGroups, input.recipientAccountId),
     };
 }
 
 async function previewMappedGroups(
     securityBinding: OAuthSecurityBinding,
     observedGroups: readonly string[],
+    recipientAccountId: string,
 ): Promise<IdentityConnectionTestDiagnosticsV1["mappedGroups"]> {
     const context = securityBinding.provider.context;
     const connection = securityBinding.connection;
@@ -64,11 +67,14 @@ async function previewMappedGroups(
         observedGroups,
     );
     const previewed = new Set<string>();
-    const mappedGroups: { id: string; name: string }[] = [];
+    const mappedGroups: IdentityConnectionTestDiagnosticsV1["mappedGroups"] = [];
     for (const binding of bindings) {
         if (!matched.has(binding.externalGroupId) || previewed.has(binding.group.id)) continue;
         previewed.add(binding.group.id);
-        mappedGroups.push({ id: binding.group.id, name: binding.group.name });
+        mappedGroups.push({
+            id: binding.group.id,
+            name: projectTeamGroupNameForRecipient({ serialized: binding.group.name, recipientAccountId }),
+        });
     }
     return mappedGroups;
 }

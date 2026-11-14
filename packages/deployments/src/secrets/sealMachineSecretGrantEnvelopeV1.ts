@@ -1,7 +1,8 @@
-import type { EnvironmentSecretBindingV1, MachineSecretGrantSubjectV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1, MachineSecretGrantSubjectV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 
 type GrantContent = Readonly<{ kind: 'secret'; value: string }>
-    | Readonly<{ kind: 'environmentValues'; definition: Exclude<EnvironmentSecretBindingV1['source'], { kind: 'secret' }> }>
+    | Readonly<{ kind: 'environmentValues'; binding: Pick<EnvironmentVariableBindingV1,
+        'purpose' | 'phase' | 'name' | 'grantRef'>; definition: Exclude<EnvironmentSecretBindingV1['source'], { kind: 'secret' }> }>
     | Readonly<{ kind: 'connectorToken'; token: string }>;
 
 /** The installation envelope has one wire author; hosts supply their crypto adapter. */

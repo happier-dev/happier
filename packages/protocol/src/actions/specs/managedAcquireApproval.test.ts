@@ -61,8 +61,9 @@ describe('managed acquire review', () => {
     [{ kind: 'guestProcess', role: 'sandbox' }, ['Runs as a process inside the sandbox'], 'approvalSandbox'],
   ] satisfies [ManagedMachineEnrollmentIdentityV1, string[], string][])('reads the reviewed identity in words, including retained history (%j)', (enrollmentIdentity, facts, key) => {
     const spec = getActionSpec('machines.managed.acquire');
-    const input = spec.inputSchema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
-      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true, enrollmentIdentity });
+    const input = spec.inputSchema.parse({ selection: { kind: 'one-off', homeId: 'home',
+      launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Reviewed machine', choices: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true }, enrollmentIdentity });
     for (const [status, actionArgs] of [
       ['pending', input], ['executed', projectApprovalReviewInput(spec, input)],
     ] as const) {
@@ -88,12 +89,28 @@ describe('managed acquire review', () => {
     }
   });
 
-  it('keeps billing unknown for an unpriced preset without billing facts', () => {
+  it('renders an opaque preset approval from structural fields without reading sealed enrollment or review facts', () => {
     const spec = MANAGED_MACHINE_ACTION_SPECS.find(candidate => candidate.id === 'machines.managed.acquire');
     if (!spec) throw new Error('Missing managed acquire Action');
     const input = spec.inputSchema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
+      presetContentOverride: { content: { t: 'plain', v: {
+        enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'private-user', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
+        reviewedFacts: { launch: { provider: { pluginId: 'private.provider', localId: 'private' }, name: 'Private machine' } },
+      } } } });
+    expect(spec.inputSchema.safeParse({ ...input,
+      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, reviewedFacts: {} }).success).toBe(false);
+    const review = projectApprovalReviewInput(spec, input);
+    expect(review).toMatchObject({ homeId: 'home', provider: 'the selected provider', size: 'Size unavailable', price: 'Price unavailable' });
+    expect(review).not.toHaveProperty('enrollmentIdentity');
+    expect(JSON.stringify(review)).not.toContain('private-user');
+    expect(JSON.stringify(review)).not.toContain('private.provider');
+    expect(JSON.stringify(review)).not.toContain('Private machine');
+    const projection = describeApprovalActionFields({ actionId: spec.id, actionArgs: input, status: 'pending' });
+    expect(projection.unrepresentable).toBeNull();
+    expect(projection.rows.map(row => row.path)).not.toContain('enrollmentIdentity.role');
+    expect(projection.rows.map(row => row.path)).not.toContain('nativeFacts');
     expect(spec.approvalPresentation?.summary(input)).toContain('Price unavailable');
     expect(spec.approvalPresentation?.summary(input)).not.toContain('billed directly');
   });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -10,9 +10,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 /** A Preset can start this provider's Machine when its creation part names that provider and it is still usable. */
-export function managedStartFromPresets(presets: readonly ManagedMachinePresetV1[], provisioner: string): readonly ManagedMachinePresetV1[] {
-    return presets.filter(preset => hasManagedMachinePresetCreationV1(preset) && preset.archivedAt === undefined
-        && preset.delegatedAcquire?.kind !== 'unavailable'
+export function managedStartFromPresets(presets: readonly ManagedMachinePresetListEntryV1[], provisioner: string): readonly ManagedMachinePresetListEntryV1[] {
+    return presets.filter(preset => hasOpenedManagedMachinePresetCreationV1(preset) && preset.archivedAt === undefined
         && buildQualifiedPluginContributionKey(preset.launch.provider) === provisioner);
 }
 
@@ -20,7 +19,7 @@ const HAND = 'hand';
 
 /** "Start from" at the head of the configurator (lab `add/create`): exactly one Preset, or the choices by hand. */
 export function ManagedStartFromSection(props: Readonly<{
-    presets: readonly ManagedMachinePresetV1[];
+    presets: readonly ManagedMachinePresetListEntryV1[];
     selectedId: string | null;
     disabled: boolean;
     onChange: (presetId: string | null) => void;

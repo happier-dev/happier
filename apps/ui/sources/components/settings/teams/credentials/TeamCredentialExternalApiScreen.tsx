@@ -21,7 +21,10 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { Modal } from '@/modal';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { randomUUID } from '@/platform/randomUUID';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
 import {
     authorizeTeamCredentialExternalApiKey,
     createTeamCredentialExternalApiKey,
@@ -44,6 +47,7 @@ import { credentialApprovalFailureMessage, credentialFailureMessage } from './te
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import { useTeamCredentialExternalApiAvailability } from './useTeamCredentialExternalApiAvailability';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
+import { teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
 
 const KEY_LABEL_MAX_LENGTH = 120;
 const EXPIRY_PRESETS: readonly ApiTokenExpiryPreset[] = ['30d', '90d', '1y', 'none'];
@@ -130,6 +134,17 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const targetPath = teamCredentialExternalApiPath(context.address, resourceId);
     const currentTargetKey = React.useRef(targetKey);
     const actionLifetime = React.useRef<AbortController | null>(null);
+    const keyLabelRequests = React.useMemo(() => keys.map((key) => ({
+        key: key.keyId,
+        binding: teamCredentialExternalApiKeyLabelBinding(key.keyId),
+        label: key.label,
+        readPolicy: { kind: 'team-resource' as const },
+    })), [keys]);
+    const openedKeyLabels = useOpenedPrivateLabels({
+        scope: context.scope,
+        requests: keyLabelRequests,
+        enabled: view.featureEnabled && canReadKeys,
+    });
     React.useEffect(() => {
         const controller = new AbortController();
         actionLifetime.current = controller;
@@ -298,6 +313,9 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const closeReveal = React.useCallback(() => {
         void runUnsavedChangesGuard(revealLossGuard, clearReveal);
     }, [clearReveal, revealLossGuard]);
+    const keyLabel = (key: TeamCredentialExternalApiKeySummaryV1): string => (
+        openedKeyLabels[key.keyId] ?? t('common.unavailable')
+    );
 
     if (!view.featureEnabled) {
         return (
@@ -486,7 +504,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             {reveal.replacedKey ? (
                 <Item
                     testID="team-credential-external-replace-revoke-old"
-                    title={t('teams.credentials.externalApi.revokeTitle', { name: reveal.replacedKey.label })}
+                    title={t('teams.credentials.externalApi.revokeTitle', { name: keyLabel(reveal.replacedKey) })}
                     detail={t('common.remove')}
                     destructive
                     disabled={operationBusy}
@@ -543,11 +561,11 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                     <Item
                         testID="team-credential-external-replace-staged"
                         title={t('secrets.actions.replace')}
-                        subtitle={replacing.label}
+                        subtitle={keyLabel(replacing)}
                         detail={t('common.cancel')}
                         accessibilityLabel={[
                             t('secrets.actions.replace'),
-                            replacing.label,
+                            keyLabel(replacing),
                             t('common.cancel'),
                         ].join(', ')}
                         disabled={operationBusy}
@@ -622,10 +640,24 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         // one reveal-loss question leaving the screen asks.
                         if (!await runUnsavedChangesGuard(revealLossGuard, clearReveal)) return;
                         const requestedTargetKey = targetKey;
+                        const signal = actionLifetime.current?.signal;
+                        if (!signal || signal.aborted) return;
                         setBusy(true); setNotice(null);
                         try {
+                            const keyId = randomUUID();
+                            const sealedLabel = await createPrivateLabelClient(context.scope).seal({
+                                owner: { kind: 'team', teamId: context.address.teamId },
+                                binding: teamCredentialExternalApiKeyLabelBinding(keyId),
+                                value: trimmedLabel,
+                                signal,
+                            });
+                            if (currentTargetKey.current !== requestedTargetKey) return;
+                            if (sealedLabel === null) {
+                                setNotice(t('teams.errors.generic'));
+                                return;
+                            }
                             const outcome = await createTeamCredentialExternalApiKey({
-                                scope: context.scope, resourceId, teamMembershipId: membershipId, label: trimmedLabel,
+                                scope: context.scope, resourceId, teamMembershipId: membershipId, keyId, label: sealedLabel,
                                 expiresAt: resolveApiTokenExpiryInstant(expiry, Date.now()),
                                 handlers: {
                                     // Creation's answer is the only copy of the
@@ -695,12 +727,12 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                     <Item
                         key={key.keyId}
                         testID={`team-credential-external-key:${key.keyId}`}
-                        title={key.label}
+                        title={keyLabel(key)}
                         // The safe prefix is the only part of a key that may be
                         // shown again; it is enough to tell two keys apart.
                         subtitle={`${key.displayPrefix} · ${keyStatusLine(key, now)}`}
                         detail={view.canManage ? `${t('teams.credentials.externalApi.assignLabel')} ${memberNames.get(key.teamMembershipId) ?? t('teams.credentials.limits.unknownSubject')}` : undefined}
-                        accessibilityLabel={[key.label, keyStatusLine(key, now), ...(view.canManage ? [memberNames.get(key.teamMembershipId) ?? t('teams.credentials.limits.unknownSubject')] : [])].join(', ')}
+                        accessibilityLabel={[keyLabel(key), keyStatusLine(key, now), ...(view.canManage ? [memberNames.get(key.teamMembershipId) ?? t('teams.credentials.limits.unknownSubject')] : [])].join(', ')}
                         disabled={operationBusy}
                         showChevron={false}
                     />
@@ -710,7 +742,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         key={`authorize:${key.keyId}`}
                         testID={`team-credential-external-authorize:${key.keyId}`}
                         title={t('teams.credentials.externalApi.authorize')}
-                        subtitle={key.label}
+                        subtitle={keyLabel(key)}
                         disabled={operationBusy || !keyListTrusted || !context.canMutate}
                         onPress={() => void authorizeKey(key)}
                         showChevron={false}
@@ -724,7 +756,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         disabled={operationBusy}
                         onPress={() => {
                             setReplacing(key);
-                            setLabel(key.label);
+                            setLabel(openedKeyLabels[key.keyId] ?? '');
                             setMembershipId(key.teamMembershipId);
                             setMembershipName(memberNames.get(key.teamMembershipId) ?? null);
                         }}

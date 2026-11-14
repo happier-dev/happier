@@ -18,15 +18,16 @@ import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
+import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient, openManagedPresetAdmission } from './acquire';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { readManagedMachine } from './readManagedMachine';
 import { createManagedNativeInvocation } from './reconcile';
-import { managedMachineActionEndpointPathV1, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { managedMachineActionEndpointPathV1, ManagedAdmissionOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { fixture as nativeFixture, roles as nativeRoles, roleActionId, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
@@ -47,6 +48,7 @@ import { logger } from '@/ui/logger';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { SharedSavedSecretCreateInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -72,6 +74,13 @@ import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import * as privateFiles from '@/daemon/privateBearerFile';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetSetupOverrideV1,
+    createManagedMachinePresetResizeOverrideV1,
+    openManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1,
+    replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '@happier-dev/protocol/actions/externalActionApi';
@@ -108,6 +117,7 @@ import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/r
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { StoredCredentials } from '@/persistence';
+import { createManagedPresetHydrator, openManagedPresetCarrier, withManagedOpaquePresetReview } from './presetHydration';
 
 // Only the filesystem removal boundary is mutable; every protection, codec,
 // SavedSecret and invocation owner still runs against the actual implementation.
@@ -169,6 +179,61 @@ function driver() {
     // contribution resolution still uses the real canonical registry owner.
     const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
+}
+
+/**
+ * A retained setup replay is now a real opaque preset row: Home holds only
+ * lifecycle state while the local keyholder opens the exact admitted snapshot.
+ */
+function plainOpaqueSetupReplayFixture() {
+    const presetId = 'setup-replay-preset';
+    const launch = input.selection.launch;
+    const resource = { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} };
+    const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({
+        launch,
+        optionStatus: 'current',
+        prerequisites: [],
+        billing: { location: 'cloud', stoppedBilling: 'unknown' },
+        retentionCapabilities: { supportedIntents: ['delete'] },
+        retention: input.selection.retention,
+        wakeOnAcceptedMessage: false,
+    });
+    const authored = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: {
+        v: 1,
+        name: 'Setup replay preset',
+        launch,
+        setup: { scripts: [{ body: 'echo admitted', affects: 'none' }] },
+    } });
+    const snapshotContent = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'plain', content: authored.content,
+        launchName: launch.name, reviewedFacts, nativeResult: { kind: 'bound', resource } });
+    if (!snapshotContent) throw new Error('Could not create plain retained preset snapshot');
+    const presetContent = { ...authored, content: snapshotContent };
+    const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+        projection: projectManagedMachinePresetForRecipientV1({ content: presetContent.content,
+            recipients: presetContent.recipients, recipientAccountId: 'owner' }),
+        enrollmentIdentity: input.enrollmentIdentity,
+    });
+    if (!presetContentOverride) throw new Error('Could not create plain retained preset override');
+    const structural = ManagedMachineV1Schema.parse({
+        id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+        preset: { id: presetId, revision: 4, contentEncryptionMode: 'plain' }, controller,
+        allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        retention: input.selection.retention, wakeOnAcceptedMessage: false,
+        enrolledMachineId: 'guest', machineSetup: { state: 'pending' },
+    });
+    const admission = ManagedAdmissionOutputV1Schema.parse({ machine: structural, presetContent, presetContentOverride, replayed: true });
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const native = nativeFixture({ credentialPurposes: [] });
+    const acquisition = createManagedMachineAcquisitionDriver({ ...accountInputs, token, serverUrl: 'https://home.example', homeId: 'home',
+        controller, runtimeRegistry: native.runtimeRegistry, credentials: { token, encryption: null } });
+    return {
+        admission,
+        acquisition,
+        input: {
+            selection: { kind: 'preset' as const, homeId: 'home', id: presetId, revision: 4 },
+            controller, retention: input.selection.retention, wakeOnAcceptedMessage: false, presetContentOverride,
+        },
+    };
 }
 describe('creation environment stage', () => {
     it('refreshes stopped native power after controller startup and reconnect without changing desired power', async () => {
@@ -539,8 +604,7 @@ describe('creation environment stage', () => {
                     expectedPolicy: { enabled: storedEnabled }, expectedMetadataVersion: 2, expectedPlanDigest: 'actual-guest-review' } });
                 if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
                 isolationWritten = true;
-                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.set', requestId: childRequestId, execution: { ok: true, result: outcome === 'conflict'
-                    ? { kind: 'conflict', policy: { enabled: false }, metadataVersion: 2 } : outcome === 'isolationApproval'
+                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.set', requestId: childRequestId, execution: { ok: true, result: outcome === 'isolationApproval'
                     ? { kind: 'approval_request_created', artifactId: 'isolation-approval', actionId: 'machines.agentIsolation.set' } : {
                     kind: 'accepted', operationId: 'isolation-operation', metadataVersion: 3,
                     status: { kind: 'applying', phase: 'runtime_replacement' },
@@ -584,8 +648,7 @@ describe('creation environment stage', () => {
             await execution.catch(error => expect(JSON.stringify(error)).not.toMatch(/PRIVATE_/));
             expect(phases.at(-1)).toBe('machines.agentIsolation.preview');
         }
-        else await expect(execution).rejects.toMatchObject({ code: outcome === 'conflict' ? 'conflict'
-            : outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
+        else await expect(execution).rejects.toMatchObject({ code: outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
         // Machine roles seed once, after administrator access, only where creation initializes policy.
         expect(rolesWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval');
@@ -933,20 +996,19 @@ esac
     it.each(['cloud-ssh', 'cloud-ssh-root'] as const)('acquires through cloud SSH installCli with an expired root password (%s)',
         runHomeRecoveryScenario, 60_000);
     it.each(['succeeded', 'skipped'] as const)('retains the original first message across failed setup until exact paid row becomes %s', async state => {
-        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
-            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
-            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const fixture = plainOpaqueSetupReplayFixture();
+        let retained = fixture.admission.machine;
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async url => {
             writes.push(String(url));
-            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+            return { status: 200, data: String(url).endsWith('/admit') ? fixture.admission : { machine: retained } };
         });
         let wake: (() => void) | undefined;
         let disposed = false;
         let started = 0;
         let setup = 0;
         let settled = false;
-        const execution = driver().execute('machines.managed.acquire', { ...input, agentStart: {
+        const execution = fixture.acquisition.execute('machines.managed.acquire', { ...fixture.input, agentStart: {
             creationKey: 'first-message', directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
         } }, { requestId: 'create', signal: new AbortController().signal,
@@ -970,16 +1032,15 @@ esac
         expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
     });
     it('runs setup after Join and before the admitted first message without buying again', async () => {
-        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
-            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
-            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const fixture = plainOpaqueSetupReplayFixture();
+        let retained = fixture.admission.machine;
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async url => {
             writes.push(String(url));
-            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+            return { status: 200, data: String(url).endsWith('/admit') ? fixture.admission : { machine: retained } };
         });
         const sequence: string[] = [];
-        await driver().execute('machines.managed.acquire', { ...input, agentStart: {
+        await fixture.acquisition.execute('machines.managed.acquire', { ...fixture.input, agentStart: {
             creationKey: 'first-message', directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
         } }, { requestId: 'create', context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
@@ -999,9 +1060,8 @@ esac
         expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
     });
     it.each(['home-unavailable', 'delete'] as const)('stops before Agent start when the post-setup phase read reports %s', async outcome => {
-        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
-            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
-            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const fixture = plainOpaqueSetupReplayFixture();
+        let retained = fixture.admission.machine;
         let setupFinished = false;
         let currentReads = 0;
         vi.spyOn(axios, 'post').mockImplementation(async url => {
@@ -1011,10 +1071,10 @@ esac
                     ? { status: 503, data: { code: 'database_transaction_conflict_exhausted' } }
                     : { status: 409, data: { code: 'intent_changed' } };
             }
-            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+            return { status: 200, data: String(url).endsWith('/admit') ? fixture.admission : { machine: retained } };
         });
         let started = false;
-        const execution = driver().execute('machines.managed.acquire', { ...input, agentStart: {
+        const execution = fixture.acquisition.execute('machines.managed.acquire', { ...fixture.input, agentStart: {
             creationKey: 'first-message', directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
         } }, { requestId: 'create', context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
@@ -1168,6 +1228,646 @@ afterEach(async () => {
     vi.unstubAllGlobals();
     resetActiveAccountSettingsSnapshotForTests();
 });
+
+function createTeamMemberE2eePresetCarrier(input: Readonly<{
+    homeId: string;
+    machineId: string;
+    launch: typeof machine.launch;
+    allocation: 'unsubmitted' | 'bound';
+    /** The Team member seals the request override; a different Account may host the controller. */
+    custodianAccountId?: 'owner' | 'team-member';
+    sealSeed?: number;
+    resource?: NonNullable<ManagedMachineV1['resource']>;
+    enrolledMachineId?: string;
+    replayed?: boolean;
+}>) {
+    const memberKey = new Uint8Array(32).fill(17);
+    const memberPublicKey = tweetnacl.box.keyPair.fromSecretKey(memberKey).publicKey;
+    const ownerKey = new Uint8Array(32).fill(18);
+    const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(ownerKey).publicKey;
+    const recipient = (accountId: string, publicKey: Uint8Array) => SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+        account: { kind: 'account', accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+        readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
+            contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+        envelopeStatus: 'missing',
+    });
+    const presetId = 'team-e2ee-preset';
+    const stored = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+        content: { v: 1, name: 'Private Team E2EE preset', launch: input.launch },
+        recipientCensus: [recipient('owner', ownerPublicKey), recipient('team-member', memberPublicKey)],
+        randomBytes: length => new Uint8Array(length).fill(input.sealSeed ?? 9),
+    });
+    const enrollmentIdentity = { kind: 'existingUser' as const, role: 'personal' as const };
+    const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'e2ee',
+        projection: projectManagedMachinePresetForRecipientV1({ content: stored.content, recipients: stored.recipients,
+            recipientAccountId: 'team-member' }), accountId: 'team-member', accountKey: memberKey, enrollmentIdentity,
+        randomBytes: length => new Uint8Array(length).fill(10) });
+    if (!presetContentOverride) throw new Error('Could not seal fixture acquire override');
+    const custodianAccountId = input.custodianAccountId ?? 'team-member';
+    const custodianKey = custodianAccountId === 'owner' ? ownerKey : memberKey;
+    const custodianPublicKey = custodianAccountId === 'owner' ? ownerPublicKey : memberPublicKey;
+    const acquisition = {
+        selection: { kind: 'preset' as const, homeId: input.homeId, id: presetId, revision: 3 },
+        controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
+        presetContentOverride,
+    };
+    const machine = ManagedMachineV1Schema.parse({
+        id: input.machineId, homeId: input.homeId, custodianAccountId,
+        preset: { id: presetId, revision: 3, contentEncryptionMode: 'e2ee' }, controller,
+        allocation: input.allocation,
+        creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        retention: acquisition.retention, wakeOnAcceptedMessage: false,
+        ...(input.resource ? { resource: input.resource } : {}),
+        ...(input.enrolledMachineId ? { enrolledMachineId: input.enrolledMachineId } : {}),
+    });
+    const admission = ManagedAdmissionOutputV1Schema.parse({ machine, presetContent: stored, presetContentOverride,
+        replayed: input.replayed ?? false });
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: custodianAccountId })).toString('base64url')}.signature`;
+    return { admission, acquisition, memberKey, memberPublicKey, custodianKey, custodianPublicKey, custodianAccountId, token };
+}
+
+function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamMemberE2eePresetCarrier>,
+    launch: typeof machine.launch, nativeResult?: ReturnType<typeof AcquireResultV1Schema.parse>) {
+    const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch, controller, optionStatus: 'current', prerequisites: [],
+        billing: { location: 'cloud', stoppedBilling: 'unknown' }, retentionCapabilities: { supportedIntents: ['delete'] },
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const content = replaceManagedMachinePresetLaunchNameV1({ presetId: carrier.admission.machine.preset.id, mode: 'e2ee',
+        content: carrier.admission.presetContent.content, recipients: carrier.admission.presetContent.recipients,
+        accountId: 'team-member', accountKey: carrier.memberKey, launchName: launch.name, reviewedFacts,
+        ...(nativeResult === undefined ? {} : { nativeResult }),
+        randomBytes: length => new Uint8Array(length).fill(12) });
+    if (!content) throw new Error('Could not create retained Team preset snapshot');
+    return { ...carrier.admission.presetContent, content };
+}
+
+describe('opaque managed preset admission', () => {
+    it.each(['plain', 'e2ee'] as const)('qualifies omitted saved policy before the sole native admission (%s)', async mode => {
+        const homeId = 'native-policy-home';
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'native-policy-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private qualified launch', choices: {} }, allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        const native = nativeFixture({ credentialPurposes: [] });
+        const { retention: _retention, wakeOnAcceptedMessage: _wake, ...root } = carrier.acquisition;
+        const preset = { id: root.selection.id, homeId, revision: root.selection.revision,
+            owner: { kind: 'account', accountId: 'owner' }, controller, contentEncryptionMode: mode,
+            ...(mode === 'e2ee' ? carrier.admission.presetContent : {
+                content: { t: 'plain', v: { v: 1, name: 'Private qualified launch', launch: {
+                    provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                    name: 'Private qualified launch', choices: {} }, enrollmentIdentity: input.enrollmentIdentity } }, recipients: [] }),
+        };
+        const acquisition = mode === 'e2ee' ? root : { selection: root.selection, controller };
+        const requestId = 'native-policy-request';
+        const originalActionEnvelope = { v: 1 as const, requestId, target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: mode === 'e2ee'
+                ? computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey) : null, updatedAt: 1 } });
+        const admitted: unknown[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+            if (String(url).endsWith('/presets/get')) {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${carrier.token}`);
+                return { status: 200, data: { kind: 'found', preset } };
+            }
+            if (String(url).endsWith('/admit')) {
+                admitted.push(body);
+                // Home refuses at the effect boundary; no native allocation is permitted by this fixture.
+                throw Object.assign(new Error('Fixture native admission refused'), { isAxiosError: true,
+                    response: { status: 409, data: { error: 'request_conflict' } } });
+            }
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: mode === 'e2ee' ? { token: carrier.token, encryption: { type: 'dataKey',
+                machineKey: carrier.custodianKey, publicKey: carrier.custodianPublicKey } } : { token: carrier.token, encryption: null } });
+        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId,
+            context: { surface: 'cli', originalActionEnvelope,
+                operationAcceptance: { operationId: 'native-policy-operation', accept() {} } } })).rejects.toBeDefined();
+        expect(admitted).toEqual([{ input: acquisition, requestId, continuationPresent: false,
+            presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope }]);
+        expect(JSON.stringify(admitted)).not.toContain('Private qualified launch');
+        expect(native.effects()).toBe(0);
+    });
+    it('hydrates the Home-retained replay snapshot while qualifying omitted policy once', async () => {
+        const homeId = 'native-replay-home';
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'native-replay-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private retained Machine', choices: {} }, allocation: 'bound', replayed: true });
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+            name: 'Private retained Machine', choices: {} };
+        const reported = createTeamMemberE2eePresetCarrier({ homeId, machineId: carrier.admission.machine.id,
+            launch, allocation: 'bound', replayed: true, sealSeed: 29 });
+        const reportedContent = { ...reported, admission: { ...reported.admission,
+            presetContent: { ...reported.admission.presetContent, content: reported.acquisition.presetContentOverride.content } } };
+        const snapshot = retainTeamMemberReviewedSnapshot(reportedContent, launch, AcquireResultV1Schema.parse({ kind: 'bound',
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { guest: 'retained-private-guest' } } }));
+        const { retention: _retention, wakeOnAcceptedMessage: _wake, ...acquisition } = carrier.acquisition;
+        const originalActionEnvelope = { v: 1 as const, requestId: 'replay-request',
+            target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
+        const native = nativeFixture({ credentialPurposes: [] });
+        const keyReads = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset: {
+                id: acquisition.selection.id, homeId, revision: acquisition.selection.revision, controller,
+                owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'e2ee', ...carrier.admission.presetContent } } };
+            if (String(url).endsWith('/admit')) {
+                // reportManagedAcquire replaces the snapshot and clears the consumed initial override atomically.
+                const { presetContentOverride: _override, ...reportedAdmission } = carrier.admission;
+                return { status: 200, data: { ...reportedAdmission, presetContent: snapshot } };
+            }
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const accepted: unknown[] = [];
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey, publicKey: carrier.memberPublicKey } } });
+        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId: 'replay-request',
+            context: { surface: 'cli', originalActionEnvelope, operationAcceptance: { operationId: 'replay-operation',
+                accept(value) { accepted.push(value); throw new Error('Stop after hydrated replay acceptance'); } } } })).rejects.toThrow('Stop after hydrated replay acceptance');
+        expect(accepted).toEqual([{ managedId: carrier.admission.machine.id, operation: { operationId: 'replay-operation' } }]);
+        expect(keyReads).toHaveBeenCalledOnce();
+        expect(native.effects()).toBe(0);
+    });
+    it('rejects a valid one-off admission for a preset request before opening or native work', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'preset-kind-home', machineId: 'preset-kind-machine',
+            launch: input.selection.launch, allocation: 'unsubmitted' });
+        const oneOffAdmission = ManagedAdmissionOutputV1Schema.parse({ machine: {
+            ...machine, id: 'one-off-machine', homeId: carrier.acquisition.selection.homeId,
+            controller, retention: carrier.acquisition.retention,
+        }, replayed: false });
+        const native = nativeFixture({ credentialPurposes: [] });
+
+        await expect(openManagedPresetAdmission({
+            input: { ...accountInputs, token: carrier.token, serverUrl: 'https://home.example', homeId: carrier.acquisition.selection.homeId,
+                controller, runtimeRegistry: native.runtimeRegistry, credentials: { token: carrier.token, encryption: null } },
+            acquisition: carrier.acquisition, admission: oneOffAdmission,
+        })).rejects.toMatchObject({ code: 'request_conflict' });
+    });
+    it('fails closed when a Team custodian key no longer matches the current E2EE identity', async () => {
+        const memberKey = new Uint8Array(32).fill(17);
+        const memberPublicKey = tweetnacl.box.keyPair.fromSecretKey(memberKey).publicKey;
+        const ownerKey = new Uint8Array(32).fill(18);
+        const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(ownerKey).publicKey;
+        const recipient = (accountId: string, publicKey: Uint8Array) => SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+            account: { kind: 'account', accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+            readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+            envelopeStatus: 'missing',
+        });
+        const stored = sealManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'e2ee',
+            content: { v: 1, name: 'Private Team preset', launch: {
+                provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private provider launch name', choices: {},
+            } },
+            recipientCensus: [recipient('owner', ownerPublicKey), recipient('team-member', memberPublicKey)],
+            randomBytes: length => new Uint8Array(length).fill(9),
+        });
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId: 'team-preset', mode: 'e2ee',
+            projection: projectManagedMachinePresetForRecipientV1({ content: stored.content, recipients: stored.recipients,
+                recipientAccountId: 'team-member' }), accountId: 'team-member', accountKey: memberKey,
+            enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, randomBytes: length => new Uint8Array(length).fill(10) });
+        if (!presetContentOverride) throw new Error('Could not seal stale-key fixture override');
+        const acquisition = {
+            selection: { kind: 'preset' as const, homeId: 'home', id: 'team-preset', revision: 3 },
+            controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
+            presetContentOverride,
+        };
+        const admission = ManagedAdmissionOutputV1Schema.parse({
+            machine: { id: 'managed-team-preset', homeId: 'home', custodianAccountId: 'team-member',
+                preset: { id: 'team-preset', revision: 3, contentEncryptionMode: 'e2ee' }, controller, allocation: 'may-exist', creationState: 'active',
+                desired: 'start', desiredWhen: 'now', intentRevision: 0, retention: acquisition.retention,
+                wakeOnAcceptedMessage: false },
+            presetContent: stored, presetContentOverride, replayed: false,
+        });
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'team-member' })).toString('base64url')}.signature`;
+        const native = nativeFixture({ credentialPurposes: [] });
+        const staleKey = new Uint8Array(32).fill(19);
+        const stalePublicKey = tweetnacl.box.keyPair.fromSecretKey(staleKey).publicKey;
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(stalePublicKey), updatedAt: 1 } });
+
+        await expect(openManagedPresetAdmission({
+            input: { ...accountInputs, token, serverUrl: 'https://home.example', homeId: 'home', controller,
+                runtimeRegistry: native.runtimeRegistry,
+                credentials: { token, encryption: { type: 'dataKey', machineKey: memberKey, publicKey: memberPublicKey } } },
+            acquisition, admission,
+        })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    });
+    it('uses an admitted sealed own-Machine name only in the local opened snapshot', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-name', machineId: 'team-e2ee-name-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Preset private launch name', choices: {} }, allocation: 'unsubmitted' });
+        const override = createManagedMachinePresetAcquireOverrideV1({ presetId: 'team-e2ee-preset', mode: 'e2ee',
+            projection: projectManagedMachinePresetForRecipientV1({ content: carrier.admission.presetContent.content,
+                recipients: carrier.admission.presetContent.recipients, recipientAccountId: 'team-member' }),
+            accountId: 'team-member', accountKey: carrier.memberKey, launchName: 'Initial Machine name',
+            enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, randomBytes: length => new Uint8Array(length).fill(10) });
+        if (!override) throw new Error('Could not seal fixture name override');
+        const admission = ManagedAdmissionOutputV1Schema.parse({ ...carrier.admission, presetContentOverride: override });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        const native = nativeFixture({ credentialPurposes: [] });
+
+        const opened = await openManagedPresetAdmission({
+            input: { ...accountInputs, token: carrier.token, serverUrl: 'https://home.example', homeId: 'team-e2ee-name', controller,
+                runtimeRegistry: native.runtimeRegistry,
+                credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey,
+                    publicKey: carrier.memberPublicKey } } },
+            acquisition: carrier.acquisition, admission,
+        });
+
+        expect(opened.launch.name).toBe('Initial Machine name');
+        expect(admission.machine).not.toHaveProperty('launch');
+        expect(admission.machine).not.toHaveProperty('reviewedFacts');
+    });
+    it('refuses a Team member E2EE acquire override with setup drift before any native action', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-drift', machineId: 'team-e2ee-drift-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private Team launch', choices: {} }, allocation: 'unsubmitted' });
+        const override = createManagedMachinePresetSetupOverrideV1({ presetId: 'team-e2ee-preset', mode: 'e2ee',
+            projection: projectManagedMachinePresetForRecipientV1({ content: carrier.admission.presetContent.content,
+                recipients: carrier.admission.presetContent.recipients, recipientAccountId: 'team-member' }),
+            accountId: 'team-member', accountKey: carrier.memberKey,
+            setup: { scripts: [{ body: 'echo private setup drift', affects: 'none' }] },
+            randomBytes: length => new Uint8Array(length).fill(11) });
+        if (!override) throw new Error('Could not seal fixture setup drift override');
+        const admission = ManagedAdmissionOutputV1Schema.parse({ ...carrier.admission, presetContentOverride: override });
+        const native = nativeFixture({ credentialPurposes: [] });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/admit')) return { status: 200, data: admission };
+            throw new Error(`Unexpected Home POST after private drift ${String(url)}`);
+        });
+        const acquisition = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId: 'team-e2ee-drift', controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey,
+                publicKey: carrier.memberPublicKey } } });
+
+        await expect(acquisition.execute('machines.managed.acquire', { ...carrier.acquisition, presetContentOverride: override }, {
+            requestId: 'team-e2ee-drift-request', context: { surface: 'cli', operationAcceptance: { operationId: 'team-e2ee-drift-operation', accept() {} } },
+        })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        expect(native.effects()).toBe(0);
+    });
+    it('seals Team E2EE resize facts before the controller report and public action output', async () => {
+        const privateLaunchName = 'Private Team resize launch name';
+        const privateNativeResult = 'Private resize native stderr';
+        const privateInitialResource = 'Private retained resize resource';
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-resize', machineId: 'team-e2ee-resize-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: privateLaunchName, choices: {} }, allocation: 'bound' });
+        const snapshot = retainTeamMemberReviewedSnapshot(carrier, {
+            provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: privateLaunchName, choices: {} },
+        AcquireResultV1Schema.parse({ kind: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' },
+            schemaVersion: 1, value: { resource: privateInitialResource } } }));
+        const override = createManagedMachinePresetResizeOverrideV1({ presetId: 'team-e2ee-preset', mode: 'e2ee',
+            projection: projectManagedMachinePresetForRecipientV1({ content: snapshot.content, recipients: snapshot.recipients,
+                recipientAccountId: 'team-member' }), accountId: 'team-member', accountKey: carrier.memberKey,
+            size: { cpuCores: 4 }, randomBytes: length => new Uint8Array(length).fill(13) });
+        if (!override) throw new Error('Could not seal fixture resize override');
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        const hydrator = createManagedPresetHydrator({ credentials: { token: carrier.token,
+            encryption: { type: 'dataKey', machineKey: carrier.memberKey, publicKey: carrier.memberPublicKey } },
+        serverUrl: 'https://home.example' });
+        const admitted = await openManagedPresetCarrier({ machine: carrier.admission.machine, presetContent: snapshot }, hydrator);
+
+        await expect(hydrator.prepareResize(admitted.machine, override)).resolves.toEqual({ cpuCores: 4 });
+        const prepared = await hydrator.prepareResizeReport({ homeId: admitted.machine.homeId, managedId: admitted.machine.id,
+            requestId: 'team-e2ee-resize-request', result: { kind: 'refused', code: 'private_resize_refusal', nativeCause: {
+                localCause: 'native_command_failed', command: 'edit', exitCode: 1, stderr: privateNativeResult,
+            } }, observation: {
+                observedAt: 17, availability: 'present', power: 'running', storage: 'retained', size: { cpuCores: 4 },
+            } });
+
+        expect(prepared.output).toEqual({ result: { kind: 'refused' }, presetContent: expect.any(Object),
+            observation: { observedAt: 17, availability: 'present', power: 'running', storage: 'retained' } });
+        expect(prepared.report).toMatchObject({ homeId: admitted.machine.homeId, managedId: admitted.machine.id,
+            requestId: 'team-e2ee-resize-request', result: { kind: 'refused' }, presetContent: expect.any(Object),
+            observation: { observedAt: 17, availability: 'present', power: 'running', storage: 'retained' } });
+        expect(JSON.stringify(prepared.report)).not.toContain(privateLaunchName);
+        expect(JSON.stringify(prepared.report)).not.toContain('cpuCores');
+        expect(JSON.stringify(prepared.report)).not.toContain(privateNativeResult);
+        expect(JSON.stringify(prepared.report)).not.toContain(privateInitialResource);
+        if (!('presetContent' in prepared.output)) throw new Error('Opaque resize must retain its sealed snapshot');
+        const reopened = openManagedMachinePresetContentV1({ presetId: 'team-e2ee-preset', mode: 'e2ee',
+            content: prepared.output.presetContent, recipients: snapshot.recipients, accountId: 'team-member', accountKey: carrier.memberKey });
+        expect(reopened).toMatchObject({ resize: { cpuCores: 4 }, nativeControlResult: { kind: 'resize',
+            result: { kind: 'refused', code: 'private_resize_refusal', nativeCause: { stderr: privateNativeResult } } },
+            observation: { size: { cpuCores: 4 } }, nativeResult: { kind: 'bound', resource: {
+                value: { resource: privateInitialResource } } } });
+    });
+    it('unwraps an opaque GET before fetching private controller context for credential delivery', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-get-credential', machineId: 'team-e2ee-get-credential-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private credential-read launch', choices: {} }, allocation: 'bound' });
+        const retained = ManagedMachineV1Schema.parse({ ...carrier.admission.machine, allocation: 'confirmed-absent' });
+        const snapshot = retainTeamMemberReviewedSnapshot(carrier, {
+            provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private credential-read launch', choices: {} });
+        const projection = projectManagedMachinePresetForRecipientV1({ content: snapshot.content,
+            recipients: snapshot.recipients, recipientAccountId: 'team-member' });
+        const calls: string[] = [];
+        const native = nativeFixture({ credentialPurposes: [] });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            calls.push(String(url));
+            if (String(url).endsWith(managedMachineActionEndpointPathV1('machines.managed.get'))) {
+                return { status: 200, data: { machine: retained, presetContent: projection } };
+            }
+            if (String(url).endsWith('/controller/context')) {
+                return { status: 200, data: { machine: retained, presetContent: snapshot, requestId: 'credential-read' } };
+            }
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token, serverUrl: 'https://home.example',
+            homeId: retained.homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey,
+                publicKey: carrier.memberPublicKey } } });
+
+        await expect(driver.execute('machines.managed.credentials.install', { homeId: retained.homeId, managedId: retained.id,
+            sessionId: 'session', bindingKey: 'binding', expectedResourceRevision: 1, expectedSourceRevision: 'source',
+            expectedProviderTicket: 'ticket' }, { requestId: 'credential-read' }))
+            .resolves.toEqual({ kind: 'refused', code: 'credential_unavailable' });
+        expect(calls.some(url => url.endsWith('/controller/context'))).toBe(true);
+        expect(native.effects()).toBe(0);
+    });
+    it('unwraps an opaque GET before private context during inspection', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-get-inspect', machineId: 'team-e2ee-get-inspect-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private inspect-read launch', choices: {} }, allocation: 'bound' });
+        const retained = ManagedMachineV1Schema.parse({ ...carrier.admission.machine, allocation: 'confirmed-absent' });
+        const snapshot = retainTeamMemberReviewedSnapshot(carrier, {
+            provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private inspect-read launch', choices: {} });
+        const projection = projectManagedMachinePresetForRecipientV1({ content: snapshot.content,
+            recipients: snapshot.recipients, recipientAccountId: 'team-member' });
+        const calls: string[] = [];
+        const native = nativeFixture({ credentialPurposes: [] });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            calls.push(String(url));
+            if (String(url).endsWith(managedMachineActionEndpointPathV1('machines.managed.get'))) {
+                return { status: 200, data: { machine: retained, presetContent: projection } };
+            }
+            if (String(url).endsWith('/controller/context')) {
+                return { status: 200, data: { machine: retained, presetContent: snapshot, requestId: 'inspect-read' } };
+            }
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token, serverUrl: 'https://home.example',
+            homeId: retained.homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey,
+                publicKey: carrier.memberPublicKey } } });
+
+        const result = await driver.execute('machines.managed.inspect', { homeId: retained.homeId, managedId: retained.id }, { requestId: 'inspect-read' });
+        expect(result).toMatchObject({ machine: { id: retained.id, allocation: 'confirmed-absent' } });
+        expect(JSON.stringify(result)).not.toContain('Private inspect-read launch');
+        expect(calls.some(url => url.endsWith('/controller/context'))).toBe(true);
+        expect(native.effects()).toBe(0);
+    });
+    it('opens a Team member E2EE snapshot at admission, validates it locally, and keeps native reports structural', async () => {
+        const homeId = 'srv_team_e2ee_daemon_acquire';
+        const privateLaunchName = 'Private Team member launch name';
+        const privateCrabboxLaunch = { backendId: 'local-container', transport: 'direct', namespace: 'private-team-namespace',
+            target: 'linux', nativeImageId: 'private-team-image', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } as const;
+        const privateCrabboxResource = { backendId: 'local-container', transport: 'direct', namespace: 'private-team-namespace',
+            leaseId: 'cbx_0123456789ab', nativeInstanceId: 'private-team-native-id' } as const;
+        const signing = tweetnacl.sign.keyPair();
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...originAuthorization(homeId, 'team-e2ee-request'), binding: {
+            ...originAuthorization(homeId, 'team-e2ee-request').binding,
+            accountId: 'team-member', custodianAccountId: 'owner', accountEncryptionMode: 'e2ee',
+        } });
+        // The provider's native Actions are intentionally unavailable to the
+        // plugin surface. They can run only if the opened preset path issues
+        // the exact host-reviewed child through the real Action policy gate.
+        const crabboxFixtureManifest = normalizePluginManifestV2({ ...CRABBOX_PLUGIN.manifest,
+            contributes: { ...CRABBOX_PLUGIN.manifest.contributes,
+                // The child is invoked by this CLI-rooted test; retain the
+                // genuine Crabbox contracts while declaring that test surface.
+                actions: CRABBOX_PLUGIN.manifest.contributes.actions.map(action =>
+                    ['acquire', 'bootstrap', 'inspect'].includes(action.id) ? { ...action, surfaces: ['cli'] } : action),
+            },
+        });
+        const crabboxProvisioner = crabboxFixtureManifest.contributes.machineProvisioners[0];
+        if (!crabboxProvisioner) throw new Error('Missing Crabbox fixture provisioner');
+        const crabboxProvider = { pluginId: crabboxFixtureManifest.id, localId: crabboxProvisioner.id };
+        const nativeEffectActions: string[] = [];
+        const nativeEffectRoles: string[] = [];
+        const native = nativeFixture({ fixtureManifest: crabboxFixtureManifest, privateNative: true, nativeActionSurfaces: ['cli'], credentialPurposes: [],
+            nativeRoleResults: { acquire: { kind: 'bound', resource: { contributionRef: crabboxProvider,
+                schemaVersion: 1, value: privateCrabboxResource } } },
+            onAction(localId) { nativeEffectActions.push(localId); },
+            onNativeRole(role) { nativeEffectRoles.push(role); },
+            onInspect() { nativeEffectRoles.push('inspect'); },
+        });
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'team-e2ee-managed-acquire',
+            launch: { provider: crabboxProvider, schemaVersion: 1,
+                name: privateLaunchName, choices: privateCrabboxLaunch }, allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        let retained = carrier.admission.machine;
+        const bootstrapCredentials: Array<ReturnType<typeof ManagedBootstrapCredentialCreateV1Schema.parse>> = [];
+        const homeBodies: unknown[] = [];
+        const reportBodies: unknown[] = [];
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = String(url);
+            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+                signingKeyFingerprint: null,
+                contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey), updatedAt: 1 } };
+            if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+            if (path.endsWith('/resources/materials')) {
+                const credential = bootstrapCredentials[0];
+                if (!credential) throw new Error('Missing bootstrap credential fixture');
+                const envelope = credential.keyEnvelopes?.[0];
+                return { status: 200, data: { resources: [{ resourceId: credential.resourceId,
+                    encryptionMode: credential.encryptionMode, storedContent: credential.storedContent,
+                    recipientEnvelope: envelope ? { encryptedDataKey: envelope.encryptedDataKey,
+                        recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint } : null,
+                    entry: { ref: formatSharedSavedSecretRefV1(credential.resourceId), source: 'shared_resource', relationship: 'owner',
+                        name: 'Managed machine bootstrap', kind: 'other', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                }] } };
+            }
+            throw new Error(`Unexpected composed Team GET ${new URL(path).pathname}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body, request) => {
+            const path = String(url);
+            homeBodies.push({ path, body });
+            if (path.endsWith('/admit')) return { status: 200, data: carrier.admission };
+            if (path.endsWith('/submit')) {
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                return { status: 200, data: { machine: retained, submitted: true } };
+            }
+            if (path.endsWith('/report')) {
+                const signature = request?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+                expect(typeof signature).toBe('string');
+                if (typeof signature !== 'string') throw new Error('Missing root report signature');
+                expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId: 'machines.managed.acquire', target: root.binding.target,
+                    installationId: root.binding.installationId, requestId: root.binding.requestId,
+                    method: 'POST', path: '/v1/machines/managed/controller/report', body,
+                    publicKey: signing.publicKey, signature })).toBe(true);
+                const report = ManagedControllerReportV1Schema.parse(body);
+                reportBodies.push(report);
+                retained = ManagedMachineV1Schema.parse({ ...retained,
+                    ...(report.result.kind === 'bound' ? { allocation: 'bound' } : {}),
+                    ...(report.observation ? { observation: report.observation } : {}),
+                });
+                if (reportBodies.length > 1) throw new Error('Stop after sealed native report');
+                return { status: 200, data: { machine: retained } };
+            }
+            // The key record is established before a native acquire; keep it
+            // as the real controller boundary but stop after the next sealed
+            // report, before unrelated guest enrollment work.
+            if (path.endsWith('/create-bootstrap-credential')) {
+                const request = ManagedBootstrapCredentialCreateV1Schema.parse(body);
+                bootstrapCredentials.push(request.credential);
+                retained = ManagedMachineV1Schema.parse({ ...retained, bootstrapCredentialRef: {
+                    kind: 'shared_resource', resourceId: request.credential.resourceId,
+                } });
+                return { status: 200, data: { machine: retained } };
+            }
+            throw new Error(`Unexpected Home POST ${path}`);
+        });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+            target: root.binding.target, installationId: controller.installationId, privateKey: signing.secretKey,
+            rootAdmitted: true, isCurrent: async () => true });
+        if (!authorization) throw new Error('Requester root authority was not established');
+        const accepted: unknown[] = [];
+        const acquisition = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.custodianKey,
+                publicKey: carrier.custodianPublicKey } },
+            externalActionMachineRequestPrivateKey: signing.secretKey,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+
+        await expect(acquisition.execute('machines.managed.acquire', carrier.acquisition, { requestId: 'team-e2ee-request',
+            context: { runtimeAccountId: 'owner', actionRequestId: 'team-e2ee-request', surface: 'cli', externalActionExecutionAuthorization: authorization,
+                externalActionTarget: root.binding.target,
+                operationAcceptance: { operationId: 'team-e2ee-operation', accept(value) { accepted.push(value); } },
+                operationOwnerUpdate: { update() {} } },
+        })).rejects.toMatchObject({ code: 'managed_controller_request_failed' });
+
+        expect(accepted).toEqual([{ managedId: 'team-e2ee-managed-acquire', operation: { operationId: 'team-e2ee-operation' } }]);
+        // The opened declaration dispatches exactly one reviewed acquire
+        // child. Its canonical post-acquire configuration capture then invokes
+        // Check and Options before the issued-resource report. The second
+        // bound report is the durable pre-bootstrap checkpoint where this
+        // fixture deliberately stops; neither is a second purchase.
+        expect({ effects: native.effects(), nativeEffectActions, nativeEffectRoles, reportKinds: reportBodies.map(report => report.result.kind) })
+            .toEqual({ effects: 3, nativeEffectActions: ['acquire', 'check', 'options'], nativeEffectRoles: ['acquire'],
+                reportKinds: ['bound', 'bound'] });
+        expect(reportBodies).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
+        expect(homeBodies.some(body => (body as { path: string }).path.includes('/preset'))).toBe(false);
+        expect(JSON.stringify(homeBodies)).not.toContain(privateLaunchName);
+        expect(JSON.stringify(homeBodies)).not.toContain(privateCrabboxLaunch.namespace);
+        expect(JSON.stringify(homeBodies)).not.toContain(privateCrabboxLaunch.nativeImageId);
+        expect(JSON.stringify(homeBodies)).not.toContain(privateCrabboxResource.nativeInstanceId);
+        expect(JSON.stringify(reportBodies)).not.toContain(privateLaunchName);
+        expect(JSON.stringify(reportBodies)).not.toContain(privateCrabboxLaunch.namespace);
+        expect(JSON.stringify(reportBodies)).not.toContain(privateCrabboxLaunch.nativeImageId);
+        expect(JSON.stringify(reportBodies)).not.toContain(privateCrabboxResource.nativeInstanceId);
+        expect(reportBodies.every(report => !Object.hasOwn(report as object, 'configurationFacts'))).toBe(true);
+        expect(retained).not.toHaveProperty('resource');
+        const report = reportBodies.find(candidate => (candidate as { result?: { kind?: string } }).result?.kind === 'bound') as
+            { presetContent: unknown } | undefined;
+        expect(report).toBeDefined();
+        const opened = report === undefined ? null : openManagedMachinePresetContentV1({ presetId: carrier.admission.machine.preset.id,
+            mode: carrier.admission.machine.preset.contentEncryptionMode, content: report.presetContent,
+            recipients: carrier.admission.presetContent.recipients, accountId: 'owner', accountKey: carrier.custodianKey });
+        expect(opened?.nativeResult).toMatchObject({ kind: 'bound', resource: { value: privateCrabboxResource } });
+    });
+    it.each(['explicit', 'preset'] as const)('routes an opened Team E2EE acquire through its admitted broker and refuses a non-custodian runtime (%s controller)', async controllerSource => {
+        const homeId = 'srv_team_e2ee_brokered_child';
+        const requestId = 'team-e2ee-brokered-child-request';
+        const provider = { pluginId: 'acme.compute', localId: 'vm' };
+        const service = { pluginId: 'acme.accounts', localId: 'cloud' };
+        const launch = { provider, schemaVersion: 1, name: 'Private brokered Team launch', choices: {}, credentials: [{
+            purpose: { consumer: provider, purpose: 'upstream' }, teamId: 'team-a',
+            selection: { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const },
+        }] };
+        const credentialOwner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+            selectTarget: unavailableTransport, resolveTarget: unavailableTransport, materializeAccount: unavailableTransport,
+            projectTargetAccounts: unavailableTransport, assertTargetAccountMaterializable: unavailableTransport,
+        });
+        const brokeredRoles: string[] = [];
+        const admitActionPurposeBindings = createActionPurposeBindingAdmission({
+            activatePurposeBindings: credentialOwner.activatePurposeBindings,
+            // The Team broker is the only substituted boundary. The custody,
+            // opaque-review policy and contributed-action dispatcher stay real.
+            executeTeamCredentialBrokerAction: async ({ subject, beforeHandlerInvocation }) => {
+                await beforeHandlerInvocation?.();
+                brokeredRoles.push(subject.consumer.localId);
+                return { ok: true, result: roleResult(subject.consumer.localId) };
+            },
+        });
+        const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(),
+            purposeBindingOwner: { ...credentialOwner, admitActionPurposeBindings },
+            requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+            createRedactionLease: () => ({ add() {}, close() {} }),
+        });
+        const native = nativeFixture({ privateNative: true, nativeActionSurfaces: ['cli'], credentialOwner,
+            credentialPurposes: [{ purpose: 'upstream', service }], referenceManifests: [nativeAccountReferenceManifest(['cloud'])] });
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'team-e2ee-brokered-machine', launch,
+            allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = String(url);
+            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+                signingKeyFingerprint: null,
+                contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey), updatedAt: 1 } };
+            throw new Error(`Unexpected brokered-child GET ${new URL(path).pathname}`);
+        });
+        const signing = tweetnacl.sign.keyPair();
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...originAuthorization(homeId, requestId), binding: {
+            ...originAuthorization(homeId, requestId).binding,
+            accountId: 'team-member', custodianAccountId: 'owner', accountEncryptionMode: 'e2ee',
+        } });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+            target: root.binding.target, installationId: controller.installationId, privateKey: signing.secretKey,
+            rootAdmitted: true, isCurrent: async () => true });
+        if (!authorization) throw new Error('Requester root authority was not established');
+        const driverInput = { token: carrier.token, serverUrl: 'https://home.example', homeId, controller,
+            runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority: authority,
+            credentials: { token: carrier.token, encryption: { type: 'dataKey' as const, machineKey: carrier.custodianKey,
+                publicKey: carrier.custodianPublicKey } },
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }),
+        };
+        const opened = await openManagedPresetAdmission({ input: driverInput, acquisition: carrier.acquisition, admission: carrier.admission });
+        const createInvocation = (runtimeAccountId: 'owner' | 'team-member') => {
+            const baseOptions = { requestId, context: { runtimeAccountId, actionRequestId: requestId, surface: 'cli' as const,
+                externalActionExecutionAuthorization: authorization, externalActionTarget: root.binding.target,
+                operationOwnerUpdate: { update() {} } } };
+            // A preset acquire may leave the controller to the preset; Home's admitted row names it.
+            const { controller: _explicitController, ...presetAcquisition } = carrier.acquisition;
+            const parentInput = controllerSource === 'explicit' ? carrier.acquisition : presetAcquisition;
+            const options = withManagedOpaquePresetReview(baseOptions, { machine: opened, opaqueMachine: carrier.admission.machine,
+                parent: { actionId: 'machines.managed.acquire', input: parentInput }, requestId });
+            const action = 'machines.managed.acquire' as const;
+            const client = createManagedMachineControllerClient(driverInput, options, action);
+            return createManagedNativeInvocation({ input: driverInput, options, client, machine: opened, action }, () => opened);
+        };
+
+        await expect(createInvocation('owner').invoke('acquire', { launch: opened.launch.choices })).resolves.toEqual(roleResult('acquire'));
+        expect(brokeredRoles).toEqual(['acquire']);
+        expect(native.effects()).toBe(0);
+
+        await expect(createInvocation('team-member').invoke('acquire', { launch: opened.launch.choices }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        expect(brokeredRoles).toEqual(['acquire']);
+        expect(native.effects()).toBe(0);
+    });
+});
 describe('managed acquisition durable custody', () => {
     it('refuses native delivery before effects when the exact controller census lacks binding support', async () => {
         const homeId = 'srv_native_missing_census';
@@ -1236,6 +1936,16 @@ describe('managed acquisition durable custody', () => {
             target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activateAccount' }, isOccurrenceCurrent: () => true });
         const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
             registration.family === 'actions' ? [[registration.localId, (body, context) => Reflect.apply(registration.value, undefined, [body, context])]] : []));
+        // The Account artifact intentionally does not publish the daemon-only
+        // snapshot action. Keep this composed Account fixture to the exact
+        // authored action surface it can execute.
+        const accountManifest = normalizePluginManifestV2({ ...manifest, contributes: { ...manifest.contributes,
+            actions: manifest.contributes.actions.filter(action => action.id !== 'snapshot'),
+            machineProvisioners: manifest.contributes.machineProvisioners.map(({ snapshot: _snapshot, actions, ...provisioner }) => {
+                const { snapshot: _snapshotAction, ...accountActions } = actions;
+                return { ...provisioner, actions: accountActions };
+            }),
+        } });
         const credentialOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'owner',
             store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
             selectTarget: unavailableTransport, resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Captured' } : null,
@@ -1257,7 +1967,7 @@ describe('managed acquisition durable custody', () => {
                 return { status: refused ? outcome === 'quota' ? 403 : outcome === 'invalid-fields' ? 422 : 409 : 200, headers: { 'content-type': 'application/json' }, finalUrl: request.url,
                     body: new TextEncoder().encode(JSON.stringify(response)) };
             } } }) });
-        const native = nativeFixture({ fixtureManifest: manifest, actionHandlers, credentialOwner, executionRealm: 'account',
+        const native = nativeFixture({ fixtureManifest: accountManifest, actionHandlers, credentialOwner, executionRealm: 'account',
             credentialPurposes: [{ purpose: 'cloud-api', service }],
             createServices: serviceOwners.createServices, resolveHostBinding: serviceOwners.resolveHostBinding });
         const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(), purposeBindingOwner: credentialOwner,
@@ -1401,6 +2111,13 @@ describe('managed acquisition durable custody', () => {
                             // becomes observable only after a later completion.
                             throw new Error('Native pull response lost');
                         }
+                    } else if (url.pathname === '/lume/vms' && request.method === 'GET') {
+                        // Start reads the host-wide native inventory first for
+                        // the macOS capacity rule; model that real boundary.
+                        response = exists ? [{ name: vmName, locationName: launch.storage, status: running ? 'running' : 'stopped', os: 'macOS',
+                            cpuCount: launch.cpu, memorySize: launch.memoryBytes,
+                            diskSize: { allocated: 1073741824, total: launch.diskBytes },
+                            ipAddress: null, sshAvailable: null, provisioningOperation: null }] : [];
                     } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'PATCH') {
                         expect(body).toEqual({ storage: launch.storage, cpu: launch.cpu,
                             memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B` });

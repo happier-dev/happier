@@ -11,6 +11,7 @@ import { db } from "@/storage/db";
 import { withSqliteReadSnapshot } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { sessionRoutes } from "./sessionRoutes";
 
@@ -141,7 +142,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             archivedAt: index === 1 ? new Date() : null,
         }));
         await db.team.createMany({ data: teams.slice(1) });
-        const groups = teams.map((parent, index) => ({ id: crypto.randomUUID(), teamId: parent.id, name: `Group ${index}`, nameKey: `group-${index}`, archivedAt: index === 2 ? new Date() : null }));
+        const groups = teams.map((parent, index) => ({ id: crypto.randomUUID(), teamId: parent.id, name: storedPlainPrivateLabel(`Group ${index}`), archivedAt: index === 2 ? new Date() : null }));
         await db.teamGroup.createMany({ data: groups });
         const measured: { grants: number; reads: number }[] = [];
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
@@ -1060,7 +1061,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             where: { teamId_accountId: { teamId: team.id, accountId: recipient.id } },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Reviewers", nameKey: `reviewers-${crypto.randomUUID()}` },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Reviewers") },
         });
         await db.teamGroupMembership.create({
             data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id },
@@ -1169,7 +1170,9 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         } });
         const resourceOf = async (input: { teamId: string; displayName: string; sessionUsePolicy: string }) =>
             await db.teamCredentialResource.create({ data: {
-                teamId: input.teamId, custodianAccountId: owner.id, displayName: input.displayName,
+                teamId: input.teamId, custodianAccountId: owner.id, displayName: JSON.stringify({
+                    content: { t: "plain", v: input.displayName }, recipients: [],
+                }),
                 disclosureCeiling: "brokered_only", sessionUsePolicy: input.sessionUsePolicy,
                 sourceBindingJson: JSON.stringify({ kind: "saved_secret", savedSecretId: "s" }),
             } });
@@ -1194,8 +1197,14 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             expect(projection.visibility).toBe("complete");
             expect(projection.visibility === "complete" ? projection.credentialBindingConsequences : undefined)
                 .toEqual(expect.arrayContaining([
-                    { resourceId: bound.id, teamId: team.id, displayName: "Prod deploy key", policy: "team_visibility_required" },
-                    { resourceId: contextual.id, teamId: team.id, displayName: "Prod registry", policy: "team_context_required" },
+                    {
+                        resourceId: bound.id, teamId: team.id, policy: "team_visibility_required",
+                        displayName: { content: { t: "plain", v: "Prod deploy key" }, recipientEnvelope: null },
+                    },
+                    {
+                        resourceId: contextual.id, teamId: team.id, policy: "team_context_required",
+                        displayName: { content: { t: "plain", v: "Prod registry" }, recipientEnvelope: null },
+                    },
                 ]));
             expect(projection.visibility === "complete" ? projection.credentialBindingConsequences?.length : 0).toBe(2);
             expect(JSON.stringify(projection)).not.toContain(personal.id);

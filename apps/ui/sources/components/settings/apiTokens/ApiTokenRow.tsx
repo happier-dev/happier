@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 
 import { ApiTokenStatusGlyph } from './ApiTokenStatusGlyph';
+import type { ApiTokenSettingsToken } from './apiTokenSettingsController';
 import {
     buildApiTokenAccessSummaryParts,
     buildApiTokenRowPresentation,
@@ -21,13 +21,13 @@ import {
  * on the list page (with a chevron).
  */
 export const ApiTokenRow = React.memo(function ApiTokenRow(props: Readonly<{
-    token: AccountApiTokenSummaryV1;
+    token: ApiTokenSettingsToken;
     names: ApiTokenAccessSummaryNames;
     nowMs: number;
     variant: 'rail' | 'page';
     selected?: boolean;
     disabled?: boolean;
-    onPress: (token: AccountApiTokenSummaryV1) => void;
+    onPress: (token: ApiTokenSettingsToken) => void;
 }>) {
     const { theme } = useUnistyles();
     const presentation = buildApiTokenRowPresentation({ token: props.token, nowMs: props.nowMs });

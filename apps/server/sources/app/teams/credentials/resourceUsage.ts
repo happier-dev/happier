@@ -14,6 +14,7 @@ import type {
     TeamCredentialUsageQueryInputV1,
     TeamCredentialUsageQueryResultV1,
 } from '@happier-dev/protocol/teams';
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { inTx, type Tx } from '@/storage/inTx';
 import { resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import type { TeamOperationAuthenticationContext } from '../actorContext';
@@ -30,6 +31,10 @@ import { classifyTeamCredentialUsageObservationSource } from '@/app/usage/usageS
 import { aggregateUsageContributionCosts, compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import { serializeUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
+import {
+    projectTeamCredentialExternalApiKeyLabelForRecipient,
+    projectTeamCredentialResourceDisplayNameForRecipient,
+} from './privateLabels';
 
 const UNAVAILABLE_SESSION_KEY = 'unavailable_session';
 const UNAVAILABLE_WORKER_MACHINE_KEY = 'unavailable_worker_machine';
@@ -236,8 +241,8 @@ function usageBreakdownCursorAnchor(key: string): string {
 /**
  * Resolves display-safe labels for exactly the slices the viewer is already
  * authorized to see. Labels never widen authorization: member names come from
- * the Account display owner and external-key labels from safe key metadata —
- * never digests, source internals, or unreadable Sessions.
+ * the Account display owner and external-key labels from their recipient-only
+ * private-label projection — never digests, source internals, or unreadable Sessions.
  */
 async function resolveBreakdownLabelsInTx(
     tx: Tx,
@@ -245,8 +250,9 @@ async function resolveBreakdownLabelsInTx(
         dimension: TeamCredentialUsageBreakdownDimensionV1;
         keys: readonly string[];
         resourceId?: string;
+        recipientAccountId: string;
     }>,
-): Promise<ReadonlyMap<string, string>> {
+): Promise<ReadonlyMap<string, string | PrivateLabelReadV1>> {
     const keys = [...new Set(input.keys)];
     if (keys.length === 0) return new Map();
     if (input.dimension === 'session' && keys.includes(UNAVAILABLE_SESSION_KEY)) {
@@ -270,7 +276,13 @@ async function resolveBreakdownLabelsInTx(
             where: { id: { in: keys }, resourceId: input.resourceId },
             select: { id: true, label: true },
         });
-        return new Map(keys_.map((key) => [key.id, key.label]));
+        return new Map(keys_.flatMap((key) => {
+            const label = projectTeamCredentialExternalApiKeyLabelForRecipient({
+                serialized: key.label,
+                recipientAccountId: input.recipientAccountId,
+            });
+            return label === null ? [] : [[key.id, label] as const];
+        }));
     }
     return new Map();
 }
@@ -391,6 +403,7 @@ export async function queryTeamCredentialUsage(
                 dimension: authorizedBreakdown,
                 keys: grouped.map((entry) => entry.key),
                 resourceId: input.resourceId,
+                recipientAccountId: accountId,
             })
             : null;
         const coverage = projectTeamCredentialUsageCoverage(rows.map(toScopedUsageEventRow), {
@@ -435,14 +448,24 @@ export async function queryTeamCredentialUsage(
             });
         })();
         if (!Array.isArray(serializedLimits)) return serializedLimits;
+        const resourceDisplayName = auth.resource === null ? null
+            : projectTeamCredentialResourceDisplayNameForRecipient({
+                serialized: auth.resource.displayName,
+                recipientAccountId: accountId,
+            });
         return TeamCredentialUsageQueryResultV1Schema.parse({
             v: 1 as const,
+            ...(resourceDisplayName === null ? {} : { resourceDisplayName }),
             totals,
             coverage,
             series: buildSeries(totalContributions, input.granularity, costMode),
             breakdown: grouped?.map((entry) => {
                 const label = breakdownLabels?.get(entry.key);
-                return label === undefined ? entry : { ...entry, label };
+                return label === undefined
+                    ? entry
+                    : typeof label === 'string'
+                        ? { ...entry, label }
+                        : { ...entry, privateLabel: label };
             }),
             nextCursor,
             limits: serializedLimits,

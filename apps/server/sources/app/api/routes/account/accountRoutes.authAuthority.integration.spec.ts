@@ -12,6 +12,7 @@ import { accountRoutes } from "./accountRoutes";
 import { currentAccountStoredContentCompatibilityHeaders } from "../../testkit/accountStoredContentCompatibility";
 import { homeDomainActionPathForMethod } from '../actions/homeDomainActionRoute';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -146,7 +147,7 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
     it('preserves the origin-denied auth response before a remote host catalog write', async () => {
         harness.resetEnv({ HAPPIER_WEBAPP_URL: 'https://happier.test/app' });
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain', settingsVersion: 0 } });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Remote host origin',
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Remote host origin'),
             grant: { v: 1, actions: null, targets: null, approve: false, origins: [], models: null, permissionModes: null, create: null } });
         const app = createTestApp();
         await app.ready();
@@ -211,7 +212,7 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
             auth.createApiToken({
                 accountId: account.id,
                 tokenId: crypto.randomUUID(),
-                label: "Settings automation regression",
+                label: await preparePlainAccountApiTokenLabel(account.id, "Settings automation regression"),
             }),
         ]);
         const app = createTestApp();
@@ -270,7 +271,7 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Encryption migration regression",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Encryption migration regression"),
         });
         const app = createTestApp();
         await app.ready();
@@ -316,7 +317,7 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Read-only automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Read-only automation"),
         });
         const app = createTestApp();
         await app.ready();

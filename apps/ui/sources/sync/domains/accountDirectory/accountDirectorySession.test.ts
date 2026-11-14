@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountDirectorySession } from './accountDirectorySession';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
+import { createDirectoryHttpFixture, toAccountDirectoryHomeWire } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/http/client', () => ({ createServerFetchAtEndpoint: () => request }));
+const realisticJWT = (subject = 'account-directory') => `header.${btoa(JSON.stringify({ sub: subject }))}.signature`;
 
 describe('AccountDirectorySession', () => {
     const fixture = createDirectoryHttpFixture();
+    const wireHome = toAccountDirectoryHomeWire(fixture.home);
     const target = { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId };
     const createSession = (capability: unknown = fixture.service.capability) => new AccountDirectorySession(target, {
         // Malformed server capability is a real network boundary input.
@@ -17,7 +19,8 @@ describe('AccountDirectorySession', () => {
 
     beforeEach(async () => {
         request.mockReset();
-        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' });
+        request.mockImplementation((path: string, init?: RequestInit) => fixture.request(fixture.service.endpointUrl, path, init));
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: fixture.token });
     });
 
     it('retains equal reconciliation and account snapshots without notifying, while publishing changes', async () => {
@@ -33,7 +36,7 @@ describe('AccountDirectorySession', () => {
             session.recordReconciliation({ kind: 'snapshot_unavailable', snapshotStatus: 'stale', error: null });
             expect(session.snapshot).toBe(reconciled);
             expect(notify).toHaveBeenCalledTimes(1);
-            const me = { v: 1, accountId: 'account-directory', displayName: 'Ada', avatar: null, linkedAuthenticationMethods: [] };
+            const me = { v: 1, accountId: 'account-directory', encryptionMode: 'plain', displayName: 'Ada', avatar: null, linkedAuthenticationMethods: [] };
             request.mockImplementation(async () => json(me));
             await session.refreshAccount();
             const account = session.snapshot;
@@ -49,10 +52,10 @@ describe('AccountDirectorySession', () => {
 
     it('disconnects only the selected identity at a reused URL', async () => {
         const other = { ...target, serverIdentityId: 'other-directory' };
-        await TokenStorage.accountDirectoryAuthCredentials.set(other, { token: 'other-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set(other, { token: realisticJWT('other-directory') });
         await expect(createSession().logout()).resolves.toBe(true);
         expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toBeNull();
-        expect(await TokenStorage.accountDirectoryAuthCredentials.get(other)).toEqual({ token: 'other-token' });
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get(other)).toEqual({ token: realisticJWT('other-directory') });
     });
 
     it('deduplicates refresh and retains cached Homes during an outage', async () => {
@@ -62,20 +65,20 @@ describe('AccountDirectorySession', () => {
         const first = session.refresh();
         const second = session.refresh();
         await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-        release(json({ v: 1, homes: [fixture.home], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
+        release(json({ v: 1, homes: [wireHome], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
         await Promise.all([first, second]);
-        expect(request).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.filter(([path]) => path === '/v1/account-directory/homes')).toHaveLength(1);
         expect(session.snapshot).toMatchObject({ status: 'ready', homes: [fixture.home] });
         request.mockRejectedValueOnce(new Error('offline'));
         expect(await session.refresh()).toMatchObject({ status: 'stale', homes: [fixture.home] });
     });
 
     it('reads who is signed in and keeps the last known identity when that read fails', async () => {
-        const me = { v: 1, accountId: 'account-directory', displayName: 'Ada Lovelace', avatar: null,
+        const me = { v: 1, accountId: 'account-directory', encryptionMode: 'plain', displayName: 'Ada Lovelace', avatar: null,
             linkedAuthenticationMethods: [{ providerId: 'github', login: 'ada' }] };
         request.mockImplementation(async (path: string) => path === '/v1/account-directory/me'
             ? json(me)
-            : json({ v: 1, homes: [fixture.home], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
+            : json({ v: 1, homes: [wireHome], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
         const session = createSession();
         await session.refreshAccount();
         expect(session.snapshot.account).toEqual(me);
@@ -94,7 +97,7 @@ describe('AccountDirectorySession', () => {
         const refresh = session.refresh();
         await vi.waitFor(() => expect(release).toBeTypeOf('function'));
         await session.logout();
-        release(json({ v: 1, homes: [fixture.home], preferredHomeServerIdentityId: null }));
+        release(json({ v: 1, homes: [wireHome], preferredHomeServerIdentityId: null }));
         await refresh;
         expect(session.snapshot).toMatchObject({ status: 'idle', homes: [] });
     });
@@ -106,11 +109,11 @@ describe('AccountDirectorySession', () => {
     });
 
     it('keeps Directory reading available without Home enrollment and refuses assertion mint', async () => {
-        request.mockResolvedValueOnce(json({ v: 1, homes: [fixture.home], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
+        request.mockResolvedValueOnce(json({ v: 1, homes: [wireHome], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId }));
         const session = createSession({ ...fixture.service.capability, homeEnrollment: false });
         expect(await session.refresh()).toMatchObject({ status: 'ready', homes: [fixture.home] });
         await expect(session.requestLoginAssertion(fixture.home.homeServerIdentityId, 'client-key')).rejects.toThrow();
-        expect(request).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.filter(([path]) => path === '/v1/account-directory/homes')).toHaveLength(1);
     });
 
     it('does not publish or delete Directory metadata when the capability is absent', async () => {
@@ -126,11 +129,11 @@ describe('AccountDirectorySession', () => {
         const session = createSession();
         const isCurrent = session.captureLifecycle();
         await TokenStorage.accountDirectoryAuthCredentials.logout(target);
-        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: fixture.token });
         expect(isCurrent()).toBe(false);
         await expect(session.readAccountSummary()).rejects.toThrow();
         await session.logout();
-        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual({ token: 'directory-token' });
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual({ token: fixture.token });
         expect(request).not.toHaveBeenCalled();
     });
 });

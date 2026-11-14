@@ -29,12 +29,14 @@ import { registerConnectedAccountConfigurationRowsRoutes } from '@/app/account/c
 import { registerRemoteHostCatalogRoutes } from '@/app/account/remoteHosts/registerRemoteHostCatalogRoutes';
 import { registerNotificationChannelRoutes } from '@/app/account/notifications/registerNotificationChannelRoutes';
 import { registerConnectedMetadataRoutes } from '@/app/account/connectedAccounts/registerConnectedMetadataRoutes';
+import { registerPrivateLabelRecipientCensusRoute } from './registerPrivateLabelRecipientCensusRoute';
 
 export function accountRoutes(app: Fastify): void {
     registerAccountProfileRoute(app);
     registerAccountIdentityVisibilityRoute(app);
     registerAccountUsernameRoute(app);
     registerAccountSettingsRoutes(app);
+    registerPrivateLabelRecipientCensusRoute(app);
     registerSavedSecretResourceRoutes(app);
     registerProfileRowsRoutes(app);
     registerProfileTransferRoutes(app);

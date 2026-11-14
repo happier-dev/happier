@@ -13,6 +13,7 @@ import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
+import { useResourceGrantGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useAccountEncryptionMode } from '@/components/settings/account/useAccountEncryptionMode';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -330,6 +331,7 @@ export function useTaskShareController(
   const isOwner = roster?.access === 'owner';
   const editable = isOwner || roster?.access === 'admin';
   const grants = roster?.grants ?? NO_GRANTS;
+  const groupDisplayNames = useResourceGrantGroupDisplayNames({ scope, grants });
   const readiness = React.useMemo<ReadonlyMap<string, TaskShareRecipientState>>(
     () => new Map(grants.flatMap(row => row.readiness === undefined ? []
       : [[sessionAccessSubjectKey(row.principal), row.readiness] as const])),
@@ -340,7 +342,7 @@ export function useTaskShareController(
       grants.map((row) => {
         const principal = presentSharePrincipal({
           ref: row.principal,
-          name: row.display.name,
+          name: row.principal.kind === 'group' ? groupDisplayNames.get(row.principal.groupId) ?? null : row.display.name,
           username: row.display.username,
           viewerAccountId: scope.accountId,
           profile:
@@ -377,6 +379,7 @@ export function useTaskShareController(
       }),
     [
       grants,
+      groupDisplayNames,
       state.operations,
       state.confirmingRemoval,
       scope.accountId,

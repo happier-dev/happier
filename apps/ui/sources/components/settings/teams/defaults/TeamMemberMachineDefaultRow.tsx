@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
-import type { ManagedMachinePresetCreationV1, ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { OpenedManagedMachinePresetCreationV1, OpenedManagedMachinePresetV1, ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useManagedMachineSelectionOffers } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
@@ -21,7 +21,7 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import { withPlacement } from './memberDefaults';
 
 const EMPTY_MACHINES: readonly Machine[] = Object.freeze([]);
-const EMPTY_PRESETS: readonly ManagedMachinePresetV1[] = Object.freeze([]);
+const EMPTY_PRESETS: readonly ManagedMachinePresetListEntryV1[] = Object.freeze([]);
 
 type MachineDefaultState = Readonly<{
     serverId: string;
@@ -58,7 +58,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     const homeId = getServerProfileById(state.serverId)?.serverIdentityId;
     const selectedRecord = useMachinePreset(state.serverId, !open && placement?.kind === 'preset'
         && placement.homeId === homeId ? placement.presetId : '', props.onApprovalPending);
-    const choosePreset = useEventCallback((preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => {
+    const choosePreset = useEventCallback((preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => {
         if (!preset || state.disabled || placement?.kind === 'preset'
             && placement.homeId === preset.homeId && placement.presetId === preset.id) return;
         state.save(withPlacement(state.defaults, { kind: 'preset', homeId: preset.homeId, presetId: preset.id }));

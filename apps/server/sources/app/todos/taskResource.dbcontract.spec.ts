@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbPostgres, initDbMysql } from '@/storage/db';
@@ -201,7 +202,7 @@ describe('Task resource HTTP authority (native database)', () => {
         const inconsistent = await db.account.create({ data: { ...createSignedAccountContentBinding(),
             contentPublicKeySig: new Uint8Array(64), encryptionMode: 'e2ee' } });
         const team = await db.team.create({ data: { name: randomUUID() } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Mixed members', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Mixed members') } });
         const members = [owner, ready, rotated, keyless, setup, inconsistent];
         const memberships = await Promise.all(members.map(account => db.teamMembership.create({
             data: { teamId: team.id, accountId: account.id, role: account.id === owner.id ? 'owner' : 'member' } })));
@@ -291,7 +292,7 @@ describe('Task resource HTTP authority (native database)', () => {
         const team = await db.team.create({ data: { name: randomUUID() } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Reviewers', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Reviewers') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         const taskId = randomUUID();
         await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`, value: new TextEncoder().encode(JSON.stringify(plain('Team work'))) } });

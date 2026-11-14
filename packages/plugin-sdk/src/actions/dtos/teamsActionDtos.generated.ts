@@ -13,7 +13,6 @@ export type TeamsActionInputById = {
         teamId: string;
         cursor?: string | undefined;
         limit?: number | undefined;
-        search?: string | undefined;
         filter?: 'all' | 'brokered' | 'direct' | 'external_api' | 'needs_attention' | undefined;
     };
     readonly "teams.credentials.sources.list": {
@@ -141,7 +140,22 @@ export type TeamsActionInputById = {
     readonly "teams.credentials.create": {
         teamId: string;
         resourceId: string;
-        displayName: string;
+        displayName: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         source: {
             v: 1;
             kind: 'connected_account';
@@ -219,7 +233,22 @@ export type TeamsActionInputById = {
         resourceId: string;
         expectedRevision: number;
         enabled?: boolean | undefined;
-        displayName?: string | undefined;
+        displayName?: undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         deliveryPolicy?: undefined | {
             preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
         };
@@ -241,7 +270,22 @@ export type TeamsActionInputById = {
         };
         replacement?: undefined | {
             enabled?: boolean | undefined;
-            displayName?: string | undefined;
+            displayName?: undefined | {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipients: {
+                    accountId: string;
+                    envelope: {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                }[];
+            };
             sessionUsePolicy?: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | undefined;
             requestPolicy?: null | undefined | {
                 allowedProtocolKinds: ('anthropic_messages' | 'openai_chat_completions' | 'openai_responses')[] | null;
@@ -394,7 +438,23 @@ export type TeamsActionInputById = {
     readonly "teams.credentials.externalKeys.create": {
         resourceId: string;
         teamMembershipId: string;
-        label: string;
+        keyId: string;
+        label: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         expiresAt?: null | string | undefined;
     };
     readonly "teams.credentials.externalKeys.authorize": {
@@ -427,8 +487,9 @@ export type TeamsActionInputById = {
             breakdown?: 'broker_machine' | 'delivery_mode' | 'external_api_key' | 'member' | 'model' | 'session' | 'source_member' | 'worker_machine' | undefined;
             cursor?: string | undefined;
         };
-        resourceName: string;
         breakdownRowCount?: number | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "teams.members.history.preparation.get": {
         teamId: string;
@@ -630,6 +691,7 @@ export type TeamsActionInputById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -646,7 +708,6 @@ export type TeamsActionInputById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -750,6 +811,7 @@ export type TeamsActionInputById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -766,7 +828,6 @@ export type TeamsActionInputById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             }>;
@@ -873,6 +934,7 @@ export type TeamsActionInputById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -889,7 +951,6 @@ export type TeamsActionInputById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -981,7 +1042,23 @@ export type TeamsActionInputById = {
     readonly "teams.groups.create": {
         v: 1;
         teamId: string;
-        name: string;
+        groupId: string;
+        name: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         requestKey: string;
         description?: null | string | undefined;
     };
@@ -989,7 +1066,22 @@ export type TeamsActionInputById = {
         v: 1;
         teamId: string;
         groupId: string;
-        name?: string | undefined;
+        name?: undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         description?: null | string | undefined;
     };
     readonly "teams.groups.archive": {
@@ -1302,7 +1394,20 @@ export type TeamsActionResultById = {
             teamId: string;
             custodianAccountId: string;
             sourceOwnerDisplayName: null | string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             enabled: boolean;
             revision: number;
             deliveryPolicy: {
@@ -1425,13 +1530,49 @@ export type TeamsActionResultById = {
                 }[];
                 selectedPool: null | {
                     poolId: string;
-                    displayName: null | string;
+                    displayName: null | {
+                        kind: 'available';
+                        label: {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: string;
+                            };
+                            recipientEnvelope: null | {
+                                encryptedDataKey: string;
+                                recipientContentPublicKeyFingerprint: string;
+                            };
+                            legacyPlaintext?: true | undefined;
+                        };
+                    } | {
+                        kind: 'unavailable';
+                    };
                     availability: 'available' | 'not_verified' | 'unavailable';
                     availableMachineCount: null | number;
                 };
                 eligiblePools: {
                     poolId: string;
-                    displayName: null | string;
+                    displayName: null | {
+                        kind: 'available';
+                        label: {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: string;
+                            };
+                            recipientEnvelope: null | {
+                                encryptedDataKey: string;
+                                recipientContentPublicKeyFingerprint: string;
+                            };
+                            legacyPlaintext?: true | undefined;
+                        };
+                    } | {
+                        kind: 'unavailable';
+                    };
                     availability: 'available' | 'not_verified' | 'unavailable';
                     availableMachineCount: null | number;
                 }[];
@@ -1530,13 +1671,49 @@ export type TeamsActionResultById = {
             }[];
             selectedPool: null | {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             };
             eligiblePools: {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             }[];
@@ -1617,7 +1794,20 @@ export type TeamsActionResultById = {
     readonly "teams.credentials.sourceResources.list": {
         resources: {
             id: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             enabled: boolean;
             revision: number;
             deliveryPolicy: {
@@ -1643,13 +1833,49 @@ export type TeamsActionResultById = {
                 }[];
                 selectedPool: null | {
                     poolId: string;
-                    displayName: null | string;
+                    displayName: null | {
+                        kind: 'available';
+                        label: {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: string;
+                            };
+                            recipientEnvelope: null | {
+                                encryptedDataKey: string;
+                                recipientContentPublicKeyFingerprint: string;
+                            };
+                            legacyPlaintext?: true | undefined;
+                        };
+                    } | {
+                        kind: 'unavailable';
+                    };
                     availability: 'available' | 'not_verified' | 'unavailable';
                     availableMachineCount: null | number;
                 };
                 eligiblePools: {
                     poolId: string;
-                    displayName: null | string;
+                    displayName: null | {
+                        kind: 'available';
+                        label: {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: string;
+                            };
+                            recipientEnvelope: null | {
+                                encryptedDataKey: string;
+                                recipientContentPublicKeyFingerprint: string;
+                            };
+                            legacyPlaintext?: true | undefined;
+                        };
+                    } | {
+                        kind: 'unavailable';
+                    };
                     availability: 'available' | 'not_verified' | 'unavailable';
                     availableMachineCount: null | number;
                 }[];
@@ -1703,7 +1929,20 @@ export type TeamsActionResultById = {
         teamId: string;
         custodianAccountId: string;
         sourceOwnerDisplayName: null | string;
-        displayName: string;
+        displayName: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
+            legacyPlaintext?: true | undefined;
+        };
         enabled: boolean;
         revision: number;
         deliveryPolicy: {
@@ -1826,13 +2065,49 @@ export type TeamsActionResultById = {
             }[];
             selectedPool: null | {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             };
             eligiblePools: {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             }[];
@@ -1868,7 +2143,20 @@ export type TeamsActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';
@@ -2164,7 +2452,20 @@ export type TeamsActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: string;
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             resourceRevision: number;
             readiness: {
                 kind: 'available';
@@ -2457,7 +2758,20 @@ export type TeamsActionResultById = {
         teamId: string;
         custodianAccountId: string;
         sourceOwnerDisplayName: null | string;
-        displayName: string;
+        displayName: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
+            legacyPlaintext?: true | undefined;
+        };
         enabled: boolean;
         revision: number;
         deliveryPolicy: {
@@ -2580,13 +2894,49 @@ export type TeamsActionResultById = {
             }[];
             selectedPool: null | {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             };
             eligiblePools: {
                 poolId: string;
-                displayName: null | string;
+                displayName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 availability: 'available' | 'not_verified' | 'unavailable';
                 availableMachineCount: null | number;
             }[];
@@ -2675,12 +3025,44 @@ export type TeamsActionResultById = {
         };
     };
     readonly "teams.credentials.activity.list": {
-        items: {
-            kind: 'audience_changed' | 'direct_delivered' | 'external_key_created' | 'external_key_revoked' | 'limits_changed' | 'resource_created' | 'resource_deleted' | 'resource_updated';
+        items: ({
+            kind: 'audience_changed' | 'direct_delivered' | 'limits_changed' | 'resource_created' | 'resource_deleted' | 'resource_updated';
             actorDisplayName: null | string;
-            subjectDisplayName: string;
+            subjectDisplayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             createdAt: string;
-        }[];
+        } | {
+            kind: 'external_key_created' | 'external_key_revoked';
+            actorDisplayName: null | string;
+            externalApiKeyId: string;
+            subjectDisplayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+            createdAt: string;
+        })[];
         nextCursor: null | string;
     };
     readonly "teams.credentials.limits.list": {
@@ -2822,6 +3204,20 @@ export type TeamsActionResultById = {
                 resetsAtUtc: string;
             };
         }[];
+        resourceDisplayName?: undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
+            legacyPlaintext?: true | undefined;
+        };
         breakdown?: undefined | {
             key: string;
             totals: {
@@ -2861,6 +3257,20 @@ export type TeamsActionResultById = {
                 };
             };
             label?: string | undefined;
+            privateLabel?: undefined | {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
         }[];
     };
     readonly "teams.credentials.externalKeys.create": {
@@ -2869,7 +3279,20 @@ export type TeamsActionResultById = {
             keyId: string;
             resourceId: string;
             teamMembershipId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;
@@ -2883,7 +3306,20 @@ export type TeamsActionResultById = {
             keyId: string;
             resourceId: string;
             teamMembershipId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;
@@ -2897,7 +3333,20 @@ export type TeamsActionResultById = {
             keyId: string;
             resourceId: string;
             teamMembershipId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;
@@ -3081,6 +3530,7 @@ export type TeamsActionResultById = {
                                 groupId: string;
                             };
                             teamResource: null | {
+                                teamId: string;
                                 selection: {
                                     source: 'team_resource';
                                     resourceId: string;
@@ -3097,7 +3547,6 @@ export type TeamsActionResultById = {
                                         accountId: string;
                                     };
                                 };
-                                teamId: string;
                             };
                         }[]> | undefined;
                     };
@@ -3201,6 +3650,7 @@ export type TeamsActionResultById = {
                                 groupId: string;
                             };
                             teamResource: null | {
+                                teamId: string;
                                 selection: {
                                     source: 'team_resource';
                                     resourceId: string;
@@ -3217,7 +3667,6 @@ export type TeamsActionResultById = {
                                         accountId: string;
                                     };
                                 };
-                                teamId: string;
                             };
                         }[]> | undefined;
                     }>;
@@ -3323,6 +3772,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -3339,7 +3789,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -3516,6 +3965,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -3532,7 +3982,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -3636,6 +4085,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -3652,7 +4102,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -3758,6 +4207,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -3774,7 +4224,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -3949,6 +4398,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -3965,7 +4415,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -4069,6 +4518,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -4085,7 +4535,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -4191,6 +4640,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -4207,7 +4657,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -4382,6 +4831,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -4398,7 +4848,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -4502,6 +4951,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -4518,7 +4968,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -4624,6 +5073,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -4640,7 +5090,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -4815,6 +5264,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -4831,7 +5281,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -4935,6 +5384,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -4951,7 +5401,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -5057,6 +5506,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -5073,7 +5523,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -5248,6 +5697,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -5264,7 +5714,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -5368,6 +5817,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -5384,7 +5834,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -5490,6 +5939,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -5506,7 +5956,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -5681,6 +6130,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -5697,7 +6147,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -5801,6 +6250,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -5817,7 +6267,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -5923,6 +6372,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -5939,7 +6389,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -6114,6 +6563,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -6130,7 +6580,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -6234,6 +6683,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -6250,7 +6700,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -6356,6 +6805,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -6372,7 +6822,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -6547,6 +6996,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -6563,7 +7013,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -6667,6 +7116,7 @@ export type TeamsActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -6683,7 +7133,6 @@ export type TeamsActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -6789,6 +7238,7 @@ export type TeamsActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -6805,7 +7255,6 @@ export type TeamsActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -7117,7 +7566,25 @@ export type TeamsActionResultById = {
             v: 1;
             id: string;
             teamId: string;
-            name: string;
+            name: {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             description: null | string;
             archivedAt: null | number;
             memberCount: number;
@@ -7149,7 +7616,25 @@ export type TeamsActionResultById = {
             v: 1;
             id: string;
             teamId: string;
-            name: string;
+            name: {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             description: null | string;
             archivedAt: null | number;
             memberCount: number;
@@ -7180,7 +7665,25 @@ export type TeamsActionResultById = {
         v: 1;
         id: string;
         teamId: string;
-        name: string;
+        name: {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         description: null | string;
         archivedAt: null | number;
         memberCount: number;
@@ -7209,7 +7712,25 @@ export type TeamsActionResultById = {
         v: 1;
         id: string;
         teamId: string;
-        name: string;
+        name: {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         description: null | string;
         archivedAt: null | number;
         memberCount: number;
@@ -7238,7 +7759,25 @@ export type TeamsActionResultById = {
         v: 1;
         id: string;
         teamId: string;
-        name: string;
+        name: {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         description: null | string;
         archivedAt: null | number;
         memberCount: number;
@@ -7267,7 +7806,25 @@ export type TeamsActionResultById = {
         v: 1;
         id: string;
         teamId: string;
-        name: string;
+        name: {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         description: null | string;
         archivedAt: null | number;
         memberCount: number;
@@ -7296,7 +7853,25 @@ export type TeamsActionResultById = {
         v: 1;
         id: string;
         teamId: string;
-        name: string;
+        name: {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         description: null | string;
         archivedAt: null | number;
         memberCount: number;
@@ -8351,7 +8926,25 @@ export type TeamsActionResultById = {
             };
             mappedGroups: {
                 id: string;
-                name: string;
+                name: {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
             }[];
         };
     };
@@ -8789,7 +9382,25 @@ export type TeamsActionResultById = {
             mode: 'directory_created' | 'native_target';
             target: {
                 teamGroupId: string;
-                name: string;
+                name: {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 archivedAt: null | number;
             };
         }[];
@@ -8810,7 +9421,25 @@ export type TeamsActionResultById = {
         mode: 'directory_created' | 'native_target';
         target: {
             teamGroupId: string;
-            name: string;
+            name: {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             archivedAt: null | number;
         };
     };
@@ -8919,7 +9548,25 @@ export type TeamsActionResultById = {
                 bindingId: string;
                 mode: 'directory_created' | 'native_target';
                 teamGroupId: string;
-                teamGroupName: null | string;
+                teamGroupName: null | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
             } | {
                 state: 'unbound';
             };

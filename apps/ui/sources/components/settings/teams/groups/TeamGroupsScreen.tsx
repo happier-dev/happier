@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { TeamGroupV1 } from '@happier-dev/protocol/teams';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -12,6 +12,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { t } from '@/text';
 
@@ -21,6 +22,7 @@ import { groupManagementLabel } from '../teamLabels';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { teamGroupCreatePath, teamGroupDetailPath } from '../teamsRoutes';
+import { presentTeamGroups, type TeamGroupPresentation } from './teamGroupPresentation';
 
 const GROUP_CHUNK_SIZE = 12;
 
@@ -29,9 +31,11 @@ type GroupVirtualizedRow = Readonly<{
     render: () => React.ReactElement;
 }>;
 
+type GroupPresentation = TeamGroupPresentation<TeamGroupV1>;
+
 const GroupRows = React.memo(function GroupRows(props: Readonly<{
     context: TeamSectionContext;
-    groups: readonly TeamGroupV1[];
+    groups: readonly GroupPresentation[];
     /** Only a second list on the page (archived) is titled; the page's own list is not. */
     title?: string;
     testIdPrefix: string;
@@ -45,13 +49,14 @@ const GroupRows = React.memo(function GroupRows(props: Readonly<{
             title={props.first ? props.title : undefined}
             virtualizedSegment={{ first: props.first, last: props.last }}
         >
-            {props.groups.map((group) => {
+            {props.groups.map((row) => {
+                const { group } = row;
                 const managedBy = groupManagementLabel(group);
                 return (
                     <Item
                         key={group.id}
                         testID={`${props.testIdPrefix}:${group.id}`}
-                        title={group.name}
+                        title={row.name ?? t('common.unavailable')}
                         subtitle={[t('teams.groups.memberCount', { count: group.memberCount }), managedBy]
                             .filter((part): part is string => part !== null)
                             .join(' · ')}
@@ -67,11 +72,11 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     context: TeamSectionContext;
     header?: React.ReactNode;
 }>) {
-    const { theme } = useUnistyles();
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const { context } = props;
     const [showArchived, setShowArchived] = React.useState(false);
+    const [query, setQuery] = React.useState('');
 
     // The Home authorizes both Group sequences on `viewRoster`; `manageGroups`
     // gates only the writes. A viewer who may read a Team may see which Groups
@@ -93,15 +98,30 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         // archived sequence; there is no speculative background read.
         enabled: canRead && showArchived,
     });
+    const activeNames = useTeamGroupDisplayNames({ scope: context.scope, groups: active.rows });
+    const archivedNames = useTeamGroupDisplayNames({ scope: context.scope, groups: archived.rows });
     const archivedCount = context.team.counts?.archivedGroups ?? 0;
     const offerArchived = archivedCount > 0;
+    const activeRows = React.useMemo(
+        () => presentTeamGroups(active.rows, activeNames, query),
+        [active.rows, activeNames, query],
+    );
+    const archivedRows = React.useMemo(
+        () => presentTeamGroups(archived.rows, archivedNames, query),
+        [archived.rows, archivedNames, query],
+    );
+    const searchable = active.rows.length > 0 || (showArchived && archived.rows.length > 0);
+    const loadedRows = active.rows.length + (showArchived ? archived.rows.length : 0);
+    const visibleRows = activeRows.length + (showArchived ? archivedRows.length : 0);
+    const queryHasNoVisibleRows = query.trim() !== '' && loadedRows > 0 && visibleRows === 0;
+    const moreRowsMayMatch = active.hasMore || (showArchived && archived.hasMore);
 
     const rows = React.useMemo<readonly GroupVirtualizedRow[]>(() => {
         const result: GroupVirtualizedRow[] = [];
         const add = (key: string, render: () => React.ReactElement) => result.push({ key, render });
         const addGroupChunks = (
             keyPrefix: string,
-            groups: readonly TeamGroupV1[],
+            groups: readonly GroupPresentation[],
             title: string | undefined,
             testIdPrefix: string,
         ) => {
@@ -170,7 +190,20 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
             ));
         }
 
-        addGroupChunks('active', active.rows, undefined, 'team-groups-row');
+        addGroupChunks('active', activeRows, undefined, 'team-groups-row');
+
+        if (queryHasNoVisibleRows) {
+            add('search-empty', () => (
+                <ItemGroup>
+                    <SurfaceStateCard
+                        testID="team-groups-search-empty"
+                        kind="empty"
+                        size="line"
+                        title={moreRowsMayMatch ? t('teams.groups.noLoadedMatches') : t('common.noMatches')}
+                    />
+                </ItemGroup>
+            ));
+        }
 
         if (active.error) {
             add('retry', () => (
@@ -236,7 +269,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                     </ItemGroup>
                 ));
             }
-            addGroupChunks('archived', archived.rows, t('teams.groups.archivedSection'), 'team-groups-archived-row');
+            addGroupChunks('archived', archivedRows, t('teams.groups.archivedSection'), 'team-groups-archived-row');
 
             if (archived.error) {
                 add('archived-retry', () => (
@@ -263,7 +296,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         }
 
         return result;
-    }, [active, archived, archivedCount, canCreate, canRead, context, offerArchived, router, showArchived, theme.colors.text.secondary]);
+    }, [active, activeRows, archived, archivedCount, archivedRows, canCreate, canRead, context, moreRowsMayMatch, offerArchived, queryHasNoVisibleRows, router, showArchived]);
 
     const renderRow = React.useCallback(
         ({ item }: Readonly<{ item: GroupVirtualizedRow }>) => item.render(),
@@ -276,7 +309,20 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
             data={rows}
             keyExtractor={(item) => item.key}
             renderItem={renderRow}
-            ListHeaderComponent={props.header === undefined ? null : <>{props.header}</>}
+            ListHeaderComponent={(
+                <>
+                    {props.header}
+                    {searchable ? (
+                        <CompactSearchField
+                            testID="team-groups-search"
+                            value={query}
+                            onChangeText={setQuery}
+                            placeholder={t('teams.groups.searchLoadedPlaceholder')}
+                            placement="page"
+                        />
+                    ) : null}
+                </>
+            )}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
             windowSize={7}

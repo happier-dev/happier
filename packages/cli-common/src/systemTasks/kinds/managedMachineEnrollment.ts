@@ -1,6 +1,6 @@
 import type { ResolvedHomeTarget } from '../../homeTarget/homeTarget.js';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { InteractiveSystemTaskContext, InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -9,7 +9,7 @@ import type { PrepareManagedDedicatedBootstrap } from '../ssh/installRemoteCli.j
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedMachineBootstrapPromptV1Schema, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { parseSshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
@@ -39,7 +39,7 @@ export type ManagedNativePayloadInstallation = Readonly<{
   channel: 'stable' | 'preview' | 'dev';
   os: 'linux' | 'darwin'; arch: 'x64' | 'arm64'; home: string;
   remoteHomeDir?: string; dedicatedIdentity: boolean;
-  resource: ManagedEnrollmentCorrelationV1['resource']['value'];
+  resource: ManagedEnrollmentFullCorrelationV1['resource']['value'];
   signal?: AbortSignal;
   exec: ManagedNativeBootstrapIO['exec']; putFile: ManagedNativeBootstrapIO['putFile'];
   bootstrapExec: ManagedNativeBootstrapIO['exec']; cleanupExec: ManagedNativeBootstrapIO['exec'];
@@ -48,7 +48,7 @@ export type ManagedNativePayloadInstallation = Readonly<{
 }>;
 
 export type ManagedMachineEnrollmentInput = Readonly<{
-  correlation: ManagedEnrollmentCorrelationV1;
+  correlation: ManagedEnrollmentFullCorrelationV1;
   target: ResolvedHomeTarget;
   carrier: unknown;
   /** Only the retained generated bundle supplies this; scanner evidence is not trust. */
@@ -63,7 +63,7 @@ export type ManagedMachineEnrollmentInput = Readonly<{
 }>;
 
 export type ManagedMachineEnrollmentDependencies = Readonly<{
-  readCurrentManagedRow(): Promise<ManagedMachineV1>;
+  readCurrentManagedRow(): Promise<ManagedMachineFullV1>;
   onEnrollmentDeadline?(deadlineMs: number, transport: 'ssh' | 'native'): void;
   native?: ManagedNativeBootstrapIO;
   createPromptId(): string;
@@ -118,7 +118,7 @@ export function projectManagedMachineBootstrapPrompt(prompt: InteractiveSystemTa
 /** The shared admitted native/SSH install, ordinary enrollment and startup owner. */
 export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmentInput,
   deps: ManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
-  const correlation = ManagedEnrollmentCorrelationV1Schema.parse(input.correlation);
+  const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse(input.correlation);
   const carrier = ManagedBootstrapCarrierV1Schema.parse(input.carrier);
   const onEnrollmentDeadline = (deadlineMs: number) => deps.onEnrollmentDeadline?.(deadlineMs, carrier.kind);
   if (input.target.homeServerIdentityId !== correlation.homeId || !input.target.descriptor) {

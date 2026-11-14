@@ -1,36 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { type MachinePoolPrivateViewV1, type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { getStorage, storage } from '@/sync/domains/state/storage';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { settingsParse } from '@/sync/domains/settings/settings';
-import { renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
-import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
-import {
+
+
+let nativeConfirmationAccepted = false;
+const approvalModal = createModalModuleMock({
+    spies: { confirm: async () => nativeConfirmationAccepted },
+});
+
+installApprovalCommonModuleMocks({
+    modal: () => approvalModal.module,
+    storage: (importOriginal) => importOriginal(),
+});
+
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+const { getStorage, storage } = await import('@/sync/domains/state/storage');
+const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+const { settingsParse } = await import('@/sync/domains/settings/settings');
+
+const {
     createMachinePool,
     deleteMachinePool,
-    MachinePoolActionApprovalPendingError,
     MachinePoolActionRefusedError,
     refreshMachinePools,
-} from './machinePools';
-
-installApprovalCommonModuleMocks({ storage: (importOriginal) => importOriginal() });
+    updateMachinePool,
+} = await import('./machinePools');
 
 const initialStorageState = getStorage().getState();
-const boundary = { serverId: '', requests: [] as string[] };
+const boundary = { serverId: '', requests: [] as string[], bodies: new Map<string, unknown[]>() };
 const features = {
     features: { machines: { enabled: true, pools: { enabled: true } } },
     capabilities: {
@@ -51,6 +57,17 @@ const created = {
     availability: { state: 'known' as const, connectedCount: 0, enabledCount: 0 },
 } satisfies MachinePoolViewV1;
 
+const createdWire = {
+    pool: {
+        ...created.pool,
+        name: {
+            kind: 'available' as const,
+            label: { content: { t: 'plain' as const, v: created.pool.name }, recipientEnvelope: null },
+        },
+    },
+    availability: created.availability,
+} satisfies MachinePoolPrivateViewV1;
+
 function setActionsSettings(actions: Record<string, unknown>): void {
     const current = storage.getState().settings ?? {};
     storage.setState({ settings: settingsParse({ ...current, actionsSettingsV1: { v: 1, actions } }) });
@@ -65,24 +82,32 @@ describe('machine pool Action front door', () => {
         getStorage().setState(initialStorageState, true);
         boundary.serverId = (await upsertAndActivateServer({ serverUrl: 'https://pool-front-door.test', name: 'Home' })).id;
         boundary.requests.length = 0;
+        boundary.bodies.clear();
         getStorage().getState().activateProfileScope({ serverId: boundary.serverId, accountId: 'alice' });
         getStorage().setState({ settingsScope: { serverId: boundary.serverId, accountId: 'alice' } });
         getStorage().setState({ machinePoolListByServerId: {}, machinePoolListStatusByServerId: {} });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: `e30.${btoa(JSON.stringify({ sub: 'alice' }))}.signature` });
         vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
         await getServerFeaturesSnapshot({ serverId: boundary.serverId, force: true });
-        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
+        nativeConfirmationAccepted = false;
+        approvalModal.spies.confirm.mockClear();
         setRuntimeFetch(async (url, init) => {
             const value = String(url);
             const pathname = new URL(value).pathname;
             if (pathname === '/v1/auth/ping' || pathname === '/health') return Response.json({ ok: true });
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            const artifactResponse = artifacts.handle(pathname + new URL(value).search, init);
-            if (artifactResponse) return await artifactResponse;
             boundary.requests.push(pathname);
-            if (pathname === '/v1/machines/pools/list') return Response.json({ pools: [created] });
-            if (pathname === '/v1/machines/pools/create') return Response.json(created);
+            if (typeof init?.body === 'string') {
+                const bodies = boundary.bodies.get(pathname) ?? [];
+                bodies.push(JSON.parse(init.body));
+                boundary.bodies.set(pathname, bodies);
+            }
+            if (pathname === '/v1/account/private-labels/recipient-census') {
+                return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
+            }
+            if (pathname === '/v1/machines/pools/list') return Response.json({ pools: [createdWire] });
+            if (pathname === '/v1/machines/pools/create') return Response.json(createdWire);
             throw new Error(`Unexpected Machine Pool request: ${pathname}`);
         });
     });
@@ -100,8 +125,62 @@ describe('machine pool Action front door', () => {
         await expect(createMachinePool(boundary.serverId, { name: 'Development', description: null, members: [] }))
             .resolves.toMatchObject({ pool: { id: created.pool.id } });
 
-        expect(boundary.requests).toEqual(['/v1/machines/pools/create']);
+        expect(boundary.requests).toEqual([
+            '/v1/account/private-labels/recipient-census',
+            '/v1/machines/pools/create',
+        ]);
+        expect(boundary.bodies.get('/v1/machines/pools/create')).toEqual([
+            expect.objectContaining({
+                name: { content: { t: 'plain', v: 'Development' }, recipients: [] },
+                description: null,
+            }),
+        ]);
         expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toEqual([created]);
+    });
+
+    it('seals an update without an audience against the current Team Pool audience', async () => {
+        const teamId = 'team-pool-audience';
+        const teamPool = {
+            ...createdWire,
+            pool: { ...createdWire.pool, audience: { kind: 'team' as const, teamId } },
+        } satisfies MachinePoolPrivateViewV1;
+        setRuntimeFetch(async (url, init) => {
+            const pathname = new URL(String(url)).pathname;
+            if (pathname === '/v1/auth/ping' || pathname === '/health') return Response.json({ ok: true });
+            if (pathname === '/v1/features') return Response.json(features);
+            if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            boundary.requests.push(pathname);
+            if (typeof init?.body === 'string') {
+                const bodies = boundary.bodies.get(pathname) ?? [];
+                bodies.push(JSON.parse(init.body));
+                boundary.bodies.set(pathname, bodies);
+            }
+            if (pathname === '/v1/machines/pools/get') return Response.json(teamPool);
+            if (pathname === '/v1/account/private-labels/recipient-census') {
+                return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
+            }
+            if (pathname === '/v1/machines/pools/update') return Response.json(teamPool);
+            throw new Error(`Unexpected Machine Pool request: ${pathname}`);
+        });
+
+        await expect(updateMachinePool(boundary.serverId, {
+            poolId: created.pool.id,
+            expectedRevision: created.pool.revision,
+            name: 'Team Development',
+            members: [],
+        })).resolves.toMatchObject({ pool: { id: created.pool.id } });
+
+        expect(boundary.requests).toEqual([
+            '/v1/machines/pools/get',
+            '/v1/account/private-labels/recipient-census',
+            '/v1/machines/pools/update',
+        ]);
+        expect(boundary.bodies.get('/v1/account/private-labels/recipient-census')).toEqual([
+            { owner: { kind: 'team', teamId } },
+        ]);
+        expect(boundary.bodies.get('/v1/machines/pools/update')).toEqual([
+            expect.objectContaining({ audience: { kind: 'team', teamId } }),
+        ]);
     });
 
     it('refuses a Pool intent the shared Action settings disable, without reaching the Home', async () => {
@@ -120,23 +199,17 @@ describe('machine pool Action front door', () => {
         expect(boundary.requests).toEqual(['/v1/machines/pools/list']);
     });
 
-    // A user who asks this surface to confirm Pool changes gets the shared executor's deferred
-    // approval artifact instead of a Pool. Publishing that envelope would show a Pool the Home
-    // never created, so the intent must surface as pending and leave the projection alone.
-    it('reports a deferred approval for Create instead of publishing an uncreated Pool', async () => {
+    it('keeps a new Pool uncreated when the person cancels its in-flow Create confirmation', async () => {
         setActionsSettings({ 'machines.pools.create': { approvalRequiredSurfaces: ['ui'] } });
 
         await expect(createMachinePool(boundary.serverId, { name: 'Development', description: null, members: [] }))
-            .rejects.toBeInstanceOf(MachinePoolActionApprovalPendingError);
+            .rejects.toBeInstanceOf(MachinePoolActionRefusedError);
 
-        expect(Object.values(getStorage().getState().artifacts)).toEqual([
-            expect.objectContaining({ header: expect.objectContaining({ kind: 'approval_request.v1', actionId: 'machines.pools.create' }) }),
-        ]);
-        expect(boundary.requests).toEqual([]);
+        expect(boundary.requests).toEqual(['/v1/account/private-labels/recipient-census']);
         expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toBeUndefined();
     });
 
-    it('keeps a Pool listed when Delete only created a deferred approval', async () => {
+    it('keeps a Pool listed when the person cancels its in-flow Delete confirmation', async () => {
         getStorage().getState().beginMachinePoolAccountScope(boundary.serverId, 'alice');
         getStorage().getState().replaceMachinePools([created], {
             sourceServerId: boundary.serverId,
@@ -145,15 +218,12 @@ describe('machine pool Action front door', () => {
         setActionsSettings({ 'machines.pools.delete': { approvalRequiredSurfaces: ['ui'] } });
 
         await expect(deleteMachinePool(boundary.serverId, { poolId: created.pool.id, expectedRevision: created.pool.revision }))
-            .rejects.toBeInstanceOf(MachinePoolActionApprovalPendingError);
+            .rejects.toBeInstanceOf(MachinePoolActionRefusedError);
 
         expect(boundary.requests).toEqual([]);
-        expect(Object.values(getStorage().getState().artifacts)).toEqual([
-            expect.objectContaining({ header: expect.objectContaining({ kind: 'approval_request.v1', actionId: 'machines.pools.delete' }) }),
-        ]);
         expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toEqual([created]);
     });
-    it.each(['create', 'delete'] as const)('replays deferred %s on Home B while Home A remains focused', async (operation) => {
+    it.each(['create', 'delete'] as const)('routes accepted native %s confirmation to Home B while Home A remains focused', async (operation) => {
         const homeA = boundary.serverId;
         const homeB = (await upsertAndActivateServer({ serverUrl: 'https://pool-background.test', name: 'Background' })).id;
         // Re-activate Home A before exercising the deferred replay: the test requires
@@ -165,7 +235,6 @@ describe('machine pool Action front door', () => {
         }));
         getStorage().setState({ settingsScope: { serverId: homeA, accountId: 'alice' } });
         setActionsSettings({ [`machines.pools.${operation}`]: { enabled: false } });
-        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'bob', encryptionMode: 'plain' });
         const effects: string[] = [];
         const requests: Array<{ host: string; authorization: string | null }> = [];
         setRuntimeFetch(async (url, init) => {
@@ -178,42 +247,24 @@ describe('machine pool Action front door', () => {
             if (pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 actionsSettingsV1: { v: 1, actions: { [`machines.pools.${operation}`]: { approvalRequiredSurfaces: ['ui'] } } },
             } }, version: 1 });
-            const artifactResponse = artifacts.handle(pathname + target.search, init);
-            if (artifactResponse) return await artifactResponse;
             if (pathname === `/v1/machines/pools/${operation}`) {
                 effects.push(pathname);
-                return Response.json(operation === 'create' ? created : { poolId: created.pool.id, deleted: true });
+                return Response.json(operation === 'create' ? createdWire : { poolId: created.pool.id, deleted: true });
+            }
+            if (pathname === '/v1/account/private-labels/recipient-census') {
+                return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
             }
             return Response.json({}, { status: 404 });
         });
         await getServerFeaturesSnapshot({ serverId: homeB, force: true });
-        const pending = await (operation === 'create'
+        nativeConfirmationAccepted = true;
+        const result = await (operation === 'create'
             ? createMachinePool(homeB, { name: 'Development', description: null, members: [] })
-            : deleteMachinePool(homeB, { poolId: created.pool.id, expectedRevision: 0 }))
-            .catch((error: unknown) => error);
-        expect(pending).toBeInstanceOf(MachinePoolActionApprovalPendingError);
-        if (!(pending instanceof MachinePoolActionApprovalPendingError)) return;
-        expect(effects).toEqual([]);
-        expect(getStorage().getState().artifacts).toEqual({});
-        const executor = createDefaultActionExecutor();
-        const screen = await renderScreen(React.createElement(ApprovalDetailScreen, {
-            artifactId: pending.artifactId, serverId: homeB,
-        }));
-        await vi.waitFor(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
-        await act(async () => { await screen.findByTestId('approvals.approve')!.props.onPress(); });
-        await vi.waitFor(() => expect(effects).toEqual([`/v1/machines/pools/${operation}`]));
-        await screen.unmount();
-        await executor.execute('approval.request.decide', {
-            artifactId: pending.artifactId, decision: 'approve',
-        }, { serverId: homeB, surface: 'ui' });
+            : deleteMachinePool(homeB, { poolId: created.pool.id, expectedRevision: 0 }));
+        if (operation === 'create') expect(result).toMatchObject({ pool: { id: created.pool.id } });
         expect(effects).toEqual([`/v1/machines/pools/${operation}`]);
-        expect(JSON.parse(artifacts.readPlainBody(pending.artifactId) ?? 'null')).toMatchObject({
-            status: 'executed',
-            actionId: `machines.pools.${operation}`,
-            executionOriginV1: { serverId: homeB, accountId: 'bob' },
-        });
+        expect(approvalModal.spies.confirm).toHaveBeenCalledOnce();
         expect(requests.every((request) => request.host === 'pool-background.test' && request.authorization === `Bearer ${token('bob')}`)).toBe(true);
-        expect(getStorage().getState().artifacts).toEqual({});
     });
 
 });

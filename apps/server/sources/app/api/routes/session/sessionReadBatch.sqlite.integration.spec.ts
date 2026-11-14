@@ -1,3 +1,4 @@
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
@@ -793,7 +794,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: child.id }),
             destinationSessionId: source.id, relation: 'manager', managerSourceSessionId: child.id,
             policyJson: JSON.stringify({ preset: 'important' }) } });
-        const pat = await auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: 'snapshot reader' });
+        const pat = await auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, 'snapshot reader') });
         const principal = (await auth.verifyToken(pat.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Expected the real PAT principal');
         const homeId = await getOrCreateServerIdentityId();

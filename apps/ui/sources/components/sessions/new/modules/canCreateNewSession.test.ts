@@ -3,12 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 describe('canCreateNewSession', () => {
+    it('admits sealed preset intent without a native review before acquisition', () => {
+        const managedMachineSelection = createManagedMachineSelectionDraft({
+            deferredAuthorPreset: true,
+            selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+            presetContentOverride: { content: { t: 'plain', v: { v: 1, name: 'Guest',
+                launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1,
+                    name: 'Guest', choices: {} } } } },
+            presetOrigin: { id: 'preset', homeId: 'home', revision: 1,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        expect(canCreateNewSession({ selectedMachineId: null, selectedMachine: null,
+            selectedPath: '', directoryKind: 'managed', managedMachineSelection })).toBe(true);
+    });
     it('allows the selected asleep shared target with an admitted wake fact, while retaining access refusals', () => {
         const selectedMachine = { ...createMachineFixture({ id: 'guest', active: false, activeAt: 0, isShared: true,
-            access: { custodian: { accountId: 'owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }),
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }),
             managedInputRuntime: { nativeReady: false, wakeState: 'asleep' as const, newSessionWake: { kind: 'available' as const } } };
+        publishMachineActivityForTest([selectedMachine]);
         const input = { selectedMachineId: 'guest', selectedMachine, selectedPath: '/work',
             scope: { serverId: 'home', accountId: 'member' } };
         expect(canCreateNewSession(input)).toBe(true);
@@ -16,8 +31,11 @@ describe('canCreateNewSession', () => {
             managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } } })).toBe(false);
         expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
             managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: undefined } } })).toBe(false);
-        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine, active: true, activeAt: Date.now(),
-            managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } } })).toBe(true);
+        const online = { ...selectedMachine, active: true, activeAt: Date.now(),
+            managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable' as const, reason: 'no_controller' } } };
+        publishMachineActivityForTest([online]);
+        expect(canCreateNewSession({ ...input, selectedMachine: online })).toBe(true);
+        publishMachineActivityForTest([selectedMachine]);
         expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine, managedInputRuntime: undefined } })).toBe(false);
         expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
             access: { ...selectedMachine.access!, accessState: 'key_pending' as const } } })).toBe(false);
@@ -83,7 +101,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('requires a selected machine id and a non-empty path', () => {
-        const machine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const machine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
 
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
@@ -101,7 +120,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('returns false when selected machine is offline', () => {
-        const offlineMachine: any = { id: 'm1', active: false, activeAt: 0 };
+        const offlineMachine = createMachineFixture({ id: 'm1', active: false, activeAt: 0 });
+        publishMachineActivityForTest([offlineMachine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
@@ -111,15 +131,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('returns false when selected machine was replaced', () => {
-        const replacedMachine: any = {
-            id: 'm-old',
-            active: true,
-            activeAt: Date.now(),
-            replacedByMachineId: 'm-new',
-            replacedAt: Date.now(),
-            replacementReason: 'manual_repair',
-            replacementSource: 'manual',
-        };
+        const replacedMachine = createMachineFixture({ id: 'm-old', active: true, activeAt: Date.now(), replacedByMachineId: 'm-new' });
+        publishMachineActivityForTest([replacedMachine]);
 
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
@@ -130,7 +143,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('returns true when selected machine has exact spawn readiness', () => {
-        const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const onlineMachine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([onlineMachine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
@@ -141,7 +155,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('allows an online machine to attempt launch before exact spawn readiness resolves', () => {
-        const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const onlineMachine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([onlineMachine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
@@ -151,7 +166,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('allows an online machine to attempt launch while exact spawn readiness is unknown', () => {
-        const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const onlineMachine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([onlineMachine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
@@ -162,7 +178,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('blocks launch when exact spawn readiness has a confirmed unavailable status', () => {
-        const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const onlineMachine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([onlineMachine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
@@ -173,7 +190,8 @@ describe('canCreateNewSession', () => {
     });
 
     it('needs no folder for a no-folder session, and still needs a ready machine', () => {
-        const machine: any = { id: 'm1', active: true, activeAt: Date.now() };
+        const machine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
@@ -100,7 +101,7 @@ describe("directory worker composed SQLite journey", () => {
             },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {

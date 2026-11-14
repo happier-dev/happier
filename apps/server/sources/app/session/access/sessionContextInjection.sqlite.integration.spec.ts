@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -254,7 +255,7 @@ describe("ordinary authenticated Follow context admission", () => {
             sessionAccessStartsAt: cutoff,
         } });
         const group = kind === "group" ? await db.teamGroup.create({ data: {
-            teamId: team.id, name: "Readers", nameKey: "readers",
+            teamId: team.id, name: storedPlainPrivateLabel("Readers"),
         } }) : null;
         if (group) await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: cutoff,

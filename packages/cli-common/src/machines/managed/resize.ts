@@ -1,4 +1,4 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, MachineProvisionerResizeResultV1Schema, managedMachineResizeRequiresRestartV1,
     readMachineProvisionerResizeCapabilityV1, type MachineProvisionerSizeV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -8,7 +8,7 @@ import { executeManagedMachinePowerIntent } from './power.js';
 
 /** Finite admitted resize: the approved size is immutable; only native observation settles it. */
 export async function executeManagedMachineResize(input: Readonly<{
-    machine: ManagedMachineV1; size: MachineProvisionerSizeV1; provisioner: Pick<MachineProvisionerContributionV1, 'actions' | 'resize'>; invoke: ManagedNativeInvocation;
+    machine: ManagedMachineFullV1; size: MachineProvisionerSizeV1; provisioner: Pick<MachineProvisionerContributionV1, 'actions' | 'resize'>; invoke: ManagedNativeInvocation;
     io?: ManagedNativeInvocationIO;
     guestStartup?: Parameters<typeof executeManagedMachinePowerIntent>[0]['guestStartup'];
     waitForObservation?(): Promise<unknown>;

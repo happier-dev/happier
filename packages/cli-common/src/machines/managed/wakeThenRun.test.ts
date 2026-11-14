@@ -1,13 +1,13 @@
 import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { describe, expect, it } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { executeManagedMachineWakeThenRun, managedMachineWakePowerInput, prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from './wakeThenRun.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 
-const asleep = ManagedMachineV1Schema.parse({
+const asleep = ManagedMachineFullV1Schema.parse({
     id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
@@ -115,7 +115,7 @@ describe('explicit managed execution', () => {
             resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
             billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'delete'] },
             actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy', power: 'power' } });
-        const machine = ManagedMachineV1Schema.parse({ ...asleep, controller: undefined, reviewedFacts: { launch: asleep.launch, provisioner,
+        const machine = ManagedMachineFullV1Schema.parse({ ...asleep, controller: undefined, reviewedFacts: { launch: asleep.launch, provisioner,
             optionStatus: 'current', prerequisites: [], billing: provisioner.billing, retentionCapabilities: provisioner.retention,
             retention: asleep.retention, wakeOnAcceptedMessage: false } });
         let reads = 0;
@@ -221,7 +221,7 @@ describe('explicit managed execution', () => {
     });
 
     it('uses the declared wake verb when retained stopped compute supports Resume only', () => {
-        const machine = ManagedMachineV1Schema.parse({ ...asleep, reviewedFacts: buildManagedConfigurationFactsV1({
+        const machine = ManagedMachineFullV1Schema.parse({ ...asleep, reviewedFacts: buildManagedConfigurationFactsV1({
             choicesSchema: PluginJsonValueV2Schema, launch: asleep.launch, optionStatus: 'current', prerequisites: [],
             billing: { location: 'cloud', stoppedBilling: 'billed' }, retentionCapabilities: { supportedIntents: ['resume'] },
         }) });

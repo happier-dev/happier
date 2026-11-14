@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -387,7 +388,7 @@ describe("plugin Account data erasure", () => {
         const groupMember = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: recipientIds[2]!, role: 'member',
         } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Group', nameKey: 'group' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Group') } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: groupMember.id, nativeContribution: true,
         } });

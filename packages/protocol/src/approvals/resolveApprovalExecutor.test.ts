@@ -14,7 +14,10 @@ const cases = [
   { actionId: 'paths.list_recent', input: { machineId: 'machine', limit: 10 }, expected: { kind: 'daemon', machineId: 'machine' } },
   { actionId: 'session.stop', input: { sessionId: 'session' }, expected: { kind: 'daemon', machineId: 'machine', sessionId: 'session' } },
   { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' }, expected: { kind: 'live_invocation' } },
-  { actionId: 'teams.credentials.externalKeys.create', input: { resourceId: 'resource', teamMembershipId: 'membership', label: 'Reviewed key' }, expected: { kind: 'app', placement: 'account' } },
+  { actionId: 'teams.credentials.externalKeys.create', input: {
+    resourceId: 'resource', teamMembershipId: 'membership', keyId: '123e4567-e89b-42d3-a456-426614174000',
+    label: { content: { t: 'plain', v: 'Reviewed key' }, recipients: [] },
+  }, expected: { kind: 'app', placement: 'account' } },
 ] as const;
 
 function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknown, surface: typeof surfaces[number] = 'cli') {
@@ -92,7 +95,7 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
   });
 
-  it('returns an unprepared provider Link to its retained controller while prepared content stays Account-owned', () => {
+  it('keeps unprepared provider Link and prepared content replay on the retained controller', () => {
     const actionId = 'deployments.targets.link';
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link',
       targetId: 'runtime', role: 'runtime', targetKind: 'platform', machines: [],
@@ -113,11 +116,13 @@ describe('resolveApprovalExecutor', () => {
     const { provider: _provider, ...prepared } = input;
     expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted, actionArgs: {
       ...prepared, contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
-    } }))).toEqual({ kind: 'app', placement: 'account' });
+    } }))).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
   });
 
-  it.each(['deployments.environments.create', 'deployments.targets.link'] as const)(
-    'returns %s with a reviewed Machine retention edit to its captured executor', actionId => {
+  it.each([
+    { actionId: 'deployments.environments.create' as const, executor: { kind: 'app', placement: 'account' } as const },
+    { actionId: 'deployments.targets.link' as const, executor: { kind: 'daemon', machineId: 'machine' } as const },
+  ])('returns $actionId with a reviewed Machine retention edit to its captured executor', ({ actionId, executor }) => {
       const content = { contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
       const machines = [{ machineId: 'guest', installationId: 'guest-installation' }];
       const input = actionId === 'deployments.environments.create'
@@ -130,7 +135,7 @@ describe('resolveApprovalExecutor', () => {
       const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
         ...request.executionOriginV1, target: { kind: 'machine', machineId: 'machine' },
       } });
-      expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'app', placement: 'account' });
+      expect(resolveApprovalExecutor(targeted)).toEqual(executor);
       const reviewed = ApprovalRequestV2Schema.parse({ ...targeted, preview: { hostReviewedChildren: { children: [{
         action: 'machines.managed.retention.update', role: 'target-retention:guest', input: {
           homeId: 'home', managedId: 'allocation', expectedIntentRevision: 4,
@@ -143,7 +148,7 @@ describe('resolveApprovalExecutor', () => {
       const accountChildren = ApprovalRequestV2Schema.parse({ ...targeted, preview: { hostReviewedChildren: { children: [{
         action: 'machines.managed.list', role: 'allocations', input: { homeId: 'home' },
       }] } } });
-      expect(resolveApprovalExecutor(accountChildren)).toEqual({ kind: 'app', placement: 'account' });
+      expect(resolveApprovalExecutor(accountChildren)).toEqual(executor);
     });
 
   it.each([true, false])('routes retained plugin publication by background custody (background=%s)', background => {
@@ -351,11 +356,14 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(deferred)).toEqual({ kind: 'daemon', machineId: 'machine' });
   });
 
-  it('routes native deployment public reads and Machine-targeted proposals to the controller while unplaced proposals stay Account-owned', () => {
+  it('keeps native deployment replay on its recorded controller and unplaced UI replay on its app adapter', () => {
     const request = requestFor('deployments.deploy', { serverId: 'stable-home', environmentId: 'environment',
       expectedRevision: 9, requestKey: 'native-deploy', targetLinkId: 'target-link', expectedTargetLinkRevision: 1,
       contentArtifactId: 'candidate', contentHeaderVersion: 3, contentBodyVersion: 3 }, 'ui');
-    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
+    const { machineId: _machineId, sessionId: _sessionId, ...unplacedOrigin } = request.executionOriginV1;
+    const unplaced = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: unplacedOrigin });
+    expect(resolveApprovalExecutor(unplaced)).toEqual({ kind: 'app', placement: 'machine' });
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
       serverIdentityId: 'stable-home', target, externalActionInputSignature: 'a'.repeat(86),

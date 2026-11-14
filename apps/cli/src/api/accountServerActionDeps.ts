@@ -1,3 +1,7 @@
+import { deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView } from '@/api/privateLabels';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
+import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
@@ -28,14 +32,14 @@ import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/acti
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
 import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolActionInputSchemasV1, MachinePoolWireOutputSchemasV1, openMachinePoolActionOutputV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
 import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
-import { isManagedControlAdmissionActionIdV1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedControlAdmissionActionIdV1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
 import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
@@ -900,7 +904,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       // The Action catalog owns Account placement, including cancellation and
       // setup decisions. Native effects retain the exact-controller adapter.
       const spec = getActionSpec(actionId);
-      if (resolveActionExecutionPlacementForInput(spec, actionInput) !== 'account') {
+      if (resolveActionExecutionPlacementForInput(spec, actionInput, actionContext.actionCaller, actionContext.surface ?? 'cli') !== 'account') {
         return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
       }
       const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(actionInput);
@@ -940,7 +944,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           input: { homeId, managedId: body.managedId }, context: actionContext, signal });
         const refusal = ActionExecuteFailureSchema.safeParse(retained);
         if (refusal.success) return refusal.data;
-        const machine = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(retained);
+        const machine = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(retained));
         if (!machine.controller) {
           try {
             return await executeCliManagedAccountInspect({ machine, context: actionContext,
@@ -950,6 +954,21 @@ export function createAccountServerActionDeps(input: Readonly<{
             if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
             throw error;
           }
+        }
+      }
+      if (actionId === MANAGED_RETIRE_ACTION_ID_V1) {
+        try {
+          const admitted = await post('admit-control', { action: actionId, input: body, requestId: actionContext.actionRequestId },
+            ManagedAdmissionOutputV1Schema);
+          if (!('presetContent' in admitted)) return admitted.machine;
+          const recipientAccountId = readAccountIdFromToken(input.token);
+          if (!recipientAccountId) throw new ManagedMachineControllerError('credential_unavailable');
+          return { machine: admitted.machine, presetContent: projectManagedMachinePresetForRecipientV1({
+            ...admitted.presetContent, recipientAccountId,
+          }) };
+        } catch (error) {
+          if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+          throw error;
         }
       }
       if (isManagedControlAdmissionActionIdV1(actionId)) {
@@ -999,7 +1018,18 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       if (actionId === 'machines.managed.inspect' && 'includeGuestDiagnostics' in body && body.includeGuestDiagnostics) {
         const output = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(response.data);
-        const guestDiagnostics = await readCliManagedAccountGuestDiagnostics({ machine: output.machine, context: actionContext,
+        let machine: ManagedMachineFullV1;
+        if (isManagedOpaquePresetMachineV1(output.machine)) {
+          const retained = await deps.managedMachineAction!({ actionId: 'machines.managed.get',
+            input: { homeId, managedId: output.machine.id }, context: actionContext, signal });
+          const refusal = ActionExecuteFailureSchema.safeParse(retained);
+          if (refusal.success) return refusal.data;
+          machine = await openManagedMachineRead({
+            read: ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(retained),
+            credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+            serverHttpBaseUrl, signal });
+        } else machine = output.machine;
+        const guestDiagnostics = await readCliManagedAccountGuestDiagnostics({ machine, context: actionContext,
           credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
           serverUrl: serverHttpBaseUrl, signal });
         return { ...output, guestDiagnostics };
@@ -1076,11 +1106,30 @@ export function createAccountServerActionDeps(input: Readonly<{
         }
         throw createHttpStatusError(response.status, `Failed to execute Machine Pool Action (${response.status})`);
       }
-      return settleAccountServerActionHttpOutput({
+      const wire = settleAccountServerActionHttpOutput({
         data: response.data,
-        outputSchema: MachinePoolActionOutputSchemasV1[actionId],
+        outputSchema: MachinePoolWireOutputSchemasV1[actionId],
         sideEffectClass: getActionSpec(actionId).sideEffectClass,
       });
+      if ('ok' in wire && wire.ok === false) return wire;
+      if (!('pool' in wire) && !('pools' in wire)) return wire;
+      const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
+      const authorization = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,
+        method: 'GET', path: '/v1/account/encryption/currentness' });
+      if (!authorization.ok) return externalAuthorizationUnavailable();
+      const storage = await resolveCliAccountStorageContext({ credentials, serverBaseUrl: serverHttpBaseUrl,
+        authorizationHeaders: authorization.headers, ...(signal ? { signal } : {}) });
+      const accountKey = storage.mode === 'e2ee' ? deriveCliPrivateLabelAccountKey(storage.encryption) : null;
+      try {
+        const opened = await openMachinePoolActionOutputV1(wire, view => openCliMachinePoolPrivateView({
+          view, accountContentEncryptionMode: storage.mode, ...(accountKey ? { accountKey } : {}),
+        }));
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+          return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        }
+        signal?.throwIfAborted();
+        return opened ?? { ok: false, errorCode: 'private_label_unavailable', error: 'private_label_unavailable' };
+      } finally { accountKey?.fill(0); }
     },
     /**
      * The Home family over the Home this process is already bound to. The Action

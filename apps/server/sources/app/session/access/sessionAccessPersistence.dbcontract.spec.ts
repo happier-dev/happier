@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -108,7 +109,7 @@ describe("Session access persistence provider contract", () => {
             const team = await db.team.create({ data: { name: `Access ${suffix}` }, select: { id: true } });
             teamId = team.id;
             const group = await db.teamGroup.create({
-                data: { teamId: team.id, name: "Access", nameKey: `access-${suffix}` },
+                data: { teamId: team.id, name: storedPlainPrivateLabel("Access") },
                 select: { id: true },
             });
             const session = await db.session.create({
@@ -189,7 +190,7 @@ describe("Session access persistence provider contract", () => {
             const team = await db.team.create({ data: { name: `Portable access ${suffix}` }, select: { id: true } });
             teamId = team.id;
             const group = await db.teamGroup.create({
-                data: { teamId: team.id, name: "Portable group", nameKey: `portable-${suffix}` },
+                data: { teamId: team.id, name: storedPlainPrivateLabel("Portable group") },
                 select: { id: true },
             });
             await db.teamMembership.createMany({ data: [

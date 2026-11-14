@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { decodeBase64 } from 'privacy-kit';
@@ -20,14 +21,14 @@ describe('Machine Team-principal guest exclusion (real Accounts and HTTP)', () =
     afterAll(async () => { if (harness) await harness.close(); });
 
     it.each(['team-guest', 'group-guest', 'account-guest', 'team-member'] as const)(
-        '%s gets only its authorized Machine access and audience', async scenario => {
+        '%s retains authorized access through grant creation, level change and revocation', async scenario => {
             const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
             const peer = await db.account.create({ data: { encryptionMode: 'plain' } });
             const team = await db.team.create({ data: { name: 'Guest grant isolation' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
             const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: peer.id,
                 role: scenario === 'team-member' ? 'member' : 'guest' } });
-            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit guests', nameKey: 'explicit-guests' } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Explicit guests') } });
             await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id } });
             const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
                 installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'Guest grant test', platform: 'linux',
@@ -59,6 +60,25 @@ describe('Machine Team-principal guest exclusion (real Accounts and HTTP)', () =
                 expect(audience).toEqual([owner.id, ...(allowed ? [peer.id] : [])].sort());
                 const roles = await inTx(tx => resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [peer.id], machineIds: [machine.id] }));
                 expect(roles.get(machine.id)?.get(peer.id) ?? null).toBe(allowed ? 'manage' : null);
+                const changed = await app.inject({ method: 'PUT', url: `/v1/machines/${machine.id}/access`,
+                    headers: headers(ownerToken), payload: { principal, level: 'view' } });
+                expect(changed.statusCode).toBe(200);
+                expect(changed.json()).toMatchObject({ kind: 'saved' });
+                const changedRead = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(peerToken) });
+                expect(changedRead.statusCode).toBe(allowed ? 200 : 404);
+                const changedRoles = await inTx(tx => resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [peer.id], machineIds: [machine.id] }));
+                expect(changedRoles.get(machine.id)?.get(peer.id) ?? null).toBe(allowed ? 'use' : null);
+                expect(await inTx(tx => readMachineAudienceAccountIdsInTx(tx, machine.id)))
+                    .toEqual([owner.id, ...(allowed ? [peer.id] : [])].sort());
+                const revoked = await app.inject({ method: 'DELETE', url: `/v1/machines/${machine.id}/access`,
+                    headers: headers(ownerToken), payload: { principal } });
+                expect(revoked.statusCode).toBe(200);
+                expect(revoked.json()).toMatchObject({ kind: 'removed' });
+                const revokedRead = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(peerToken) });
+                expect(revokedRead.statusCode).toBe(404);
+                expect(await inTx(tx => readMachineAudienceAccountIdsInTx(tx, machine.id))).toEqual([owner.id]);
+                const revokedRoles = await inTx(tx => resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [peer.id], machineIds: [machine.id] }));
+                expect(revokedRoles.get(machine.id)?.get(peer.id) ?? null).toBeNull();
             }, { authentication: 'real' });
         });
 });

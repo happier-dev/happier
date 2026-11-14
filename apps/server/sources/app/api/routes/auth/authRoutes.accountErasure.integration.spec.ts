@@ -14,6 +14,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 import { authRoutes } from "./authRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 /**
  * Erasure cases that involve encrypted access seal real envelopes to a real
@@ -240,7 +241,7 @@ describe("authRoutes (Account erasure) (integration)", () => {
         });
         const [signedToken, pat] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Automation cannot erase Accounts" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Automation cannot erase Accounts") }),
         ]);
         const app = createTestApp();
         await app.ready();

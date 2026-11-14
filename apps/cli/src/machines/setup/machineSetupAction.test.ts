@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupReportInputV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { accountSettingsParse, formatSavedSecretCatalogReferenceV1, sealSavedSecretResourceStoredContentV1, machineSetupItemKeyV1 } from '@happier-dev/protocol';
 import { commitActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -28,16 +28,18 @@ describe('admitted Machine setup snapshot lifetime', () => {
     { exitCode: 23, reportFailure: 'refused', reportState: 'terminal' },
     { exitCode: 0, reportFailure: 'lost', reportState: 'running' },
   ] as const)('preserves native outcome when the $reportState report is $reportFailure (native exit $exitCode)', async ({ exitCode, reportFailure, reportState }) => {
-    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
     const target = { homeId: 'srv_home', machineId: fixture.machine.id };
-    const sources = [{ kind: 'accountPreset' as const, presetId: 'creation-preset', presetRevision: 1,
-      setup: { scripts: [{ body: `exit ${exitCode}`, affects: 'none' as const }] } },
-      { kind: 'direct' as const, setup: {} }];
+    const preset = { kind: 'accountPresetOpaque' as const, presetId: 'creation-preset', presetRevision: 1,
+      contentEncryptionMode: 'plain' as const };
+    const sources = [preset, { kind: 'direct' as const, setup: {} }];
+    const resolvedSources = [{ ...preset, presetContent: { content: { t: 'plain', v: { v: 1, name: 'Creation',
+      setup: { scripts: [{ body: `exit ${exitCode}`, affects: 'none' }] } } }, recipientEnvelope: null } }, sources[1]!];
     const reports: Array<ReturnType<typeof MachineSetupReportInputV1Schema.parse>> = [];
     // Home transport is the boundary; planning, native tasks, and operation settlement remain real.
     const home = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (new URL(String(url)).pathname === '/v1/machines/setup/resolve') return { status: 200,
-        data: { sources, creation: { managedId: 'creation-machine', preset: { id: 'creation-preset', revision: 1 } } } };
+        data: { sources: resolvedSources, creation: { managedId: 'creation-machine', preset: { id: 'creation-preset', revision: 1 } } } };
       expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/report');
       const report = MachineSetupReportInputV1Schema.parse(body);
       reports.push(report);
@@ -150,10 +152,10 @@ describe('admitted Machine setup snapshot lifetime', () => {
     const recipeEffects = fixture.rootLaunches.length;
     expect(await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'stale-ordinary') }))
       .toMatchObject({ ok: false, errorCode: 'plan_changed' });
-    const retryContext = fixture.context('machines.setup.apply', 'retry');
-    const authorization = retryContext.externalActionExecutionAuthorization!;
-    retryContext.externalActionExecutionAuthorization = { ...authorization, binding: { ...authorization.binding,
-      workflowActionOrigin: { runId: 'retained-setup', requestId: 'retry' } } };
+    const baseRetryContext = fixture.context('machines.setup.apply', 'retry');
+    const authorization = baseRetryContext.externalActionExecutionAuthorization!;
+    const retryContext = { ...baseRetryContext, externalActionExecutionAuthorization: { ...authorization, binding: { ...authorization.binding,
+      workflowActionOrigin: { runId: 'retained-setup', requestId: 'retry' } } } };
     nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
     expect(await fixture.apply({ input, context: retryContext })).toMatchObject({ operationId: expect.any(String) });
     expect(nativeTerminal.launches.map(launch => launch.args.at(-1)))
@@ -166,9 +168,8 @@ describe('admitted Machine setup snapshot lifetime', () => {
       expectedDesiredRevision: completed.policy.revision,
       sources: [{ kind: 'direct', setup: {} }], exclusions: [],
     });
-    const editedContext = fixture.context('machines.setup.apply', 'after-edit');
-    editedContext.externalActionExecutionAuthorization = { ...authorization, binding: { ...authorization.binding,
-      requestId: 'after-edit', workflowActionOrigin: { runId: 'retained-setup', requestId: 'after-edit' } } };
+    const editedContext = { ...fixture.context('machines.setup.apply', 'after-edit'), externalActionExecutionAuthorization: { ...authorization, binding: { ...authorization.binding,
+      requestId: 'after-edit', workflowActionOrigin: { runId: 'retained-setup', requestId: 'after-edit' } } } };
     expect(await fixture.apply({ input, context: editedContext })).toMatchObject({ ok: false, errorCode: 'plan_changed' });
   });
   it.each([['plain', false], ['plain', true], ['e2ee', false], ['e2ee', true]] as const)('recovers only unfinished scripts after a confirmed failed step (%s, update %s)', async (accountEncryptionMode, update) => {
@@ -290,6 +291,99 @@ describe('admitted Machine setup snapshot lifetime', () => {
         branch: 'installed_runtime', reason } } });
     expect(fixture.rootLaunches).toEqual([]);
     expect(fixture.metadataWrites).toEqual([]);
+  });
+  it.each(['plain', 'e2ee'] as const)('keeps detached opaque preset items local through Apply and frozen Workflow retry (%s)', async accountEncryptionMode => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const items = fixture.sources[0]!.setup.items!;
+    const local = { kind: 'accountPreset' as const, presetId: 'private-retained', presetRevision: 3,
+      contentEncryptionMode: accountEncryptionMode, setup: { items } };
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0,
+      sources: [local, { kind: 'direct', setup: {} }], exclusions: [] });
+    const sources = [{ kind: 'direct' as const, setup: { scripts: [{ body: 'exit 23', affects: 'none' as const }] } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    // This signed Home input carries the original public proposal. Kept private
+    // items are normalized only inside the daemon's desired metadata owner.
+    expect(plan.sources).toEqual(sources);
+    const input = { ...target, desiredRevision: plan.desiredRevision, sources: plan.sources,
+      exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(23));
+    expect(await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'first-detach') }))
+      .toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed' });
+    const current = await fixture.client.getMachineSetupDesiredSnapshot();
+    expect(current).toMatchObject({ status: 'ready', policy: { sources: [{ kind: 'direct', setup: { items } }] } });
+    expect(await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'stale-detach') }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+    const context = fixture.context('machines.setup.apply', 'retry-detach');
+    const authorization = context.externalActionExecutionAuthorization!;
+    const retry = { ...context, externalActionExecutionAuthorization: { ...authorization, binding: { ...authorization.binding,
+      workflowActionOrigin: { runId: 'retained-detach', requestId: 'retry-detach' } } } };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+    expect(await fixture.apply({ input, context: retry })).toMatchObject({ operationId: expect.any(String) });
+    const completed = await fixture.client.getMachineSetupDesiredSnapshot();
+    expect(completed).toMatchObject({ status: 'ready', policy: { sources: [{ kind: 'direct', setup: { items } }] } });
+    if (completed.status !== 'ready') throw new Error('Missing completed desired state');
+    expect(completed.policy.pendingScriptSources).toBeUndefined();
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: completed.policy.revision,
+      sources: [{ kind: 'direct', setup: { items, scripts: [{ body: 'changed', affects: 'none' }] } }], exclusions: [] });
+    const afterEdit = fixture.context('machines.setup.apply', 'after-detach-edit');
+    expect(await fixture.apply({ input, context: { ...afterEdit, externalActionExecutionAuthorization: {
+      ...afterEdit.externalActionExecutionAuthorization!, binding: { ...afterEdit.externalActionExecutionAuthorization!.binding,
+        workflowActionOrigin: { runId: 'retained-detach', requestId: 'after-detach-edit' } } } } }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+  });
+  it('returns the exact resolved opaque preset projection beside Plan without sending its setup to Home', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const opaque = { kind: 'accountPresetOpaque' as const, presetId: 'historical-preset', presetRevision: 4,
+      contentEncryptionMode: 'plain' as const };
+    const direct = { kind: 'direct' as const, setup: {} };
+    const sources = [opaque, direct];
+    const resolvedSources = [{ ...opaque, presetContent: { content: { t: 'plain' as const, v: { v: 1,
+      name: 'Historical private setup', setup: { scripts: [{ body: 'private setup', affects: 'none' as const }] } } },
+      recipientEnvelope: null } }, direct];
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, sources });
+      return { status: 200, data: { sources: resolvedSources } };
+    });
+    const plan = MachineSetupPlanResultV1Schema.parse(await createMachineSetupPlanAction({ apiMachine: fixture.client,
+      machineId: fixture.machine.id, homeId: 'srv_home', installation: fixture.installation })({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources, mode: 'check' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+
+    expect(plan.sources).toEqual(sources);
+    expect(plan.resolvedSources).toEqual(resolvedSources);
+    expect(machineSetupApplyTargetFromPlanV1({ homeId: 'srv_home', machineId: fixture.machine.id }, plan)).not.toHaveProperty('resolvedSources');
+    expect(JSON.stringify(post.mock.calls)).not.toContain('private setup');
+  });
+  it('returns the authorized resolved projection for an incumbent opaque preset source', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const local = { kind: 'accountPreset' as const, presetId: 'incumbent-preset', presetRevision: 9,
+      contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'incumbent private setup', affects: 'none' as const }] } };
+    const direct = { kind: 'direct' as const, setup: {} };
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0, sources: [local, direct], exclusions: [] });
+    const opaque = { kind: 'accountPresetOpaque' as const, presetId: local.presetId, presetRevision: local.presetRevision,
+      contentEncryptionMode: local.contentEncryptionMode };
+    const sources = [opaque, direct];
+    const resolvedSources = [{ ...opaque, presetContent: { content: { t: 'plain' as const, v: { v: 1,
+      name: 'Incumbent private setup', setup: local.setup } }, recipientEnvelope: null } }, direct];
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, sources });
+      return { status: 200, data: { sources: resolvedSources } };
+    });
+    const plan = MachineSetupPlanResultV1Schema.parse(await createMachineSetupPlanAction({ apiMachine: fixture.client,
+      machineId: fixture.machine.id, homeId: 'srv_home', installation: fixture.installation })({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'check' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+
+    expect(plan.sources).toEqual(sources);
+    expect(plan.resolvedSources).toEqual(resolvedSources);
+    expect(JSON.stringify(post.mock.calls)).not.toContain('incumbent private setup');
   });
   it.each([
     { unavailable: 'locks', present: false, mode: 'plain' },

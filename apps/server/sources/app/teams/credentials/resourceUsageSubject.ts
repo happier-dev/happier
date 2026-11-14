@@ -32,7 +32,10 @@ function hasDirectRoute(resource: Readonly<{
 
 async function authorizeResourceUsageInTx(tx: Tx, accountId: string, resourceId: string,
     authentication: TeamOperationAuthenticationContext) {
-    const resource = await tx.teamCredentialResource.findUnique({ where: { id: resourceId }, select: usageResourceSelect });
+    const resource = await tx.teamCredentialResource.findUnique({
+        where: { id: resourceId },
+        select: { ...usageResourceSelect, displayName: true },
+    });
     if (!resource) return { ok: false as const, error: 'not_found_or_not_visible' as const };
     const actor = await resolveTeamActorContextInTx(tx, { teamId: resource.teamId, actorAccountId: accountId });
     if (!actor || actor.accountStatus !== AccountStatus.active) return { ok: false as const, error: 'not_found_or_not_visible' as const };

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
@@ -16,10 +18,22 @@ export const IdentityTestDiagnosticsGroup = React.memo(function IdentityTestDiag
     diagnostics: IdentityConnectionTestDiagnosticsV1;
     /** Only a Team connection carries external Group mappings a test can evaluate. */
     groupMappings?: boolean;
+    scope?: ServerAccountScope | null;
 }>) {
+    const groups = React.useMemo(
+        () => props.groupMappings ? props.diagnostics.mappedGroups : [],
+        [props.diagnostics.mappedGroups, props.groupMappings],
+    );
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({
+        scope: props.scope ?? null,
+        groups,
+    });
     const rows = React.useMemo(
-        () => identityTestDiagnosticsRows(props.diagnostics, { groupMappings: props.groupMappings }),
-        [props.diagnostics, props.groupMappings],
+        () => identityTestDiagnosticsRows(props.diagnostics, {
+            groupMappings: props.groupMappings,
+            openedGroupDisplayNames,
+        }),
+        [openedGroupDisplayNames, props.diagnostics, props.groupMappings],
     );
     return (
         <ItemGroup

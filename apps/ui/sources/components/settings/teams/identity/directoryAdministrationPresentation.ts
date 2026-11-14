@@ -2,10 +2,13 @@ import type { TeamDirectoryGroupV1, TeamDirectorySourceSummaryV1 } from '@happie
 
 import { t } from '@/text';
 
-/** The directory reader supplies the mapped identity independently of the chooser's paged snapshot. */
-export function directoryGroupMappingTargetLabel(mapping: TeamDirectoryGroupV1['mapping']): string {
-    return mapping.state === 'bound' && mapping.teamGroupName
-        ? mapping.teamGroupName
+/** The directory reader supplies the mapped identity; its label opens only in the local viewer. */
+export function directoryGroupMappingTargetLabel(
+    mapping: TeamDirectoryGroupV1['mapping'],
+    openedGroupDisplayName?: string | null,
+): string {
+    return mapping.state === 'bound' && openedGroupDisplayName !== null && openedGroupDisplayName !== undefined
+        ? openedGroupDisplayName
         : t('identityAdministration.mappedGroupNotVisible');
 }
 export type DirectorySourcePresentationState =

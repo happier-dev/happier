@@ -1,8 +1,8 @@
 import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { ManagedEnrollmentCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
     readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -31,11 +31,11 @@ export type ManagedNativeInvocationIO = Readonly<{
 }>;
 export type ManagedNativeInvocation = (role: ManagedNativeRole, body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>;
 export type ManagedReconciliationHome = Readonly<{
-    correlation(machine: ManagedMachineV1): ManagedControllerCurrentnessV1;
-    row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineV1>;
-    submit(machine: ManagedMachineV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineV1 }>>;
-    reportIssuedAcquireFact(machine: ManagedMachineV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedConfigurationFactsV1): Promise<ManagedMachineV1>;
-    preparePendingAcquireBoundReport(machine: ManagedMachineV1): Promise<(result: Extract<AcquireResultV1, { kind: 'bound' }>) => Promise<ManagedMachineV1>>;
+    correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1;
+    row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineFullV1>;
+    submit(machine: ManagedMachineFullV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineFullV1 }>>;
+    reportIssuedAcquireFact(machine: ManagedMachineFullV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedConfigurationFactsV1): Promise<ManagedMachineFullV1>;
+    preparePendingAcquireBoundReport(machine: ManagedMachineFullV1): Promise<(result: Extract<AcquireResultV1, { kind: 'bound' }>) => Promise<ManagedMachineFullV1>>;
 }>;
 export type ManagedReconciliationNative = Readonly<{
     bootstrapCredentialKind?: 'ssh' | 'native-token';
@@ -44,16 +44,16 @@ export type ManagedReconciliationNative = Readonly<{
     invoke: ManagedNativeInvocation;
 }>;
 export type ManagedReconciliationEnrollment = Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     carrier: ManagedBootstrapCarrierV1;
-    correlation: ManagedEnrollmentCorrelationV1;
+    correlation: ManagedEnrollmentFullCorrelationV1;
     invoke: ManagedNativeInvocation;
     credentialRevision?: number;
     guestHostPublicKey?: string;
     onInstalled(): Promise<void>;
 }>;
 export type ManagedMachineReconciliation = Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     action: ManagedMachineActionIdV1;
     requestId: string;
     signal?: AbortSignal;
@@ -63,21 +63,21 @@ export type ManagedMachineReconciliation = Readonly<{
     provisioner?: MachineProvisionerContributionV1;
     home: ManagedReconciliationHome;
     /** The host maps role names using that selected authority, never raw caller review facts. */
-    createNative(readMachine: () => ManagedMachineV1, readCredentialRevision: () => number | undefined): ManagedReconciliationNative;
+    createNative(readMachine: () => ManagedMachineFullV1, readCredentialRevision: () => number | undefined): ManagedReconciliationNative;
     bootstrap: Readonly<{
         preflight(): Promise<void>;
-        prepareCredential(machine: ManagedMachineV1, kind: 'ssh' | 'native-token'): Promise<Readonly<{
-            machine: ManagedMachineV1; publicKey?: string; guestHostPublicKey?: string; credentialRevision?: number;
+        prepareCredential(machine: ManagedMachineFullV1, kind: 'ssh' | 'native-token'): Promise<Readonly<{
+            machine: ManagedMachineFullV1; publicKey?: string; guestHostPublicKey?: string; credentialRevision?: number;
         }>>;
-        readCredential(machine: ManagedMachineV1, revision?: number): Promise<Readonly<{
+        readCredential(machine: ManagedMachineFullV1, revision?: number): Promise<Readonly<{
             publicKey?: string; guestHostPublicKey?: string; revision?: number;
         }>>;
-        enroll(input: ManagedReconciliationEnrollment): Promise<ManagedMachineV1>;
+        enroll(input: ManagedReconciliationEnrollment): Promise<ManagedMachineFullV1>;
         /** Finish host-owned guest policies before publishing successful enrollment. */
-        complete?(machine: ManagedMachineV1): Promise<void>;
+        complete?(machine: ManagedMachineFullV1): Promise<void>;
     }>;
     waitForObservation(): Promise<unknown>;
-    onResource?(machine: ManagedMachineV1): void;
+    onResource?(machine: ManagedMachineFullV1): void;
     onProgress?(progress: ActionOperationProgressV1): void;
 }>;
 
@@ -88,7 +88,7 @@ function acquisitionFailure(result: Exclude<AcquireResultV1, { kind: 'bound' }>)
 }
 
 /** Initial issued acquisitions retain the same facts as the configurator, without changing admitted input. */
-async function captureIssuedConfigurationFacts(machine: ManagedMachineV1, provisioner: MachineProvisionerContributionV1 | undefined,
+async function captureIssuedConfigurationFacts(machine: ManagedMachineFullV1, provisioner: MachineProvisionerContributionV1 | undefined,
     native: ManagedReconciliationNative): Promise<ManagedConfigurationFactsV1 | undefined> {
     if (machine.reviewedFacts || !provisioner) return undefined;
     let check: ReturnType<typeof MachineProvisionerCheckResultV1Schema.parse> | undefined;
@@ -117,7 +117,7 @@ async function captureIssuedConfigurationFacts(machine: ManagedMachineV1, provis
 export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMachineReconciliation, 'requestId' | 'provisioner' | 'signal'> & (
     | Pick<ManagedMachineReconciliation, 'action' | 'home'>
     | Readonly<{ action: 'machines.managed.inspect' | 'machines.managed.delete'; home: Pick<ManagedReconciliationHome, 'correlation' | 'row'> }>),
-    machine: ManagedMachineV1, invoke: ManagedNativeInvocation): Promise<ManagedMachineV1> {
+    machine: ManagedMachineFullV1, invoke: ManagedNativeInvocation): Promise<ManagedMachineFullV1> {
     const retained = machine.nativeOperationRef;
     if (retained && (retained.contributionRef.pluginId !== machine.launch.provider.pluginId
         || retained.contributionRef.localId !== machine.launch.provider.localId
@@ -176,7 +176,7 @@ function managedNativeReadFailure(error: unknown): ProviderObservationV1 & { rea
 }
 
 /** Native Running does not confirm Happier enrollment. Keep its durable cause until enrollment settles. */
-function withManagedBootstrapObservation(machine: ManagedMachineV1, observation: ProviderObservationV1): ProviderObservationV1 {
+function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observation: ProviderObservationV1): ProviderObservationV1 {
     if (machine.enrolledMachineId || observation.availability === 'absent' || observation.reason) return observation;
     const retained = machine.observation?.reason?.startsWith('bootstrap.') ? machine.observation : undefined;
     if (!retained && (observation.availability !== 'present' || observation.power !== 'running')) return observation;
@@ -186,13 +186,13 @@ function withManagedBootstrapObservation(machine: ManagedMachineV1, observation:
 
 /** Observe a bound submission and report against its original admitted intent. */
 export async function reconcileManagedBoundNativeIntent(input: Readonly<{
-    machine: ManagedMachineV1;
-    resource: NonNullable<ManagedMachineV1['resource']>;
-    outstanding: NonNullable<ManagedMachineV1['submittedNativeEffect']>;
+    machine: ManagedMachineFullV1;
+    resource: NonNullable<ManagedMachineFullV1['resource']>;
+    outstanding: NonNullable<ManagedMachineFullV1['submittedNativeEffect']>;
     provisioner?: MachineProvisionerContributionV1;
     home: Pick<ManagedReconciliationHome, 'row'>;
     invoke: ManagedNativeInvocation;
-}>): Promise<ManagedMachineV1> {
+}>): Promise<ManagedMachineFullV1> {
     const { machine, resource, outstanding } = input;
     const correlation = { homeId: machine.homeId, managedId: machine.id,
         expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller };
@@ -217,15 +217,18 @@ export async function inspectManagedMachine(input: Pick<ManagedMachineReconcilia
         home: Pick<ManagedReconciliationHome, 'correlation' | 'row'>;
         invoke: ManagedNativeInvocation;
         complete?: ManagedMachineReconciliation['bootstrap']['complete'];
-    }>): Promise<ManagedMachineV1> {
+        resolveProvisioner?: () => Promise<ManagedMachineReconciliation['provisioner']>;
+    }>): Promise<ManagedMachineFullV1> {
     const machine = input.machine;
     if (machine.allocation === 'confirmed-absent'
-        || !machine.resource && !machine.nativeOperationRef && (machine.allocation !== 'may-exist' || !input.provisioner?.reconciliation)) return machine;
+        || !machine.resource && !machine.nativeOperationRef && machine.allocation !== 'may-exist') return machine;
+    const provisioner = input.provisioner ?? await input.resolveProvisioner?.();
+    if (!machine.resource && !machine.nativeOperationRef && !provisioner?.reconciliation) return machine;
     if (!machine.resource && machine.allocation === 'may-exist') {
-        return await reconcileManagedAcquisitionIdentity({ ...input, action: 'machines.managed.inspect' }, machine, input.invoke);
+        return await reconcileManagedAcquisitionIdentity({ ...input, provisioner, action: 'machines.managed.inspect' }, machine, input.invoke);
     }
     if (!machine.resource) return machine;
-    if (machine.submittedNativeEffect && !input.observationOnly) return await reconcileManagedBoundNativeIntent({ ...input, resource: machine.resource,
+    if (machine.submittedNativeEffect && !input.observationOnly) return await reconcileManagedBoundNativeIntent({ ...input, provisioner, resource: machine.resource,
         outstanding: machine.submittedNativeEffect });
     const observation = ProviderObservationV1Schema.parse(await input.invoke('inspect', { resource: machine.resource.value }));
     if (machine.enrolledMachineId && machine.observation?.reason?.startsWith('bootstrap.')
@@ -235,7 +238,7 @@ export async function inspectManagedMachine(input: Pick<ManagedMachineReconcilia
 }
 
 /** Finite managed work is admitted by Home; the invoking host owns local cancellation. */
-export async function reconcileManagedMachine(input: ManagedMachineReconciliation): Promise<ManagedMachineV1> {
+export async function reconcileManagedMachine(input: ManagedMachineReconciliation): Promise<ManagedMachineFullV1> {
     let machine = input.machine;
     if (input.action === 'machines.managed.inspect') {
         let native: ManagedReconciliationNative | undefined;
@@ -312,7 +315,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         if (result.kind !== 'bound') throw acquisitionFailure(result);
         // Cancel can settle Home's row while the provider allocates. The late
         // report retains cleanup custody; this canceled creation does no guest IO.
-        if (machine.creationState !== 'active') throw new ManagedMachineControllerError('intent_changed');
+        if (machine.creationState !== 'active') throw new ManagedMachineControllerError('cancelled');
         startPending = result.startPending === true;
     }
     if (!machine.resource || machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) return machine;
@@ -381,7 +384,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                     throw error;
                 }
                 if (!machine.enrolledMachineId || carrier.kind === 'native') {
-                    const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
+                    const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
                     if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
                     machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
                         onInstalled: async () => {

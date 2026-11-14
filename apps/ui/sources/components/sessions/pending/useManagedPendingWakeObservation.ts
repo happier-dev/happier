@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineActionOutputSchemasV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -57,8 +58,8 @@ export function useManagedPendingWakeObservation(input: Readonly<{
                     surface: 'ui', signal: controller.signal,
                 });
                 if (controller.signal.aborted || !lifetime.isCurrent()) return;
-                const parsed = result.ok ? ManagedMachineV1Schema.safeParse(result.result) : null;
-                const row = parsed?.success ? parsed.data : null;
+                const parsed = result.ok ? ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result.result) : null;
+                const row = parsed?.success ? unwrapManagedMachineReadV1(parsed.data) : null;
                 settle(row && row.homeId === target.homeId && row.id === target.managedId
                     && row.enrolledMachineId === target.enrolledMachineId && row.creationState === 'active' ? row : null);
             } catch {

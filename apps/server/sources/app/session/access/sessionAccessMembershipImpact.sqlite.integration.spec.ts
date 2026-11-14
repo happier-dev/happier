@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -30,7 +31,7 @@ describe("Membership Session access effects (SQLite integration)", () => {
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const team = await db.team.create({ data: { name: "Membership impact" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Group", nameKey: "group" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Group") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",

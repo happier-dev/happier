@@ -3,6 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, FeaturesResponseSchema, type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import {
+  ManagedMachinePresetContentV1Schema,
+  openManagedMachinePresetContentV1,
+  openManagedMachinePresetRecipientProjectionV1,
+  projectManagedMachinePresetForRecipientV1,
+  sealManagedMachinePresetContentV1,
+} from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedOpaquePresetReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -26,6 +36,9 @@ import { REMOTE_HOST_ROWS_ROUTE_V1, REMOTE_HOST_ACCOUNT_CIPHER_KIND_V1, RemoteHo
   sealRemoteHostCatalogContentV1, openRemoteHostCatalogContentV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1, NOTIFICATION_CHANNELS_CIPHER_KIND_V1, NotificationChannelCatalogRecordV1Schema,
   sealNotificationChannelCatalogContentV1, openNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import tweetnacl from 'tweetnacl';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -80,7 +93,7 @@ describe('SavedSecret material-demand legacy import', () => {
   });
 
   it.each([['plain', 'chat'], ['e2ee', 'chat'], ['plain', 'nonchat'], ['e2ee', 'nonchat'],
-    ['plain', 'bound-personal'], ['e2ee', 'bound-personal'], ['plain', 'mixed'], ['e2ee', 'mixed'],
+    ['plain', 'bound-personal'], ['e2ee', 'bound-personal'], ['e2ee', 'opaque-e2ee'], ['e2ee', 'opaque-unavailable'], ['plain', 'mixed'], ['e2ee', 'mixed'],
     ['plain', 'mixed-source-drift'], ['e2ee', 'mixed-source-drift'], ['plain', 'unrelated-bound-personal'],
     ['plain', 'after-receipt-catalog']] as const)(
     'promotes original inline Voice in one full source transaction: %s %s', async (mode, origin) => {
@@ -92,7 +105,8 @@ describe('SavedSecret material-demand legacy import', () => {
       encryptedValue: encryptSecretStringV1('inline-private', deriveSettingsSecretsKeySetV1(material).writeKey,
         length => new Uint8Array(length).fill(12)) } : { _isSecretValue: true as const, value: 'inline-private' };
     const mixed = origin === 'mixed' || origin === 'mixed-source-drift';
-    const boundPersonal = origin === 'bound-personal' || origin === 'unrelated-bound-personal' || origin === 'after-receipt-catalog';
+    const opaquePreset = origin === 'opaque-e2ee' || origin === 'opaque-unavailable';
+    const boundPersonal = origin === 'bound-personal' || origin === 'unrelated-bound-personal' || origin === 'after-receipt-catalog' || opaquePreset;
     const originalSecret = { id: 'custom-eleven-credential', name: 'Personal Eleven credential', kind: 'apiKey' as const,
       createdAt: 7, updatedAt: 9, encryptedValue };
     const neighborRef = 'happier:shared-secret:v1:neighbor-chat';
@@ -116,6 +130,35 @@ describe('SavedSecret material-demand legacy import', () => {
     expect(receipt.encryptedValue).toBe(encryptedValue);
     const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: 'inline-account', source: receipt.source });
     const resourceRef = `happier:shared-secret:v1:${resourceId}`;
+    const opaqueFixture = opaquePreset && material?.type === 'legacy' ? (() => {
+      const accountKey = deriveAccountMachineKeyFromRecoverySecret(material.secret);
+      const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
+      const recipient = {
+        account: { kind: 'account' as const, accountId: 'inline-account', firstName: 'Inline', lastName: null, username: 'inline', avatarUrl: null },
+        readiness: { status: 'available' as const, contentPublicKey: Buffer.from(publicKey).toString('base64'),
+          contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+        envelopeStatus: 'missing' as const,
+      };
+      const source = sealManagedMachinePresetContentV1({ presetId: 'opaque-preset', mode: 'e2ee',
+        content: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'Opaque source preset',
+          setup: { secretRefs: { v: 1, bindings: { TOKEN: { ref: originalSecret.id } } } } }),
+        recipientCensus: [recipient], randomBytes: length => new Uint8Array(length).fill(61) });
+      const preset = ManagedMachinePresetV1Schema.parse({ id: 'opaque-preset', homeId: 'srv_inline_home', revision: 2,
+        owner: { kind: 'account', accountId: 'inline-account' }, contentEncryptionMode: 'e2ee', content: source.content,
+        recipients: origin === 'opaque-unavailable' ? [] : source.recipients });
+      const projection = projectManagedMachinePresetForRecipientV1({ content: source.content, recipients: source.recipients,
+        recipientAccountId: 'inline-account' });
+      if (projection === null) throw new Error('fixture_missing_opaque_projection');
+      const snapshot = ManagedOpaquePresetReadV1Schema.parse({
+        machine: { id: 'managed-opaque', homeId: 'srv_inline_home', custodianAccountId: 'inline-account',
+          preset: { id: preset.id, revision: preset.revision, contentEncryptionMode: 'e2ee' }, allocation: 'unsubmitted',
+          creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        presetContent: projection,
+      });
+      return { accountKey, recipient, source, preset, snapshot };
+    })() : null;
+    if (opaquePreset && !opaqueFixture) throw new Error('fixture_requires_e2ee_legacy_material');
     const publishedAfterCatalog = origin === 'after-receipt-catalog'
       ? publishUnrelatedAfterCatalogAdmission(input => input.references?.some(reference => reference.ref === resourceRef && reference.revision === 1) === true)
       : undefined;
@@ -148,7 +191,7 @@ describe('SavedSecret material-demand legacy import', () => {
     const unexpectedReads: string[] = [];
     let historySourceChurn = false;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({
-      features: { teams: { enabled: true } }, capabilities: {} }))));
+      features: { teams: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_inline_home' } } }))));
     vi.mocked(axios.get).mockImplementation(async url => {
       expect(new URL(String(url)).origin).toBe('https://inline-home.example');
       const path = new URL(String(url)).pathname;
@@ -186,12 +229,66 @@ describe('SavedSecret material-demand legacy import', () => {
       }
       unexpectedReads.push(path); throw new Error(`Unexpected inline fixture read ${path}`);
     });
+    let opaqueRecipientCensusRequests = 0;
+    let promoteRequests = 0;
     vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      const path = new URL(String(url)).pathname;
+      if (path === machinePresetActionEndpointPathV1('machines.presets.list')) {
+        expect(body).toEqual({ homeId: 'srv_inline_home', includeArchived: true });
+        return { status: 200, data: { kind: 'listed', presets: opaqueFixture ? [opaqueFixture.preset] : [] } };
+      }
+      if (path === '/v1/machines/presets/recipient-census') {
+        opaqueRecipientCensusRequests++;
+        expect(opaqueFixture).not.toBeNull();
+        expect(body).toEqual({ homeId: 'srv_inline_home', presetId: 'opaque-preset',
+          owner: { kind: 'account', accountId: 'inline-account' } });
+        return { status: 200, data: { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [opaqueFixture!.recipient] } };
+      }
+      if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+        expect(body).toEqual({ homeId: 'srv_inline_home', archived: expect.any(Boolean) });
+        return { status: 200, data: { machines: body.archived || !opaqueFixture || origin === 'opaque-unavailable'
+          ? [] : [opaqueFixture.snapshot] } };
+      }
       expect(String(url)).toBe('https://inline-home.example/v1/account/saved-secrets/resources/promote');
+      promoteRequests++;
+      if (opaqueFixture) expect(raw.secrets).toEqual([originalSecret]);
       const mutation = SharedSavedSecretPromoteInputV1Schema.parse(body);
       expect(mutation.resourceId).toBe(resourceId);
       if (boundPersonal) expect(mutation.personalSecretPromotions).toEqual([{ personalSecretId: originalSecret.id, resourceId }]);
       else expect(mutation.personalSecretPromotions).toBeUndefined();
+      if (opaqueFixture) {
+        expect(mutation.referenceCensus).toMatchObject({ opaquePresetReferences: {
+          presets: [{ presetId: opaqueFixture.preset.id }],
+          snapshots: origin === 'opaque-e2ee' ? [{ managedId: opaqueFixture.snapshot.machine.id, presetId: opaqueFixture.preset.id }] : [],
+        } });
+        expect(mutation.opaquePresetRewrites?.presets).toHaveLength(1);
+        expect(mutation.opaquePresetRewrites?.snapshots).toHaveLength(origin === 'opaque-e2ee' ? 1 : 0);
+        const sourceRewrite = mutation.opaquePresetRewrites?.presets[0];
+        if (!sourceRewrite) throw new Error('fixture_missing_source_preset_rewrite');
+        const openedSource = openManagedMachinePresetContentV1({ presetId: opaqueFixture.preset.id, mode: 'e2ee',
+          content: sourceRewrite.replacement.content, recipients: sourceRewrite.replacement.recipients,
+          accountId: 'inline-account', accountKey: opaqueFixture.accountKey });
+        expect(openedSource?.setup?.secretRefs?.bindings.TOKEN).toEqual({ ref: resourceRef, revision: 1 });
+        const oldDataKey = openEncryptedDataKeyEnvelopeV1({ envelope: Buffer.from(opaqueFixture.source.recipients[0]!.envelope.encryptedDataKey, 'base64'),
+          recipientSecretKeyOrSeed: opaqueFixture.accountKey });
+        const freshDataKey = openEncryptedDataKeyEnvelopeV1({ envelope: Buffer.from(sourceRewrite.replacement.recipients[0]!.envelope.encryptedDataKey, 'base64'),
+          recipientSecretKeyOrSeed: opaqueFixture.accountKey });
+        expect(freshDataKey).not.toEqual(oldDataKey);
+        if (origin === 'opaque-e2ee') {
+          const snapshotRewrite = mutation.opaquePresetRewrites?.snapshots[0];
+          if (!snapshotRewrite) throw new Error('fixture_missing_snapshot_preset_rewrite');
+          expect(snapshotRewrite.expectedContent).toEqual(opaqueFixture.snapshot.presetContent.content);
+          expect(snapshotRewrite.expectedRecipientEnvelope).toEqual(opaqueFixture.snapshot.presetContent.recipientEnvelope);
+          const openedSnapshot = openManagedMachinePresetRecipientProjectionV1({ presetId: opaqueFixture.preset.id, mode: 'e2ee',
+            projection: { content: snapshotRewrite.replacementContent, recipientEnvelope: snapshotRewrite.expectedRecipientEnvelope },
+            accountId: 'inline-account', accountKey: opaqueFixture.accountKey });
+          expect(openedSnapshot?.setup?.secretRefs?.bindings.TOKEN).toEqual({ ref: resourceRef, revision: 1 });
+        }
+        expect(JSON.stringify(mutation)).not.toContain('inline-private');
+      } else if (boundPersonal) {
+        expect(mutation.opaquePresetRewrites).toEqual({ presets: [], snapshots: [] });
+        expect(mutation.referenceCensus).toMatchObject({ opaquePresetReferences: { presets: [], snapshots: [] } });
+      } else expect(mutation.opaquePresetRewrites).toBeUndefined();
       expect(mutation.displayName).toBe(boundPersonal ? originalSecret.name : receipt.displayName);
       expect(mutation.kind).toBe(boundPersonal ? originalSecret.kind : receipt.kind);
       expect(mutation.expectedSettingsVersion).toBe(4);
@@ -230,9 +327,21 @@ describe('SavedSecret material-demand legacy import', () => {
     const refresh = () => runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
       expectedScopeKey: scopeKey, operationContext: context, refreshCatalog: true }));
     const snapshot = await refresh();
+    if (origin === 'opaque-unavailable') {
+      expect(opaqueRecipientCensusRequests).toBe(0);
+      expect(promoteRequests).toBe(0);
+      expect(applied).toHaveLength(0);
+      expect(raw).toEqual(originalRaw);
+      expect(snapshot.savedSecretLegacyImport).toEqual({ status: 'pending', reason: 'source-unavailable' });
+      return;
+    }
     if (publishedAfterCatalog) expect(publishedAfterCatalog()).toBe(true);
     expect(unexpectedReads).toEqual([]);
     expect(applied).toHaveLength(1);
+    if (origin === 'opaque-e2ee') {
+      expect(opaqueRecipientCensusRequests).toBe(1);
+      expect(promoteRequests).toBe(1);
+    }
     if (origin === 'unrelated-bound-personal') expect(unrelatedCatalogPublished).toBe(true);
     expect(historyObservedPromotions).not.toHaveLength(0);
     expect(historyObservedPromotions.every(count => count === 1)).toBe(true);
@@ -629,7 +738,8 @@ describe('SavedSecret material-demand legacy import', () => {
         createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null,
       updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain'
         ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } };
-    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
+    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } },
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_import_home' } } });
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(features)));
     const ambientCredentials: StoredCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'ambient-account' })).toString('base64url')}.signature`, encryption: null };
     persistenceBoundary.readStoredCredentials.mockResolvedValue(invocation ? ambientCredentials : credentials);
@@ -674,9 +784,24 @@ describe('SavedSecret material-demand legacy import', () => {
       if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
       return { status: 404, data: { error: 'not_found' } };
     });
+    let opaqueCaptureRequests = 0;
     vi.mocked(axios.post).mockImplementation(async (url, body) => {
       expect(new URL(String(url)).origin).toBe('https://import-home.example');
       const path = new URL(String(url)).pathname;
+      if (path === machinePresetActionEndpointPathV1('machines.presets.list')) {
+        opaqueCaptureRequests++;
+        expect(body).toEqual({ homeId: 'srv_import_home', includeArchived: true });
+        return { status: 200, data: { kind: 'listed', presets: [] } };
+      }
+      if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+        opaqueCaptureRequests++;
+        expect(body).toEqual({ homeId: 'srv_import_home', archived: expect.any(Boolean) });
+        return { status: 200, data: { machines: [] } };
+      }
+      if (path === '/v1/machines/presets/recipient-census') {
+        opaqueCaptureRequests++;
+        throw new Error('inference promotion must not census opaque Presets');
+      }
       if (path === '/v2/account/settings/history/4/mutate') {
         historyAttempts++;
         if (historyRetry && historyAttempts === 1) return { status: 503, data: { error: 'history_unavailable' } };
@@ -693,6 +818,11 @@ describe('SavedSecret material-demand legacy import', () => {
       expect(mutation.expectedSettingsVersion).toBe(version);
       expect(mutation.referenceCensus).toMatchObject({ accountMode: mode, profileTransferRevision: 'absent',
         profiles: { referenceGuardRevision: 3, rows: nativeArtifact ? [{ id: 'p', revision: 2 }] : [] } });
+      if (inference) expect(mutation.opaquePresetRewrites).toBeUndefined();
+      else {
+        expect(mutation.opaquePresetRewrites).toEqual({ presets: [], snapshots: [] });
+        expect(mutation.referenceCensus).toMatchObject({ opaquePresetReferences: { presets: [], snapshots: [] } });
+      }
       if (activeConnected) {
         expect(mutation.catalogMutations?.connectedConfigurations).toBeUndefined();
       }
@@ -830,6 +960,7 @@ describe('SavedSecret material-demand legacy import', () => {
       ]));
     }
     if (inference) {
+      expect(opaqueCaptureRequests).toBe(0);
       expect(raw).toEqual({ preferredLanguage: 'fr', futureSibling: { preserve: true } });
       expect(applied[0]!.profileMutations).toEqual([]);
     } else expect(raw).toMatchObject({ secrets: retainFuture ? [future] : [],

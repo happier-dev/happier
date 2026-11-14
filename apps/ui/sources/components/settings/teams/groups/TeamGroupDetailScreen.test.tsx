@@ -164,14 +164,41 @@ describe('TeamGroupDetailScreen', () => {
         expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(0);
     });
 
+    it('promotes a retained raw Group name when its description is normally saved', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', {
+            body: { contentEncryptionMode: 'plain', recipients: [] },
+        });
+        const group = teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES,
+            name: { kind: 'available', label: { content: { t: 'plain', v: 'Retained Group' },
+                recipientEnvelope: null, legacyPlaintext: true } } });
+        harness.answer(serverId, GROUP_GET_PATH, { body: group });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_UPDATE_PATH, { body: teamGroupFixture({
+            capabilities: MANAGED_GROUP_CAPABILITIES, name: 'Retained Group', description: 'Updated description' }) });
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-description');
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-name')?.props.value).toBe('Retained Group'));
+        await act(async () => screen.changeTextByTestId('team-group-description', 'Updated description'));
+        await act(async () => screen.pressByTestId('team-group-save'));
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]?.input).toMatchObject({
+            name: { content: { t: 'plain', v: 'Retained Group' }, recipients: [] },
+            description: 'Updated description',
+        });
+    });
+
     it('starts only one metadata save when pressed twice before React renders busy state', async () => {
         let releaseUpdate = (): void => {};
         const respondAfter = new Promise<void>((resolve) => { releaseUpdate = resolve; });
         const serverId = await addManagedHome();
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', {
+            body: { contentEncryptionMode: 'plain', recipients: [] },
+        });
         const group = teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES });
         harness.answer(serverId, GROUP_GET_PATH, { body: group });
         harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
-        harness.answer(serverId, GROUP_UPDATE_PATH, { body: { ...group, name: 'Edited Group' }, respondAfter });
+        harness.answer(serverId, GROUP_UPDATE_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, name: 'Edited Group' }), respondAfter });
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-save');

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
+import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams/groupLabel';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
@@ -13,6 +14,7 @@ import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
 import { projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
 import type {
@@ -32,6 +34,9 @@ export type SessionAccessDirectoryTeamContext = Readonly<{
 type DirectoryCandidateRow = SessionAccessCandidateRowModel & Readonly<{
     /** Retain the Home's safe display facts so local viewer-profile changes do not erase them. */
     accountProfile?: AccountDisplayProfileV1;
+    /** The opaque Group label is retained only for the canonical local opener. */
+    groupName?: TeamGroupNameProjectionV1;
+    groupTeamName?: string;
 }>;
 
 type Page = Readonly<{
@@ -45,7 +50,7 @@ type Page = Readonly<{
 
 type GroupTeamPage = Readonly<{
     team: SessionAccessDirectoryTeamContext;
-    rows: readonly SessionAccessCandidateRowModel[];
+    rows: readonly DirectoryCandidateRow[];
     nextCursor: string | null;
     initialized: boolean;
     failed: boolean;
@@ -76,7 +81,7 @@ const EMPTY_GROUP_PAGE: GroupDirectoryPage = Object.freeze({
     revision: 0,
 });
 
-function groupRows(page: GroupDirectoryPage): readonly SessionAccessCandidateRowModel[] {
+function groupRows(page: GroupDirectoryPage): readonly DirectoryCandidateRow[] {
     return Object.values(page.byTeam).flatMap((source) => source.rows);
 }
 
@@ -178,6 +183,17 @@ export function useSessionAccessDirectory(input: Readonly<{
     const contextTeamKey = contextTeams.map((team) => team.teamId).sort().join(',');
     const [pages, setPages] = React.useState<Readonly<Record<string, Page>>>({});
     const [groupPage, setGroupPage] = React.useState<GroupDirectoryPage | null>(null);
+    const groupLabelInputs = React.useMemo(() => [
+        ...teamGroups.rows.map((group) => ({ id: group.id, name: group.name })),
+        ...groupRows(groupPage ?? EMPTY_GROUP_PAGE).flatMap((row) =>
+            row.principal.ref.kind === 'group' && row.groupName !== undefined
+                ? [{ id: row.principal.ref.groupId, name: row.groupName }]
+                : []),
+    ], [groupPage, teamGroups.rows]);
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope, groups: groupLabelInputs });
+    const groupDisplayNamesKey = React.useMemo(() => groupLabelInputs
+        .map((group) => `${group.id}:${openedGroupDisplayNames.get(group.id) ?? ''}`)
+        .join('\u0001'), [groupLabelInputs, openedGroupDisplayNames]);
     const currentScope = React.useRef(scopeKey);
     currentScope.current = scopeKey;
     const pagesRef = React.useRef(pages);
@@ -224,10 +240,18 @@ export function useSessionAccessDirectory(input: Readonly<{
             const current = operation(row.principal.key);
             // A loaded directory page remains its Home's answer. The viewer's own display fields
             // can refresh locally without querying or borrowing the focused Home's Profile.
-            const principal = row.principal.ref.kind === 'account' && row.principal.ref.accountId === scope.accountId
-                ? presentSharePrincipal({ ref: row.principal.ref, profile: row.accountProfile,
-                    viewerProfile, viewerAccountId: scope.accountId })
-                : row.principal;
+            const principal = row.principal.ref.kind === 'group' && row.groupName !== undefined
+                ? projectSessionAccessPrincipal({
+                    kind: 'group',
+                    teamId: row.principal.ref.teamId,
+                    groupId: row.principal.ref.groupId,
+                    name: row.groupName,
+                    teamName: row.groupTeamName ?? '',
+                }, viewer, openedGroupDisplayNames.get(row.principal.ref.groupId))
+                : row.principal.ref.kind === 'account' && row.principal.ref.accountId === scope.accountId
+                    ? presentSharePrincipal({ ref: row.principal.ref, profile: row.accountProfile,
+                        viewerProfile, viewerAccountId: scope.accountId })
+                    : row.principal;
             const samePrincipal = principal.displayName === row.principal.displayName
                 && principal.secondaryLabel === row.principal.secondaryLabel
                 && principal.accessibilityLabel === row.principal.accessibilityLabel
@@ -237,7 +261,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             return { ...row, principal: samePrincipal ? row.principal : principal, operation: current };
         });
         return changed ? next : rows;
-    }, [operation, scope.accountId, viewerProfile]);
+    }, [openedGroupDisplayNames, operation, scope.accountId, viewer, viewerProfile]);
 
     /**
      * Only non-idle operations enter the section resolver keys, so an editor with
@@ -303,8 +327,15 @@ export function useSessionAccessDirectory(input: Readonly<{
         const nextRows = outcome.value.items.map((group) => {
             const principal = projectSessionAccessPrincipal({
                 kind: 'group', teamId: group.teamId, groupId: group.id, name: group.name, teamName: source.team.name,
-            });
-            return { principal, addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION };
+            }, viewer, openedGroupDisplayNames.get(group.id));
+            return {
+                principal,
+                groupName: group.name,
+                groupTeamName: source.team.name,
+                teamGroup: { teamId: group.teamId, teamGroupId: group.id },
+                addition: { kind: 'allowed' as const },
+                operation: IDLE_OPERATION,
+            };
         });
         const seen = new Set(source.rows.map((row) => row.principal.key));
         return {
@@ -314,7 +345,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             initialized: true,
             failed: false,
         };
-    }, [scope, directoryLifetime]);
+    }, [scope, directoryLifetime, openedGroupDisplayNames, viewer]);
 
     const advanceGroups = React.useCallback((mode: 'initial' | 'more' | 'retry'): Promise<GroupDirectoryPage> => {
         if (groupRequest.current) return groupRequest.current;
@@ -638,7 +669,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 principal: projectSessionAccessPrincipal({
                     kind: 'group', teamId: group.teamId, groupId: group.id, name: group.name,
                     teamName: contextTeams.find((team) => team.teamId === group.teamId)?.name ?? '',
-                }),
+                }, viewer, openedGroupDisplayNames.get(group.id)),
                 teamGroup: { teamId: group.teamId, teamGroupId: group.id },
                 addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
             }));
@@ -657,7 +688,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 ...(teamGroups.status === 'error' ? { error: directoryError } : {}),
                 cursor: teamGroups.hasMore ? `team-groups:${teamGroups.rows.length}` : null,
                 hasMore: teamGroups.hasMore, loadingMore: teamGroups.status === 'loading_more',
-                resolverKey: `${scopeKey}:team-groups:${revision}:${teamGroups.rows.length}:${teamGroups.status}:${operationsKey}`,
+                resolverKey: `${scopeKey}:team-groups:${revision}:${teamGroups.rows.length}:${teamGroups.status}:${operationsKey}:${groupDisplayNamesKey}`,
                 resolveCandidates: async (query: string) => applyOperations(narrow(groupCandidateRows, query)),
             }];
             return scoped.filter((section) => principalKinds.includes(section.kind));
@@ -712,11 +743,11 @@ export function useSessionAccessDirectory(input: Readonly<{
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,
             hasMore: groupHasMore,
             loadingMore: currentGroupPage.loadingMore,
-            resolverKey: `${scopeKey}:group:${revision}:${contextTeamKey}:${currentGroupPage.revision}:${groupRows(currentGroupPage).length}:${groupFailed}:${operationsKey}`,
+            resolverKey: `${scopeKey}:group:${revision}:${contextTeamKey}:${currentGroupPage.revision}:${groupRows(currentGroupPage).length}:${groupFailed}:${operationsKey}:${groupDisplayNamesKey}`,
             resolveCandidates: (query) => resolvePaged('group', query),
         });
         return built.filter((section) => principalKinds.includes(section.kind));
-    }, [applyOperations, availability, contextTeamKey, contextTeams, enabled, groupPage, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status, viewer, viewerPresentationKey]);
+    }, [applyOperations, availability, contextTeamKey, contextTeams, enabled, groupDisplayNamesKey, groupPage, openedGroupDisplayNames, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status, viewer, viewerPresentationKey]);
 
     const teamContexts = React.useMemo(() => {
         const discovered = pages.team?.teamContexts ?? [];

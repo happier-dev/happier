@@ -4,6 +4,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { TEAM_DIRECTORY_ACTION_IDS_V1, type TeamDirectoryActionIdV1 } from './actionIds.js';
 
 import { TeamIdSchema, TeamMembershipIdSchema } from '../membership.js';
+import { TeamGroupNameProjectionV1Schema } from '../groupLabel.js';
 
 const DirectoryIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(256)));
 const DirectoryLabelSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(256)));
@@ -132,8 +133,8 @@ const TeamDirectoryGroupMappingV1Schema = lazyZodSchema(() => z.discriminatedUni
     bindingId: DirectoryIdSchema,
     mode: z.enum(['directory_created', 'native_target']),
     teamGroupId: DirectoryIdSchema,
-    /** Display-only, projected by the authorized reader. Null explicitly means not visible. */
-    teamGroupName: z.nullable(z.string()),
+    /** Recipient-safe label; null explicitly means the target is outside this Team. */
+    teamGroupName: z.nullable(TeamGroupNameProjectionV1Schema),
   }),
 ]));
 

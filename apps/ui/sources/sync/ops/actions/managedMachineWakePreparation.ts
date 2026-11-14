@@ -12,6 +12,7 @@ import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccou
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { executeUiManagedMachineRuntimeDemand } from './managedMachineWake';
 import { readUiManagedProvisioners } from './managedProvisionerAction';
+import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 /** The captured Account supplies exact reads; shared preparation alone decides whether a wake is demanded. */
 export async function prepareUiManagedMachineWake(
@@ -75,7 +76,10 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
                 const result = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', target,
                     { signal: context.signal });
                 account.assertCurrent();
-                return result;
+                const [opened] = await openManagedMachineReadSnapshots(account.accountLifetime.scope, [result], context.signal);
+                account.assertCurrent();
+                return opened?.launch ? opened
+                    : { ok: false as const, errorCode: 'content_unavailable', error: 'content_unavailable' };
             } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled'
                     : error instanceof ManagedMachineActionError ? error.code : 'managed_request_failed';

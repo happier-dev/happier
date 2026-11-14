@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
+import type { MachinePoolPrivateLabelStoredV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { inTx } from "@/storage/inTx";
 import { deleteTeamCredentialResourceInTx } from "@/app/teams/credentials/resourceDelete";
 import { updateTeamCredentialResourceInTx } from "@/app/teams/credentials/resourceUpdate";
@@ -27,6 +28,14 @@ const TEST_AUTHENTICATION = {
     authenticationAuthority: "present_user",
     authenticationEvidence: [],
 } as const;
+
+function plainPoolLabel(value: string): MachinePoolPrivateLabelStoredV1 {
+    return { content: { t: 'plain', v: value }, recipients: [] };
+}
+
+function projectedPlainPoolLabel(value: string) {
+    return { kind: 'available' as const, label: { content: { t: 'plain' as const, v: value }, recipientEnvelope: null } };
+}
 
 function createDeferred(): Readonly<{
     promise: Promise<void>;
@@ -74,7 +83,7 @@ describe("Machine Pool aggregate provider contract", () => {
     it(`keeps the large aggregate, CAS, and deletion semantics atomic on ${provider}`, async () => {
         const created = await createMachinePool({
             accountId,
-            input: { poolId, name: "Provider-scale aggregate", members },
+            input: { poolId, name: plainPoolLabel("Provider-scale aggregate"), members },
             io: disconnectedPresence,
         });
         expect(created).toMatchObject({ ok: true, value: { pool: { revision: 0 } } });
@@ -89,7 +98,7 @@ describe("Machine Pool aggregate provider contract", () => {
             input: {
                 poolId,
                 expectedRevision: 0,
-                name: "Provider-scale aggregate updated",
+                name: plainPoolLabel("Provider-scale aggregate updated"),
                 members: replacement,
             },
             io: disconnectedPresence,
@@ -105,7 +114,7 @@ describe("Machine Pool aggregate provider contract", () => {
             input: {
                 poolId,
                 expectedRevision: 0,
-                name: "Stale aggregate edit",
+                name: plainPoolLabel("Stale aggregate edit"),
                 members: replacement.slice(1),
             },
             io: disconnectedPresence,
@@ -114,7 +123,7 @@ describe("Machine Pool aggregate provider contract", () => {
             ok: false,
             error: {
                 code: "pool_changed",
-                current: { pool: { revision: 1, name: "Provider-scale aggregate updated" } },
+                current: { pool: { revision: 1, name: projectedPlainPoolLabel("Provider-scale aggregate updated") } },
             },
         });
         expect(await db.machinePoolMember.count({ where: { poolId } })).toBe(1_001);
@@ -165,7 +174,7 @@ describe("Machine Pool aggregate provider contract", () => {
         });
         await expect(createMachinePool({
             accountId,
-            input: { poolId: attachedPoolId, name: "Attached Pool", members: [] },
+            input: { poolId: attachedPoolId, name: plainPoolLabel("Attached Pool"), members: [] },
             io: disconnectedPresence,
         })).resolves.toMatchObject({ ok: true, value: { pool: { revision: 0 } } });
 

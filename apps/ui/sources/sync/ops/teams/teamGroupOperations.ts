@@ -10,6 +10,7 @@ import {
     type TeamGroupV1,
     type TeamGroupsPageV1,
 } from '@happier-dev/protocol/teams';
+import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -126,7 +127,9 @@ async function groupMutation(params: Readonly<{
 export function createTeamGroup(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
-    name: string;
+    /** Minted before sealing so the ciphertext is bound to the immutable Group row. */
+    groupId: string;
+    name: PrivateLabelStoredV1;
     description: string | null;
     requestKey: string;
     /**
@@ -144,6 +147,7 @@ export function createTeamGroup(params: Readonly<{
         input: {
             v: 1,
             teamId: params.address.teamId,
+            groupId: params.groupId,
             name: params.name,
             description: params.description,
             requestKey: params.requestKey,
@@ -157,7 +161,7 @@ export function updateTeamGroup(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     groupId: string;
-    name?: string;
+    name?: PrivateLabelStoredV1;
     description?: string | null;
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({

@@ -12,6 +12,7 @@ import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import type { Fastify as AppFastify } from "../../types";
 import { buildChangesReadRequest, CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("Session-filtered changes replay (SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -30,7 +31,7 @@ describe("Session-filtered changes replay (SQLite)", () => {
         for (const session of [a, b]) await inTx(tx => markAccountChanged(tx, {
             accountId: account.id, kind: "session", entityId: session.id,
         }));
-        const token = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "feed", grant: {
+        const token = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "feed"), grant: {
             v: 1, actions: { families: [], ids: ["session.transcript.get"] }, targets: { sessions: [a.id], machines: [] },
             approve: false, origins: [], models: null, permissionModes: null, create: null,
         } });

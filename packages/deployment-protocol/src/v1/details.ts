@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 
-import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema } from './environment.js';
+import { DeploymentEnvironmentContentStoredReadV1Schema, DeploymentEnvironmentHeaderV1Schema } from './environment.js';
 import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema } from './target.js';
 import { DeploymentContentV1Schema, DeploymentReceiptFailureV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from './deployment.js';
 import { DeploymentIdentifierV1Schema } from './ids.js';
@@ -53,7 +53,7 @@ export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
     savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
     secretScope: z.optional(DeploymentEnvironmentSecretScopeV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),
-    content: DeploymentEnvironmentContentV1Schema,
+    content: DeploymentEnvironmentContentStoredReadV1Schema,
     targetLinks: z.array(z.strictObject({
         targetLink: DeploymentTargetLinkHeaderV1Schema,
         // Custody headers remain available without demanding private link bodies.

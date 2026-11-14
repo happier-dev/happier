@@ -66,6 +66,7 @@ export function createAutomationPluginEventTriggerDefinitionV1(
 ): AutomationEventTriggerDefinitionStoredPayloadV1 {
   return {
     v: 1,
+    ...(definition.automationDisplay === undefined ? {} : { automationDisplay: definition.automationDisplay }),
     sourceInstanceId: definition.sourceInstanceId,
     ...(definition.observationTransport.kind === 'durablePush' ? {
       webhookRoutingSourceInstanceId: definition.observationTransport.webhookRoutingSourceInstanceId,

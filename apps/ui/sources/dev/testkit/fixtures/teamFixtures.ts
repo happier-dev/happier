@@ -15,6 +15,7 @@ import {
     type TeamPolicyV1,
     type TeamSummaryV1,
 } from '@happier-dev/protocol/teams';
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import { accountDisplayProfileFixture } from './homeGovernanceFixtures';
 
@@ -71,18 +72,21 @@ export function teamCapabilitiesFixture(
     return { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, viewRoster: true, ...granted };
 }
 
-export function teamGroupFixture(overrides?: Partial<TeamGroupV1>): TeamGroupV1 {
+export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name'> & { name?: string | TeamGroupV1['name'] }): TeamGroupV1 {
+    const name = overrides?.name ?? 'Developers';
     return {
         v: 1,
         id: 'group-1',
         teamId: 'team-1',
-        name: 'Developers',
         description: null,
         memberCount: 1,
         archivedAt: null,
         management: { kind: 'native' },
         capabilities: NO_TEAM_GROUP_CAPABILITIES_V1,
         ...overrides,
+        name: typeof name === 'string'
+            ? { kind: 'available', label: { content: { t: 'plain', v: name }, recipientEnvelope: null } }
+            : name,
     };
 }
 
@@ -144,17 +148,28 @@ export function teamInvitationRowFixture(
  * plan's own example uses. Both halves are explicit so a case that cares about
  * an audience or a delivery mode has to say so rather than inheriting one.
  */
+export function teamCredentialDisplayNameFixture(displayName: string): PrivateLabelReadV1 {
+    return { content: { t: 'plain', v: displayName }, recipientEnvelope: null };
+}
+
+export type TeamCredentialResourceFixtureOverrides = Omit<Partial<TeamCredentialResourceSummaryV1>, 'capabilities' | 'displayName'> & Readonly<{
+    /** Text remains convenient test input; production rows carry a recipient projection. */
+    displayName?: string | PrivateLabelReadV1;
+    capabilities?: Partial<TeamCredentialResourceSummaryV1['capabilities']>;
+}>;
+
 export function teamCredentialResourceFixture(
-    overrides?: Omit<Partial<TeamCredentialResourceSummaryV1>, 'capabilities'> & Readonly<{
-        capabilities?: Partial<TeamCredentialResourceSummaryV1['capabilities']>;
-    }>,
+    overrides?: TeamCredentialResourceFixtureOverrides,
 ): TeamCredentialResourceSummaryV1 {
+    const { displayName: displayNameOverride, capabilities: capabilityOverrides, ...rest } = overrides ?? {};
     return {
         id: 'resource-1',
         teamId: 'team-1',
         custodianAccountId: 'account-ada',
         sourceOwnerDisplayName: 'Ada Lovelace',
-        displayName: 'Claude Enterprise',
+        displayName: typeof displayNameOverride === 'string'
+            ? teamCredentialDisplayNameFixture(displayNameOverride)
+            : displayNameOverride ?? teamCredentialDisplayNameFixture('Claude Enterprise'),
         enabled: true,
         revision: 3,
         deliveryPolicy: { preferredAllowedModes: ['brokered'] },
@@ -190,7 +205,7 @@ export function teamCredentialResourceFixture(
         directExportSupport: 'unsupported',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
-        ...overrides,
+        ...rest,
         capabilities: {
             manageAudience: true,
             managePolicy: true,
@@ -203,20 +218,27 @@ export function teamCredentialResourceFixture(
             disable: true,
             enable: true,
             delete: true,
-            ...overrides?.capabilities,
+            ...capabilityOverrides,
         },
     };
 }
 
+export type TeamCredentialSourceResourceFixtureOverrides = Omit<Partial<TeamCredentialSourceResourceAdministrationV1>, 'capabilities' | 'displayName'> & Readonly<{
+    /** Match the main resource fixture: concise text input still becomes a recipient projection. */
+    displayName?: string | PrivateLabelReadV1;
+    capabilities?: Partial<TeamCredentialSourceResourceAdministrationV1['capabilities']>;
+}>;
+
 export function teamCredentialSourceResourceFixture(
-    overrides?: Omit<Partial<TeamCredentialSourceResourceAdministrationV1>, 'capabilities'> & Readonly<{
-        capabilities?: Partial<TeamCredentialSourceResourceAdministrationV1['capabilities']>;
-    }>,
+    overrides?: TeamCredentialSourceResourceFixtureOverrides,
 ): TeamCredentialSourceResourceAdministrationV1 {
+    const { displayName: displayNameOverride, capabilities: capabilityOverrides, ...rest } = overrides ?? {};
     const resource = teamCredentialResourceFixture();
     return {
         id: resource.id,
-        displayName: resource.displayName,
+        displayName: typeof displayNameOverride === 'string'
+            ? teamCredentialDisplayNameFixture(displayNameOverride)
+            : displayNameOverride ?? resource.displayName,
         enabled: resource.enabled,
         revision: resource.revision,
         deliveryPolicy: resource.deliveryPolicy,
@@ -226,8 +248,8 @@ export function teamCredentialSourceResourceFixture(
         recoveryAction: resource.recoveryAction,
         createdAt: resource.createdAt,
         updatedAt: resource.updatedAt,
-        ...overrides,
-        capabilities: { ...resource.capabilities, ...overrides?.capabilities },
+        ...rest,
+        capabilities: { ...resource.capabilities, ...capabilityOverrides },
     };
 }
 

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from "@happier-dev/protocol/changes";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
@@ -121,7 +122,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             },
         };
         if (kind === "group_update") {
-            const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Initial group", nameKey: "initial group" } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Initial group") } });
             return {
                 owner, url: "/v1/teams/groups/update", payload: { v: 1, teamId: team.id, groupId: group.id, name: "Updated group" },
                 verify: async () => {
@@ -348,7 +349,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         teamIds.push(team.id);
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Operators", nameKey: "operators" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Operators") } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
         } });

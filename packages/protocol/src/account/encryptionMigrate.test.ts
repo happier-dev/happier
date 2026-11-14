@@ -116,6 +116,88 @@ describe('account/encryptionMigrate', () => {
     expect(plain([{ resourceId, expectedRevision: 2, storedContent: { t: 'plain', v: content }, ownerKeyEnvelope }])).toBe(false);
     expect(plain([{ resourceId, expectedRevision: 2, storedContent: encrypted }])).toBe(false);
   });
+  it('binds Account private-label replacements to both the source and target modes', () => {
+    const encryptedLabel = {
+      content: {
+        t: 'encrypted' as const,
+        c: encodeBase64(new Uint8Array(40).fill(7)),
+      },
+      recipients: [{
+        accountId: 'account',
+        envelope: {
+          encryptedDataKey: encodeBase64(
+            new Uint8Array(ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES).fill(5),
+          ),
+          recipientContentPublicKeyFingerprint: 'owner-fingerprint',
+        },
+      }],
+    };
+    const directive = {
+      items: [{
+        entity: 'account_api_token',
+        field: 'label',
+        id: 'token-a',
+        expectedLabel: {
+          content: { t: 'plain' as const, v: 'Token label' },
+          recipientEnvelope: null,
+        },
+        label: encryptedLabel,
+      }],
+    };
+    const candidate = {
+      ...createUnsignedE2eeRequest(),
+      privateLabels: directive,
+    };
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse(candidate).success).toBe(true);
+    const request = AccountEncryptionMigrateUnsignedRequestSchema.parse(candidate);
+    const binding = { accountId: 'account', sourceMode: 'plain' as const };
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding }))
+      .not.toBe(createAccountEncryptionMigrateRequestBindingDigestV1({ request: createUnsignedE2eeRequest(), ...binding }));
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse({
+      ...candidate,
+      privateLabels: { items: [directive.items[0], directive.items[0]] },
+    }).success).toBe(false);
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse({
+      ...candidate,
+      privateLabels: {
+        items: [{
+          ...directive.items[0],
+          expectedLabel: {
+            content: { t: 'encrypted', c: encryptedLabel.content.c },
+            recipientEnvelope: encryptedLabel.recipients[0]!.envelope,
+          },
+        }],
+      },
+    }).success).toBe(false);
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse({
+      ...candidate,
+      privateLabels: {
+        items: [{
+          ...directive.items[0],
+          label: { content: { t: 'plain', v: 'Token label' }, recipients: [] },
+        }],
+      },
+    }).success).toBe(false);
+
+    // A personal Pool carries two independently bound labels on one row. The
+    // migration inventory must distinguish their fields rather than treating
+    // the Pool id as the whole label identity.
+    const poolName = {
+      entity: 'machine_pool',
+      field: 'name',
+      id: 'pool-a',
+      expectedLabel: directive.items[0]!.expectedLabel,
+      label: directive.items[0]!.label,
+    };
+    const poolDescription = {
+      ...poolName,
+      field: 'description',
+    };
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse({
+      ...candidate,
+      privateLabels: { items: [poolName, poolDescription] },
+    }).success).toBe(true);
+  });
   it('binds all five D9 catalog revisions and content into the signed Account conversion', () => {
     const domains = [
       ['providerConnections', 'account_provider_connections'],

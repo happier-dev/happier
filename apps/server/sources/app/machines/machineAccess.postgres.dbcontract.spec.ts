@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
@@ -253,7 +254,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const member = await db.account.create({ data: { id: `a-${randomUUID()}`, encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Prospective audience' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: f.owner.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Prospective group', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Prospective group') } });
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', retries);
         const restore = beforeAdmissionFence(async () => {
             const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });

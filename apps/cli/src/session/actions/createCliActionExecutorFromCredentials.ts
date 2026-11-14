@@ -98,6 +98,7 @@ import type {
   SessionSpawnDirectTargetTransport,
 } from './createCliActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { createCliTeamCredentialUsageExportAction } from './teamCredentialUsageExportAction';
 import { isControllerDeploymentMutationAction } from './createCliActionDeps';
 import { consumeDeferredCliApprovalResult, isOriginalCliApprovalPreservedAtAccount, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
 import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
@@ -484,7 +485,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     if (!admittedInput.success) return { kind: 'settled', result: actionFailure('invalid_parameters') };
     placementInput = admittedInput.data;
   }
-  const executionPlacement = resolveActionExecutionPlacementForInput(spec, placementInput, params.context?.actionCaller);
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, placementInput, params.context?.actionCaller, params.context?.surface ?? 'cli');
   const targetInput = readRecord(params.input);
   if (spec.sessionTarget && targetInput) {
     const rawTarget = readActionSessionTargetField(targetInput, spec.sessionTarget.field);
@@ -1003,7 +1004,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         // the currentness checker still verifies Home, Account and installation.
         const terminalTarget = isMachineTerminalActionId(args.request.actionId)
           ? resolveExternalActionMachineTarget({ actionId: args.request.actionId,
-              rawInput: args.request.actionArgs, target: args.origin.target }) : null;
+              rawInput: args.request.actionArgs, target: args.origin.target,
+              context: { actionCaller: args.origin.caller, surface: args.origin.surface } }) : null;
         if (terminalTarget?.kind === 'rejected') return false;
         const currentMachineId = readNonEmptyString(params.machineId)
           ?? (terminalTarget?.kind === 'ready' ? terminalTarget.machineId : null)
@@ -1078,6 +1080,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                 ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}) },
             });
           } }) : undefined;
+    const teamCredentialUsageExport = accountServerActionDeps.homeDomainAction
+      ? createCliTeamCredentialUsageExportAction({
+          credentials,
+          homeDomainAction: accountServerActionDeps.homeDomainAction,
+        })
+      : undefined;
     return createCliActionExecutor({
       ...cryptoContext,
       ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
@@ -1090,6 +1098,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(routeHostChildAction ? { routeHostChildAction } : {}),
       ...(readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions } : {}),
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
+      ...(teamCredentialUsageExport ? { teamCredentialUsageExport } : {}),
       clientActionExecute: params.clientActionExecute ?? getDaemonClientActionExecutor(approvalServerId),
       confidentialSecretFill: params.confidentialSecretFill ?? getDaemonConfidentialSecretFillExecutor(approvalServerId),
       confidentialActionInputs: params.confidentialActionInputs ?? getDaemonConfidentialActionInputsExecutor(approvalServerId),
@@ -1522,7 +1531,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             ?? (context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : null);
           if (!receiverMachineId) return routingFailure(actionId, actionFailure('target_unavailable'));
           const selected = resolveExternalActionMachineTarget({ actionId, rawInput: input,
-            target: context.externalActionTarget, ownerMachineId: receiverMachineId });
+            target: context.externalActionTarget, ownerMachineId: receiverMachineId, context });
           if (selected.kind === 'rejected') return routingFailure(actionId, selected.execution);
           if (isMachineSetupPlanOrApplyActionIdV1(actionId)) {
             const operation = readHostReviewedChildOperationV1(context, actionId, input);
@@ -1622,7 +1631,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         && !context.externalActionExecutionAuthorization && params.machineId
         && (params.pluginActionExecutionOwner !== 'current_process' || isDeploymentReceiptObservationActionIdV1(actionId))
         && !isPluginActionExecutionDispatchId(actionId)
-        && resolveActionExecutionPlacementForInput(getActionSpec(ActionIdSchema.parse(actionId)), input, context.actionCaller) === 'machine') {
+        && resolveActionExecutionPlacementForInput(getActionSpec(ActionIdSchema.parse(actionId)), input, context.actionCaller, context.surface) === 'machine') {
         const invocation = readExternalActionRequesterInvocation(context);
         const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
         const originalTarget = context.externalActionTarget ?? { kind: 'machine' as const, machineId: params.machineId };
@@ -1651,7 +1660,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               });
               if (!selected.ok) return selected;
               const resolved = resolveExternalActionMachineTarget({ actionId, rawInput: input,
-                target: context.externalActionTarget, ownerMachineId: selected.machineId });
+                target: context.externalActionTarget, ownerMachineId: selected.machineId, context });
               if (resolved.kind === 'rejected') return resolved.execution;
               target = { kind: 'machine', machineId: selected.machineId };
             }
@@ -1823,7 +1832,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         liveResultCustody = resolveActionApprovalRouting({ actionId: spec.id, spec, input: admittedInput,
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller);
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller, context.surface ?? 'cli');
       if (originalCliCaller && actionId === 'machines.managed.acquire' && executionPlacement === 'account') {
         const invocation = readExternalActionRequesterInvocation({ ...context, surface: 'cli',
           authority: context.authority ?? 'account_automation' });
@@ -1854,11 +1863,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         && executionPlacement === 'client';
       const declaredDaemonIngress = spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true;
       const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
-        || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput)
+        || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)
         && (executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
         ? resolveSelectedExternalActionMachineTarget({ actionId: spec.id, rawInput: admittedInput,
-          target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId }) : null;
+          target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId, context }) : null;
       if (selectedOriginalMachine && (selectedOriginalMachine.kind === 'rejected'
         || params.machineId && params.machineId !== selectedOriginalMachine.machineId)) return { context,
           invocation: createOneShotPatInvocation(async () => routingFailure(actionId,
@@ -1879,7 +1888,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (spec.inputSchema.safeParse(withDefault).success) admittedInput = withDefault;
       }
       const reconciliation = reconcileExternalActionTarget({ actionId: spec.id, rawInput: admittedInput,
-        target: context.externalActionTarget, currentMachineId: params.machineId ?? '' });
+        target: context.externalActionTarget, currentMachineId: params.machineId ?? '', context });
       const sessionTarget = sessionPlaced && reconciliation.kind === 'ready' && reconciliation.target?.kind === 'session'
         ? reconciliation.target.sessionId : null;
       if (sessionTarget && originalCliCaller && !machineAdmissionTransport
@@ -2028,7 +2037,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
         }
         const daemonControlTarget = originalDaemonTarget;
-        if (!target && !ownManagedNativeIngress && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput)
+        if (!target && !ownManagedNativeIngress && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)
           && ownDaemon && daemonControlTarget?.machineId) {
           target = { kind: 'machine', machineId: daemonControlTarget.machineId };
         }
@@ -2054,9 +2063,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             const localPublication = daemonControlTarget ?? localEndpoint;
             const ownLocal = (ordinary || pairedTerminal) && accountId && localPublication?.machineId === target.machineId
               && localPublication.accountId === accountId;
-            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput)) {
+            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)) {
               try {
-                if (requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput)) {
+                if (requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)) {
                   if (!params.actionsSettingsProvider) await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
                   const policy = params.actionsSettingsProvider ?? createActionSettingsProvider({
                     scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),

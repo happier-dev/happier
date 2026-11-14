@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedMachinePresetDelegatedAcquireV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -82,7 +81,7 @@ export function useManagedControllerScope(
     /** A machine the page already names (a preset's controller, the picker's handoff), used until the person picks. */
     preferred?: ManagedControllerV1;
     /** Exact preset authority fixes the controller without granting a Machine picker. */
-    delegatedAcquire?: ManagedMachinePresetDelegatedAcquireV1;
+    delegatedPreset?: boolean;
     /** Acquisition may prefer this device; recipe authoring does not demand its native task runner. */
     observeThisComputer?: boolean;
     disabled?: boolean;
@@ -302,12 +301,12 @@ export function useManagedControllerScope(
       />
     ) : null;
   return {
-    controller: input.delegatedAcquire ? input.preferred : controller,
+    controller: input.delegatedPreset ? input.preferred : controller,
     machine: machines?.find((machine) => machine.id === controller?.machineId),
     hasCandidates: controllerMachines.length > 0,
     hasOnlineCandidate: scopedRows.some(row => row.candidate.availability === 'online'),
     machineList: listSettled ? 'settled' : listStatus === 'error' || listStatus === 'signedOut' ? 'unavailable' : 'loading',
-    chip: input.delegatedAcquire ? null : chip,
-    selection: input.delegatedAcquire ? undefined : selection,
+    chip: input.delegatedPreset ? null : chip,
+    selection: input.delegatedPreset ? undefined : selection,
   };
 }

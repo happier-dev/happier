@@ -75,6 +75,7 @@ import { createExternalActionDaemonDispatcher } from "./externalActionDispatcher
 import { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE } from "../socket";
 import { buildRpcMethodRoom } from "./rpc/rpcMethodRoom";
 import { registerExternalActionRoutes } from "../routes/actions/registerExternalActionRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const machineId = "machine-external-action-carrier";
 const expectedHttpBodyLimitBytes = 33_554_432;
@@ -420,7 +421,7 @@ describe("external Action server-to-daemon request carrier", () => {
         });
 
         const credential = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(),
-            label: 'Carrier boundary', grant: API_TOKEN_FULL_GRANT_V1 });
+            label: await preparePlainAccountApiTokenLabel(account.id, 'Carrier boundary'), grant: API_TOKEN_FULL_GRANT_V1 });
         const requestHeaders = { authorization: `Bearer ${credential.token}`, 'content-type': 'application/json' };
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         const io = new Server(app.server, {

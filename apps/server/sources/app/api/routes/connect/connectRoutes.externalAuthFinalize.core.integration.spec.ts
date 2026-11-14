@@ -23,6 +23,7 @@ import { eventRouter } from "@/app/events/connectionEventRouter";
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 
 function createTestApp() {
@@ -1424,7 +1425,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
         // Socket disconnection is an external transport boundary. Keep the
         // provider reset, disablement and credential revocation path real.
         const disconnectAccountSockets = vi.spyOn(eventRouter, "disconnectAccountSockets");
-        const oldPat = await auth.createApiToken({ accountId: oldAccount!.id, tokenId: crypto.randomUUID(), label: 'Before provider reset' });
+        const oldPat = await auth.createApiToken({ accountId: oldAccount!.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(oldAccount!.id, 'Before provider reset') });
 
         // Add some social data to be migrated.
         const friend = await db.account.create({ data: { publicKey: "pk_friend_reset", username: "friend1" } });

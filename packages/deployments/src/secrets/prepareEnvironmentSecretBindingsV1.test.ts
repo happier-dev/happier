@@ -18,6 +18,7 @@ it('captures backup credential references before placement without acquiring mat
 type ReferenceComponent = Extract<EnvironmentSecretBindingV1['source'], { kind: 'reference' }>['component'];
 const reference = (component: ReferenceComponent): EnvironmentSecretBindingV1 => ({
     purpose: 'variable', phase: 'runtime', name: 'DATABASE_CONNECTION',
+    grantRef: '00000000-0000-4000-8000-000000000010',
     source: { kind: 'reference', environmentId: 'database-environment', export: 'database', via: 'privateNetwork',
         ...(component ? { component } : {}) },
 });
@@ -56,8 +57,9 @@ describe('Environment reference grant preparation', () => {
         expect(prepared.grants).toHaveLength(1);
         expect(open(prepared.grants[0]!.sealedContent)).toMatchObject({
             subject: { kind: 'environmentValues', environmentId: input.environmentId,
-                binding: { purpose: binding.purpose, phase: 'runtime', name: 'DATABASE_CONNECTION' } },
-            content: { kind: 'environmentValues', definition: binding.source },
+                binding: { purpose: binding.purpose, phase: 'runtime', grantRef: binding.grantRef } },
+            content: { kind: 'environmentValues', binding: { purpose: binding.purpose, phase: 'runtime', name: 'DATABASE_CONNECTION',
+                grantRef: binding.grantRef }, definition: binding.source },
         });
         if (previous === next) expect(prepared.grants[0]!.sealedContent).toBe(initial.grants[0]!.sealedContent);
     });

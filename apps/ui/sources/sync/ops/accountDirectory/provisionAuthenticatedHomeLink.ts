@@ -158,7 +158,10 @@ export async function provisionAuthenticatedHomeLink(
             ).catch(() => null),
             readAccountServiceCredential: async (identity) =>
                 identity === selectedIssuerIdentity ? input.session : null,
-            readAccountSubject: async (session) => (await session.readAccountSummary()).accountId,
+            readAccountSubject: async (session) => {
+                const { accountId, encryptionMode } = await session.readAccountSummary();
+                return { accountId, encryptionMode };
+            },
             publishLinkToHome: async ({ credential, issuerSubjectId, relink }) => {
                 const resolvedTransport = await resolveHomeEnrollmentTransport(descriptor, {
                     verification: { kind: 'authenticated', token: credential.token },

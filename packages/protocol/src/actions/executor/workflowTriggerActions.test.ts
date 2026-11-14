@@ -21,6 +21,7 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/a
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationPullRequestTriggerSchema } from '../../automations/automationTriggerDefinition.js';
 import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
+import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -163,7 +164,8 @@ function fixture(savedDefinition = definition) {
                   binding: { v: 1, automationId: input.automationId, triggerId: AutomationTriggerIdSchema.parse(value.triggerId),
                     triggerRevision: 0, triggerKind: 'pluginEvent', eventRef: value.trigger.eventRef,
                     sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001') },
-                  definition: { v: 1, sourceInstanceId: value.trigger.sourceInstanceId, sourceConfig: value.trigger.sourceConfig,
+                  definition: { v: 1, ...(value.trigger.automationDisplay === undefined ? {} : { automationDisplay: value.trigger.automationDisplay }),
+                    sourceInstanceId: value.trigger.sourceInstanceId, sourceConfig: value.trigger.sourceConfig,
                     displayLabel: value.trigger.displayLabel, filter: value.trigger.filter, maximumObservationAgeMs: value.trigger.maximumObservationAgeMs } })) })
             : value.trigger.kind === 'sessionLifecycle' || value.trigger.kind === 'runLifecycle'
             ? AutomationTriggerDetailSchema.parse({ ...value.trigger, id: value.triggerId,
@@ -186,6 +188,15 @@ function fixture(savedDefinition = definition) {
           }
           if (item.kind === 'new') return toTrigger(item.triggerId, item.trigger.enabled);
           const old = current.triggers.find((value) => value.id === item.triggerId)!;
+          if (old.kind === 'pluginEvent' && item.triggerDefinitionEnvelope !== undefined) {
+            const revision = old.revision + 1;
+            return AutomationTriggerDetailSchema.parse({
+              ...old,
+              revision,
+              enabled: item.enabled ?? old.enabled,
+              triggerDefinitionEnvelope: JSON.stringify(item.triggerDefinitionEnvelope),
+            });
+          }
           if ((old.kind === 'prComment' || old.kind === 'ciFailed') && (item.enabled !== undefined || item.trigger !== undefined)) {
             const revision = old.revision + 1;
             const definition = item.trigger ?? await deps.openPullRequestTrigger!(current, old);
@@ -205,7 +216,8 @@ function fixture(savedDefinition = definition) {
                 : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
                   binding: { v: 1, automationId: id, triggerId: old.id, triggerRevision: revision,
                     triggerKind: 'pluginEvent', eventRef: value.eventRef, sourceSelectorId },
-                  definition: { v: 1, sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
+                  definition: { v: 1, ...(value.automationDisplay === undefined ? {} : { automationDisplay: value.automationDisplay }),
+                    sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
                     displayLabel: value.displayLabel, filter: value.filter, maximumObservationAgeMs: value.maximumObservationAgeMs } })) });
           }
           return { ...old, ...(item.enabled === undefined ? {} : { enabled: item.enabled }),
@@ -213,7 +225,10 @@ function fixture(savedDefinition = definition) {
         }));
         const row: AutomationDefinitionDetail = { ...current,
           // The Automation transport advances the definition revision for metadata/trigger writes too.
-          templateVersion: current.templateVersion + 1, enabled: input.enabled,
+          templateVersion: current.templateVersion + 1,
+          name: input.name,
+          description: input.description,
+          enabled: input.enabled,
           assignments: input.assignments.map((value) => ({ machineId: value.machineId, enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })),
           workflowDefinitionId: input.workflowDefinitionId === undefined ? current.workflowDefinitionId : input.workflowDefinitionId,
           executionRecipe: input.executionRecipe ?? current.executionRecipe, triggers };
@@ -887,6 +902,123 @@ describe('Account source watcher assignment', () => {
     await expect(host.list({ automationId: first.set.automationId, triggerId: 'missing' })).rejects.toBeDefined();
     if (mode === 'e2ee') expect(after.triggerDefinitionEnvelope).not.toContain('provider-owner');
   });
+
+  it.each(['plain', 'e2ee'] as const)('seals a current %s observation label in its incumbent Event definition and restores it for reads', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    let nextId = 0;
+    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations,
+      resolveEncryption: async () => encryption, randomBytes: length => new Uint8Array(length).fill(3),
+      resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` });
+
+    const saved = await host.add({ observationOnly: { kind: 'observationOnly' }, name: 'Production alerts',
+      trigger: deploymentEventTrigger });
+    const stored = f.rows.get(saved.set.automationId)!;
+    const trigger = stored.triggers[0]!;
+    if (trigger.kind !== 'pluginEvent') throw new Error('Expected Event observation');
+    expect(stored).toMatchObject({ name: 'Automation', description: null });
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({
+      ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+        ? { mode: 'e2ee' as const, material: encryption.material.material } : { mode: 'plain' as const }),
+      binding: { v: 1, automationId: stored.id, triggerId: trigger.id, triggerRevision: trigger.revision,
+        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+      envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
+    });
+    expect(opened).toMatchObject({ kind: 'available', definition: {
+      automationDisplay: { name: 'Production alerts', description: null },
+    } });
+    expect(saved.set.name).toBe('Production alerts');
+    expect((await host.list({ scope: 'account_all' })).sets).toMatchObject([
+      { automationId: stored.id, name: 'Production alerts' },
+    ]);
+
+    // A status-only Event revision must rebind the same private display payload.
+    // Otherwise its authenticated trigger revision makes the current label unreadable.
+    const updated = await host.update({ automationId: stored.id, triggerId: trigger.id,
+      expectedRevision: saved.set.revision, patch: { enabled: false } });
+    const updatedTrigger = f.rows.get(stored.id)!.triggers[0]!;
+    if (updatedTrigger.kind !== 'pluginEvent') throw new Error('Expected retained Event observation');
+    const updatedOpened = openAutomationTriggerDefinitionStoredEnvelopeV1({
+      ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+        ? { mode: 'e2ee' as const, material: encryption.material.material } : { mode: 'plain' as const }),
+      binding: { v: 1, automationId: stored.id, triggerId: updatedTrigger.id, triggerRevision: updatedTrigger.revision,
+        triggerKind: 'pluginEvent', eventRef: updatedTrigger.eventRef, sourceSelectorId: updatedTrigger.sourceSelectorId },
+      envelope: JSON.parse(updatedTrigger.triggerDefinitionEnvelope),
+    });
+    expect(updatedOpened).toMatchObject({ kind: 'available', definition: {
+      automationDisplay: { name: 'Production alerts', description: null },
+    } });
+    expect(updated.set.name).toBe('Production alerts');
+  });
+
+  it.each(['plain', 'e2ee'] as const)(
+    'keeps a retained %s Event label readable, then seals it through the first ordinary save',
+    async mode => {
+      const f = fixture();
+      const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+        ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+        : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+          material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+            material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+      let nextId = 0;
+      const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations,
+        resolveEncryption: async () => encryption, randomBytes: length => new Uint8Array(length).fill(3),
+        resolveWorkflow: f.deps.resolveWorkflow,
+        newId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` });
+
+      const saved = await host.add({ observationOnly: { kind: 'observationOnly' }, name: 'Release monitor',
+        trigger: deploymentEventTrigger });
+      const stored = f.rows.get(saved.set.automationId)!;
+      const trigger = stored.triggers[0]!;
+      if (trigger.kind !== 'pluginEvent') throw new Error('Expected Event observation');
+      const binding = { v: 1 as const, automationId: stored.id, triggerId: trigger.id, triggerRevision: trigger.revision,
+        triggerKind: 'pluginEvent' as const, eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId };
+      const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({
+        ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+          ? { mode: 'e2ee' as const, material: encryption.material.material } : { mode: 'plain' as const }),
+        binding,
+        envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
+      });
+      if (opened.kind !== 'available') throw new Error(`Expected readable Event envelope, got ${opened.kind}`);
+      const { automationDisplay: _display, ...legacyDefinition } = AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse(opened.definition);
+      trigger.triggerDefinitionEnvelope = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+        ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+          ? { mode: 'e2ee' as const, material: encryption.material.material, randomBytes: length => new Uint8Array(length).fill(5) }
+          : { mode: 'plain' as const }),
+        binding,
+        definition: legacyDefinition,
+      }));
+      stored.name = 'Release monitor';
+      stored.description = 'Legacy private label';
+
+      expect((await host.list({ scope: 'account_all' })).sets).toMatchObject([
+        { automationId: stored.id, name: 'Release monitor' },
+      ]);
+      expect(stored).toMatchObject({ name: 'Release monitor', description: 'Legacy private label' });
+
+      const updated = await host.update({ automationId: stored.id, triggerId: trigger.id,
+        expectedRevision: stored.templateVersion, patch: { enabled: false } });
+      const rewritten = f.rows.get(stored.id)!;
+      const rewrittenTrigger = rewritten.triggers[0]!;
+      if (rewrittenTrigger.kind !== 'pluginEvent') throw new Error('Expected retained Event observation');
+      const rewrittenOpened = openAutomationTriggerDefinitionStoredEnvelopeV1({
+        ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+          ? { mode: 'e2ee' as const, material: encryption.material.material } : { mode: 'plain' as const }),
+        binding: { ...binding, triggerRevision: rewrittenTrigger.revision },
+        envelope: JSON.parse(rewrittenTrigger.triggerDefinitionEnvelope),
+      });
+      expect(rewritten).toMatchObject({ name: 'Automation', description: null });
+      expect(rewrittenOpened).toMatchObject({ kind: 'available', definition: {
+        automationDisplay: { name: 'Release monitor', description: 'Legacy private label' },
+      } });
+      expect(updated.set.name).toBe('Release monitor');
+    },
+  );
 
   it.each(['plain', 'e2ee'] as const)('shares one %s source watcher across Event declarations and refuses competing assignments before persistence', async mode => {
     const f = fixture();

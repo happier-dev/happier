@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import sharp from "sharp";
 import type { FastifyRequest } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -146,7 +147,7 @@ describe("Team routes (SQLite integration)", () => {
 
         const memberAccount = await account();
         await db.teamMembership.create({ data: { teamId, accountId: memberAccount.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId, name: "Developers", nameKey: "developers-route" } });
+        const group = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Developers") } });
         const memberMembership = await db.teamMembership.findFirstOrThrow({ where: { teamId, accountId: memberAccount.id } });
         const audience = await post("/v1/teams/credential-resources/audience/set", owner.id, {
             resourceId: "route-resource", expectedRevision: 0,

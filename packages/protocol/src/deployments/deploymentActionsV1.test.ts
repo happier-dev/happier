@@ -137,7 +137,7 @@ describe('existing deployment restart', () => {
     const input = { serverId: 'home', environmentId: 'environment', reason: 'manual', requestKey: 'remove' };
     const spec = getActionSpec('deployments.teardown');
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('machine');
     expect(DeploymentTeardownInputV1Schema.safeParse(input).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, resources: [] }).success).toBe(false);
   });
@@ -163,11 +163,11 @@ describe('existing deployment restart', () => {
     expect(DeploymentTeardownInputV1Schema.safeParse(intent).success).toBe(false);
     expect(DeploymentActionInputSchemasV1['deployments.teardown'].safeParse({ ...intent, resources: [] }).success).toBe(false);
     const spec = getActionSpec('deployments.teardown');
-    expect(resolveActionExecutionPlacementForInput(spec, intent)).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, intent, undefined, 'ui')).toBe('machine');
     const prepared = spec.inputSchema.parse({ ...intent, contentArtifactId: 'receipt', contentHeaderVersion: 1, contentBodyVersion: 1 });
-    expect(resolveActionExecutionPlacementForInput(spec, prepared)).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, prepared, undefined, 'ui')).toBe('machine');
     const detached = spec.inputSchema.parse({ ...intent, detachKeepRunning: true });
-    expect(resolveActionExecutionPlacementForInput(spec, detached)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, detached, undefined, 'ui')).toBe('account');
   });
   it('exposes only an exact existing service generation, with no definition overrides', () => {
     const action = ActionIdSchema.safeParse('deployments.restart');
@@ -657,8 +657,8 @@ describe('Environment binding authored patch', () => {
   it('carries exact required binding identities only privately and non-content routing summaries through prepared input', () => {
     const source = { kind: 'secret', ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 };
     const identities = [
-      { purpose: 'variable', name: 'BUILD_TOKEN', phase: 'build' },
-      { purpose: 'variable', name: 'RUNTIME_TOKEN', phase: 'runtime' },
+      { purpose: 'variable', name: 'BUILD_TOKEN', phase: 'build', grantRef: '00000000-0000-4000-8000-000000000001' },
+      { purpose: 'variable', name: 'RUNTIME_TOKEN', phase: 'runtime', grantRef: '00000000-0000-4000-8000-000000000002' },
     ];
     const bindings = [...identities,
       { purpose: 'registry', targetLinkId: 'runtime', registryOrigin: 'https://private-registry.example.com', access: 'pushPull' },
@@ -672,7 +672,8 @@ describe('Environment binding authored patch', () => {
       { purpose: 'variable', phase: 'runtime' },
     ];
     expect(captures).toEqual([{ resourceId: 'credential', revision: 3, requiredBindings: routing }]);
-    for (const privateContent of ['BUILD_TOKEN', 'RUNTIME_TOKEN', 'private-registry.example.com', 'private-service-sentinel']) {
+    for (const privateContent of ['BUILD_TOKEN', 'RUNTIME_TOKEN', '00000000-0000-4000-8000-000000000001',
+      '00000000-0000-4000-8000-000000000002', 'private-registry.example.com', 'private-service-sentinel']) {
       expect(JSON.stringify(captures)).not.toContain(privateContent);
     }
     expect(captureDeploymentBindingSavedSecretRevisionsV1([...bindings].reverse().concat(bindings))).toEqual(captures);
@@ -778,8 +779,8 @@ describe('deployment semantic preparation', () => {
     const schema = getActionSpec('deployments.environments.create').inputSchema;
     expect(schema.safeParse(input).success).toBe(true);
     const spec = getActionSpec('deployments.environments.create');
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('machine');
-    expect(resolveActionExecutionPlacementForInput(spec, { ...input, mode: 'preview' })).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, { ...input, mode: 'preview' }, undefined, 'ui')).toBe('machine');
     expect(schema.safeParse({ ...input, copyFrom: { environmentId: 'production', expectedRevision: 7 } }).success).toBe(false);
     expect(schema.safeParse({ ...input, copyFrom: { ...input.copyFrom, choices: { values: [], data: [] } } }).success).toBe(false);
   });
@@ -841,7 +842,7 @@ describe('deployment semantic preparation', () => {
     ]) {
       const input = { ...metadata, definition };
       expect(schema.parse(input)).toEqual(input);
-      expect(resolveActionExecutionPlacementForInput(getActionSpec('deployments.environments.create'), input)).toBe('machine');
+      expect(resolveActionExecutionPlacementForInput(getActionSpec('deployments.environments.create'), input, undefined, 'ui')).toBe('machine');
       expect(schema.safeParse({ ...input, contentArtifactId: 'overlay', contentHeaderVersion: 1, contentBodyVersion: 1 }).success).toBe(false);
       expect(schema.safeParse({ ...input, definition: { ...definition, kind: 'stored', contentRevision: 1 } }).success).toBe(false);
     }
@@ -851,7 +852,7 @@ describe('deployment semantic preparation', () => {
     const { name: _name, ...preparedMetadata } = metadata;
     const prepared = { ...preparedMetadata, contentArtifactId: 'existing', contentHeaderVersion: 1, contentBodyVersion: 1 };
     expect(schema.parse(prepared)).toEqual(prepared);
-    expect(resolveActionExecutionPlacementForInput(getActionSpec('deployments.environments.create'), prepared)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(getActionSpec('deployments.environments.create'), prepared, undefined, 'ui')).toBe('account');
   });
 
   it('admits a selected Domain first deploy before original template preparation', () => {

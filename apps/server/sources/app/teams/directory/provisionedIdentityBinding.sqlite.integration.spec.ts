@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -114,7 +115,7 @@ describe("directory provisioned identity binding", () => {
             },
         });
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {

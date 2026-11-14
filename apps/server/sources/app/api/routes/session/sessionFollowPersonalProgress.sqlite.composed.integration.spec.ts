@@ -28,6 +28,7 @@ import { removeAccountSessionFollow } from '@/app/session/follow/accountFollowSe
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { registerSessionFollowRoutes } from './registerSessionFollowRoutes';
 import { registerSessionFollowSourceRoutes } from './registerSessionFollowSourceRoutes';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const url = '/v2/account/session-follow-rules/personal-progress';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -314,7 +315,7 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
                     signal: AbortSignal; occurrence: SessionFollowPersonalProgressRequestV1 }>): Promise<SessionFollowPersonalProgressResponseV1 | null>;
             }>(
                 '../../../../../../cli/src/api/sessionFollowPersonalProgressTransport');
-            const full = await auth.createApiToken({ accountId: s.account.id, tokenId: randomUUID(), label: 'Full Account' });
+            const full = await auth.createApiToken({ accountId: s.account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(s.account.id, 'Full Account') });
             const occurrence = { ...s.base, rules: [], sourceMessage: await s.original() };
             expect(await submitAccountFollowPersonalProgress({ token: full.token, serverHttpBaseUrl,
                 signal: new AbortController().signal, occurrence })).toEqual({ accepted: true, alreadyRepresented: false });
@@ -322,7 +323,7 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
             // default-rule cursor or enrollment row.
             expect(await db.userKVStore.count({ where: { accountId: s.account.id } })).toBe(0);
             expect(await db.accountSessionFollow.count({ where: { accountId: s.account.id } })).toBe(0);
-            const limited = await auth.createApiToken({ accountId: s.account.id, tokenId: randomUUID(), label: 'Limited Follow',
+            const limited = await auth.createApiToken({ accountId: s.account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(s.account.id, 'Limited Follow'),
                 grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['follow.get', 'follow.list', 'follow.set'] } } });
             const response = await app.inject({ method: 'POST', url, headers: { authorization: `Bearer ${limited.token}` },
                 payload: occurrence });

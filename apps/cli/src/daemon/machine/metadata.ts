@@ -7,7 +7,7 @@ import { projectPath } from '@/projectPath';
 import type { MachineMetadata } from '@/api/types';
 import { deriveManagedDevcontainerChildProjectionV1, isManagedDevcontainerChildProjectionCurrentV1,
   managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { readManagedMachineFull } from '@/machines/managed/readManagedMachine';
 import type { StoredCredentials } from '@/persistence';
 import packageJson from '../../../package.json';
 
@@ -22,7 +22,7 @@ export async function readCurrentManagedChildMachineMetadata(input: Readonly<{
 }>): Promise<MachineMetadata['devcontainerChild'] | null> {
   const prior = input.current.devcontainerChild;
   if (!prior) return undefined;
-  const managedMachine = await readManagedMachine({ credentials: input.credentials,
+  const managedMachine = await readManagedMachineFull({ credentials: input.credentials,
     serverHttpBaseUrl: input.serverHttpBaseUrl, homeId: input.homeId, managedId: prior.relation.managedMachineId });
   const projection = deriveManagedDevcontainerChildProjectionV1({ managedMachineId: managedMachine.id,
     controllerMachineId: managedMachine.controller?.machineId, enrolledMachineId: managedMachine.enrolledMachineId,

@@ -7,6 +7,11 @@ import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretC
 import { prepareEnvironmentSecretBindings } from './environmentSecretBindingService';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';
 
+const variable = (name: string, phase: 'build' | 'runtime',
+    source: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>['source']) => ({
+    purpose: 'variable' as const, name, phase, grantRef: crypto.randomUUID(), source,
+});
+
 // This is the P42 custody hop, not another program journey. The real P40
 // transaction/Action/daemon assertions belong in deploymentComposeJourney.
 describe('S0 exact installation secret custody', () => {
@@ -15,8 +20,8 @@ describe('S0 exact installation secret custody', () => {
     const secret = 's0-runtime-secret-sentinel-48b19';
     const ref = formatSharedSavedSecretRefV1('runtime-credential');
     const bindings: readonly EnvironmentSecretBindingV1[] = [
-        { purpose: 'variable', name: 'S0_SECRET', phase: 'runtime', source: { kind: 'secret', ref, resourceRevision: 1 } },
-        { purpose: 'variable', name: 'PORT', phase: 'runtime', source: { kind: 'value', value: '3000' } },
+        variable('S0_SECRET', 'runtime', { kind: 'secret', ref, resourceRevision: 1 }),
+        variable('PORT', 'runtime', { kind: 'value', value: '3000' }),
     ];
     const installation = { machineId: 's0-guest', installationId: 's0-installation', publicKey };
     // This callback is the admitted storage/transport boundary. The program
@@ -103,7 +108,7 @@ describe('S0 exact installation secret custody', () => {
         await expect(prepareEnvironmentSecretBindingsForLaunch({ ...input, grants: [] }))
             .rejects.toMatchObject({ data: { code: 'secret_missing' } });
         await expect(prepareEnvironmentSecretBindingsForLaunch({ ...input, bindings: [
-            { purpose: 'variable', name: 'S0_SECRET', phase: 'runtime', source: { kind: 'secret', ref, resourceRevision: 2 } },
+            variable('S0_SECRET', 'runtime', { kind: 'secret', ref, resourceRevision: 2 }),
         ] })).rejects.toMatchObject({ data: { code: 'secret_missing' } });
     });
 
@@ -137,11 +142,11 @@ describe('S0 exact installation secret custody', () => {
         };
         const a = installed('A', 41), b = installed('B', 42), c = installed('C', 43);
         const source = { kind: 'secret' as const, ref, resourceRevision: 1 };
-        const runtime = { purpose: 'variable' as const, name: 'RUNTIME_SECRET', phase: 'runtime' as const, source };
-        const build = { purpose: 'variable' as const, name: 'BUILD_SECRET', phase: 'build' as const, source };
+        const runtime = variable('RUNTIME_SECRET', 'runtime', source);
+        const build = variable('BUILD_SECRET', 'build', source);
         const registry = { purpose: 'registry' as const, targetLinkId: 'runtime-link', registryOrigin: 'https://registry.example.test', access: 'pushPull' as const, source };
         const rows: EnvironmentSecretBindingV1[] = [runtime, build, registry,
-            { purpose: 'variable', phase: 'build', name: 'BUILD_PUBLIC', source: { kind: 'value', value: 'public-value' } }];
+            variable('BUILD_PUBLIC', 'build', { kind: 'value', value: 'public-value' })];
         const destinations = { runtimeInstallations: [a, b], buildInstallation: c };
         const prepared = await prepareEnvironmentSecretBindings({ environmentId: 'staging', bindings: rows, previousBindings: [],
             ...destinations, existingGrants: [], materializer: materializer(), assertCurrent });
@@ -206,10 +211,10 @@ describe('S0 exact installation secret custody', () => {
         const source = (resourceId: string) => ({ kind: 'secret' as const,
             ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 });
         const rows: EnvironmentSecretBindingV1[] = [
-            { purpose: 'variable', phase: 'build', name: 'BUILD_ONLY', source: source('build-only') },
-            { purpose: 'variable', phase: 'runtime', name: 'RUNTIME_ONLY', source: source('runtime-only') },
-            { purpose: 'variable', phase: 'build', name: 'SHARED_BUILD', source: source('shared') },
-            { purpose: 'variable', phase: 'runtime', name: 'SHARED_RUNTIME', source: source('shared') },
+            variable('BUILD_ONLY', 'build', source('build-only')),
+            variable('RUNTIME_ONLY', 'runtime', source('runtime-only')),
+            variable('SHARED_BUILD', 'build', source('shared')),
+            variable('SHARED_RUNTIME', 'runtime', source('shared')),
             { purpose: 'registry', targetLinkId: 'runtime-link', registryOrigin: 'https://registry.example.test',
                 access: 'pushPull', source: source('shared') },
         ];
@@ -248,9 +253,9 @@ describe('S0 exact installation secret custody', () => {
             displayName: `Resource ${index}`, kind: 'password' as const, encryptionMode: 'plain' as const,
             revision: 1, materialStatus: 'ready' as const, capabilities: { use: true },
             storedContent: { t: 'plain' as const, v: { v: 1 as const, name: `Resource ${index}`, kind: 'password' as const, value: `cost-sentinel-${index}` } } }));
-        const rows: EnvironmentSecretBindingV1[] = Array.from({ length: 200 }, (_, index) => ({ purpose: 'variable',
-            phase: 'runtime', name: `SECRET_${index}`, source: { kind: 'secret',
-                ref: formatSharedSavedSecretRefV1(`resource-${index % 100}`), resourceRevision: 1 } }));
+        const rows: EnvironmentSecretBindingV1[] = Array.from({ length: 200 }, (_, index) => variable(
+            `SECRET_${index}`, 'runtime', { kind: 'secret',
+                ref: formatSharedSavedSecretRefV1(`resource-${index % 100}`), resourceRevision: 1 }));
         const resolver = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources,
             resourceCatalogState: 'ready', isCurrent: () => true });
         const common = { environmentId: 'scale', runtimeInstallations: [installation, other], assertCurrent };

@@ -20,6 +20,7 @@ import {
   AutomationEventSourceStatusV1Schema,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from './automationEventV1.js';
+import { AutomationStoredContentEnvelopeV1Schema } from './automationStoredContentEnvelopeV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import {
   AutomationEventSourceCatalogStatusStateV1Schema,
@@ -155,6 +156,13 @@ const AutomationDefinitionExecutionRecipeSchema = lazyZodSchema(() => z.union([
   AutomationStoredActionDefinitionRecipeV1Schema,
 ]));
 
+/**
+ * Current writers leave only this neutral marker in the server-readable
+ * Automation row. The authored name and description are carried by the
+ * matching private template/definition payload instead.
+ */
+export const AUTOMATION_PRIVATE_DISPLAY_PLACEHOLDER_V1 = 'Automation';
+
 export const AutomationTriggerCreateRequestSchema = lazyZodSchema(() => z.strictObject({
   triggerId: AutomationTriggerIdSchema,
   trigger: AutomationTriggerDefinitionInputSchema,
@@ -238,7 +246,13 @@ export const AutomationTriggerReconcileExistingItemSchema = lazyZodSchema(() => 
   expectedRevision: AutomationTriggerRevisionSchema,
   enabled: z.optional(z.boolean()),
   trigger: zMini.optional(AutomationTriggerDefinitionSchema),
-  triggerDefinitionEnvelope: zMini.optional(AutomationEncryptedTriggerDefinitionEnvelopeV1Schema),
+  /**
+   * A next-revision Event definition envelope. E2EE Account writers carry an
+   * encrypted arm; plain Account writers carry the same canonical envelope's
+   * plain arm, so a retained row can receive a new private display without the
+   * server opening it.
+   */
+  triggerDefinitionEnvelope: zMini.optional(AutomationStoredContentEnvelopeV1Schema),
 }).check(z.superRefine((value, context) => {
   if (
     value.triggerDefinitionEnvelope !== undefined
@@ -390,9 +404,17 @@ function requireExactlyOneDefinitionContent(
   }
 }
 
-/** Bounded definition list item; no private source/configuration envelope. */
+/**
+ * Bounded definition list item. Current definitions may carry their incumbent
+ * opaque display carrier so Account hosts can restore a private label without
+ * a per-row detail fetch; released rows omit it and retain raw labels.
+ */
 export const AutomationDefinitionListItemSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationDefinitionBaseSchema, {
   triggers: z.array(AutomationTriggerListItemSchema),
+  executionRecipe: z.optional(z.union([
+    AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
+    AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
+  ])),
 })));
 export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 

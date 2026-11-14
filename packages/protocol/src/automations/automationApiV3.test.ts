@@ -316,6 +316,54 @@ describe('Automation versioned API schemas', () => {
     }).executionRecipe?.templateVersion).toBe(4);
   });
 
+  it('accepts a plain Event display carrier only for a full-editor enablement write', () => {
+    const triggerDefinitionEnvelope = {
+      t: 'plain' as const,
+      v: {
+        binding: {
+          v: 1,
+          automationId: 'automation-observation-1',
+          triggerId: 'trigger-event-1',
+          triggerRevision: 2,
+          triggerKind: 'pluginEvent',
+          eventRef: eventInput.eventRef,
+          sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
+        },
+        definition: {
+          v: 1,
+          automationDisplay: { name: 'Repository updates', description: null },
+          sourceInstanceId: eventInput.sourceInstanceId,
+          sourceConfig: eventInput.sourceConfig,
+          displayLabel: eventInput.displayLabel,
+          filter: null,
+          maximumObservationAgeMs: eventInput.maximumObservationAgeMs,
+        },
+      },
+    };
+    const request = {
+      expectedTemplateVersion: 1,
+      name: 'Automation',
+      description: null,
+      enabled: true,
+      assignments: [],
+      triggers: [{
+        kind: 'existing' as const,
+        triggerId: 'trigger-event-1',
+        expectedRevision: 1,
+        enabled: false,
+        triggerDefinitionEnvelope,
+      }],
+      removedTriggers: [],
+    };
+    expect(Api.AutomationDefinitionReconcileRequestSchema.parse(request)).toEqual(request);
+    expect(Api.AutomationTriggerPatchRequestSchema.safeParse({
+      triggerId: 'trigger-event-1',
+      expectedRevision: 1,
+      enabled: false,
+      triggerDefinitionEnvelope,
+    }).success).toBe(false);
+  });
+
   it('accepts one strict ciphertext-blind Event authoring arm bound by client-stable ids', () => {
     const encrypted = {
       kind: 'pluginEvent' as const,

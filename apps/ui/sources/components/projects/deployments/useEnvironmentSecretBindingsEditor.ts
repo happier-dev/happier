@@ -1,9 +1,13 @@
 import * as React from 'react';
 import {
-    EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1,
-    type DeploymentEnvironmentHeaderV1, type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1,
+    EnvironmentSecretBindingInputV1Schema, environmentSecretBindingIdentityV1,
+    type DeploymentEnvironmentHeaderV1, type EnvironmentSecretBindingInputV1, type EnvironmentSecretBindingV1,
+    type EnvironmentVariableBindingV1,
 } from '@happier-dev/deployment-protocol';
 import { projectEnvironmentSecretBindingsV1, type EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
+import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { randomUUID } from '@/platform/randomUUID';
 
 type EditResult = Readonly<{ ok: true }> | Readonly<{
     ok: false;
@@ -120,14 +124,14 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
         return current.current.scopeKey === scopeKey && !current.current.readOnly && current.current.isCurrent?.() !== false;
     }
 
-    function apply(set: readonly EnvironmentSecretBindingV1[], remove: readonly string[] = [], commit = true): EditResult {
+    function apply(set: readonly EnvironmentSecretBindingInputV1[], remove: readonly string[] = [], commit = true): EditResult {
         if (!canWrite()) return { ok: false, error: 'unavailable' };
         const { bindings, managedIdentities, onChangeBindings } = current.current;
         const existing = new Map(bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
         const removed = new Set(remove);
-        const changed = new Map<string, EnvironmentSecretBindingV1>();
+        const changed = new Map<string, EnvironmentSecretBindingInputV1>();
         for (const binding of set) {
-            if (!EnvironmentSecretBindingV1Schema.safeParse(binding).success) return { ok: false, error: 'invalid_binding' };
+            if (!EnvironmentSecretBindingInputV1Schema.safeParse(binding).success) return { ok: false, error: 'invalid_binding' };
             const identity = environmentSecretBindingIdentityV1(binding);
             if (changed.has(identity)) return { ok: false, error: 'duplicate_identity' };
             if (managedIdentities?.has(identity)) return { ok: false, error: 'managed' };
@@ -141,7 +145,7 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
             if (!existing.has(identity)) return { ok: false, error: 'missing_binding' };
         }
         if (!commit) return ok;
-        const next: EnvironmentSecretBindingV1[] = [];
+        const next: EnvironmentSecretBindingInputV1[] = [];
         for (const binding of bindings) {
             const identity = environmentSecretBindingIdentityV1(binding);
             if (!removed.has(identity)) next.push(binding);
@@ -154,11 +158,21 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
             }
         }
         next.push(...changed.values());
-        if (next.length !== bindings.length || next.some((binding, index) => binding !== bindings[index])) onChangeBindings(next);
+        const nextIdentities = new Set(next.map(environmentSecretBindingIdentityV1));
+        const materialized = applyEnvironmentSecretBindingsPatchV1(bindings, {
+            set: next,
+            remove: bindings.filter(binding => !nextIdentities.has(environmentSecretBindingIdentityV1(binding)))
+                .map(projectEnvironmentSecretBindingIdentityV1),
+        }, randomUUID);
+        // Materialization decides grant references; the editor retains the person's
+        // row order, including an in-place rename.
+        const materializedByIdentity = new Map(materialized.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+        const ordered = next.map(binding => materializedByIdentity.get(environmentSecretBindingIdentityV1(binding))!);
+        if (ordered.length !== bindings.length || ordered.some((binding, index) => binding !== bindings[index])) onChangeBindings(ordered);
         return ok;
     }
 
-    function put(binding: EnvironmentSecretBindingV1, originalIdentity?: string): EditResult {
+    function put(binding: EnvironmentSecretBindingInputV1, originalIdentity?: string): EditResult {
         return apply([binding], originalIdentity === undefined ? [] : [originalIdentity]);
     }
     function setVariable(input: Readonly<{ name: string; phase: 'build' | 'runtime' | 'both'; source: EnvironmentVariableBindingV1['source']; originalIdentity?: string }>, commit = true): EditResult {
@@ -223,7 +237,7 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
             }
             for (const entry of phasesOf(entryPhase)) {
                 const binding = { purpose: 'variable' as const, name, phase: entry, source: source ?? { kind: 'value' as const, value } };
-                if (!EnvironmentSecretBindingV1Schema.safeParse(binding).success) return { ok: false, error: 'invalid_binding' };
+                if (!EnvironmentSecretBindingInputV1Schema.safeParse(binding).success) return { ok: false, error: 'invalid_binding' };
                 const identity = environmentSecretBindingIdentityV1(binding);
                 if (desired.has(identity)) return { ok: false, error: 'duplicate_identity' };
                 desired.add(identity);
@@ -266,7 +280,7 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
     function applyBulk(selections: Readonly<Record<string, SecretSource>>, commit = true): EditResult {
         if (!canWrite()) return { ok: false, error: 'unavailable' };
         if (!staged || currentBulk.current !== bulkState) return { ok: false, error: 'no_draft' };
-        const set: EnvironmentSecretBindingV1[] = [];
+        const set: EnvironmentSecretBindingInputV1[] = [];
         for (const row of staged.rows) {
             const selected = Object.hasOwn(selections, row.name) ? selections[row.name] : undefined;
             const source = row.source ?? (row.classification === 'plain' ? { kind: 'value' as const, value: row.value }
@@ -281,7 +295,7 @@ export function useEnvironmentSecretBindingsEditor(options: Readonly<{
     return { rows, bulk: staged?.rows ?? null, bulkRemoved: staged?.removed ?? null, bulkText,
         bulkInput: available && inputState !== null && inputState.scopeKey === scopeKey ? inputState.value : null,
         setBulkInput: (value: BulkInput) => { if (canWrite()) setInput({ scopeKey, value }); },
-        put, putMany: (set: readonly EnvironmentSecretBindingV1[], remove: readonly string[] = []) => apply(set, remove),
+        put, putMany: (set: readonly EnvironmentSecretBindingInputV1[], remove: readonly string[] = []) => apply(set, remove),
         setVariable: (input: Parameters<typeof setVariable>[0]) => setVariable(input), stageBulk,
         applyBulk: (selections: Readonly<Record<string, SecretSource>>) => applyBulk(selections),
         // Creation can check the same destination rules before making a Saved

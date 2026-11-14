@@ -1,13 +1,16 @@
+import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { isStoredOpaquePresetMachine } from './managedMachineProjection';
 import { resolvePluginLocalizedStringV2Text } from "@happier-dev/protocol/plugins/contributions/publicTypes";
-import { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
-import { isManagedResizeActionIdV1, isManagedPowerOrDeleteActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-export { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
+import { readManagedController, readManagedAdmissionState, projectManagedMachine, readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from './managedMachineProjection';
+import { MANAGED_RESIZE_ACTION_ID_V1, isManagedResizeActionIdV1, isManagedPowerOrDeleteActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+export { readManagedController, readManagedAdmissionState, projectManagedMachine, readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAdmissionComputeInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -102,14 +105,6 @@ export function createManagedMachineRetainedSchema(native: PluginJsonSchemaV2 | 
 export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunchSnapshotV1 {
     return createStoredReadSchema(RetainedManagedLaunchSnapshotV1Schema).parse(value);
 }
-/**
- * The name of a Machine made from a preset: the one given at creation, else its provider's default name, as a one-off
- * Create starts with. Never the preset's own launch name: a preset is reused, and each Machine is named for itself.
- */
-export function managedPresetMachineName(provisioner: Readonly<{ id: string; title: unknown }>, name?: string): string {
-    return name?.trim() || resolvePluginLocalizedStringV2Text(provisioner.title).trim() || provisioner.id;
-}
-
 export class ManagedMachineError extends Error {
     constructor(readonly code: z.infer<typeof ManagedRefusalCodeV1Schema>) {
         super(code);
@@ -123,12 +118,15 @@ export function readManagedJsonEqualityOperand(value: unknown): Prisma.InputJson
     return parsed.data;
 }
 
+const StoredManagedOpaquePresetComputeInputSchema = z.omit(ManagedAdmissionComputeInputV1Schema.def.options[1], { presetContentOverride: true });
 const StoredManagedComputeInputSchema = z.union([
     z.extend(z.omit(ManagedAdmissionComputeInputV1Schema.def.options[0], { enrollmentIdentity: true }), {
         enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     }),
-    z.extend(z.omit(ManagedAdmissionComputeInputV1Schema.def.options[1], { enrollmentIdentity: true }), {
+    // Preset identity is private sealed content, not retained Home input.
+    z.extend(StoredManagedOpaquePresetComputeInputSchema, {
         enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
+        reviewedFacts: z.optional(ManagedConfigurationFactsV1ReadSchema),
     }),
 ]);
 const StoredManagedAdmissionSchema = z.strictObject({
@@ -136,12 +134,15 @@ const StoredManagedAdmissionSchema = z.strictObject({
     creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema),
     enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
     requestEnvelopeDigest: z.optional(z.string().check(z.minLength(1))),
+    /** First admitted opaque name override, retained only until the controller snapshots it into launch content. */
+    presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
     computeInput: z.optional(StoredManagedComputeInputSchema),
     continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) }))),
     machineSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
     currentAdmission: z.optional(z.discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("control"), request: ManagedControlAdmissionInputV1Schema,
-            rebuildSettled: z.optional(z.literal(true)), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
+            rebuildSettled: z.optional(z.literal(true)), resizeSettled: z.optional(z.literal(true)),
+            resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
         z.strictObject({ kind: z.literal("policy"), request: ManagedPolicyAdmissionInputV1Schema }),
     ])),
     submittedEffect: z.optional(z.strictObject({ ...ManagedControllerCurrentnessV1Schema.shape, intent: SupportedNativeIntentSchema,
@@ -151,13 +152,54 @@ const StoredManagedAdmissionSchema = z.strictObject({
 const StoredManagedAdmissionReadSchema = createStoredReadSchema(StoredManagedAdmissionSchema);
 export type StoredManagedAdmission = z.infer<typeof StoredManagedAdmissionSchema>;
 
+/** Migration has already carried legacy private compute facts into the sealed body. */
+export function projectManagedPresetAdmissionForOpaqueStorage(value: unknown,
+    content: ManagedMachinePresetV1['content']) {
+    const admitted = readManagedAdmissionState(value);
+    const current = admitted.currentAdmission;
+    const currentAdmission = current?.kind === 'control' && current.request.action === MANAGED_RESIZE_ACTION_ID_V1
+        ? { kind: 'control' as const, resizeSettled: true as const,
+            request: ManagedControlAdmissionInputV1Schema.parse({ ...current.request, input: {
+                homeId: current.request.input.homeId, managedId: current.request.input.managedId,
+                presetContentOverride: { content },
+            } }) }
+        : current;
+    return { ...admitted, ...(currentAdmission ? { currentAdmission } : {}),
+        ...(admitted.computeInput === undefined ? {} : {
+            computeInput: createStoredReadSchema(StoredManagedOpaquePresetComputeInputSchema).parse(admitted.computeInput),
+        }) };
+}
+
+
+/** The row launch envelope is the sole persisted source of opaque preset content. */
+export function readManagedOpaquePresetContent(row: Pick<StoredManagedMachine, 'presetId' | 'launch'>) {
+    if (!isStoredOpaquePresetMachine(row)) throw new ManagedMachineError('request_conflict');
+    const { content, recipients } = readStoredOpaquePresetLaunch(row.launch);
+    return ManagedAdmissionPresetContentV1Schema.parse({ content, recipients });
+}
+
+/** The row's active admitted action owns any private content override and its settlement. */
+export function readManagedOpaquePresetContentOverride(row: Pick<StoredManagedMachine, 'presetId' | 'launch' | 'admittedInput'>) {
+    if (!isStoredOpaquePresetMachine(row)) return undefined;
+    const admitted = readManagedAdmissionState(row.admittedInput);
+    if (admitted.presetContentOverride) return admitted.presetContentOverride;
+    const current = admitted.currentAdmission;
+    if (current?.kind !== 'control' || !isManagedResizeActionIdV1(current.request.action) || current.resizeSettled) return undefined;
+    const input = current.request.input;
+    return 'presetContentOverride' in input ? input.presetContentOverride : undefined;
+}
+
 export function readManagedAcquisitionIdentity(value: unknown) {
     // Request correlation is a new admission boundary. Normalize retained
     // additive fields here so they cannot turn a legitimate replay into a conflict.
     const parsed = StoredManagedAdmissionReadSchema.safeParse(value);
     if (!parsed.success) throw new ManagedMachineError('request_conflict');
     const { computeInput, continuation } = parsed.data;
-    return { computeInput, continuation };
+    // Historical preset requests retained private review facts separately. The
+    // signed request digest binds those bytes; replay identity is structural.
+    return { computeInput: computeInput?.selection.kind === 'preset'
+        ? createStoredReadSchema(StoredManagedOpaquePresetComputeInputSchema).parse(computeInput)
+        : computeInput, continuation };
 }
 /** New admission binds the authenticated requester; only historical absence retains custody. */
 export function readManagedEnrollmentAccountId(row: Pick<StoredManagedMachine, 'admittedInput' | 'custodianAccountId'>): string {
@@ -205,18 +247,24 @@ export async function requireActiveManagedResizeInTx(tx: Tx, input: Readonly<{ h
     return row;
 }
 
-/** Home identity and controller lifecycle are rechecked inside each row mutation. */
+/** Retained jobs keep their Home routing identity without re-admitting controller availability. */
+export async function requireManagedHomeInTx(tx: Tx, homeId: string): Promise<void> {
+    if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
+}
+
+/** Fresh admission checks the selected controller's lifecycle. */
 export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
     homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
-}>, projection?: ManagedProjectionFacts): Promise<void> {
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError("permission_denied");
+}>, projection?: ManagedProjectionFacts): Promise<ManagedProjectionController | undefined> {
+    await requireManagedHomeInTx(tx, input.homeId);
     if (!input.controller) return;
     const machine = projection ? projection.controllers.get(input.controller.machineId)
-        : await tx.machine.findUnique({ where: { id: input.controller.machineId } });
+        : await tx.machine.findUnique({ where: { id: input.controller.machineId }, select: MANAGED_PROJECTION_CONTROLLER_SELECT });
     if (!machine || machine.accountId !== input.custodianAccountId) throw new ManagedMachineError("permission_denied");
     if (classifyMachineAvailabilityState(machine) !== "available" || machine.installationId !== input.controller.installationId) {
         throw new ManagedMachineError("controller_retired");
     }
+    return machine;
 }
 
 /** Consume the incumbent current declaration/materialization owners, never a provider registry. */
@@ -231,6 +279,9 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
 
 /** An admitted row keeps its reviewed native schema across controller publication changes. */
 export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine) {
+    // Preset declaration lives in the opaque content envelope. The server
+    // retains routing/lifecycle facts only; a keyholding daemon resolves it.
+    if (isStoredOpaquePresetMachine(row)) return null;
     const reviewed = readManagedReviewedDeclaration(row.reviewedFacts);
     if (reviewed) return reviewed;
     return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
@@ -246,7 +297,7 @@ const MANAGED_PROJECTION_CONTROLLER_SELECT = {
     id: true, accountId: true, kind: true, installationId: true, installationPublicKey: true, active: true,
     revokedAt: true, replacedByMachineId: true, account: { select: { status: true } },
 } as const;
-type ManagedProjectionController = Prisma.MachineGetPayload<{ select: typeof MANAGED_PROJECTION_CONTROLLER_SELECT }>;
+export type ManagedProjectionController = Prisma.MachineGetPayload<{ select: typeof MANAGED_PROJECTION_CONTROLLER_SELECT }>;
 export interface ManagedProjectionFacts {
     controllers: ReadonlyMap<string, ManagedProjectionController>;
     declarationFor(input: ManagedProjectionInput): ManagedDeclaration | null;
@@ -522,7 +573,11 @@ export async function requireCurrentManagedMachineInTx(tx: Tx, input: Readonly<{
     controller?: { machineId: string; installationId: string };
 }>, options: Readonly<{ requestAuthority?: "creation" | "intent"; allowCanceledResourceReport?: boolean; allowInactiveCurrentIntent?: boolean }> = {}): Promise<StoredManagedMachine> {
     const row = await readManagedMachineInTx(tx, input);
-    await requireManagedControllerInTx(tx, { ...input, custodianAccountId: row.custodianAccountId });
+    // Native work was admitted with the controller's then-current authority.
+    // Later reports prove the retained controller identity below rather than
+    // re-admitting controller availability at every lifecycle boundary.
+    if (isStoredOpaquePresetMachine(row)) await requireManagedHomeInTx(tx, input.homeId);
+    else await requireManagedControllerInTx(tx, { ...input, custodianAccountId: row.custodianAccountId });
     const creation = options.requestAuthority === "creation" || options.allowCanceledResourceReport === true;
     const currentAdmission = !creation && !row.controllerMachineId && input.controller
         ? readManagedAdmissionState(row.admittedInput).currentAdmission : undefined;

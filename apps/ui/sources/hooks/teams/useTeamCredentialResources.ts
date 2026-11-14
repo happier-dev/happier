@@ -179,27 +179,25 @@ export function useTeamCredentialResources(params: Readonly<{
     scope: ServerAccountScope | null;
     address: TeamAddress | null;
     enabled: boolean;
-    search?: string;
     filter?: TeamCredentialResourceListFilterV1;
 }>): TeamCredentialResourcesProjection {
-    const { scope, address, enabled, search, filter = 'all' } = params;
+    const { scope, address, enabled, filter = 'all' } = params;
     const serverId = scope?.serverId ?? '';
     const accountId = scope?.accountId ?? '';
     const addressServerId = address?.serverId ?? '';
     const teamId = address?.teamId ?? '';
     const active = enabled && scope !== null && address !== null;
-    const queryKey = address && (search || filter !== 'all')
+    const queryKey = address && filter !== 'all'
         ? teamCredentialResourcesQueryKeyV1({
             teamId: address.teamId,
             filter,
-            ...(search ? { search } : {}),
         })
         : '';
 
     React.useEffect(() => {
         if (!active) return;
-        return observeTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, search, filter);
-    }, [active, serverId, accountId, addressServerId, teamId, search, filter]);
+        return observeTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, filter);
+    }, [active, serverId, accountId, addressServerId, teamId, filter]);
 
     const snapshot = React.useSyncExternalStore(
         subscribeTeamsSnapshots,
@@ -209,19 +207,19 @@ export function useTeamCredentialResources(params: Readonly<{
 
     const reload = React.useCallback(async () => {
         if (!active) return;
-        await refreshTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, search, filter);
-    }, [active, serverId, accountId, addressServerId, teamId, search, filter]);
+        await refreshTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, filter);
+    }, [active, serverId, accountId, addressServerId, teamId, filter]);
 
     const [loadingMore, setLoadingMore] = React.useState(false);
     const loadMore = React.useCallback(async () => {
         if (!active) return;
         setLoadingMore(true);
         try {
-            await loadMoreTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, search, filter);
+            await loadMoreTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, filter);
         } finally {
             setLoadingMore(false);
         }
-    }, [active, serverId, accountId, addressServerId, teamId, search, filter]);
+    }, [active, serverId, accountId, addressServerId, teamId, filter]);
     const hasMore = (snapshot?.nextCursor ?? null) !== null;
     const retry = hasMore && snapshot?.data
         ? loadMore

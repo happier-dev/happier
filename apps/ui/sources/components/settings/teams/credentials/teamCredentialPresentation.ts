@@ -245,13 +245,14 @@ function resourceRowFacts(
  */
 export function resourceAccessibilityLabel(
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
+    displayName: string | null,
     // The Home's per-resource `capabilities` is the one viewer-authority gate;
     // a caller cannot widen or narrow what this viewer was told.
     options?: Readonly<{ audienceKnown?: boolean }>,
 ): string {
     void options;
     const facts = resourceRowFacts(resource);
-    return [resource.displayName, ...facts.identity, ...facts.state].join(', ');
+    return [displayName ?? t('teams.credentials.title'), ...facts.identity, ...facts.state].join(', ');
 }
 
 /**
@@ -279,9 +280,13 @@ export function resourceAdministrationSummaryLines(
  */
 export function orderTeamCredentialResources<T extends Pick<TeamCredentialResourceSummaryV1, 'id' | 'displayName'>>(
     resources: readonly T[],
+    displayNames: Readonly<Record<string, string | null>> = {},
 ): readonly T[] {
     return [...resources].sort((left, right) => {
-        const byName = left.displayName.localeCompare(right.displayName);
+        // Labels are opened in the client, so storage ciphertext can never
+        // influence ordering. An unopened row has a stable id fallback until
+        // its authorized recipient projection settles.
+        const byName = (displayNames[left.id] ?? left.id).localeCompare(displayNames[right.id] ?? right.id);
         return byName !== 0 ? byName : left.id.localeCompare(right.id);
     });
 }
@@ -302,7 +307,12 @@ export function brokerPoolChoiceLabel(
 
 export function brokerPlacementLabel(
     resource: TeamCredentialResourceSummaryV1,
-    machinePresentation?: Pick<Parameters<typeof teamCredentialBrokerMachineLabel>[0], 'serverId' | 'pickerRows'>,
+    presentation?: Readonly<{
+        serverId?: string;
+        pickerRows?: Pick<Parameters<typeof teamCredentialBrokerMachineLabel>[0], 'pickerRows'>['pickerRows'];
+        /** Opened locally from the recipient projection, keyed by Pool id. */
+        poolDisplayNames?: Readonly<Record<string, string | null>>;
+    }>,
 ): string {
     // A value, never the action's own label: the owner's "Choose a broker location" button sits beside it.
     if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNotChosen');
@@ -317,17 +327,16 @@ export function brokerPlacementLabel(
         // A Pool is named as one: "Development" beside a Machine's own display
         // name is otherwise indistinguishable from a single computer, and the
         // two behave differently when a connection opens.
-        const selectedPool = resource.brokerPresentation.selectedPool;
-        const poolName = selectedPool?.poolId === resource.brokerPlacement.poolId
-            ? selectedPool.displayName?.trim()
-            : null;
+        const poolName = presentation?.poolDisplayNames?.[resource.brokerPlacement.poolId]?.trim() ?? null;
         return poolName
             ? `${t('machinePools.title')} · ${poolName}`
             : unnamedPlacement;
     }
-    if (resource.capabilities.updateBrokerPlacement && machinePresentation) {
+    if (resource.capabilities.updateBrokerPlacement && presentation?.serverId && presentation.pickerRows) {
         const label = teamCredentialBrokerMachineLabel({
-            ...machinePresentation, machineId: resource.brokerPlacement.machineId,
+            serverId: presentation.serverId,
+            pickerRows: presentation.pickerRows,
+            machineId: resource.brokerPlacement.machineId,
             unnamedTitle: unnamedPlacement,
         });
         if (label) return label;

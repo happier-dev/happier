@@ -423,7 +423,11 @@ describe("Saved Secret material route (SQLite integration)", () => {
         const input = SharedSavedSecretPromoteInputV1Schema.parse({ resourceId, displayName: personal.name, kind: personal.kind,
             encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: personal.name, kind: personal.kind, value: personal.encryptedValue.value } },
             expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: promoted.settings }, profileMutations: [],
-            ...(explicitMapping ? { personalSecretPromotions: [{ personalSecretId: personal.id, resourceId }] } : {}),
+            ...(explicitMapping ? {
+                personalSecretPromotions: [{ personalSecretId: personal.id, resourceId }],
+                // This keyholder has opened every visible Preset/managed snapshot and found none to rewrite.
+                opaquePresetRewrites: { presets: [], snapshots: [] },
+            } : {}),
             referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] },
                 catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent',
                     connectedPurposes: 'absent', registrySources: 0 } },
@@ -442,7 +446,8 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(await db.savedSecretResource.count()).toBe(0);
             const uncaptured = await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/promote',
                 headers: { 'x-test-user-id': owner.id }, payload: { ...input, nextSettings: null,
-                    personalSecretPromotions: undefined, referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: { registrySources: 0 } },
+                    personalSecretPromotions: undefined, opaquePresetRewrites: undefined,
+                    referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: { registrySources: 0 } },
                     catalogMutations: { registrySources: { expectedRevision: 0, content: input.catalogMutations?.registrySources?.content } } } });
             expect(uncaptured.statusCode).toBe(400);
             expect(uncaptured.json()).toMatchObject({ error: 'references_invalid' });

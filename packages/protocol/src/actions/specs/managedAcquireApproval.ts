@@ -21,7 +21,7 @@ const reviewSchema = lazyZodSchema(() => z.strictObject({
   // RELOAD 78 retained raw native facts. Read those through the same presenter as new reviews.
   nativeFacts: z.optional(z.pipe(z.union([z.string(), ProviderNativeOptionFactsV1Schema]),
     z.transform(value => typeof value === 'string' ? value : describeNativeChoices(value)))),
-  enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema,
+  enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
   setup: z.optional(MachineSetupV1Schema), agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
 }));
 
@@ -37,8 +37,9 @@ function describeNativeChoices(facts: ProviderNativeOptionFactsV1): string {
 function projectReview(value: unknown) {
   const input = ManagedAcquireInputV1Schema.parse(value);
   const effect = resolveManagedAcquireReviewV1(input);
-  const facts = input.reviewedFacts;
-  const launch = facts?.launch ?? (input.selection.kind === 'one-off' ? input.selection.launch : undefined);
+  const oneOffInput = 'enrollmentIdentity' in input ? input : undefined;
+  const facts = oneOffInput?.reviewedFacts;
+  const launch = facts?.launch ?? oneOffInput?.selection.launch;
   const provider = facts?.provisioner
     ? resolvePluginLocalizedStringV2Text(facts.provisioner.title) : launch?.provider.pluginId ?? 'the selected provider';
   const size = facts?.nativeFacts?.size;
@@ -61,7 +62,7 @@ function projectReview(value: unknown) {
       `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`, price.source,
     ].filter(Boolean).join(' · ')).join('; ') : presentManagedCost(cost).value,
     lifetime, ...(facts?.nativeFacts ? { nativeFacts: describeNativeChoices(facts.nativeFacts) } : {}),
-    enrollmentIdentity: input.enrollmentIdentity,
+    ...(oneOffInput ? { enrollmentIdentity: oneOffInput.enrollmentIdentity } : {}),
     ...(facts?.setup ? { setup: facts.setup } : {}), ...(input.agentStart ? { agentStart: input.agentStart } : {}),
   };
 }
@@ -83,7 +84,7 @@ export const managedAcquireApprovalPresentation = {
     { path: 'price', title: 'Provider price', widget: 'text', required: true },
     { path: 'lifetime', title: 'Keep and lifetime', widget: 'text', required: true },
     { path: 'nativeFacts', title: 'Selected native choices', widget: 'text' },
-    { path: 'enrollmentIdentity.role', title: 'Enrollment identity', widget: 'select', required: true, options: Object.values({
+    { path: 'enrollmentIdentity.role', title: 'Enrollment identity', widget: 'select', options: Object.values({
       server: { value: 'server', label: 'Runs as a dedicated user on the machine.\nAgents share a Linux user until separate users are enabled in Security.',
         labelKey: 'managedMachines.identity.approvalServer' },
       deployTarget: { value: 'deployTarget', label: 'Runs as a dedicated user on the machine.\nAgents share a Linux user until separate users are enabled in Security.',

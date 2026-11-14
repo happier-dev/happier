@@ -43,6 +43,9 @@ import { useSessionAccessApprovalHold } from './useSessionAccessApprovalHold';
 import { createSessionAccessQuery } from './sessionAccessQuery';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
+import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
+import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
 
 /** Mounted exact-scope grant state; acknowledged server rows remain visible until refreshed. */
 export function useLiveSessionAccessEditorController(input: Readonly<{
@@ -488,8 +491,26 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         });
     }, [approvalHeldRef, client, contextOperation, holdForApproval, input.sessionId, isScopeCurrent, lifetime, refresh, scopeKey]);
     const current=state.scopeKey===scopeKey?state:createSessionAccessEditorState(scopeKey);
+    const groupLabelInputs = React.useMemo(() => current.snapshot?.grants.flatMap(row =>
+        row.principal.kind === 'group' ? [{ id: row.principal.groupId, name: row.principal.name }] : []) ?? [],
+    [current.snapshot]);
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope: input.scope, groups: groupLabelInputs });
+    const credentialLabelRequests = React.useMemo(() => current.snapshot?.visibility === 'complete'
+        ? (current.snapshot.credentialBindingConsequences ?? []).map((consequence) => ({
+            key: consequence.resourceId,
+            binding: teamCredentialDisplayNameBinding(consequence.resourceId),
+            label: consequence.displayName,
+            readPolicy: { kind: 'team-resource' as const },
+        }))
+        : [], [current.snapshot]);
+    const openedCredentialDisplayNames = useOpenedPrivateLabels({
+        scope: input.scope,
+        requests: credentialLabelRequests,
+        enabled: detailsDemanded && availability === 'available',
+    });
     const projection=current.snapshot?projectSessionAccessEditorSnapshot({snapshot:current.snapshot,operations:current.operations,
-        confirmingRemoval:current.confirmingRemoval,viewerAccountId:input.scope.accountId,viewerProfile}):{
+        confirmingRemoval:current.confirmingRemoval,viewerAccountId:input.scope.accountId,viewerProfile,
+        openedCredentialDisplayNames,openedGroupDisplayNames}):{
         owner:null,grants:[],accessMode:'read_only' as const,summary:{label:t('session.access.title'),accessibilityLabel:t('session.access.title'),requiredByTeamPolicy:false},
     };
     // Current grant Teams preserve their admitted display names while the directory
@@ -605,7 +626,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
             current: currentTeam,
             grants: snapshot.grants.map((row) => row.grant),
             ...(snapshot.visibility === 'complete' && snapshot.credentialBindingConsequences
-                ? { credentialBindings: snapshot.credentialBindingConsequences } : {}),
+                ? { credentialBindings: snapshot.credentialBindingConsequences, openedCredentialDisplayNames } : {}),
         });
         if (consequences.length > 0) {
             setPendingContextTeamId(teamId);
@@ -765,7 +786,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         current: currentContextPolicyTeam,
         grants: current.snapshot?.grants.map((row) => row.grant) ?? [],
         ...(current.snapshot?.visibility === 'complete' && current.snapshot.credentialBindingConsequences
-            ? { credentialBindings: current.snapshot.credentialBindingConsequences } : {}),
+            ? { credentialBindings: current.snapshot.credentialBindingConsequences, openedCredentialDisplayNames } : {}),
     });
     return {actions,query,model:{...projection,revision:directoryRevision,
         ...(current.snapshot && availability === 'available' ? { context: { primaryTeamId: current.snapshot.primaryTeamId, options: [{ teamId: null, label: t('session.access.private'),

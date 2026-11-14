@@ -5,7 +5,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { inTx } from "@/storage/inTx";
-import { requireCurrentManagedMachineInTx, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx, readManagedAcquisitionIdentity } from "./managedRows";
+import { requireCurrentManagedMachineInTx, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx, readManagedAcquisitionIdentity, storeOpaquePresetLaunch } from "./managedRows";
 import { qualifyManagedAcquisitionPolicy } from "./managedAcquire";
 import { admitManagedAcquire } from "./managedAcquire";
 import { buildManagedConfigurationFactsV1, ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -67,18 +67,19 @@ describe("managed acquisition durable authority", () => {
             installationId: id === guestId ? 'guest-install' : controller.installationId })) });
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
         const setup = { scripts: [{ body: 'echo admitted' }] };
-        await db.managedMachinePreset.create({ data: { id: 'setup-preset', homeId, custodianAccountId: account.id, name: 'Preset',
-            launch, controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
-            setup: { scripts: [{ body: 'echo changed' }] }, revision: 2 } });
+        const admittedContent = { t: 'plain' as const, v: { v: 1, name: 'Admitted setup', launch, setup } };
+        const editedContent = { t: 'plain' as const, v: { v: 1, name: 'Edited setup', launch,
+            setup: { scripts: [{ body: 'echo changed' }] } } };
+        await db.managedMachinePreset.create({ data: { id: 'setup-preset', homeId, custodianAccountId: account.id, name: '',
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: editedContent, recipients: [] }),
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            revision: 2 } });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
             admittedActionRequestId: 'setup-create', admittedInput: {}, presetId: 'setup-preset', presetRevision: 1,
-            launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, allocation: 'bound', enrolledMachineId: guestId,
-            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'same-native' } },
-            // CAS must compare the complete retained JSON, not its known-field read projection.
-            machineSetup: { setup, state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] } } } });
-        expect(row.machineSetup).toEqual({ setup, state: 'pending',
-            futureStoredMember: { nested: [null, { opaque: true }] } });
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: admittedContent, recipients: [] }),
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, allocation: 'bound', enrolledMachineId: guestId,
+            machineSetup: { state: 'pending' } } });
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         let signer = guestId;
@@ -89,20 +90,24 @@ describe("managed acquisition durable authority", () => {
                 authTokenLegacy: false,
                 ...(signedSetup ? { externalActionExecutionAuthorized: true, externalActionExecutionMachineId: signer,
                 externalActionEffectActionId: 'machines.setup.apply', externalActionExecutionRequestId: 'apply',
-                externalActionExecutionCustodianAccountId: account.id } : {}),
+                externalActionExecutionCustodianAccountId: account.id,
+                // The route consumes the child Action's already-verified
+                // continuation to bind this exact admitted creation row.
+                externalActionExecutionAuthorizationBinding: { managedContinuation: { managedId: row.id } } } : {}),
             }), { headers: request.headers, params: request.params, query: request.query });
         });
         registerManagedMachineRoutes(app);
         onTestFinished(() => app.close());
         const target = { homeId, machineId: guestId, presetId: 'setup-preset', presetRevision: 1 };
-        const sources = [{ kind: 'accountPreset', presetId: 'setup-preset', presetRevision: 1, setup },
+        const sources = [{ kind: 'accountPresetOpaque' as const, presetId: 'setup-preset', presetRevision: 1,
+            contentEncryptionMode: 'plain' as const },
             { kind: 'direct', setup: {}}];
         const copied = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId, sources } });
         expect(copied.statusCode, copied.body).toBe(200);
         const creation = { managedId: row.id, preset: { id: 'setup-preset', revision: 1 } };
-        expect(copied.json()).toEqual({ sources, creation });
+        expect(copied.json()).toEqual({ sources: [{ ...sources[0], presetContent: { content: admittedContent, recipientEnvelope: null } }, sources[1]], creation });
         const substituted = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId,
-            sources: [{ ...sources[0], setup: { scripts: [{ body: 'echo client-substitution' }] } }, sources[1]] } });
+            sources: [{ ...sources[0], presetRevision: 2 }, sources[1]] } });
         expect(substituted.statusCode, substituted.body).toBe(409);
         const report = (state: 'running' | 'failed' | 'succeeded', operationId = 'setup-first') => app.inject({ method: 'POST',
             url: '/v1/machines/setup/report', payload: { ...target, managedId: row.id, state, operation: { operationId },
@@ -124,11 +129,13 @@ describe("managed acquisition durable authority", () => {
         expect(origin.statusCode, origin.body).toBe(200);
         expect(origin.json()).toEqual({ purpose: 'creationOrigin', creation });
         for (const candidate of [{ ...sources[0], presetId: 'unrelated-preset' },
-            { ...sources[0], setup: { scripts: [{ body: 'echo substituted' }] } }]) {
+            { ...sources[0], presetRevision: 2 }]) {
             const unrelated = await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve',
                 payload: { ...originRequest, candidates: [candidate] } });
-            expect(unrelated.statusCode, unrelated.body).toBe(200);
-            expect(unrelated.json()).toEqual({ purpose: 'creationOrigin' });
+            // A signed creation continuation names this exact retained source;
+            // an unrelated current Preset cannot turn it into a new origin.
+            expect(unrelated.statusCode, unrelated.body).toBe(409);
+            expect(unrelated.json()).toEqual({ code: 'intent_changed' });
         }
         expect((await report('running', 'setup-retry')).statusCode).toBe(200);
         expect((await report('succeeded', 'setup-first')).statusCode).toBe(409);
@@ -138,8 +145,9 @@ describe("managed acquisition durable authority", () => {
         const skipped = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/setup.skip', payload: {
             homeId, managedId: row.id, expectedIntentRevision: 0 } });
         expect(skipped.statusCode, skipped.body).toBe(200);
-        expect(skipped.json()).toMatchObject({ id: row.id, enrolledMachineId: guestId,
-            resource: { value: { id: 'same-native' } }, machineSetup: { setup, state: 'skipped' } });
+        expect(skipped.json()).toMatchObject({ machine: { id: row.id, enrolledMachineId: guestId,
+            machineSetup: { state: 'skipped' } },
+        presetContent: { content: admittedContent, recipientEnvelope: null } });
         signer = guestId;
         expect((await report('succeeded', 'setup-retry')).statusCode).toBe(409);
         expect((await report('running', 'setup-after-skip')).statusCode).toBe(409);
@@ -147,7 +155,7 @@ describe("managed acquisition durable authority", () => {
             .toEqual({ purpose: 'creationOrigin' });
         expect((await app.inject({ method: 'POST', url: '/v1/machines/setup/resolve', payload: { homeId, machineId: guestId, sources } })).statusCode).toBe(409);
         await db.managedMachine.update({ where: { id: row.id }, data: { desired: 'delete', intentRevision: 1,
-            machineSetup: { setup, state: 'running', operation: { operationId: 'setup-delete-race' } } } });
+            machineSetup: { state: 'running', operation: { operationId: 'setup-delete-race' } } } });
         expect((await report('succeeded', 'setup-delete-race')).statusCode).toBe(409);
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: 'setup-create' } })).toBe(1);
     });
@@ -164,20 +172,21 @@ describe("managed acquisition durable authority", () => {
             accessLevel: 'admin', createdByAccountId: custodian.id } });
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Requester', choices: {} };
         const setup = { scripts: [{ body: 'echo requester' }] };
+        const admittedContent = { t: 'plain' as const, v: { v: 1, name: 'Admitted', launch, setup } };
+        const storedLaunch = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: admittedContent, recipients: [] });
         const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: custodian.id,
-            name: 'Admitted', launch, controllerMachineId: controller.id, controllerInstallationId: controller.installationId! } });
+            name: '', launch: storedLaunch, controllerMachineId: controller.id, controllerInstallationId: controller.installationId! } });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
             controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
             admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: requester.id },
-            presetId: preset.id, presetRevision: preset.revision, enrolledMachineId: guest.id, allocation: 'bound', launch,
-            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'requester-setup' } },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { setup, state: 'pending' } } });
-        const sources = [{ kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision, setup },
+            presetId: preset.id, presetRevision: preset.revision, enrolledMachineId: guest.id, allocation: 'bound', launch: storedLaunch,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { state: 'pending' } } });
+        const sources = [{ kind: 'accountPresetOpaque' as const, presetId: preset.id, presetRevision: preset.revision, contentEncryptionMode: 'plain' as const },
             { kind: 'direct' as const, setup: {}}];
         const input = { homeId, machineId: guest.id, sources };
-        expect(await resolveMachineSetup({ actorAccountId: requester.id, custodianAccountId: requester.id, input }))
-            .toMatchObject({ sources, creation: { managedId: row.id } });
-        await expect(resolveMachineSetup({ actorAccountId: custodian.id, custodianAccountId: custodian.id, input }))
+        expect(await resolveMachineSetup({ actorAccountId: requester.id, custodianAccountId: requester.id, creationManagedId: row.id, input }))
+            .toMatchObject({ sources: [{ ...sources[0], presetContent: { content: admittedContent, recipientEnvelope: null } }, sources[1]], creation: { managedId: row.id } });
+        await expect(resolveMachineSetup({ actorAccountId: custodian.id, custodianAccountId: custodian.id, creationManagedId: row.id, input }))
             .rejects.toMatchObject({ code: 'permission_denied' });
         expect(await reportMachineSetup({ actorAccountId: requester.id, custodianAccountId: requester.id, input: {
             homeId, machineId: guest.id, managedId: row.id, presetId: preset.id, presetRevision: preset.revision,
@@ -917,13 +926,15 @@ describe("managed acquisition durable authority", () => {
         const { homeId, account, controller } = fixture;
         const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
             role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'reviewed-admin' } } as const;
+        const baseContent = { t: 'plain' as const, v: { v: 1, name: 'Reviewed preset', launch: fixture.input.selection.launch } };
+        const admittedContent = { t: 'plain' as const, v: { ...baseContent.v, enrollmentIdentity } };
         const preset = kind === 'preset' ? await db.managedMachinePreset.create({ data: {
-            homeId, custodianAccountId: account.id, name: 'Reviewed preset', launch: fixture.input.selection.launch,
+            homeId, custodianAccountId: account.id, name: '', launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: baseContent, recipients: [] }),
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
         } }) : undefined;
         const computeInput = preset
             ? { selection: { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision }, controller,
-                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrollmentIdentity }
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, presetContentOverride: { content: admittedContent } }
             : { ...fixture.input, enrollmentIdentity };
         const request = { ...fixture.request, input: { ...fixture.request.input, input: computeInput } };
         const app = fastify().withTypeProvider<ZodTypeProvider>();
@@ -947,7 +958,9 @@ describe("managed acquisition durable authority", () => {
             requestId: request.input.requestId, controller };
         await submitManagedAcquire(original);
         const resource = { contributionRef: fixture.input.selection.launch.provider, schemaVersion: 1, value: { id: `identity-${kind}` } };
-        await reportManagedAcquire({ ...original, result: { kind: 'bound', resource } });
+        await reportManagedAcquire(preset
+            ? { ...original, result: { kind: 'bound' }, presetContent: { t: 'plain', v: { ...admittedContent.v, nativeResult: { kind: 'bound', resource } } } }
+            : { ...original, result: { kind: 'bound', resource } });
         await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
             action: 'machines.managed.retention.update', requestId: `identity-${kind}-control`, input: {
                 homeId, managedId: created.machine.id, expectedIntentRevision: 0,
@@ -956,24 +969,30 @@ describe("managed acquisition durable authority", () => {
         } });
         const controlled = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
         expect(controlled.admittedInput).toMatchObject({ currentAdmission: { kind: 'control', request: {
-            requestId: `identity-${kind}-control` } }, computeInput: { enrollmentIdentity } });
+            requestId: `identity-${kind}-control` } }, computeInput: preset ? { selection: computeInput.selection } : { enrollmentIdentity } });
         await admitManagedPolicy({ custodianAccountId: account.id, input: { ...original, expectedIntentRevision: 1,
             requestId: `identity-${kind}-policy`, purpose: { kind: 'retention' } } });
         const cold = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
-        expect(readManagedAcquisitionIdentity(cold.admittedInput).computeInput).toEqual(computeInput);
+        const storedComputeInput = preset && 'presetContentOverride' in computeInput
+            ? (({ presetContentOverride: _private, ...structural }) => structural)(computeInput) : computeInput;
+        expect(readManagedAcquisitionIdentity(cold.admittedInput).computeInput).toEqual(storedComputeInput);
         expect(cold.admittedInput).toMatchObject({ currentAdmission: { kind: 'policy', request: {
-            requestId: `identity-${kind}-policy` } }, computeInput: { enrollmentIdentity } });
+            requestId: `identity-${kind}-policy` } }, computeInput: preset ? { selection: computeInput.selection } : { enrollmentIdentity } });
         expect(JSON.stringify(cold.admittedInput)).not.toContain('password');
         action = 'machines.managed.bootstrap.retry';
         const context = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/context',
             payload: { homeId, managedId: cold.id, controller, expectedIntentRevision: 2 } });
         expect(context.statusCode, context.body).toBe(200);
         expect(ManagedControllerContextOutputV1Schema.parse(context.json())).toMatchObject({
-            requestId: original.requestId, machine: { enrollmentIdentity, enrollmentAccountId: account.id } });
+            requestId: original.requestId, machine: { enrollmentAccountId: account.id, ...(preset ? {} : { enrollmentIdentity }) },
+            ...(preset ? { presetContent: { content: { t: 'plain', v: { enrollmentIdentity } } } } : {}) });
         const bootstrap = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context',
-            payload: { ...original, expectedIntentRevision: 2, resource } });
+            payload: { ...original, expectedIntentRevision: 2, ...(preset ? {} : { resource }) } });
         expect(bootstrap.statusCode, bootstrap.body).toBe(200);
-        expect(ManagedControllerMachineOutputV1Schema.parse(bootstrap.json()).machine).toMatchObject({ enrollmentIdentity, enrollmentAccountId: account.id });
+        expect(ManagedControllerMachineOutputV1Schema.parse(bootstrap.json())).toMatchObject({
+            machine: { enrollmentAccountId: account.id, ...(preset ? {} : { enrollmentIdentity }) } });
+        if (preset) expect(bootstrap.json()).not.toHaveProperty('presetContent');
+        if (preset) expect(JSON.stringify(cold.admittedInput)).not.toContain('reviewed-admin');
     });
 
     it('reads retained enrollment without a redundant identity review while strict acquire input remains required', async () => {
@@ -2252,16 +2271,19 @@ describe("managed acquisition durable authority", () => {
             retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, setup,
             preset: { id: preset.id, revision: 0 } });
-        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: preset.id, revision: 0 },
+        const legacyInput = { selection: { kind: 'preset', homeId, id: preset.id, revision: 0 },
             enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, controller,
-            retention: facts.retention, wakeOnAcceptedMessage: false, reviewedFacts: facts });
+            retention: facts.retention, wakeOnAcceptedMessage: false, reviewedFacts: facts };
+        const input = ManagedAcquireInputV1Schema.parse({ selection: legacyInput.selection, controller,
+            retention: facts.retention, wakeOnAcceptedMessage: false, presetContentOverride: { content: { t: 'plain',
+                v: { v: 1, name: 'Retained setup', launch, setup, enrollmentIdentity: legacyInput.enrollmentIdentity } } } });
         const { setup: oldDefinition, ...oldFacts } = facts;
         const reviewedFacts = { ...oldFacts, environment: oldDefinition };
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
             admittedActionRequestId: 'migrated-setup-request', presetId: preset.id, presetRevision: 0, launch,
             retention: facts.retention, wakeOnAcceptedMessage: false, reviewedFacts,
-            admittedInput: { computeInput: { ...input, reviewedFacts }, continuation: null,
+            admittedInput: { computeInput: { ...legacyInput, reviewedFacts }, continuation: null,
                 environmentSetup: { requestEnvelopeDigest: 'retained-envelope' } },
             machineSetup: { setup, state: 'pending' } } });
         // The provider suite deploys all of D1 to the real old-column database.

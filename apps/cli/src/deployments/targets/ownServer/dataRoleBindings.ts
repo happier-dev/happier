@@ -37,7 +37,7 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
             if ('set' in job.input && settledSet.length !== job.input.set.length) return refuse('client_required');
             const current = await host.readEnvironment({ environmentId: job.input.environmentId, targetLinkId: job.targetLinkId, context });
             const candidate = 'set' in job.input ? { ok: true as const, content: { ...current.content,
-                bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings, { set: settledSet, remove: job.input.remove }) } }
+                bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings, { set: settledSet, remove: job.input.remove }, randomUUID) } }
                 : readDeploymentEnvironmentArtifactV1(job.input, await host.open(job.input.contentArtifactId, context));
             if (!candidate.ok) return refuse(candidate.error);
             environment = { ...current, content: candidate.content };

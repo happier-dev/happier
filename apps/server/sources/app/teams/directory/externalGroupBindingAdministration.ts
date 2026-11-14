@@ -1,4 +1,5 @@
 import { acquireTeamMutationAccountAdmissionInTx, withTeamSessionAccessEffectsInTx } from "../memberships/sessionAccessEffects";
+import { randomUUID } from "node:crypto";
 import type {
     TeamDirectorySafeErrorCodeV1,
     TeamErrorCodeV1,
@@ -14,7 +15,6 @@ import {
     decodeTeamKeysetCursorV1,
     encodeTeamKeysetCursorV1,
     readTeamKeysetIdV1,
-    teamGroupNameKeyV1,
     validateTeamGroupNameV1,
 } from "@happier-dev/protocol/teams";
 
@@ -30,6 +30,10 @@ import {
 } from "../memberships/externalFacts";
 import { publishTeamChangedInTx } from "../teamChanges";
 import { isDirectorySourceCompletedEvidenceAllowedInTx } from "./directorySourcePolicy";
+import {
+    prepareTeamGroupNameForDirectoryInitialWriteInTx,
+    projectTeamGroupNameForRecipient,
+} from "../groups/privateLabels";
 
 const DEFAULT_PAGE_LIMIT = 50;
 
@@ -57,7 +61,7 @@ const bindingProjectionSelect = {
     group: { select: { id: true, name: true, archivedAt: true } },
 } as const;
 
-function projectBinding(row: BindingRow): TeamExternalGroupBindingV1 {
+function projectBinding(row: BindingRow, recipientAccountId: string): TeamExternalGroupBindingV1 {
     let owner: TeamExternalGroupBindingOwnerV1;
     if (row.directorySourceId !== null) {
         owner = { kind: "directory_source", directorySourceId: row.directorySourceId };
@@ -75,7 +79,10 @@ function projectBinding(row: BindingRow): TeamExternalGroupBindingV1 {
         mode: row.bindingMode,
         target: {
             teamGroupId: row.group.id,
-            name: row.group.name,
+            name: projectTeamGroupNameForRecipient({
+                serialized: row.group.name,
+                recipientAccountId,
+            }),
             archivedAt: row.group.archivedAt?.getTime() ?? null,
         },
     };
@@ -200,7 +207,7 @@ export async function listExternalGroupBindingsForActor(
         return {
             ok: true,
             value: {
-                items: pageRows.map(projectBinding),
+                items: pageRows.map((row) => projectBinding(row, input.actorAccountId)),
                 nextCursor: rows.length > limit && last
                     ? encodeTeamKeysetCursorV1({ queryKey, parts: [last.id] })
                     : null,
@@ -292,11 +299,20 @@ export async function setExternalGroupBindingForActor(
             } else {
                 const candidate = validateTeamGroupNameV1(validOwner.value.externalDisplayName ?? "");
                 if (candidate.status !== "ok") return { ok: false, error: "directory_group_mapping_invalid" };
+                const groupId = randomUUID();
+                const name = await prepareTeamGroupNameForDirectoryInitialWriteInTx({
+                    tx,
+                    authorAccountId: input.actorAccountId,
+                    teamId: input.teamId,
+                    groupId,
+                    value: candidate.name,
+                });
+                if (name.kind !== "ready") return { ok: false, error: "directory_group_mapping_invalid" };
                 targetGroup = await tx.teamGroup.create({
                     data: {
+                        id: groupId,
                         teamId: input.teamId,
-                        name: candidate.name,
-                        nameKey: teamGroupNameKeyV1(candidate.name),
+                        name: name.serialized,
                     },
                     select: { id: true, name: true, archivedAt: true },
                 });
@@ -357,7 +373,7 @@ export async function setExternalGroupBindingForActor(
                     }
                 }
                 await publishTeamChangedInTx(tx, { teamId: input.teamId });
-                return { ok: true, value: projectBinding(binding) };
+                return { ok: true, value: projectBinding(binding, input.actorAccountId) };
             });
         }, { isolationLevel: "ReadCommitted" /* The outer Team guard precedes the fresh projected roster, binding and contribution census. */ });
     } catch (error) {

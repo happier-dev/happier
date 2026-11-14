@@ -24,14 +24,18 @@ describe('recipient template setup', () => {
     expect(projectBotTemplateSoftwareFactsV1([software], { version: 1, desiredRevision: 0, status: 'drifted', recipes: [
       { ref: recipe, status: 'drifted', steps: [] },
     ] })).toEqual([{ key: 'git', status: 'missing' }]);
-    expect(projectBotTemplateSoftwareFactsV1([software], null, {
+    const demandedPlan: NonNullable<Parameters<typeof projectBotTemplateSoftwareFactsV1>[2]> = {
       desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref: recipe, inputs: {} } }] } }],
       exclusions: [], support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }], recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: {
         v: 1, basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
         steps: [{ id: 'git', kind: 'package', manager: 'apt', packages: [{ name: 'git' }] }], planDigest: 'a'.repeat(64),
         nativeFacts: [{ stepId: 'git', status: 'satisfied', facts: { manager: 'apt', packages: [{ manager: 'apt', name: 'git', present: true, version: '2.46' }] } }],
       } }],
-    })).toEqual([{ key: 'git', status: 'found', versions: ['2.46'] }]);
+    };
+    expect(projectBotTemplateSoftwareFactsV1([software], null, demandedPlan)).toEqual([{ key: 'git', status: 'found', versions: ['2.46'] }]);
+    expect(projectBotTemplateSoftwareFactsV1([software], null, { ...demandedPlan, sources: [{
+      kind: 'accountPresetOpaque', presetId: 'private-preset', presetRevision: 0, contentEncryptionMode: 'e2ee',
+    }] })).toEqual([{ key: 'git', status: 'unknown' }]);
   });
 
   it('binds recipient MCP secrets as refs without resolving or copying source values', () => {

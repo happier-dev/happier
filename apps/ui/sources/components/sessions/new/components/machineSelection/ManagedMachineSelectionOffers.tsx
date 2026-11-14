@@ -1,6 +1,6 @@
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -50,14 +50,14 @@ export function useManagedMachineConfigurator(input: Readonly<{
     onUse: ManagedMachineUse;
     onConfigure?: () => void;
     startsSession?: () => boolean;
-}>): (preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => void {
+}>): (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void {
     const { binding, serverId, initialConfiguration } = input;
     // Host handlers are per render; only the Account binding and target identify the configurator.
     const onUse = useEventCallback(input.onUse);
     const onConfigure = useEventCallback(() => input.onConfigure?.());
     const startsSession = useEventCallback(() => input.startsSession?.());
-    return React.useCallback((preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => {
-        if (!binding?.isCurrent() || preset && !hasManagedMachinePresetCreationV1(preset)) return;
+    return React.useCallback((preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => {
+        if (!binding?.isCurrent() || preset && !hasOpenedManagedMachinePresetCreationV1(preset)) return;
         onConfigure();
         // The opener's binding belongs to the picker and dies with it; the modal keeps its own (below),
         // for the same Account.
@@ -81,12 +81,12 @@ export function ManagedMachineSelectionOffers(props: OffersProps) {
 
 /** The picker's one-tap offers, built from presets and the machine names their controllers show. */
 export function useManagedMachineSelectionOffers(input: Readonly<{
-    homeId: string | undefined;
+    homeId: string | null | undefined;
     binding: ServerCredentialAccountScopeBinding | null;
     serverId: string;
-    presets: readonly ManagedMachinePresetV1[] | undefined;
+    presets: readonly ManagedMachinePresetListEntryV1[] | undefined;
     machines: ReturnType<typeof useMachineListForServer>;
-    configure: (preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => void;
+    configure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
     const { homeId, binding, serverId, presets, machines, configure } = input;
     // Presence ticks replace the machine list; offers only show the controller's name, so they rebuild for a name change.
@@ -132,7 +132,7 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
 }
 
 function ManagedMachineSelectionConfigurationModal(props: CustomModalInjectedProps & Readonly<{
-    serverId: string; preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null; initialConfiguration?: ManagedMachineConfigurationContinuation;
+    serverId: string; preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null; initialConfiguration?: ManagedMachineConfigurationContinuation;
     accountId: string;
     onUse: ManagedMachineUse;
     startsSession: boolean;

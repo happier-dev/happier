@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { TeamGroupIdSchema, TeamIdSchema } from '../membership.js';
+import { TeamGroupNameProjectionV1Schema } from '../groupLabel.js';
 import {
   TEAM_EXTERNAL_GROUP_BINDING_ACTION_IDS_V1,
   type TeamExternalGroupBindingActionIdV1,
@@ -24,7 +25,7 @@ export const TeamExternalGroupBindingV1Schema = lazyZodSchema(() => z.strictObje
   mode: z.enum(['directory_created', 'native_target']),
   target: z.strictObject({
     teamGroupId: TeamGroupIdSchema,
-    name: z.string().check(z.minLength(1)),
+    name: TeamGroupNameProjectionV1Schema,
     archivedAt: z.nullable(z.number()),
   }),
 }));

@@ -1,11 +1,11 @@
 import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachinePowerIntent } from './power.js';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
-const machine = ManagedMachineV1Schema.parse({
+const machine = ManagedMachineFullV1Schema.parse({
     id: 'retained', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
     resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'same-native' } },

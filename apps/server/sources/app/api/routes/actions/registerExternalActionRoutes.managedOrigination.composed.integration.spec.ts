@@ -1,3 +1,7 @@
+import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
+    openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -61,9 +65,11 @@ import { prepareReviewedChildAuthorization } from './reviewedChildAuthorization.
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { managedQb56Input, managedQb56RequestId } from './managedQb56Input.testkit';
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
+import { prepareManagedOpaquePresetAcquireV1, prepareManagedOpaquePresetReportV1 } from '@happier-dev/cli-common/machines/managed';
+import { submitManagedAcquire, reportManagedAcquire } from '@/app/machines/managed/managedMutations';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { createManagedMachineControllerClient, type ManagedMachineAcquisitionDriverInput } from '../../../../../../cli/src/machines/managed/acquire';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineV1Schema, isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { prepareRequesterAccountActionContext } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
 import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
@@ -817,6 +823,75 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
+    it.each(['plain', 'e2ee'] as const)('admits omitted preset policy only from the exact signed native root (%s)', async mode => {
+        const selected = await fixture(true);
+        const requester = await fixture(true, mode);
+        const team = await db.team.create({ data: { name: 'Native policy Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const id = crypto.randomUUID();
+        const content = { t: 'plain' as const, v: { v: 1, name: 'Private native policy', launch: selected.input.selection.launch } };
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id, homeId, owner: { kind: 'team', teamId: team.id }, contentEncryptionMode: 'plain', content, recipients: [],
+                controller: selected.controller, teamAcquireDelegated: true,
+            } })).toMatchObject({ kind: 'saved' });
+        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id, revision: 0 },
+            controller: selected.controller, presetContentOverride: { content: { ...content,
+                v: { ...content.v, enrollmentIdentity: selected.input.enrollmentIdentity } } } });
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const binding = { serverIdentityId: homeId, accountId: requester.account.id,
+            authentication: { kind: 'account' as const, tokenEpoch: requester.account.tokenEpoch },
+            actionId: 'machines.managed.acquire', requestId: crypto.randomUUID(), target };
+        const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
+        const envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding, material, input, randomBytes: tweetnacl.randomBytes });
+        const instance = await app(async () => { throw new Error('Only the native HTTP admission is exercised'); }, () => {}, []);
+        try {
+            const issued = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const policy = resolveMachineRetentionPolicyV1({ billing: { location: 'cloud', stoppedBilling: 'billed' },
+                nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } });
+            const body = { requestId: binding.requestId, input, continuationPresent: false,
+                presetPolicy: { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage },
+                originalActionEnvelope: envelope };
+            const send = (payload: typeof body, privateKey = selected.keys.secretKey) => instance.inject({ method: 'POST',
+                url: '/v1/machines/managed/controller/admit', payload,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: binding.actionId,
+                    target, installationId: selected.controller.installationId, method: 'POST',
+                    path: '/v1/machines/managed/controller/admit', body: payload, privateKey }) });
+            const unrelated = await fixture(true);
+            expect((await send(body, unrelated.keys.secretKey)).statusCode).toBe(401);
+            const changed = { ...body, input: { ...input, selection: { ...input.selection, revision: 1 } } };
+            expect((await send(changed)).statusCode).toBe(403);
+            const changedEnvelope = { ...body, originalActionEnvelope: { ...envelope, idempotencyKey: 'foreign-root' } };
+            expect((await send(changedEnvelope)).statusCode).toBe(403);
+            const requesterOnly = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
+                headers: { authorization: `Bearer ${requester.token}` } });
+            expect(requesterOnly.statusCode).toBe(403);
+            expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(0);
+            await db.managedMachinePreset.update({ where: { id }, data: { retentionOverride: { kind: 'until-delete' } } });
+            expect((await send(body)).statusCode).toBe(403);
+            await db.managedMachinePreset.update({ where: { id }, data: { retentionOverride: null } });
+            const accepted = await send(body);
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(ManagedAdmissionOutputV1Schema.parse(accepted.json()).machine).toMatchObject({
+                retention: policy.retention, wakeOnAcceptedMessage: false, custodianAccountId: selected.account.id,
+                enrollmentAccountId: requester.account.id });
+            expect(accepted.json().machine).not.toHaveProperty('launch');
+            expect((await send(body)).json()).toMatchObject({ replayed: true });
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: { homeId, admittedActionRequestId: binding.requestId } } });
+            const { presetContentOverride: _override, ...computeInput } = input;
+            expect(row.admittedInput).toMatchObject({ computeInput, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+            expect(row.admittedInput).not.toHaveProperty('computeInput.retention');
+        } finally { await instance.close(); }
+    });
+
     it.each([
         { mode: 'plain', delegated: true, surface: 'cli' }, { mode: 'e2ee', delegated: true, surface: 'cli' },
         { mode: 'plain', delegated: true, surface: 'ui' }, { mode: 'plain', delegated: false, surface: 'ui' },
@@ -831,16 +906,22 @@ describe('composed CLI managed Action origination', () => {
         if (!delegated) await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
         const presetId = crypto.randomUUID();
+        const presetContent = sealManagedMachinePresetContentV1({ presetId, mode: 'plain',
+            content: { v: 1, name: 'Delegated guest', launch: selected.input.selection.launch }, randomBytes: tweetnacl.randomBytes });
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({ ...presetContent, recipientAccountId: selected.account.id }),
+            enrollmentIdentity: selected.input.enrollmentIdentity });
+        expect(presetContentOverride).not.toBeNull();
         expect(await createMachinePreset({ accountId: selected.account.id,
             authentication: { authenticationAuthority: 'present_user' }, input: {
-                id: presetId, homeId, name: 'Delegated guest', owner: { kind: 'team', teamId: team.id },
-                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: delegated,
+                id: presetId, homeId, contentEncryptionMode: 'plain', ...presetContent, owner: { kind: 'team', teamId: team.id },
+                controller: selected.controller, teamAcquireDelegated: delegated,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             } })).toMatchObject({ kind: 'saved' });
         const access = await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: selected.controller.machineId });
         if (delegated) expect(access).toBeNull();
         else expect(access).toMatchObject({ role: 'manage' });
-        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+        const input = ManagedAcquireInputV1Schema.parse({ presetContentOverride,
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
@@ -973,23 +1054,42 @@ describe('composed CLI managed Action origination', () => {
             { teamId: team.id, accountId: stranger.account.id, role: 'member' },
         ] });
         const presetId = crypto.randomUUID();
+        const presetContent = sealManagedMachinePresetContentV1({ presetId, mode: 'plain',
+            content: { v: 1, name: 'Creator guest', launch: selected.input.selection.launch }, randomBytes: tweetnacl.randomBytes });
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({ ...presetContent, recipientAccountId: selected.account.id }),
+            enrollmentIdentity: selected.input.enrollmentIdentity });
+        expect(presetContentOverride).not.toBeNull();
         expect(await createMachinePreset({ accountId: selected.account.id,
             authentication: { authenticationAuthority: 'present_user' }, input: {
-                id: presetId, homeId, name: 'Creator guest', owner: { kind: 'team', teamId: team.id },
-                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: true,
+                id: presetId, homeId, contentEncryptionMode: 'plain', ...presetContent, owner: { kind: 'team', teamId: team.id },
+                controller: selected.controller, teamAcquireDelegated: true,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             } })).toMatchObject({ kind: 'saved' });
-        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+        const acquireInput = ManagedAcquireInputV1Schema.parse({ presetContentOverride,
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
             requesterAccountId: creator ? requester.account.id : selected.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
                 v: 1, requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId }, input: acquireInput }),
             input: { input: acquireInput, requestId: selected.requestId, continuationPresent: false } });
-        if (actionId === 'machines.managed.delete') await db.managedMachine.update({ where: { id: admitted.machine.id }, data: {
-            allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
-                schemaVersion: 1, value: { id: 'creator-native-resource' } },
-        } });
+        if (actionId === 'machines.managed.delete') {
+            if (!isManagedOpaquePresetMachineV1(admitted.machine)) throw new Error('Expected opaque preset admission');
+            const prepared = await prepareManagedOpaquePresetAcquireV1({ content: presetContent.content,
+                override: presetContentOverride, provisioner: fixtureManifests.daemon.contributes.machineProvisioners![0],
+                open: content => openManagedMachinePresetContentV1({ presetId, mode: 'plain', content }) });
+            if (!prepared) throw new Error('Expected valid admitted preset content');
+            const reported = prepareManagedOpaquePresetReportV1({ machine: admitted.machine,
+                content: prepared.content, opened: prepared.opened, recipients: presetContent.recipients,
+                accountId: selected.account.id, randomBytes: tweetnacl.randomBytes,
+                nativeResult: { kind: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
+                    schemaVersion: 1, value: { id: 'creator-native-resource' } } } });
+            if (!reported) throw new Error('Expected sealed native acquisition snapshot');
+            const correlation = { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0,
+                requestId: selected.requestId, controller: selected.controller };
+            await submitManagedAcquire(correlation);
+            await reportManagedAcquire({ ...correlation, result: { kind: 'bound' }, presetContent: reported.content });
+        }
         if (manage) await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
         const input = actionId === 'machines.managed.cancel'
@@ -1014,7 +1114,8 @@ describe('composed CLI managed Action origination', () => {
             externalActionMachineRequestPrivateKey: selected.keys.secretKey,
             externalActionMachineInstallationId: selected.controller.installationId,
             managedMachineAction: async request => {
-                if (request.actionId === 'machines.managed.cancel') return accountActions.managedMachineAction!(request);
+                if (request.actionId === 'machines.managed.cancel' || request.actionId === 'machines.managed.get')
+                    return accountActions.managedMachineAction!(request);
                 // Stop at real Home admission, before the external native provider effect.
                 const client = createManagedMachineControllerClient(connection,
                     { requestId: request.context.actionRequestId!, context: request.context }, request.actionId);
@@ -1162,15 +1263,22 @@ describe('composed CLI managed Action origination', () => {
             { teamId: team.id, accountId: requester.account.id, role: 'member' },
         ] });
         const presetId = crypto.randomUUID();
+        const presetContent = sealManagedMachinePresetContentV1({ presetId, mode: 'plain',
+            content: { v: 1, name: 'One container at a time', launch: {
+                provider: { pluginId: manifest.id, localId: 'devcontainer' }, schemaVersion: 1, name: 'Recovery container',
+                choices: { runtime: 'docker', configuration: { kind: 'image', image: 'ubuntu:24.04' } } } },
+            randomBytes: tweetnacl.randomBytes });
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({ ...presetContent, recipientAccountId: selected.account.id }),
+            enrollmentIdentity: selected.input.enrollmentIdentity });
+        expect(presetContentOverride).not.toBeNull();
         expect(await createMachinePreset({ accountId: selected.account.id,
             authentication: { authenticationAuthority: 'present_user' }, input: {
-                id: presetId, homeId, name: 'One container at a time', owner: { kind: 'team', teamId: team.id },
-                launch: { provider: { pluginId: manifest.id, localId: 'devcontainer' }, schemaVersion: 1, name: 'Recovery container',
-                    choices: { runtime: 'docker', configuration: { kind: 'image', image: 'ubuntu:24.04' } } },
+                id: presetId, homeId, contentEncryptionMode: 'plain', ...presetContent, owner: { kind: 'team', teamId: team.id },
                 controller: selected.controller, teamAcquireDelegated: true, simultaneousLimit: { maximum: 1 },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             } })).toMatchObject({ kind: 'saved' });
-        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+        const acquireInput = ManagedAcquireInputV1Schema.parse({ presetContentOverride,
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const acquire = (requestId: string) => admitManagedAcquire({ custodianAccountId: selected.account.id,

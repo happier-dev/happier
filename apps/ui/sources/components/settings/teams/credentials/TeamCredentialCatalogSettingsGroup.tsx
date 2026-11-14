@@ -20,8 +20,13 @@ import {
     teamCredentialRecoveryPresentation,
 } from './teamCredentialPresentation';
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+
+import { useOpenedTeamCredentialDisplayNames } from './teamCredentialPrivateLabels';
 
 export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCredentialCatalogSettingsGroup(props: Readonly<{
+    /** The active recipient identity that may open the catalog's already-projected labels. */
+    scope: ServerAccountScope | null;
     title: string;
     /** A page section's sentence above its rows (Credentials and Providers say what is shared with you). */
     description?: string;
@@ -43,14 +48,26 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
             if (resource.sourcePresentation?.kind !== props.sourceKind) continue;
             unique.set(`${resource.teamId}:${resource.id}`, resource);
         }
-        return [...unique.values()].sort((left, right) => (
-            left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)
-        ));
+        return [...unique.values()];
     }, [props.catalog.resources, props.sourceKind]);
+    const displayNames = useOpenedTeamCredentialDisplayNames({
+        scope: props.scope,
+        resources,
+        enabled: props.scope !== null,
+    });
+    const orderedResources = React.useMemo(() => [...resources].sort((left, right) => {
+        const leftName = displayNames[left.id];
+        const rightName = displayNames[right.id];
+        // A recipient projection without a current key cannot establish a sort
+        // order. Retain a deterministic non-content order until it opens.
+        return leftName !== null && leftName !== undefined && rightName !== null && rightName !== undefined
+            ? leftName.localeCompare(rightName) || left.id.localeCompare(right.id)
+            : left.id.localeCompare(right.id);
+    }), [displayNames, resources]);
 
     // Last-known is truthful only when there are retained rows. Disabled and
     // current-empty catalogs stay absent; cold loads and failures name their state.
-    if (resources.length === 0 && !props.catalog.condition) return null;
+    if (orderedResources.length === 0 && !props.catalog.condition) return null;
     const rail = props.variant === 'rail';
     const condition = props.catalog.condition;
     const retry = props.onRetry && condition?.retryable !== false ? {
@@ -58,7 +75,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         label: t('common.retry'),
         onPress: () => Promise.resolve(props.onRetry?.()).catch(() => undefined),
     } : undefined;
-    const state = !props.catalog.current ? resources.length > 0 ? (
+    const state = !props.catalog.current ? orderedResources.length > 0 ? (
         <SurfaceFreshnessLine
             testID={`team-credential-catalog-stale:${props.sourceKind}`}
             reason={[t('teams.stale.label'), condition && condition.reason !== 'loading' ? teamsUnavailableHomeReason(condition) : null].filter(Boolean).join(' ')}
@@ -76,7 +93,8 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         />
     ) : null : null;
 
-    const rows = resources.map((resource) => {
+    const rows = orderedResources.map((resource) => {
+        const displayName = displayNames[resource.id] ?? t('teams.credentials.title');
         const status = props.catalog.resourceStatusByKey.get(`${resource.teamId}:${resource.id}`) ?? { kind: 'pending' as const };
         const resourceCurrent = status.kind === 'current';
         // The catalog row never decides who may repair a resource: every
@@ -109,13 +127,13 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
                 pressableStyle={rail ? collectionListStyles.row : undefined}
                 showChevron={rail ? false : undefined}
                 testID={`team-credential-catalog-resource:${resource.teamId}:${resource.id}`}
-                title={resource.displayName}
+                title={displayName}
                 subtitle={subtitle}
                 // On a page the line carries a repair in words: it wraps rather than stopping mid-sentence.
                 subtitleLines={rail ? undefined : 0}
                 icon={props.renderMark?.(resource)}
                 accessibilityLabel={[
-                    resource.displayName,
+                    displayName,
                     teamName,
                     sourceKindLabel(resource.sourcePresentation),
                     delivery,
@@ -134,7 +152,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
             <>
                 <CollectionListGroupLabel
                     title={props.title}
-                    count={props.catalog.current || resources.length > 0 ? resources.length : undefined}
+                    count={props.catalog.current || orderedResources.length > 0 ? orderedResources.length : undefined}
                 />
                 {rows}
                 {state}

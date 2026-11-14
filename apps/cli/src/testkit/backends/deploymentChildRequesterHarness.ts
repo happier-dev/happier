@@ -5,7 +5,7 @@ import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, deployment
     isDeploymentChildRootActionIdV1, type DeploymentChildRpcV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol';
 import { createDeploymentCandidatePublicationV1, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
     projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1,
-    isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, sealExternalActionRequestV2, createActionExecutor } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -51,7 +51,8 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
         publicKey: Buffer.from(receiver.publicKey).toString('base64url'), privateKey: Buffer.from(receiver.secretKey).toString('base64url') };
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installed);
     const secret = new Uint8Array(32).fill(73);
-    const bob: StoredCredentials = { token: 'bob-private-archive', credentialProvenance: 'stored_session',
+    const bobToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
+    const bob: StoredCredentials = { token: bobToken, credentialProvenance: 'stored_session',
         encryption: encryptionMode === 'plain' ? null : { type: 'legacy', secret } };
     const ann: StoredCredentials = { token: 'ann-finite-socket', credentialProvenance: 'stored_session',
         encryption: encryptionMode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(74) } };
@@ -81,7 +82,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
         ...binding, custodianAccountId: 'controller-owner', accountEncryptionMode: encryptionMode, machineId: sourceMachineId,
         installationId: sourceInstallationId, requestEnvelopeDigest,
         ...(isDeploymentChildRootActionIdV1(binding.actionId, deploymentPreparationAdmission) ? { deploymentChildRoot: true } : {}),
-        ...(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission?.kind === 'restore'
+        ...(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission) || nativeAdmission?.kind === 'restore'
             ? { environmentId: nativeAdmission.environmentId, deploymentNativeAdmission: nativeAdmission } : {}),
         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
         ...(options.rootActionId || deploymentOperationForRootActionV1(job.actionId) === undefined ? {} : { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ ...binding, requestEnvelopeDigest,

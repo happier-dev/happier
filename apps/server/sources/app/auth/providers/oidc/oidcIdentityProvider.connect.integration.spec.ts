@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -224,7 +225,7 @@ describe("oidcIdentityProvider.connect (integration)", () => {
             },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering") },
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {

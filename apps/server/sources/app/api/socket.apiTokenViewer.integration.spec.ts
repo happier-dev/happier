@@ -14,6 +14,7 @@ import type { Fastify as AppFastify } from "./types";
 import { enableAuthentication } from './utils/enableAuthentication';
 import { registerAccountApiTokenManagementRoutes } from './routes/auth/registerAccountApiTokenManagementRoutes';
 import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("API-token Session viewer", () => {
     let harness: LightSqliteHarness;
@@ -33,7 +34,7 @@ describe("API-token Session viewer", () => {
         const otherSession = await db.session.create({ data: {
             accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
-        const parentToken = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "viewer",
+        const parentToken = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "viewer"),
             expiresAt: new Date(Date.now() + 60_000), grant: {
                 v: 1, actions: { families: ["session_transcripts"], ids: [] },
                 targets: { sessions: [session.id, otherSession.id], machines: [] }, approve: false,

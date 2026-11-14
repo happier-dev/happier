@@ -13,6 +13,7 @@ import {
 import { TeamExternalGroupBindingMode } from "@/storage/enums.generated";
 import type { Tx } from "@/storage/inTx";
 import { sessionHistoryAccessOf } from "../memberships/sessionHistory";
+import { projectTeamGroupNameForRecipient } from "./privateLabels";
 
 /**
  * The Group row and the two facts its metadata lifecycle depends on: whether a
@@ -24,7 +25,6 @@ export const TEAM_GROUP_ROW_SELECT = {
     id: true,
     teamId: true,
     name: true,
-    nameKey: true,
     description: true,
     archivedAt: true,
 } as const;
@@ -33,7 +33,6 @@ export type TeamGroupRow = Readonly<{
     id: string;
     teamId: string;
     name: string;
-    nameKey: string;
     description: string | null;
     archivedAt: Date | null;
 }>;
@@ -175,6 +174,7 @@ export function resolveTeamGroupCapabilitiesV1(input: Readonly<{
 
 export function projectTeamGroupV1(input: Readonly<{
     row: TeamGroupRow;
+    recipientAccountId: string;
     memberCount: number;
     manageGroups: boolean;
     teamArchivedAt: Date | null;
@@ -185,7 +185,10 @@ export function projectTeamGroupV1(input: Readonly<{
         v: 1,
         id: input.row.id,
         teamId: input.row.teamId,
-        name: input.row.name,
+        name: projectTeamGroupNameForRecipient({
+            serialized: input.row.name,
+            recipientAccountId: input.recipientAccountId,
+        }),
         description: input.row.description,
         archivedAt: input.row.archivedAt?.getTime() ?? null,
         memberCount: input.memberCount,

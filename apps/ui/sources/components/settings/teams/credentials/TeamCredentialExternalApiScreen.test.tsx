@@ -92,6 +92,7 @@ const EXTERNAL_KEY_CREATE_PATH = '/v1/teams/credential-resources/external-keys/c
 const EXTERNAL_KEY_AUTHORIZE_PATH = '/v1/teams/credential-resources/external-keys/authorize';
 const EXTERNAL_KEY_REVOKE_PATH = '/v1/teams/credential-resources/external-keys/revoke';
 const EXTERNAL_KEY_REVOKE_ALL_PATH = '/v1/teams/credential-resources/external-keys/revoke-all';
+const PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
 const MEMBERS_LIST_PATH = '/v1/teams/members/list';
 const ACCOUNT_SETTINGS_V2_PATH = '/v2/account/settings';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
@@ -103,7 +104,7 @@ function key(keyId: string, resourceId: string, label: string) {
         keyId,
         resourceId,
         teamMembershipId: 'membership-1',
-        label,
+        label: { content: { t: 'plain' as const, v: label }, recipientEnvelope: null },
         displayPrefix: `hapek_v1_${keyId.slice(0, 8)}`,
         createdAt: '2026-09-07T10:00:00.000Z',
         lastUsedAt: null,
@@ -142,6 +143,9 @@ async function addManagedHome(initialKeys: readonly ReturnType<typeof key>[] = [
         },
     });
     harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { body: { keys: initialKeys } });
+    harness.answer(serverId, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, {
+        body: { contentEncryptionMode: 'plain', recipients: [] },
+    });
     harness.answer(serverId, ACCOUNT_SETTINGS_V2_PATH, {
         body: {
             content: { t: 'plain', v: {} },
@@ -200,7 +204,7 @@ describe('TeamCredentialExternalApiScreen', () => {
         harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) }) });
         harness.answer(serverId, CREDENTIAL_GET_PATH, { status: 404, body: { error: 'not_found_or_not_visible' } });
         harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ nextCursor: null, failures: [], resources: [{
-            id: 'resource-1', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Acme Provider' }, recipientEnvelope: null }, resourceRevision: 7,
             readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
             sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
@@ -386,7 +390,10 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(screen.getTextContent()).toContain('OPENAI_BASE_URL=https://external-api-approval.example/prefix/api/provider-broker/v1');
         expect(screen.getTextContent()).toContain('ANTHROPIC_BASE_URL=https://external-api-approval.example/prefix/api/provider-broker/v1');
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)[0]?.input).toMatchObject({
-            teamMembershipId: 'membership-1', label: 'CI runner', expiresAt: expect.any(String),
+            teamMembershipId: 'membership-1',
+            keyId: expect.any(String),
+            label: { content: { t: 'plain', v: 'CI runner' }, recipients: [] },
+            expiresAt: expect.any(String),
         });
 
         modalConfirm.mockResolvedValueOnce(false);
@@ -754,7 +761,9 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(1);
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)[0]?.input).toMatchObject({
-            teamMembershipId: 'membership-1', label: 'CI runner',
+            teamMembershipId: 'membership-1',
+            keyId: expect.any(String),
+            label: { content: { t: 'plain', v: 'CI runner' }, recipients: [] },
         });
         expect(harness.artifacts(serverId).list()).toHaveLength(0);
         expect(JSON.stringify(harness.requests.filter(request => request.path !== EXTERNAL_KEY_CREATE_PATH)))

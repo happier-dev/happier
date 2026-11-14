@@ -1,4 +1,4 @@
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMachineEnrollment.js';
 import type { ManagedNativeInvocation } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
@@ -43,7 +43,7 @@ export async function startManagedNativeGuestDaemon(input: Readonly<{
 }
 
 /** Adapt the provider's native byte/exec roles to the one shared enrollment recipe. */
-export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollmentCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
+export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollmentFullCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
     return {
         exec: async request => {
             const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {

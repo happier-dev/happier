@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 
@@ -1608,7 +1609,7 @@ describe('SessionFollowEdge service', () => {
         const membership = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: guest.id, role: 'guest', sessionAccessStartsAt: cutoff,
         } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Guests', nameKey: 'guests' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Guests') } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
             nativeContribution: true, sessionAccessStartsAt: null,

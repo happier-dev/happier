@@ -4,16 +4,17 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { getMachineSocketRoom, getUserMachinesSocketRoom } from '@/app/api/socketRooms';
 import type { MachineDaemonPresenceSocketServer } from "../machineDaemonPresence";
-import type { MachinePoolCreateInputV1 } from "@happier-dev/protocol";
+import type { MachinePoolCreateInputV1, MachinePoolPrivateLabelStoredV1, MachinePoolUpdateInputV1 } from "@happier-dev/protocol";
+import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import {
-    createMachinePool,
+    createMachinePool as createMachinePoolService,
     deleteMachinePool,
     getMachinePool,
     getMachinePoolCandidateSnapshot,
     getMachinePoolCandidateSnapshots,
     listMachinePools,
     resolveMachinePool,
-    updateMachinePool,
+    updateMachinePool as updateMachinePoolService,
 } from "./machinePoolService";
 import { getMachinePoolMemberEligibility } from './machinePoolMemberAdmission';
 
@@ -22,6 +23,66 @@ vi.mock("@/app/events/connectionEventRouter", () => ({ eventRouter: { emitUpdate
 const ownerId = "pool-owner";
 const otherId = "pool-other";
 const poolId = "99d55938-f860-4af8-8023-01fecec86f35";
+
+type TestMachinePoolLabel = MachinePoolPrivateLabelStoredV1 | string;
+type TestMachinePoolCreateInput = Omit<MachinePoolCreateInputV1, 'name' | 'description'> & Readonly<{
+    name: TestMachinePoolLabel;
+    description?: TestMachinePoolLabel | null;
+}>;
+type TestMachinePoolUpdateInput = Omit<MachinePoolUpdateInputV1, 'name' | 'description'> & Readonly<{
+    name: TestMachinePoolLabel;
+    description?: TestMachinePoolLabel | null;
+}>;
+
+function plainPoolLabel(value: string): MachinePoolPrivateLabelStoredV1 {
+    return { content: { t: 'plain', v: value }, recipients: [] };
+}
+
+function storedPlainPoolLabel(value: string): string {
+    return serializePrivateLabelStoredV1(plainPoolLabel(value));
+}
+
+function projectedPlainPoolLabel(value: string) {
+    return { kind: 'available' as const, label: { content: { t: 'plain' as const, v: value }, recipientEnvelope: null } };
+}
+
+function normalizedPoolLabel(label: TestMachinePoolLabel): MachinePoolPrivateLabelStoredV1 {
+    return typeof label === 'string' ? plainPoolLabel(label.trim()) : label;
+}
+
+function normalizedPoolDescription(description: TestMachinePoolLabel | null | undefined): MachinePoolPrivateLabelStoredV1 | null | undefined {
+    if (description === undefined || description === null) return description;
+    if (typeof description !== 'string') return description;
+    const value = description.trim();
+    return value ? plainPoolLabel(value) : null;
+}
+
+function toCreateInput(input: TestMachinePoolCreateInput): MachinePoolCreateInputV1 {
+    const description = normalizedPoolDescription(input.description);
+    return {
+        ...input,
+        name: normalizedPoolLabel(input.name),
+        ...(description === undefined ? {} : { description }),
+    };
+}
+
+function toUpdateInput(input: TestMachinePoolUpdateInput): MachinePoolUpdateInputV1 {
+    const description = normalizedPoolDescription(input.description);
+    return {
+        ...input,
+        name: normalizedPoolLabel(input.name),
+        ...(description === undefined ? {} : { description }),
+    };
+}
+
+/** Existing membership tests retain their plain authoring fixtures while the service receives canonical labels. */
+async function createMachinePool(params: Omit<Parameters<typeof createMachinePoolService>[0], 'input'> & Readonly<{ input: TestMachinePoolCreateInput }>) {
+    return await createMachinePoolService({ ...params, input: toCreateInput(params.input) });
+}
+
+async function updateMachinePool(params: Omit<Parameters<typeof updateMachinePoolService>[0], 'input'> & Readonly<{ input: TestMachinePoolUpdateInput }>) {
+    return await updateMachinePoolService({ ...params, input: toUpdateInput(params.input) });
+}
 
 function io(machineIds: readonly string[] = []): MachineDaemonPresenceSocketServer {
     return {
@@ -103,7 +164,7 @@ describe("machinePoolService (SQLite integration)", () => {
     it("rejects ephemeral members and never selects an ephemeral Machine from a stored Pool", async () => {
         await seed();
         await db.machine.update({ where: { id: "m-fast" }, data: { kind: "ephemeral_session_runner" } });
-        const input: MachinePoolCreateInputV1 = {
+        const input: TestMachinePoolCreateInput = {
             poolId, name: "Persistent only", members: [{ machineId: "m-fast", priorityTier: 0, enabled: true }],
         };
         await expect(createMachinePool({ accountId: ownerId, input, io: io(["m-fast"]) })).resolves.toMatchObject({
@@ -111,7 +172,7 @@ describe("machinePoolService (SQLite integration)", () => {
         });
         expect(await db.machinePool.count()).toBe(0);
         await db.machinePool.create({ data: {
-            id: poolId, accountId: ownerId, name: input.name,
+            id: poolId, accountId: ownerId, name: storedPlainPoolLabel('Persistent only'),
             members: { create: input.members },
         } });
         await expect(resolveMachinePool({ accountId: ownerId, input: { poolId, requestKey: "request" }, io: io(["m-fast"]) }))
@@ -120,7 +181,7 @@ describe("machinePoolService (SQLite integration)", () => {
 
     it("atomically creates, replays, conflicts, mutates by revision, and marks actual changes", async () => {
         await seed();
-        const input: MachinePoolCreateInputV1 = {
+        const input: TestMachinePoolCreateInput = {
             poolId,
             name: " Fast pool ",
             description: "   ",
@@ -133,7 +194,7 @@ describe("machinePoolService (SQLite integration)", () => {
         expect(created).toMatchObject({
             ok: true,
             value: {
-                pool: { name: "Fast pool", description: null, revision: 0 },
+                pool: { name: projectedPlainPoolLabel("Fast pool"), description: null, revision: 0 },
                 availability: { state: "known", connectedCount: 1, enabledCount: 2 },
             },
         });
@@ -145,14 +206,14 @@ describe("machinePoolService (SQLite integration)", () => {
             accountId: ownerId,
             input: { ...input, name: "Different" },
             io: io(),
-        })).resolves.toMatchObject({ ok: false, error: { code: "pool_changed", current: { pool: { name: "Fast pool" } } } });
+        })).resolves.toMatchObject({ ok: false, error: { code: "pool_changed", current: { pool: { name: projectedPlainPoolLabel("Fast pool") } } } });
 
         const updated = await updateMachinePool({
             accountId: ownerId,
             input: { ...input, expectedRevision: 0, name: "Updated", members: input.members },
             io: io(),
         });
-        expect(updated).toMatchObject({ ok: true, value: { pool: { revision: 1, name: "Updated" } } });
+        expect(updated).toMatchObject({ ok: true, value: { pool: { revision: 1, name: projectedPlainPoolLabel("Updated") } } });
         await expect(updateMachinePool({
             accountId: ownerId,
             input: {
@@ -167,7 +228,7 @@ describe("machinePoolService (SQLite integration)", () => {
             where: { id: poolId },
             include: { members: { orderBy: { machineId: "asc" } } },
         })).resolves.toMatchObject({
-            name: "Updated",
+            name: storedPlainPoolLabel("Updated"),
             revision: 1,
             members: [
                 { machineId: "m-fast", priorityTier: 0, enabled: true },
@@ -190,7 +251,7 @@ describe("machinePoolService (SQLite integration)", () => {
         await expect(db.machinePool.findUniqueOrThrow({
             where: { id: poolId },
             include: { members: true },
-        })).resolves.toMatchObject({ name: "Updated", revision: 1, members: expect.arrayContaining([
+        })).resolves.toMatchObject({ name: storedPlainPoolLabel("Updated"), revision: 1, members: expect.arrayContaining([
             expect.objectContaining({ machineId: "m-fast", priorityTier: 0 }),
             expect.objectContaining({ machineId: "m-slow", priorityTier: 2 }),
         ]) });
@@ -218,6 +279,55 @@ describe("machinePoolService (SQLite integration)", () => {
             io: io(),
         })).resolves.toEqual({ ok: true, value: { poolId, deleted: true } });
         expect(await db.account.findUniqueOrThrow({ where: { id: ownerId }, select: { seq: true } })).toEqual({ seq: 3 });
+    });
+
+    it('stores tagged label envelopes and retains raw labels without rewriting their routing rows', async () => {
+        await seed();
+        const name = plainPoolLabel('Private Pool');
+        const description = plainPoolLabel('Private description');
+        const created = await createMachinePoolService({
+            accountId: ownerId,
+            input: {
+                poolId,
+                name,
+                description,
+                members: [{ machineId: 'm-fast', priorityTier: 0, enabled: true }],
+            },
+            io: io(['m-fast']),
+        });
+        expect(created).toMatchObject({
+            ok: true,
+            value: {
+                pool: {
+                    name: projectedPlainPoolLabel('Private Pool'),
+                    description: projectedPlainPoolLabel('Private description'),
+                },
+            },
+        });
+        const persisted = await db.machinePool.findUniqueOrThrow({ where: { id: poolId } });
+        expect(persisted.name).toBe(serializePrivateLabelStoredV1(name));
+        expect(persisted.description).toBe(serializePrivateLabelStoredV1(description));
+        expect(JSON.parse(persisted.name)).toEqual(name);
+
+        const legacyPoolId = 'e2d34ecf-c2d9-4b8e-a6de-30cf8b795ee8';
+        await db.machinePool.create({ data: {
+            id: legacyPoolId,
+            accountId: ownerId,
+            name: 'Untyped retained label',
+            members: { create: { machineId: 'm-fast', priorityTier: 0, enabled: true } },
+        } });
+        const legacy = (await listMachinePools({ accountId: ownerId, io: io(['m-fast']) }))
+            .find((view) => view.pool.id === legacyPoolId);
+        expect(legacy).toMatchObject({ pool: { name: { kind: 'available', label: { content: { t: 'plain', v: 'Untyped retained label' }, recipientEnvelope: null, legacyPlaintext: true } }, description: null } });
+        expect((await db.machinePool.findUniqueOrThrow({ where: { id: legacyPoolId } })).name).toBe('Untyped retained label');
+        await expect(resolveMachinePool({
+            accountId: ownerId,
+            input: { poolId: legacyPoolId, requestKey: 'retained-row' },
+            io: io(['m-fast']),
+        })).resolves.toEqual({
+            ok: true,
+            value: { kind: 'resolved', poolId: legacyPoolId, machineId: 'm-fast', priorityTier: 0 },
+        });
     });
 
     it("does not disclose or admit foreign Machines and pool ids", async () => {
@@ -643,7 +753,7 @@ describe("machinePoolService (SQLite integration)", () => {
             value: {
                 pool: {
                     revision: 1,
-                    name: "Renamed despite temporary member",
+                    name: projectedPlainPoolLabel("Renamed despite temporary member"),
                     members: [{ machineId: "m-fast", enabled: true, state: "temporary" }],
                 },
                 availability: { state: "known", enabledCount: 1, connectedCount: 0 },
@@ -711,8 +821,8 @@ describe("machinePoolService (SQLite integration)", () => {
         const stored = await db.machinePool.findUniqueOrThrow({ where: { id: poolId }, include: { members: true } });
         expect(stored.revision).toBe(1);
         expect([
-            { name: "Left", members: [{ machineId: "m-fast", priorityTier: 10 }] },
-            { name: "Right", members: [{ machineId: "m-slow", priorityTier: 20 }] },
+            { name: storedPlainPoolLabel("Left"), members: [{ machineId: "m-fast", priorityTier: 10 }] },
+            { name: storedPlainPoolLabel("Right"), members: [{ machineId: "m-slow", priorityTier: 20 }] },
         ]).toContainEqual({
             name: stored.name,
             members: stored.members.map(({ machineId, priorityTier }) => ({ machineId, priorityTier })),

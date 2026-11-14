@@ -4,12 +4,17 @@ import type { TeamCredentialActivityKindV1 } from '@happier-dev/protocol/teams';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useTeamCredentialActivity } from '@/hooks/teams/useTeamCredentialResources';
+import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
+import {
+    teamCredentialDisplayNameBinding,
+    teamCredentialExternalApiKeyLabelBinding,
+} from '@/sync/ops/teams/teamCredentialLabels';
 
 /**
  * What one administrative event says.
@@ -53,6 +58,23 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
         scope: context.scope,
         resourceId,
         enabled: view.featureEnabled && view.resource !== null && managesResources,
+    });
+    const activityLabelRequests = React.useMemo(() => activity.rows.map((event, index) => (
+        {
+            key: `${event.createdAt}:${index}`,
+            // Historical resource snapshots remain resource-bound; an external
+            // key snapshot deliberately carries its own immutable AAD id.
+            binding: event.kind === 'external_key_created' || event.kind === 'external_key_revoked'
+                ? teamCredentialExternalApiKeyLabelBinding(event.externalApiKeyId)
+                : teamCredentialDisplayNameBinding(resourceId),
+            label: event.subjectDisplayName,
+            readPolicy: { kind: 'team-resource' as const },
+        }
+    )), [activity.rows, resourceId]);
+    const openedActivityDisplayNames = useOpenedPrivateLabels({
+        scope: context.scope,
+        requests: activityLabelRequests,
+        enabled: view.featureEnabled && managesResources,
     });
 
     if (!view.featureEnabled || (view.resolved && view.resource === null)) {
@@ -131,22 +153,24 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
 
             {activity.rows.length > 0 ? (
                 <ItemGroup title={t('teams.credentials.activity.title')}>
-                    {activity.rows.map((event, index) => (
-                        <Item
+                    {activity.rows.map((event, index) => {
+                        const key = `${event.createdAt}:${index}`;
+                        const subjectDisplayName = openedActivityDisplayNames[key] ?? t('common.unavailable');
+                        return <Item
                             // The history has no event identity of its own, so the
                             // position in the sequence is the only stable key; the
                             // sequence is append-only and never reordered.
-                            key={`${event.createdAt}:${index}`}
+                            key={key}
                             testID={`team-credential-activity-row:${index}`}
                             title={activityKindLabel(event.kind)}
                             subtitle={[
                                 event.actorDisplayName ?? t('teams.credentials.activity.unknownActor'),
-                                event.subjectDisplayName,
+                                subjectDisplayName,
                             ].join(' · ')}
                             detail={formatShortRelativeTime(Date.parse(event.createdAt))}
                             showChevron={false}
-                        />
-                    ))}
+                        />;
+                    })}
                 </ItemGroup>
             ) : null}
 

@@ -38,7 +38,9 @@ import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttp
 import { readExternalActionBindingAuthority, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionIdV1Schema, isManagedRetainedControlInvocation } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
+import { MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -49,6 +51,8 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
   & CliTranscriptActionExecutorOptions
   & Readonly<{
     runtimeActionExecute?: RuntimeActionExecute;
+    /** Daemon-owned finite broker transport retained by Account child execution. */
+    executeTeamCredentialBrokerAction?: import('@/plugins/runtime/accountExecutionRuntime').AccountExecutionRuntimeInput['executeTeamCredentialBrokerAction'];
     prepareLocalServiceStartApproval?: ActionExecutorDeps['prepareLocalServiceStartApproval'];
     clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
     confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
@@ -111,6 +115,25 @@ export function createCliActionExecutor(
 ): ReturnType<typeof createCliActionExecutorHarness>['executor']
   & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'> {
   const { projectWorkerAction: projectWorkerAccountAction, ...accountServerActionPorts } = params.accountServerActionDeps ?? {};
+  const nativeManagedMachineAction = params.managedMachineAction;
+  const accountManagedMachineAction = accountServerActionPorts.managedMachineAction;
+  const managedMachineAction: ActionExecutorDeps['managedMachineAction'] = nativeManagedMachineAction && accountManagedMachineAction
+    ? async request => {
+      // A receiving daemon supplies transport, not a controller identity for an
+      // Account-owned resource. Consume the retained controller selector here.
+      if (request.actionId === MANAGED_RETIRE_ACTION_ID_V1) return await accountManagedMachineAction(request);
+      if (isManagedRetainedControlInvocation(request.actionId, request.input)) {
+        const controller = await resolveManagedControlControllerTarget({ actionId: request.actionId, rawInput: request.input,
+          credentials: params.credentials?.token === params.token ? params.credentials : { token: params.token, encryption: null },
+          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+          ...(request.context.externalActionExecutionAuthorization ? { authorization: request.context.externalActionExecutionAuthorization } : {}),
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
+        if (!controller) return await accountManagedMachineAction(request);
+      }
+      return await nativeManagedMachineAction(request);
+    }
+    : nativeManagedMachineAction;
   const personalSavedSecretActionExecute = params.personalSavedSecretActionExecute ?? (params.credentials && accountServerActionPorts.homeDomainAction
     ? createCliPersonalSavedSecretActionExecute({ credentials: params.credentials, home: accountServerActionPorts.homeDomainAction,
       operationContext: params.savedSecretOperationContext, serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent }) : undefined);
@@ -191,6 +214,7 @@ export function createCliActionExecutor(
     },
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
+      ...(params.teamCredentialUsageExport ? { teamCredentialUsageExport: params.teamCredentialUsageExport } : {}),
       clientActionExecute: params.clientActionExecute ?? (async ({ actionId }) => clientActionUnavailable(actionId)),
       ...(params.confidentialSecretFill ? { confidentialSecretFill: params.confidentialSecretFill } : {}),
       ...(params.confidentialActionInputs ? { confidentialActionInputs: params.confidentialActionInputs } : {}),
@@ -251,7 +275,7 @@ export function createCliActionExecutor(
         }
         return await params.routeHostChildAction?.(request) ?? null;
       },
-      ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
+      ...(managedMachineAction ? { managedMachineAction } : {}),
       ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
       ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),

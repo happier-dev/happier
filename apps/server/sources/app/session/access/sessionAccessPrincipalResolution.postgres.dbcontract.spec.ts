@@ -8,6 +8,7 @@ import { resolveShareSubjectsInTx } from "@/app/teams/shareEligibility";
 import { classifySubjectsExternalToTeamInTx } from "./sessionAccessExternalSharingPolicy";
 import { teamsPolicyStillRequireGrants } from "./sessionAccessGrantService";
 import { listSessionTeamCredentialBindingConsequencesInTx } from "@/app/teams/credentials/sessionBinding";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Session principals query cost (PostgreSQL)", () => {
     const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
@@ -38,7 +39,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
     it("reads credential binding consequences beyond the Team bind boundary", async () => {
         const teamIds = Array.from({ length: 35_001 }, (_, index) => `absent-team-${index}`);
         const consequences = await client.$transaction(tx => listSessionTeamCredentialBindingConsequencesInTx(tx, {
-            sessionId: "absent-session", teamIds,
+            sessionId: "absent-session", teamIds, actorAccountId: "absent-actor",
         }));
         expect(consequences).toEqual([]);
     });
@@ -50,7 +51,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
         try {
             await client.userRelationship.create({ data: { fromUserId: actor.id, toUserId: friend.id, status: "friend" } });
             const membership = await client.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "owner" } });
-            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: `Group ${index}`, nameKey: `group-${index}` }));
+            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: storedPlainPrivateLabel(`Group ${index}`) }));
             await client.teamGroup.createMany({ data: groups });
             const subjects: PrincipalRefV1[] = [
                 { kind: "team", teamId: team.id },

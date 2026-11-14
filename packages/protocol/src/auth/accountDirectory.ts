@@ -17,6 +17,7 @@ import {
   IrohEndpointDescriptorV1Schema,
   IrohEndpointIdV1Schema,
 } from '../connectivity/iroh/endpointDescriptorV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
 
 export {
   IrohEndpointDescriptorV1Schema,
@@ -342,7 +343,7 @@ export const AccountDirectoryHomeEntryV1Schema = lazyZodSchema(() => z.strictObj
   v: z.literal(1),
   homeServerIdentityId: ServerIdentityIdSchema,
   canonicalServerUrl: HomeApplicationOriginV1Schema,
-  label: LabelSchema,
+  label: z.nullable(PrivateLabelReadV1Schema),
   connectionDescriptor: HomeConnectionDescriptorV1Schema,
   createdAtMs: TimestampMsSchema,
   updatedAtMs: TimestampMsSchema,
@@ -350,9 +351,12 @@ export const AccountDirectoryHomeEntryV1Schema = lazyZodSchema(() => z.strictObj
 }).check(z.superRefine(validateDescriptorIdentityAndUrl)));
 export type AccountDirectoryHomeEntryV1 = z.infer<typeof AccountDirectoryHomeEntryV1Schema>;
 
+/** The client-owned plaintext input bound before a Home label is sealed. */
+export const AccountDirectoryHomeLabelV1Schema = LabelSchema;
+
 export const AccountDirectoryHomePutRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  label: LabelSchema,
+  label: PrivateLabelStoredV1Schema,
   connectionDescriptor: HomeConnectionDescriptorV1Schema,
 }));
 export type AccountDirectoryHomePutRequestV1 = z.infer<typeof AccountDirectoryHomePutRequestV1Schema>;
@@ -418,6 +422,8 @@ export type AccountDirectoryLinkedAuthenticationMethodV1 = z.infer<typeof Accoun
 export const AccountDirectoryMeResponseV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   accountId: BoundedIdentifierSchema,
+  /** Persisted Account mode is the authority for private-label sealing. */
+  encryptionMode: z.enum(['plain', 'e2ee']),
   displayName: z.nullable(LabelSchema),
   avatar: z.nullable(z.string().check(z.trim(), z.maxLength(ACCOUNT_DIRECTORY_MAX_URL_UTF8_BYTES), z.url())),
   linkedAuthenticationMethods: z.array(AccountDirectoryLinkedAuthenticationMethodV1Schema).check(z.maxLength(32)),
@@ -619,6 +625,7 @@ export const ACCOUNT_DIRECTORY_ERROR_CODES_V1 = {
   assertionClockSkew: 'assertion_clock_skew',
   directoryLinkNotFound: 'directory_link_not_found',
   descriptorRevisionConflict: 'descriptor_revision_conflict',
+  labelModeMismatch: 'label_mode_mismatch',
   approvalRequired: 'approval_required',
   approvalRejected: 'approval_rejected',
   approvalExpired: 'approval_expired',
@@ -643,6 +650,7 @@ export const AccountDirectoryErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.assertionClockSkew,
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.directoryLinkNotFound,
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.descriptorRevisionConflict,
+  ACCOUNT_DIRECTORY_ERROR_CODES_V1.labelModeMismatch,
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.approvalRequired,
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.approvalRejected,
   ACCOUNT_DIRECTORY_ERROR_CODES_V1.approvalExpired,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedGuestDiagnosticsV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedGuestDiagnostics } from './guestDiagnostics.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
-const machine = ManagedMachineV1Schema.parse({
+const machine = ManagedMachineFullV1Schema.parse({
     id: 'retained', homeId: 'home', custodianAccountId: 'owner', enrolledMachineId: 'guest-machine',
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
     resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'same-native' } },

@@ -1,16 +1,16 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +43,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     serverBaseUrl: string;
     serverId: string;
     executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
-    executeEnvironmentSetup?: (machine: ManagedMachineV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
+    executeEnvironmentSetup?: (machine: ManagedMachineFullV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
     subscribeEnvironmentSetupChanges?: (context: ActionExecutorContext, callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
     observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
     preflightSessionStart?: (context: ActionExecutorContext) => Promise<boolean>;
@@ -76,7 +76,8 @@ function isManagedMachinePolicyRetentionSatisfiedAbort(reason: unknown): boolean
 }
 
 async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, signal: AbortSignal | undefined,
-    execute: (driver: ReturnType<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>) => Promise<T>): Promise<T> {
+    execute: (driver: ReturnType<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>,
+        controllerCredentials: StoredCredentials) => Promise<T>): Promise<T> {
         if (!params.managedProviderOperationAuthority) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
@@ -134,7 +135,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
                 ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
-            }));
+            }), controllerCredentials);
         } finally {
             current = false;
             try { if (accountRuntime) await accountRuntime.then(runtime => runtime.registry.dispose(), () => {}); }
@@ -193,14 +194,16 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart || !await params.preflightSessionStart(context))))) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
-        const result = await withBoundDriver(params, signal, async driver => await driver.execute(actionId, input, { requestId, context, signal,
+        const result = await withBoundDriver(params, signal, async (driver, controllerCredentials) => await driver.execute(actionId, input, { requestId, context, signal,
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
                 ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
                     if (!machine.enrolledMachineId || !machine.preset) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     const setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
                     if (!setup.ok) throw Object.assign(new Error(setup.errorCode), { code: setup.errorCode });
-                    const current = await driver.execute('machines.managed.get', { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal });
-                    return ManagedMachineV1Schema.parse(current);
+                    const read = ManagedGetOutputV1Schema.parse(await driver.execute('machines.managed.get',
+                        { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal }));
+                    return await openManagedMachineRead({ credentials: controllerCredentials, serverHttpBaseUrl: params.serverBaseUrl,
+                        read, ...(signal ? { signal } : {}) });
                 } } : {}),
                 ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine }) => {
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });

@@ -56,7 +56,9 @@ function projectManagedAdmissionCarrier(row: StoredManagedMachine, machine = pro
 /** Declared reconciliation can recover partial cleanup; native submission still requires its concrete target. */
 async function hasPendingManagedCleanupTargetInTx(tx: Tx, row: StoredManagedMachine, allowCorrelation = false): Promise<boolean> {
     if (row.allocation !== 'may-exist' || row.resource !== null) return false;
-    if (isStoredOpaquePresetMachine(row)) return false;
+    // Home admits the retained lifecycle; the keyholding controller owns
+    // private reconciliation support and concrete native target validation.
+    if (isStoredOpaquePresetMachine(row)) return true;
     const launch = readManagedLaunchSnapshot(row.launch);
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration?.reconciliation || declaration.schemaVersion !== launch.schemaVersion) return false;

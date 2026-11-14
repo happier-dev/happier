@@ -9,11 +9,12 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, type ConnectedAccountActionFormSelectionV1 } from '../../connect/connectedAccountPurposeBindings.js';
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
-import { ManagedNativeOperationReferenceV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
+import { ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
+import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAdminAccessV1,
   MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAgentIsolationV1, matchesManagedMachineEnrollmentAgentIsolationV1,
   type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
@@ -115,6 +116,16 @@ export const ManagedCredentialSelectionsV1Schema = lazyDefinition(() => credenti
 export const RetainedManagedCredentialSelectionsV1Schema = lazyDefinition(() => credentialSelections(z.union([z.strictObject({
   ...ManagedAccountCredentialSelectionV1Schema.shape, configurationRevision: z.optional(z.nullable(id())),
 }), QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema])));
+/** A retained selection's controller-captured basis is not a chooser input; native reads take the plain selection. */
+export function projectRetainedManagedCredentialSelectionsV1(
+  credentials: z.infer<typeof RetainedManagedCredentialSelectionsV1Schema>,
+): ManagedCredentialSelectionV1[] {
+  return credentials.map(credential => {
+    if (!('configurationRevision' in credential)) return credential;
+    const { configurationRevision: _basis, ...selection } = credential;
+    return selection;
+  });
+}
 export function createValidatedLaunchSnapshotV1Schema<T extends z.core.$ZodType>(choices: T) {
   return z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), name: id(), choices, credentials: z.optional(ManagedCredentialSelectionsV1Schema) });
 }
@@ -125,11 +136,17 @@ export function createRetainedManagedLaunchSnapshotV1Schema<T extends z.core.$Zo
     credentials: z.optional(RetainedManagedCredentialSelectionsV1Schema) });
 }
 export const RetainedManagedLaunchSnapshotV1Schema = lazyDefinition(() => createRetainedManagedLaunchSnapshotV1Schema(PluginJsonValueV2Schema));
-export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Native extends z.core.$ZodType, Operation extends z.core.$ZodType = typeof PluginJsonValueV2Schema>(launch: Launch, native: Native, nativeOperation?: Operation) {
-  return z.strictObject({
+/**
+ * Unrefined field owner shared by admission-only structural projections.
+ * Consumers may omit private leaves from this shape; cross-field invariants
+ * remain owned exclusively by `createManagedMachineV1Schema` below.
+ */
+export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, Native extends z.core.$ZodType, Operation extends z.core.$ZodType = typeof PluginJsonValueV2Schema>(launch: Launch, native: Native, nativeOperation?: Operation) {
+  return {
     id: id(), homeId: id(), custodianAccountId: id(),
     enrollmentAccountId: z.optional(id()),
-    preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
+    /** Captured author mode for a preset snapshot; readers must not use their own Account mode. */
+    preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)), contentEncryptionMode: AccountEncryptionModeSchema })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: z.optional(ManagedControllerV1Schema),
     controllerAccess: z.optional(ManagedControllerAccessV1Schema),
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
@@ -152,6 +169,16 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
     creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema), observation: z.optional(ProviderObservationV1Schema),
     cleanup: z.optional(z.strictObject({ disposition: z.enum(['pending', 'unavailable']), reason: id() })),
+  };
+}
+export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Native extends z.core.$ZodType, Operation extends z.core.$ZodType = typeof PluginJsonValueV2Schema>(
+  launch: Launch,
+  native: Native,
+  nativeOperation?: Operation,
+) {
+  const base = createManagedMachineV1BaseShape(launch, native, nativeOperation);
+  return z.strictObject({
+    ...base,
   }).check(z.superRefine((value, context) => {
     if (value.machineSetup && !value.preset) {
       context.addIssue({ code: 'custom', path: ['machineSetup'], message: 'Setup requires its admitted preset.' });
@@ -182,8 +209,90 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     if (value.allocation === 'confirmed-absent' && value.observation?.availability === 'unavailable') context.addIssue({ code: 'custom', path: ['allocation'], message: 'Unavailability is not confirmed absence.' });
   }));
 }
-export const ManagedMachineV1Schema = lazyDefinition(() => createManagedMachineV1Schema(PluginJsonValueV2Schema, PluginJsonValueV2Schema));
+/** The established branch retains a Home-readable launch snapshot. */
+export const ManagedMachineFullV1Schema = lazyDefinition(() => createManagedMachineV1Schema(PluginJsonValueV2Schema, PluginJsonValueV2Schema));
+export type ManagedMachineFullV1 = z.infer<typeof ManagedMachineFullV1Schema>;
+/** Legacy raw preset snapshots remain readable as Plain until a normal save seals them. */
+export const ManagedMachinePublicFullV1Schema = lazyDefinition(() => createManagedMachineV1Schema(
+  PluginJsonValueV2Schema,
+  PluginJsonValueV2Schema,
+).check(z.superRefine((value, context) => {
+  if (value.preset && value.preset.contentEncryptionMode !== 'plain') {
+    context.addIssue({ code: 'custom', path: ['preset'], message: 'Encrypted presets require an opaque carrier.' });
+  }
+})));
+export type ManagedMachinePublicFullV1 = z.infer<typeof ManagedMachinePublicFullV1Schema>;
+
+/** Opaque preset setup keeps lifecycle progress without retaining private setup content. */
+export const ManagedOpaqueMachineSetupStateV1Schema = lazyDefinition(() => z.strictObject({
+  state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
+  operation: z.optional(z.strictObject({ operationId: id() })),
+  settledAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
+  errorCode: z.optional(id()),
+}).check(z.superRefine((value, context) => {
+  if (value.state !== 'failed' && value.errorCode !== undefined) {
+    context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
+  }
+})));
+export type ManagedOpaqueMachineSetupStateV1 = z.infer<typeof ManagedOpaqueMachineSetupStateV1Schema>;
+
+/**
+ * E2EE preset rows retain only server-owned allocation/lifecycle fields. Their
+ * private launch, reviewed facts and setup remain inside the preset envelope.
+ */
+export const ManagedOpaquePresetMachineV1Schema = lazyDefinition(() => {
+  const base = createManagedMachineV1BaseShape(PluginJsonValueV2Schema, PluginJsonValueV2Schema);
+  const {
+    launch: _launch,
+    reviewedFacts: _reviewedFacts,
+    machineSetup: _machineSetup,
+    resource: _resource,
+    nativeOperationRef: _nativeOperationRef,
+    recovery: _recovery,
+    devcontainerChild: _devcontainerChild,
+    enrollmentIdentity: _enrollmentIdentity,
+    observation: _observation,
+    preset,
+    ...structural
+  } = base;
+  return z.strictObject({
+    ...structural,
+    // Keep the union's absent private leaves readable as `undefined` for
+    // structural consumers while rejecting every supplied wire value.
+    launch: z.optional(z.never()),
+    enrollmentIdentity: z.optional(z.never()),
+    reviewedFacts: z.optional(z.never()),
+    resource: z.optional(z.never()),
+    nativeOperationRef: z.optional(z.never()),
+    recovery: z.optional(z.never()),
+    devcontainerChild: z.optional(z.never()),
+    preset: z.nonoptional(preset),
+    machineSetup: z.optional(ManagedOpaqueMachineSetupStateV1Schema),
+    observation: z.optional(ManagedOpaquePresetObservationV1Schema),
+  }).check(z.superRefine((value, context) => {
+    if (value.enrolledMachineId && value.creationState !== 'active') {
+      context.addIssue({ code: 'custom', path: ['enrolledMachineId'], message: 'Retired enrollment cannot bind a Machine.' });
+    }
+    if (value.desiredWhen !== 'after-idle' && value.desiredAfterMs !== undefined) {
+      context.addIssue({ code: 'custom', path: ['desiredAfterMs'], message: 'An idle duration cannot accompany an immediate intent.' });
+    }
+    if (value.allocation === 'confirmed-absent' && value.observation?.availability === 'unavailable') {
+      context.addIssue({ code: 'custom', path: ['allocation'], message: 'Unavailability is not confirmed absence.' });
+    }
+  }));
+});
+export type ManagedOpaquePresetMachineV1 = z.infer<typeof ManagedOpaquePresetMachineV1Schema>;
+
+/** Public rows retain legacy full reads alongside the current opaque preset projection. */
+export const ManagedMachineV1Schema = lazyDefinition(() => z.union([
+  ManagedMachinePublicFullV1Schema,
+  ManagedOpaquePresetMachineV1Schema,
+]));
 export type ManagedMachineV1 = z.infer<typeof ManagedMachineV1Schema>;
+
+export function isManagedOpaquePresetMachineV1(machine: ManagedMachineV1): machine is ManagedOpaquePresetMachineV1 {
+  return machine.launch === undefined;
+}
 export type RetentionV1 = z.infer<typeof RetentionV1Schema>;
 export type ManagedControllerV1 = z.infer<typeof ManagedControllerV1Schema>;
 export type ValidatedLaunchSnapshotV1 = z.infer<typeof ValidatedLaunchSnapshotV1Schema>;
@@ -191,6 +300,10 @@ export type RetainedManagedLaunchSnapshotV1 = z.infer<typeof RetainedManagedLaun
 
 /** Public creator output never carries the custodian's connection or bootstrap selectors. */
 export function redactManagedMachineCredentialReferences(machine: ManagedMachineV1): ManagedMachineV1 {
+  if (isManagedOpaquePresetMachineV1(machine)) {
+    const { bootstrapCredentialRef: _bootstrap, ...publicMachine } = machine;
+    return publicMachine;
+  }
   const { bootstrapCredentialRef: _bootstrap, ...publicMachine } = machine;
   const { credentials: _credentials, ...launch } = machine.launch;
   const facts = machine.reviewedFacts;

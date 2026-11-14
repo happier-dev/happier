@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parsePrivateLabelStoredV1 } from "@happier-dev/protocol/crypto/privateLabelV1";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { applyTeamGroupContributionInTx } from "../groups/groupContributions";
 import { admitTeamMemberInTx } from "./membershipService";
 import {
@@ -76,7 +78,7 @@ describe("Team external-fact seam (SQLite integration)", () => {
 
     async function group(teamId: string, name: string) {
         return db.teamGroup.create({
-            data: { teamId, name, nameKey: name.toLowerCase() },
+            data: { teamId, name: storedPlainPrivateLabel(name) },
         });
     }
 
@@ -537,7 +539,7 @@ describe("Team external-fact seam (SQLite integration)", () => {
         const acme = await team("Archived contribution");
         const { directorySource } = await source(acme.id, "Okta");
         const developers = await db.teamGroup.create({
-            data: { teamId: acme.id, name: "Developers", nameKey: "developers", archivedAt: new Date() },
+            data: { teamId: acme.id, name: storedPlainPrivateLabel("Developers"), archivedAt: new Date() },
         });
         const developersBinding = await binding({
             teamId: acme.id,
@@ -781,18 +783,22 @@ describe("Team external-fact seam (SQLite integration)", () => {
         expect(renamed).toMatchObject({ status: "applied" });
         const restored = await db.teamGroup.findUniqueOrThrow({ where: { id: sourced.id } });
         expect(restored.archivedAt).toBeNull();
-        expect(restored.name).toBe("Platform");
+        expect(parsePrivateLabelStoredV1(restored.name)).toMatchObject({
+            kind: "current", stored: { content: { t: "plain", v: "Platform" } },
+        });
 
         await group(acme.id, "Eng Team");
-        const canonicalCollision = await inTx((tx) => applyExternalManagedGroupInTx(tx, {
+        const renamedWithoutNameKey = await inTx((tx) => applyExternalManagedGroupInTx(tx, {
             teamId: acme.id,
             externalGroupBindingId: owning.id,
             desired: "active",
             sourceDisplayName: "  Eng \t Team  ",
         }));
-        expect(canonicalCollision).toEqual({ status: "unchanged", teamGroupId: sourced.id });
-        await expect(db.teamGroup.findUniqueOrThrow({ where: { id: sourced.id } }))
-            .resolves.toMatchObject({ name: "Platform", nameKey: "platform" });
+        expect(renamedWithoutNameKey).toEqual({ status: "applied", teamGroupId: sourced.id });
+        const afterRename = await db.teamGroup.findUniqueOrThrow({ where: { id: sourced.id } });
+        expect(parsePrivateLabelStoredV1(afterRename.name)).toMatchObject({
+            kind: "current", stored: { content: { t: "plain", v: "Eng Team" } },
+        });
 
         // A contributing binding is not the metadata owner and cannot archive a
         // Group it merely feeds members into.

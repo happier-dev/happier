@@ -101,10 +101,16 @@ describe('shared Saved Secret complete audience inputs', () => {
       referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
       personalSecretPromotions: [{ personalSecretId, resourceId: resource.resourceId },
         { personalSecretId: 'personal-secondary', resourceId: 'promotion-secondary' }],
-      additionalSavedSecretResources: [{ ...resource, resourceId: 'promotion-secondary' }] };
+      additionalSavedSecretResources: [{ ...resource, resourceId: 'promotion-secondary' }],
+      // Keyholding clients always supply a capture, including the meaningful
+      // empty case where no managed Preset or retained snapshot used a source.
+      opaquePresetRewrites: { presets: [], snapshots: [] } };
     const parsed = SharedSavedSecretPromoteInputV1Schema.safeParse(request);
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data).toHaveProperty('personalSecretPromotions', request.personalSecretPromotions);
+    expect(SharedSavedSecretPromoteInputV1Schema.safeParse({ ...request,
+      opaquePresetRewrites: undefined,
+    }).success).toBe(false);
     expect(SharedSavedSecretPromoteInputV1Schema.safeParse({ ...request,
       personalSecretPromotions: [{ personalSecretId: 'personal-primary', resourceId: 'not-in-request' }],
     }).success).toBe(false);

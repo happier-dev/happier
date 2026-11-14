@@ -51,13 +51,20 @@ function usageResult(overrides?: Readonly<{
     tokenCoverage?: 'complete' | 'partial' | 'unavailable';
     costCoverage?: 'complete' | 'partial' | 'unavailable';
     unobservedExternalRequestCount?: number;
-    breakdown?: readonly { key: string; label?: string; requestCount: number; tokens: number }[];
+    breakdown?: readonly {
+        key: string;
+        label?: string;
+        privateLabel?: { content: { t: 'plain'; v: string }; recipientEnvelope: null };
+        requestCount: number;
+        tokens: number;
+    }[];
     nextCursor?: string | null;
     series?: readonly { bucketStartMs: number; bucketEndMs: number; requestCount: number; tokens: number }[];
     limits?: readonly Record<string, unknown>[];
 }>) {
     return {
         v: 1,
+        resourceDisplayName: teamCredentialResourceFixture().displayName,
         totals: {
             eventCount: 3,
             requestCount: overrides?.requestCount ?? 12,
@@ -96,6 +103,7 @@ function usageResult(overrides?: Readonly<{
                 breakdown: overrides.breakdown.map((entry) => ({
                     key: entry.key,
                     ...(entry.label === undefined ? {} : { label: entry.label }),
+                    ...(entry.privateLabel === undefined ? {} : { privateLabel: entry.privateLabel }),
                     totals: {
                         eventCount: 1,
                         requestCount: entry.requestCount,
@@ -181,7 +189,7 @@ async function addRecipientHome(): Promise<string> {
             nextCursor: null,
             failures: [],
             resources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Acme Provider' }, recipientEnvelope: null }, resourceRevision: 7,
                 readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
                 sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
@@ -579,6 +587,30 @@ describe('TeamCredentialUsageScreen', () => {
         await screen.pressByTestIdAsync('team-credential-usage-breakdown:model');
         await waitForTestId(screen, 'team-credential-usage-slice:model-without-label');
         expect(screen.findAllByTestId('team-credential-usage-slice:model-without-label')[0]?.props.title).toBe('model-without-label');
+    });
+
+    it('opens the recipient-projected external-key label instead of rendering an opaque transport value', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-requests');
+
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
+        await waitForTestId(screen, 'team-credential-usage-breakdown:external_api_key');
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: usageResult({
+                breakdown: [{
+                    key: '550e8400-e29b-41d4-a716-446655440000',
+                    privateLabel: { content: { t: 'plain', v: 'CI runner' }, recipientEnvelope: null },
+                    requestCount: 3,
+                    tokens: 200,
+                }],
+            }),
+        });
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown:external_api_key');
+        await waitForTestId(screen, 'team-credential-usage-slice:550e8400-e29b-41d4-a716-446655440000');
+        expect(screen.findAllByTestId('team-credential-usage-slice:550e8400-e29b-41d4-a716-446655440000')[0]?.props.title)
+            .toBe('CI runner');
     });
 
     it('loads every usage page without replacing already visible slices', async () => {

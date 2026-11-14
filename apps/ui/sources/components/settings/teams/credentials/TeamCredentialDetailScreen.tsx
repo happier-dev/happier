@@ -57,6 +57,7 @@ import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plu
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
 import { resourceConnectedServiceMarkId } from './teamCredentialPresentation';
 import { useMachineAdministrationTargetRows } from '@/sync/domains/machines/administration/useTargetSelection';
+import { useOpenedTeamCredentialBrokerPoolNames } from './teamCredentialPrivateLabels';
 
 type BrokerLocationRowProps = Readonly<{
     context: TeamSectionContext;
@@ -64,9 +65,23 @@ type BrokerLocationRowProps = Readonly<{
     busy: boolean;
 }>;
 
-function BrokerLocationRow(props: BrokerLocationRowProps & Readonly<{ label: string }>) {
+function BrokerLocationRow(props: BrokerLocationRowProps & Readonly<{
+    machinePresentation?: Readonly<{
+        serverId: string;
+        pickerRows: ReturnType<typeof useMachineAdministrationTargetRows>['pickerRows'];
+    }>;
+}>) {
     const router = useRouter();
-    const { resource, label } = props;
+    const { resource } = props;
+    const poolDisplayNames = useOpenedTeamCredentialBrokerPoolNames({
+        scope: props.context.scope,
+        brokerPresentation: resource.brokerPresentation,
+        enabled: resource.brokerPlacement?.kind === 'machine_pool',
+    });
+    const label = brokerPlacementLabel(resource, {
+        ...props.machinePresentation,
+        poolDisplayNames,
+    });
     const semantics = resource.brokerPlacement?.kind === 'machine_pool' ? t('machinePools.connectionSemantics') : undefined;
     const canChange = resource.capabilities.updateBrokerPlacement;
     return <Item
@@ -97,7 +112,7 @@ function CustodianBrokerLocationRow(props: BrokerLocationRowProps) {
         selectedMachineId: resource.brokerPlacement?.kind === 'machine' ? resource.brokerPlacement.machineId : undefined,
         managedInventoryDemand: false,
     });
-    return <BrokerLocationRow {...props} label={brokerPlacementLabel(resource, { serverId: context.scope.serverId, pickerRows })} />;
+    return <BrokerLocationRow {...props} machinePresentation={{ serverId: context.scope.serverId, pickerRows }} />;
 }
 
 function directMaterialStateLabel(state: NonNullable<ReturnType<typeof useTeamCredentialResourceView>['catalogResource']>['directMaterialState']): string {
@@ -199,7 +214,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
             <PageHeader
                 testID="team-credential-header"
                 alwaysShowTitle
-                title={named?.displayName ?? t('teams.credentials.title')}
+                title={view.displayName ?? t('teams.credentials.title')}
                 leading={named ? <ConnectedServiceMark service={named.sourcePresentation?.kind === 'connected_service' ? named.sourcePresentation.service : null} legacyServiceId={resourceConnectedServiceMarkId(named, registry)} size="page" /> : undefined}
                 description={named ? (sharedBy ?? t('teams.pages.credentialDetail')) : t('teams.pages.credentialDetail')}
             />
@@ -463,7 +478,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 /> : null}
                 {resource.source !== null ? capabilities.updateBrokerPlacement && resource.brokerPlacement?.kind === 'machine'
                     ? <CustodianBrokerLocationRow context={context} resource={resource} busy={busy} />
-                    : <BrokerLocationRow context={context} resource={resource} busy={busy} label={brokerPlacementLabel(resource)} />
+                    : <BrokerLocationRow context={context} resource={resource} busy={busy} />
                     : null}
             </ItemGroup>
 

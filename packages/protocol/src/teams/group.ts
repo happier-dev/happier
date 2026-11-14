@@ -3,10 +3,14 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
 import {
+  PrivateLabelStoredV1Schema,
+} from '../crypto/privateLabelV1.js';
+import { TeamGroupNameProjectionV1Schema } from './groupLabel.js';
+export { TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
+import {
   decodeTeamKeysetCursorV1,
   encodeTeamKeysetCursorV1,
   readTeamKeysetIdV1,
-  readTeamKeysetTextV1,
   readTeamKeysetTimeV1,
 } from './cursor.js';
 import {
@@ -36,10 +40,9 @@ import {
  */
 
 /**
- * Group names reuse the Team display-name owner — one normalizer, one set of
- * bounds, one validation vocabulary. Only the *uniqueness key* is Group-specific,
- * because a Team may hold two Teams-worth of identically named Groups only in
- * the sense that names are unique **within** their Team.
+ * Group labels reuse the Team display-name validation owner before the client
+ * seals them. The server never receives a normalizable label or retains a
+ * label-derived uniqueness key.
  */
 export const TEAM_GROUP_NAME_MAX_LENGTH_V1 = TEAM_NAME_MAX_LENGTH_V1;
 export const TEAM_GROUP_DESCRIPTION_MAX_LENGTH_V1 = TEAM_DESCRIPTION_MAX_LENGTH_V1;
@@ -56,19 +59,6 @@ export function validateTeamGroupDescriptionV1(
   raw: string | null | undefined,
 ): TeamDescriptionValidationV1 {
   return validateTeamDescriptionV1(raw);
-}
-
-/**
- * The stored uniqueness key for a Group name inside its Team.
- *
- * The display name stays exactly as typed — presentation is never folded. The
- * key adds only the case fold that in-Team uniqueness requires, so "Design" and
- * "design" cannot both exist and confuse a roster. It is derived from the shared
- * normalizer rather than a second Group-specific normalization scheme, and it is
- * a uniqueness key only: nothing routes, links, or authorizes through it.
- */
-export function teamGroupNameKeyV1(raw: string): string {
-  return normalizeTeamGroupNameV1(raw).toLowerCase();
 }
 
 /**
@@ -117,14 +107,15 @@ export const NO_TEAM_GROUP_CAPABILITIES_V1: TeamGroupCapabilitiesV1 = Object.fre
  * sum of contributions: a person contributed by native plus two directories is
  * one member, and the count the roster shows must be the count the roster pages.
  *
- * The stored `nameKey` is absent by design — it is an internal uniqueness key,
- * and publishing it would invite a client to compute collisions locally.
+ * `name` is a recipient-safe label projection. The stored audience and every
+ * other recipient's envelope remain server-private; invalid historical raw
+ * values fail closed as unavailable instead of being reinterpreted as text.
  */
 export const TeamGroupV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   id: TeamGroupIdSchema,
   teamId: TeamIdSchema,
-  name: z.string(),
+  name: TeamGroupNameProjectionV1Schema,
   description: z.nullable(z.string()),
   archivedAt: z.nullable(z.number()),
   memberCount: z.number().check(z.int(), z.minimum(0)),
@@ -167,7 +158,6 @@ export const TeamGroupMemberV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type TeamGroupMemberV1 = z.infer<typeof TeamGroupMemberV1Schema>;
 
-const TeamGroupNameInputV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(TEAM_GROUP_NAME_MAX_LENGTH_V1 * 4)));
 const TeamGroupDescriptionInputV1Schema = lazyZodSchema(() => z.string().check(z.maxLength(TEAM_GROUP_DESCRIPTION_MAX_LENGTH_V1 * 4)));
 
 export const TEAM_GROUPS_PAGE_LIMIT_MAX_V1 = 100;
@@ -211,7 +201,9 @@ export type TeamGroupRefInputV1 = z.infer<typeof TeamGroupRefInputV1Schema>;
 export const TeamGroupCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   teamId: TeamIdSchema,
-  name: TeamGroupNameInputV1Schema,
+  /** Client-minted so the name ciphertext can bind to this immutable row id. */
+  groupId: TeamGroupIdSchema,
+  name: PrivateLabelStoredV1Schema,
   description: z.optional(z.nullable(TeamGroupDescriptionInputV1Schema)),
   requestKey: z.string().check(z.minLength(1), z.maxLength(128)),
 }));
@@ -222,7 +214,7 @@ export const TeamGroupUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
-  name: z.optional(TeamGroupNameInputV1Schema),
+  name: z.optional(PrivateLabelStoredV1Schema),
   description: z.optional(z.nullable(TeamGroupDescriptionInputV1Schema)),
 }).check(z.refine((input) => input.name !== undefined || input.description !== undefined, { message: 'Group metadata patch changes nothing' })));
 export type TeamGroupUpdateInputV1 = z.infer<typeof TeamGroupUpdateInputV1Schema>;
@@ -317,14 +309,14 @@ export const TeamGroupMemberMutationResultV1Schema = lazyZodSchema(() => z.discr
 export type TeamGroupMemberMutationResultV1 = z.infer<typeof TeamGroupMemberMutationResultV1Schema>;
 
 /**
- * Groups order by their normalized key and then id, so a rename moves a Group
- * within the sequence rather than breaking it.
+ * Groups page by immutable id only. Labels are opened, sorted and searched by
+ * the client after it has loaded the complete sequence.
  */
 export function teamGroupsQueryKeyV1(input: TeamGroupsListInputV1): string {
   return `v1:groups:${input.teamId}:${input.archived}`;
 }
 
-export type TeamGroupsCursorV1 = Readonly<{ nameKey: string; id: string }>;
+export type TeamGroupsCursorV1 = Readonly<{ id: string }>;
 
 export type TeamGroupsCursorDecodeV1 =
   | Readonly<{ status: 'ok'; cursor: TeamGroupsCursorV1 }>
@@ -332,19 +324,17 @@ export type TeamGroupsCursorDecodeV1 =
 
 export function encodeTeamGroupsCursorV1(input: Readonly<{
   queryKey: string;
-  nameKey: string;
   id: string;
 }>): string {
-  return encodeTeamKeysetCursorV1({ queryKey: input.queryKey, parts: [input.nameKey, input.id] });
+  return encodeTeamKeysetCursorV1({ queryKey: input.queryKey, parts: [input.id] });
 }
 
 export function decodeTeamGroupsCursorV1(value: string, queryKey: string): TeamGroupsCursorDecodeV1 {
   const decoded = decodeTeamKeysetCursorV1(value, queryKey);
   if (decoded.status !== 'ok') return { status: 'invalid' };
-  const nameKey = readTeamKeysetTextV1(decoded.parts[0]);
-  const id = readTeamKeysetIdV1(decoded.parts[1]);
-  if (nameKey === null || id === null) return { status: 'invalid' };
-  return { status: 'ok', cursor: { nameKey, id } };
+  const id = readTeamKeysetIdV1(decoded.parts[0]);
+  if (id === null || decoded.parts.length !== 1) return { status: 'invalid' };
+  return { status: 'ok', cursor: { id } };
 }
 
 /**

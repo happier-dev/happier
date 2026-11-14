@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import type { MachinePoolCreateInputV1, MachinePoolDeleteInputV1, MachinePoolDeleteOutputV1, MachinePoolErrorV1, MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolUpdateInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import type { MachinePoolCreateInputV1, MachinePoolDeleteInputV1, MachinePoolDeleteOutputV1, MachinePoolErrorV1, MachinePoolPrivateLabelStoredV1, MachinePoolPrivateViewV1, MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolUpdateInputV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
@@ -22,6 +23,7 @@ import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
 import { canReadMachinePoolTeamInTx, canSetMachinePoolAudienceInTx, CUSTODIAN_POOL_ACCESS, TEAM_POOL_ACCESS, machinePoolAudience, readableMachinePoolTeamsInTx,
     readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, type MachinePoolActor } from './machinePoolAccess';
 import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { prepareMachinePoolPrivateLabelsForWriteInTx, projectMachinePoolPrivateLabelForRecipient } from './privateLabels';
 
 const poolAggregate = {
     include: {
@@ -68,6 +70,7 @@ export type MachinePoolCandidateSnapshot = Readonly<{
     members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[];
     availableMachineIds: ReadonlySet<string>;
     machineEndpointIds: ReadonlyMap<string, string | null>;
+    machineOperationProtocolCapabilities?: ReadonlyMap<string, unknown>;
     presenceState: "known" | "partial" | "unavailable";
 }>;
 
@@ -76,11 +79,6 @@ type MachinePoolCandidateSnapshotInput = Readonly<{
     poolId: string;
     presence: MachineDaemonPresenceInventory;
 }>;
-
-function normalizeDescription(description: string | null | undefined): string | null {
-    const normalized = description?.trim() ?? "";
-    return normalized.length > 0 ? normalized : null;
-}
 
 function normalizedMembers(members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[]) {
     return [...members]
@@ -94,10 +92,12 @@ function normalizedMembers(members: readonly Readonly<{ machineId: string; prior
 
 function sameDefinition(
     stored: StoredPool,
-    input: Readonly<{ name: string; description?: string | null; audience?: MachinePoolAudienceV1; members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[] }>,
+    input: Readonly<{ name: MachinePoolPrivateLabelStoredV1; description?: MachinePoolPrivateLabelStoredV1 | null; audience?: MachinePoolAudienceV1; members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[] }>,
 ): boolean {
-    return stored.name === input.name.trim()
-        && stored.description === normalizeDescription(input.description)
+    return stored.name === serializePrivateLabelStoredV1(input.name)
+        && stored.description === (input.description === undefined || input.description === null
+            ? null
+            : serializePrivateLabelStoredV1(input.description))
         && (input.audience === undefined || stored.teamId === (input.audience.kind === 'team' ? input.audience.teamId : null))
         && JSON.stringify(normalizedMembers(stored.members)) === JSON.stringify(normalizedMembers(input.members));
 }
@@ -112,7 +112,7 @@ function classifyPoolMemberState(member: StoredPoolMember, inventory: MachineDae
 }
 
 function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInventory,
-    access: MachinePoolAccessV1 = CUSTODIAN_POOL_ACCESS): MachinePoolViewV1 {
+    access: MachinePoolAccessV1 = CUSTODIAN_POOL_ACCESS, recipientAccountId = stored.accountId): MachinePoolPrivateViewV1 {
     const members = [...stored.members]
         .sort((left, right) => left.priorityTier - right.priorityTier || left.machineId.localeCompare(right.machineId))
         .map((member) => ({
@@ -131,8 +131,14 @@ function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInvento
     return {
         pool: {
             id: stored.id,
-            name: stored.name,
-            description: stored.description,
+            name: projectMachinePoolPrivateLabelForRecipient({
+                serialized: stored.name,
+                recipientAccountId,
+            }),
+            description: stored.description === null ? null : projectMachinePoolPrivateLabelForRecipient({
+                serialized: stored.description,
+                recipientAccountId,
+            }),
             revision: stored.revision,
             createdAt: stored.createdAt.getTime(),
             updatedAt: stored.updatedAt.getTime(),
@@ -168,7 +174,7 @@ export async function listMachinePools(params: Readonly<{
     accountId: string;
     authentication?: MachinePoolActor['authentication'];
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<readonly MachinePoolViewV1[]> {
+}>): Promise<readonly MachinePoolPrivateViewV1[]> {
     const stored = await inReadSnapshot(async tx => {
         const teamIds = await readableMachinePoolTeamsInTx(tx, params);
         const owned = await tx.machinePool.findMany({
@@ -196,7 +202,7 @@ export async function listMachinePools(params: Readonly<{
     const inventories = new Map(await Promise.all([...poolsByCustodian].map(async ([accountId, pools]) =>
         [accountId, await inventoryFor(accountId, params.io, pools)] as const)));
     return stored.map(pool => projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
-        ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS));
+        ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS, params.accountId));
 }
 
 export async function getMachinePool(params: Readonly<{
@@ -204,7 +210,7 @@ export async function getMachinePool(params: Readonly<{
     authentication?: MachinePoolActor['authentication'];
     poolId: string;
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<PoolResult<MachinePoolViewV1>> {
+}>): Promise<PoolResult<MachinePoolPrivateViewV1>> {
     const result = await inReadSnapshot(async tx => {
         const stored = await tx.machinePool.findUnique({ where: { id: params.poolId }, ...poolAggregate });
         if (!stored) return null;
@@ -213,7 +219,7 @@ export async function getMachinePool(params: Readonly<{
     });
     return result
         ? { ok: true, value: projectPool(result.stored,
-            await inventoryFor(result.stored.accountId, params.io, [result.stored]), result.access) }
+            await inventoryFor(result.stored.accountId, params.io, [result.stored]), result.access, params.accountId) }
         : { ok: false, error: { code: "pool_not_found" } };
 }
 
@@ -221,10 +227,10 @@ async function settleCreateCollision(params: Readonly<{
     accountId: string;
     input: MachinePoolCreateInputV1;
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<PoolResult<MachinePoolViewV1>> {
+}>): Promise<PoolResult<MachinePoolPrivateViewV1>> {
     const owned = await readOwnedPool(db, params.accountId, params.input.poolId);
     if (!owned) return { ok: false, error: { code: "pool_changed" } };
-    const current = projectPool(owned, await inventoryFor(params.accountId, params.io, [owned]));
+    const current = projectPool(owned, await inventoryFor(params.accountId, params.io, [owned]), CUSTODIAN_POOL_ACCESS, params.accountId);
     return sameDefinition(owned, params.input)
         ? { ok: true, value: current }
         : { ok: false, error: { code: "pool_changed", current } };
@@ -235,7 +241,7 @@ export async function createMachinePool(params: Readonly<{
     authentication?: MachinePoolActor['authentication'];
     input: MachinePoolCreateInputV1;
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<PoolResult<MachinePoolViewV1>> {
+}>): Promise<PoolResult<MachinePoolPrivateViewV1>> {
     let stored: StoredPool;
     try {
         const result = await inTx(async (tx) => {
@@ -245,6 +251,14 @@ export async function createMachinePool(params: Readonly<{
             const existing = await tx.machinePool.findUnique({ where: { id: params.input.poolId }, ...poolAggregate });
             if (existing) return { kind: "collision" as const };
             if (!await canSetMachinePoolAudienceInTx(tx, params, params.input.audience)) return { kind: 'not_found' as const };
+            const labels = await prepareMachinePoolPrivateLabelsForWriteInTx({
+                tx,
+                authorAccountId: params.accountId,
+                teamId: params.input.audience?.kind === 'team' ? params.input.audience.teamId : null,
+                name: params.input.name,
+                description: params.input.description,
+            });
+            if (labels.kind !== 'ready') return { kind: 'invalid_labels' as const, labels };
             const invalid = await validateMachinePoolMembersInTx({ tx, accountId: params.accountId, members: params.input.members });
             if (invalid.length > 0) return { kind: "invalid" as const, machineIds: invalid };
             await tx.machinePool.create({
@@ -252,8 +266,8 @@ export async function createMachinePool(params: Readonly<{
                     id: params.input.poolId,
                     accountId: params.accountId,
                     teamId: params.input.audience?.kind === 'team' ? params.input.audience.teamId : null,
-                    name: params.input.name.trim(),
-                    description: normalizeDescription(params.input.description),
+                    name: labels.name,
+                    description: labels.description,
                 },
             });
             if (params.input.members.length > 0) {
@@ -274,6 +288,11 @@ export async function createMachinePool(params: Readonly<{
         });
         if (result.kind === "collision") return await settleCreateCollision(params);
         if (result.kind === 'not_found') return { ok: false, error: { code: 'pool_not_found' } };
+        if (result.kind === 'invalid_labels') {
+            return { ok: false, error: { code: 'invalid_request', message: result.labels.kind === 'invalid_mode'
+                ? 'Machine Pool labels do not match the Account encryption mode.'
+                : 'Machine Pool label recipients are not current.' } };
+        }
         if (result.kind === "invalid") {
             return { ok: false, error: { code: "member_machine_not_eligible", machineIds: [...result.machineIds] } };
         }
@@ -282,7 +301,7 @@ export async function createMachinePool(params: Readonly<{
         if (!isPrismaUniqueConstraintError(error)) throw error;
         return await settleCreateCollision(params);
     }
-    return { ok: true, value: projectPool(stored, await inventoryFor(params.accountId, params.io, [stored])) };
+    return { ok: true, value: projectPool(stored, await inventoryFor(params.accountId, params.io, [stored]), CUSTODIAN_POOL_ACCESS, params.accountId) };
 }
 
 export async function updateMachinePool(params: Readonly<{
@@ -290,7 +309,7 @@ export async function updateMachinePool(params: Readonly<{
     authentication?: MachinePoolActor['authentication'];
     input: MachinePoolUpdateInputV1;
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<PoolResult<MachinePoolViewV1>> {
+}>): Promise<PoolResult<MachinePoolPrivateViewV1>> {
     const result = await inTx(async (tx) => {
         const current = await readOwnedPool(tx, params.accountId, params.input.poolId);
         if (!current) return { kind: "not_found" as const };
@@ -301,6 +320,16 @@ export async function updateMachinePool(params: Readonly<{
         ], { includeSingleAccount: true });
         if (params.input.audience?.kind === 'team' && params.input.audience.teamId !== current.teamId
             && !await canSetMachinePoolAudienceInTx(tx, params, params.input.audience)) return { kind: 'not_found' as const };
+        const labels = await prepareMachinePoolPrivateLabelsForWriteInTx({
+            tx,
+                authorAccountId: params.accountId,
+            teamId: params.input.audience === undefined
+                ? current.teamId
+                : params.input.audience.kind === 'team' ? params.input.audience.teamId : null,
+            name: params.input.name,
+            description: params.input.description,
+        });
+        if (labels.kind !== 'ready') return { kind: 'invalid_labels' as const, labels };
         if (sameDefinition(current, params.input)) return { kind: "settled" as const, stored: current };
         if (current.revision !== params.input.expectedRevision) return { kind: "conflict" as const, stored: current };
         const invalid = await validateMachinePoolMembersInTx({
@@ -313,8 +342,8 @@ export async function updateMachinePool(params: Readonly<{
         const updated = await tx.machinePool.updateMany({
             where: { id: current.id, accountId: params.accountId, revision: params.input.expectedRevision },
             data: {
-                name: params.input.name.trim(),
-                description: normalizeDescription(params.input.description),
+                name: labels.name,
+                description: labels.description,
                 ...(params.input.audience === undefined ? {} : { teamId: params.input.audience.kind === 'team' ? params.input.audience.teamId : null }),
                 revision: { increment: 1 },
             },
@@ -332,6 +361,11 @@ export async function updateMachinePool(params: Readonly<{
         return { kind: "updated" as const, stored };
     });
     if (result.kind === "not_found") return { ok: false, error: { code: "pool_not_found" } };
+    if (result.kind === 'invalid_labels') {
+        return { ok: false, error: { code: 'invalid_request', message: result.labels.kind === 'invalid_mode'
+            ? 'Machine Pool labels do not match the Account encryption mode.'
+            : 'Machine Pool label recipients are not current.' } };
+    }
     if (result.kind === "invalid") return { ok: false, error: { code: "member_machine_not_eligible", machineIds: [...result.machineIds] } };
     if (result.kind === "cas_lost") {
         const current = await getMachinePool({ accountId: params.accountId, poolId: params.input.poolId, io: params.io });
@@ -339,7 +373,7 @@ export async function updateMachinePool(params: Readonly<{
             ? { ok: false, error: { code: "pool_changed", current: current.value } }
             : current;
     }
-    const current = projectPool(result.stored, await inventoryFor(params.accountId, params.io, [result.stored]));
+    const current = projectPool(result.stored, await inventoryFor(params.accountId, params.io, [result.stored]), CUSTODIAN_POOL_ACCESS, params.accountId);
     return result.kind === "conflict"
         ? { ok: false, error: { code: "pool_changed", current } }
         : { ok: true, value: current };
@@ -389,7 +423,7 @@ export async function deleteMachinePool(params: Readonly<{
                 ok: false,
                 error: {
                     code: "pool_changed",
-                    current: projectPool(current, await inventoryFor(params.accountId, params.io, [current])),
+                    current: projectPool(current, await inventoryFor(params.accountId, params.io, [current]), CUSTODIAN_POOL_ACCESS, params.accountId),
                 },
             }
             : settled;
@@ -397,7 +431,7 @@ export async function deleteMachinePool(params: Readonly<{
     if (result.kind === "conflict") {
         return {
             ok: false,
-            error: { code: "pool_changed", current: projectPool(result.stored, await inventoryFor(params.accountId, params.io, [result.stored])) },
+            error: { code: "pool_changed", current: projectPool(result.stored, await inventoryFor(params.accountId, params.io, [result.stored]), CUSTODIAN_POOL_ACCESS, params.accountId) },
         };
     }
     return settled;
@@ -433,6 +467,7 @@ function projectMachinePoolCandidateSnapshot(
             enabled: member.enabled,
         }))),
         availableMachineIds,
+        machineOperationProtocolCapabilities: new Map(stored.members.map(member => [member.machineId, member.machine.operationProtocolCapabilities])),
         machineEndpointIds: new Map(stored.members.map(member => [member.machineId, readMachineIrohEndpointAuthorityV1({
             capabilities: member.machine.operationProtocolCapabilities,
             revision: member.machine.operationProtocolCapabilitiesRevision,

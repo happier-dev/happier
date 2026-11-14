@@ -6,7 +6,22 @@
 export type AccountApiTokensActionInputById = {
     readonly "account.apiTokens.create": {
         tokenId: string;
-        label: string;
+        label: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         expiresAt?: null | string | undefined;
         encryption?: undefined | {
             access: {
@@ -196,7 +211,22 @@ export type AccountApiTokensActionInputById = {
     readonly "account.apiTokens.update": {
         tokenId: string;
         authorizeUnattendedTeamAccess?: true | undefined;
-        label?: string | undefined;
+        label?: undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
         grant?: undefined | {
             v: 1;
             actions: null | {
@@ -380,7 +410,20 @@ export type AccountApiTokensActionResultById = {
         token: string;
         apiToken: {
             tokenId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;
@@ -529,7 +572,20 @@ export type AccountApiTokensActionResultById = {
     readonly "account.apiTokens.list": {
         tokens: {
             tokenId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;
@@ -678,7 +734,20 @@ export type AccountApiTokensActionResultById = {
     readonly "account.apiTokens.update": {
         apiToken: {
             tokenId: string;
-            label: string;
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
             displayPrefix: string;
             createdAt: string;
             lastUsedAt: null | string;

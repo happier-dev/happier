@@ -85,6 +85,25 @@ export type MachineAccessActionResultById = {
             level: 'admin' | 'view';
             display: {
                 name: null | string;
+                groupName?: undefined | {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
             };
             readiness: 'key_pending' | 'ready' | 'refused';
             audience: {
@@ -112,6 +131,25 @@ export type MachineAccessActionResultById = {
                 teamId: string;
             };
             displayName: null | string;
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
         }[];
         currentRequesterDisplayIdentities?: undefined | {
             accountId: string;

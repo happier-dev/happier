@@ -7,7 +7,7 @@ import { MachinePoolResolveResultV1Schema } from '../../machines/pools/v1.js';
 import { resolveProjectMemoryDemandV1 } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
-import { ManagedMachineActionOutputSchemasV1 } from '../../machines/managed/actionsV1.js';
+import { ManagedMachineActionOutputSchemasV1, unwrapManagedMachineReadV1 } from '../../machines/managed/actionsV1.js';
 import { resolveManagedMachineWakeStateV1 } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
 import type { AdmittedActionInputById } from '../actionSpecs.js';
 
@@ -105,8 +105,10 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
           const inventory = await executeRead('machines.managed.list', { homeId: args.homeId });
           if (inventory.ok) {
             const rows = ManagedMachineActionOutputSchemasV1['machines.managed.list'].safeParse(inventory.result);
-            if (!rows.success || rows.data.machines.some(row => row.homeId !== args.homeId)) return failure('invalid_action_output');
-            const targets = rows.data.machines.filter(row => row.enrolledMachineId === destination.machineId);
+            if (!rows.success) return failure('invalid_action_output');
+            const machines = rows.data.machines.map(unwrapManagedMachineReadV1);
+            if (machines.some(row => row.homeId !== args.homeId)) return failure('invalid_action_output');
+            const targets = machines.filter(row => row.enrolledMachineId === destination.machineId);
             const managed = targets.length === 1 ? targets[0] : undefined;
             if (managed?.wakeOnAcceptedMessage && resolveManagedMachineWakeStateV1(managed, destination.machineId)) {
               // C52 rechecks requester/controller custody and wakes this SAME finite

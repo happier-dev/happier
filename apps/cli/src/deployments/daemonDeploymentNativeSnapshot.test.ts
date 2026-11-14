@@ -1,7 +1,14 @@
 import axios, { AxiosHeaders } from 'axios';
+import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectManagedMachinePresetForRecipientV1, replaceManagedMachinePresetLaunchNameV1,
+    sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler } from '@/api/rpc/types';
@@ -13,6 +20,45 @@ import { createManagedMachineAcquisitionDriver } from '@/machines/managed/acquir
 import { registerDaemonDeploymentChildRpcHandler } from './daemonDeploymentChildRpc';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+function opaqueSnapshotRead(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, mode: 'plain' | 'e2ee',
+    accountId: string, accountKey: Uint8Array) {
+    const { launch, resource, observation: _observation, reviewedFacts: _reviewedFacts, ...structural } = machine;
+    if (!resource) throw new Error('snapshot_fixture_requires_resource');
+    const presetId = 'snapshot-preset';
+    const randomBytes = (length: number) => new Uint8Array(length).fill(41);
+    const content = { v: 1 as const, name: launch.name, launch };
+    const stored = mode === 'plain'
+        ? sealManagedMachinePresetContentV1({ presetId, mode, content })
+        : sealManagedMachinePresetContentV1({ presetId, mode, content, recipientCensus: [
+            SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+                account: { kind: 'account', accountId, firstName: 'Requester', lastName: null, username: accountId, avatarUrl: null },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(nacl.box.keyPair.fromSecretKey(accountKey).publicKey, 'base64'),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(nacl.box.keyPair.fromSecretKey(accountKey).publicKey) },
+                envelopeStatus: 'missing',
+            }),
+        ], randomBytes });
+    const reviewedFacts = {
+        launch,
+        ...(machine.controller ? { controller: machine.controller } : {}),
+        optionStatus: 'current' as const,
+        billing: { location: 'unknown' as const, stoppedBilling: 'unknown' as const },
+        prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop'] as const },
+        retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
+        preset: { id: presetId, revision: 1, name: launch.name },
+    };
+    const snapshot = mode === 'plain'
+        ? replaceManagedMachinePresetLaunchNameV1({ presetId, mode, content: stored.content, launchName: launch.name,
+            reviewedFacts, nativeResult: { kind: 'bound', resource } })
+        : replaceManagedMachinePresetLaunchNameV1({ presetId, mode, content: stored.content, recipients: stored.recipients,
+            accountId, accountKey, launchName: launch.name, reviewedFacts, nativeResult: { kind: 'bound', resource }, randomBytes });
+    if (!snapshot) throw new Error('snapshot_fixture_seal_failed');
+    return {
+        machine: { ...structural, preset: { id: presetId, revision: 1, contentEncryptionMode: mode } },
+        presetContent: projectManagedMachinePresetForRecipientV1({ content: snapshot, recipients: stored.recipients,
+            recipientAccountId: accountId }),
+    };
+}
 
 describe('installed restore snapshot child', () => {
     it.each(['plain', 'e2ee'] as const)('spends the admitted restore through retained controller custody (%s)', async encryptionMode => {
@@ -35,6 +81,8 @@ describe('installed restore snapshot child', () => {
                 label: 'Before restore', reason: 'Database restore' });
             const fixture = await createDeploymentChildRequesterHarness({ encryptionMode, job,
                 receivingIdentity: { ...machine.controller, homeIdentityId: machine.homeId } });
+            const opaque = opaqueSnapshotRead(machine, encryptionMode, fixture.root.binding.accountId, fixture.machineKey);
+            expect(opaque.machine.custodianAccountId).not.toBe(fixture.root.binding.accountId);
             vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
                 if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: fixture.root.binding.accountId } };
                 if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: fixture.settingsContent, version: 1 } };
@@ -46,7 +94,7 @@ describe('installed restore snapshot child', () => {
             vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
                 managedRequests.push({ url: String(url), body, headers: new AxiosHeaders(config?.headers) });
                 managedReads++;
-                return { status: 200, data: machine };
+                return { status: 200, data: opaque };
             });
             prepared = await fixture.prepare();
             const handlers = new Map<string, RpcHandler>();

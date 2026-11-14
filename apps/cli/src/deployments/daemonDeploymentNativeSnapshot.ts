@@ -3,7 +3,9 @@ import { DeploymentChildRpcV1Schema, DeploymentNativeSnapshotOfferV1Schema,
     type ActionExecutorContext, type DeploymentChildRpcV1,
     type DeploymentBackupRestoreInputV1,
     type DeploymentNativeSnapshotOfferV1 } from '@happier-dev/protocol';
-import { ManagedListOutputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedListOutputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
+    unwrapManagedMachineReadV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedNativeSnapshotRequest } from '@/machines/managed/acquire';
 
@@ -16,6 +18,8 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
 }>, ports: Readonly<{
     headers(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Record<string, string>>;
     sendChild(job: DeploymentChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
+    /** Account custody opens only the recipient projection chosen by Home. */
+    openManagedRead(read: ManagedMachineReadV1, context: ActionExecutorContext): Promise<ManagedMachineFullV1 | null>;
 }>) {
     async function read(input: Extract<DeploymentBackupRestoreInputV1, { mode: 'prepare' }>, context: ActionExecutorContext): Promise<DeploymentNativeSnapshotOfferV1 | null> {
         // Home admits this offer read as the managed list Action it calls, scoped to
@@ -26,7 +30,9 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
         const response = await axios.post(`${host.serverHttpBaseUrl}${path}`, body, {
             headers: await ports.headers(context, actionId, { method: 'POST', path, body }), signal: context.signal,
         });
-        const machine = ManagedListOutputV1Schema.parse(response.data).machines.find(row => row.enrolledMachineId === input.machineId);
+        const selected = ManagedListOutputV1Schema.parse(response.data).machines
+            .find(row => unwrapManagedMachineReadV1(row).enrolledMachineId === input.machineId);
+        const machine = selected ? await ports.openManagedRead(selected, context) : null;
         const provisioner = machine?.reviewedFacts?.provisioner;
         if (!machine?.controller || !machine.resource || !provisioner?.actions.snapshot || !provisioner.snapshot) return null;
         return DeploymentNativeSnapshotOfferV1Schema.parse({ managedId: machine.id, intentRevision: machine.intentRevision,
@@ -59,7 +65,8 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
             });
             // Home returns the exact managed projection captured at child admission,
             // including incumbent credential references. No second manage check.
-            const machine = ManagedGetOutputV1Schema.parse(response.data);
+            const machine = await ports.openManagedRead(ManagedGetOutputV1Schema.parse(response.data), context);
+            if (!machine) return { kind: 'unknown', code: 'native_snapshot_outcome_unknown' };
             return await host.executeManagedSnapshot({ machine, label: job.label, reason: job.reason,
                 options: { requestId: job.actionOperationId, signal: context.signal, context: { ...context,
                     operationAcceptance: { actionId: job.actionId, operationId: job.actionOperationId, accept() {} } } } });

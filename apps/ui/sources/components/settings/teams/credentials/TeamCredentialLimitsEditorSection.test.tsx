@@ -9,8 +9,6 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 import type { TeamSectionContext } from '../teamSectionContext';
 import type { TeamCredentialResourceDraft } from './teamCredentialEditorDraft';
 
-let EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT: typeof import('./teamCredentialEditorDraft')['EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT'];
-
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSettingsViewCommonModuleMocks({
@@ -21,13 +19,13 @@ installSettingsViewCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT } = await import('./teamCredentialEditorDraft');
+const { TeamCredentialLimitsEditorSection } = await import('./TeamCredentialLimitsEditorSection');
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
 
 beforeEach(async () => {
-    // Load the production graph after the canonical HTTP boundary is installed.
-    ({ EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT } = await import('./teamCredentialEditorDraft'));
-    const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
-    const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
-    const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     resetTeamActionClientForTests();
@@ -53,7 +51,6 @@ const usageCapabilities = {
 } as const;
 
 async function mount(initial: TeamCredentialResourceDraft) {
-    const { TeamCredentialLimitsEditorSection } = await import('./TeamCredentialLimitsEditorSection');
     let latest = initial;
     function ControlledEditor() {
         const [draft, setDraft] = React.useState(initial);
@@ -97,12 +94,40 @@ describe('TeamCredentialLimitsEditorSection', () => {
         const rowText = (id: string) => JSON.stringify(screen.findAllByTestId(id)[0]?.props);
         await vi.waitFor(() => expect(rowText('team-credential-limit-edit:ada')).toContain('Ada'));
         await vi.waitFor(() => expect(rowText('team-credential-limit-edit:maya')).toContain('Maya'));
-        expect(rowText('team-credential-limit-edit:platform')).toContain('Platform');
+        await vi.waitFor(() => expect(screen.findAllByTestId('team-credential-limit-edit:platform')[0]?.props.title)
+            .toContain('Platform'));
         await screen.pressByTestIdAsync('team-credential-limit-edit:maya');
         expect(rowText('team-credential-limit-member-account:account-maya')).toContain('Maya');
         await screen.pressByTestIdAsync('team-credential-limit-cancel');
         await screen.pressByTestIdAsync('team-credential-limit-edit:platform');
-        expect(rowText('team-credential-limit-group:group-platform')).toContain('Platform');
+        expect(screen.findAllByTestId('team-credential-limit-group:group-platform')[0]?.props.title).toBe('Platform');
+    });
+
+    it('keeps a group rule visible when its recipient label is unavailable', async () => {
+        harness.answer(context.scope.serverId, '/v1/teams/groups/list', { body: {
+            items: [teamGroupFixture({ id: 'group-unavailable', name: { kind: 'unavailable' } })],
+            nextCursor: 'later',
+        } });
+        const initial: TeamCredentialResourceDraft = {
+            ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
+            limits: [{
+                id: 'unavailable-group',
+                subjectKind: 'team_group',
+                subjectId: 'group-unavailable',
+                metric: 'inference_requests',
+                period: 'month',
+                maximum: '10',
+                enabled: true,
+            }],
+        };
+
+        const { screen } = await mount(initial);
+
+        await vi.waitFor(() => expect(screen.findAllByTestId('team-credential-limit-edit:unavailable-group')[0]?.props.title)
+            .toContain('teams.credentials.limits.unknownSubject'));
+        // A known group whose label cannot be opened is not a missing directory
+        // row, so it must not consume another page merely to recover text.
+        expect(harness.requestsFor('/v1/teams/groups/list')).toHaveLength(1);
     });
 
     it('edits and removes saved rules through the complete controlled resource draft', async () => {

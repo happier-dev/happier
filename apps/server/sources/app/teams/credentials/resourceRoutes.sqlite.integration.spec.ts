@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from 'tweetnacl';
 import type { RouteOptions } from "fastify";
@@ -1693,7 +1694,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const team = await db.team.create({ data: { name: "Custodian source repair" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "member" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Builders", nameKey: "builders" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Builders") } });
         const broker = await db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", kind: "persistent",
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
@@ -4088,7 +4089,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             data: { teamId: team.id, accountId: groupRecipient.id, role: "member" },
         });
         const directGroup = await db.teamGroup.create({ data: {
-            teamId: team.id, name: "Direct group", nameKey: "direct-group",
+            teamId: team.id, name: storedPlainPrivateLabel("Direct group"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,

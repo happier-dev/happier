@@ -11,6 +11,7 @@ import {
   type MachineSetupSourceEntryV1, type MachineSetupSourceV1,
 } from './machineSetupSourcesV1.js';
 import { mergeMachineSetupsV1 } from '../managed/machineSetupV1.js';
+import { StoredMachinePublishedMetadataV1Schema } from '../machinePublishedContentV1.js';
 
 function publicationPort(initial: unknown) {
   // Raw persisted transport is the boundary; the field reader/CAS policy stays real.
@@ -32,6 +33,64 @@ function publicationPort(initial: unknown) {
 }
 
 describe('Machine setup saved-copy publication', () => {
+  it('reads the retained direct/accountPreset shape without a captured mode until a normal save', async () => {
+    // FIN-FIX-MACHINE-META opened-shape.json: setup.sources[1] is an
+    // accountPreset copy with no contentEncryptionMode; sources[0] is direct.
+    const stored = { version: 1, revision: 7, exclusions: [], sources: [
+      { kind: 'direct', setup: {} },
+      { kind: 'accountPreset', presetId: 'legacy-preset', presetRevision: 4,
+        setup: { scripts: [{ body: 'echo retained' }] } },
+    ] };
+    const boundary = publicationPort(stored);
+    const opened = await getMachineSetupDesiredV1(boundary.port);
+    expect(opened).toMatchObject({ status: 'ready', policy: stored });
+    const metadata = { host: 'retained', platform: 'linux', happyCliVersion: '0.3.0',
+      homeDir: '/home/retained', happyHomeDir: '/home/retained/.happier', setup: stored };
+    expect(StoredMachinePublishedMetadataV1Schema.parse(metadata)).toEqual(metadata);
+    expect(boundary.compareAndSwap).not.toHaveBeenCalled();
+    expect(boundary.readStored().setup).toBe(stored);
+    expect(MachineSetupDesiredV1Schema.safeParse(stored).success).toBe(false);
+
+    const current = { ...stored, sources: [stored.sources[0], { ...stored.sources[1], contentEncryptionMode: 'plain' }] };
+    const saved = await mutateMachineSetupDesiredV1({ expectedDesiredRevision: 7,
+      sources: MachineSetupSourceV1Schema.parse(current.sources), exclusions: [] }, boundary.port);
+    expect(saved).toMatchObject({ status: 'applied', policy: { revision: 8, sources: current.sources } });
+    expect(MachineSetupDesiredV1Schema.safeParse(boundary.readStored().setup).success).toBe(true);
+  });
+
+  it.each([
+    { contentEncryptionMode: 'invalid' },
+    { contentEncryptionMode: null },
+    { presetContentOverride: { content: { t: 'encrypted', c: 'invalid' } } },
+  ])('does not reinterpret a malformed current preset copy as legacy: %j', async fields => {
+    const stored = { version: 1, revision: 7, exclusions: [], sources: [
+      { kind: 'direct', setup: {} },
+      { kind: 'accountPreset', presetId: 'legacy-preset', presetRevision: 4, setup: {}, ...fields },
+    ] };
+    const boundary = publicationPort(stored);
+    expect(await getMachineSetupDesiredV1(boundary.port)).toMatchObject({ status: 'invalid' });
+    expect(boundary.compareAndSwap).not.toHaveBeenCalled();
+  });
+
+  it('retains the original request only while a normalized setup has unfinished scripts', async () => {
+    const original: MachineSetupSourceV1 = [{ kind: 'direct', setup: { scripts: [{ body: 'exit 23' }] } }];
+    const normalized: MachineSetupSourceV1 = [{ kind: 'direct', setup: { ...original[0]!.setup,
+      items: [{ kind: 'softwareRecipe', selection: {
+        ref: { pluginId: 'fixture.recipes', recipeId: 'kept', revision: '1' }, inputs: {},
+      } }],
+    } }];
+    const boundary = publicationPort(createEmptyMachineSetupDesiredV1());
+    const input = { expectedDesiredRevision: 0, sources: normalized, exclusions: [],
+      observedSourceFacts: { direct: { pendingScripts: [0] } }, pendingScriptSources: original };
+    const partial = await mutateMachineSetupDesiredV1(input, boundary.port);
+    expect(partial).toMatchObject({ status: 'applied', policy: { pendingScriptSources: original } });
+    const current = await getMachineSetupDesiredV1(boundary.port);
+    if (current.status !== 'ready') throw new Error('Expected saved setup');
+    const completed = await mutateMachineSetupDesiredV1({ expectedDesiredRevision: current.policy.revision,
+      sources: normalized, exclusions: [], observedSourceFacts: { direct: { pendingScripts: [] } } }, boundary.port);
+    expect(completed.status).toBe('applied');
+    expect(boundary.readStored().setup).not.toHaveProperty('pendingScriptSources');
+  });
   it('retains completed recipe effects while resuming failed scripts, then permits an explicit full reapply', () => {
     const item = { kind: 'softwareRecipe' as const, selection: {
       ref: { pluginId: 'fixture.recipes', recipeId: 'package', revision: '1' }, inputs: {},
@@ -198,7 +257,7 @@ describe('Machine setup saved-copy publication', () => {
   });
   it('reads retained singular attachment copies in order without rewriting Machine metadata', async () => {
     const stored = { version: 1, revision: 7, exclusions: [], sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4,
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain',
         setup: { setupScript: 'echo account\r\n', setupScriptAffects: 'none' } },
       { kind: 'bundledPreset', ref: { pluginId: 'fixture.setup', localId: 'tools', revision: '1' },
         setup: { setupScript: '' } },

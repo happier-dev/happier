@@ -95,6 +95,10 @@ import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Sch
 
 const TEAM_MEMBER_ADD_TITLE = 'Add Team member';
 const TEAM_ID_FIELD = approvalField('teamId', 'Team ID', { required: true });
+const TEAM_ARCHIVE_INPUT_HINTS = {
+  description: 'Waiting invitations are permanently revoked. Restoring the Team does not restore them.',
+  fields: [TEAM_ID_FIELD],
+};
 const MEMBERSHIP_ID_FIELD = approvalField('membershipId', 'Membership ID', { required: true });
 const GROUP_ID_FIELD = approvalField('groupId', 'Group ID', { required: true });
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
@@ -255,15 +259,14 @@ function createTeamActionSpecs() {
   return Object.freeze([
   {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
-    description: 'Return CSV file bytes from the authorized Team credential usage query, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',
-    safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account',
+    description: 'Build CSV file bytes on the keyholding client from the authorized Team credential usage projection, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',
+    safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: true, rpc: false },
     cli: { commands: [{ path: ['teams', 'credentials', 'usage', 'export'], visibility: 'canonical' }], acceptsServerId: true, requiresServerId: true },
     bindings: { mcpToolName: 'teams_credentials_usage_export' },
     inputSchema: TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'],
     outputSchema: TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export'],
     inputHints: { fields: [approvalField('query', 'Usage query', { widget: 'json', required: true }),
-      approvalField('resourceName', 'Resource display name', { required: true }),
       approvalField('breakdownRowCount', 'Selected ranked rows', { widget: 'number' })] },
   } as const satisfies PreNormalizedActionSpec,
   {
@@ -492,7 +495,8 @@ function createTeamActionSpecs() {
     path: '/v1/teams/archive',
     inputSchema: TeamRefInputV1Schema,
     outputSchema: TeamSummaryV1Schema,
-    inputHints: { description: 'Waiting invitations are permanently revoked. Restoring the Team does not restore them.', fields: [TEAM_ID_FIELD] },
+    approvalPresentation: { summary: () => TEAM_ARCHIVE_INPUT_HINTS.description, inputHints: TEAM_ARCHIVE_INPUT_HINTS },
+    inputHints: TEAM_ARCHIVE_INPUT_HINTS,
   }),
   homeDomainActionRow({
     id: 'teams.restore', approval: {result: 'required',flow: 'deferred'},

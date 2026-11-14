@@ -1,4 +1,4 @@
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { RegistryItemV1 } from '@happier-dev/protocol/registries';
@@ -21,7 +21,7 @@ export function storeAppPresetItem(name: string, templateRef: DeploymentTemplate
 }
 
 /** The presets the door offers, each saying whether it already sets this item up. */
-export function projectAddToPresetChoices<Row extends Readonly<{ serverId: string; preset: ManagedMachinePresetV1 }>>(
+export function projectAddToPresetChoices<Row extends Readonly<{ serverId: string; preset: OpenedManagedMachinePresetV1 }>>(
     rows: readonly Row[], item: StorePresetDoorItem,
 ): readonly (Row & Readonly<{ contains: boolean }>)[] {
     return rows.map(row => ({ ...row, contains: containsMachineSetupItem(row.preset.setup, item) }));

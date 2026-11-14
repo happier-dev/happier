@@ -31,6 +31,7 @@ import { resolveResourceGrantPageAccessWhere, resourceGrantAccessSqlPredicate } 
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { artifactAccessFactsSelect, artifactGrantFacts, artifactGrantStorageAdapter, type ArtifactAccessFacts } from './artifactGrantStorageAdapter';
 import { withArtifactSourceReadersInTx } from './artifactSourceReaders';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import { APPROVAL_ARTIFACT_KINDS_V1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
@@ -795,7 +796,7 @@ export async function listArtifactAccessGrantsInTx(tx: Tx, input: Readonly<{
     const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
     const selfAccountId = mayInspectArtifactAudience(row.kind, access) ? undefined : input.actorAccountId;
-    const grants = await readArtifactAccessGrantsForAdmittedCustodyInTx(tx, input.artifactId, selfAccountId);
+    const grants = await readArtifactAccessGrantsForAdmittedCustodyInTx(tx, input.artifactId, selfAccountId, input.actorAccountId);
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId, access: access.level,
         grants: selfAccountId === undefined && decodeArtifactKindV1(row.kind).kindHint === 'bot_template.v1'
             ? await projectAdmittedTemplateAcceptedVersionsInTx(tx, input.artifactId, grants) : grants } };
@@ -816,7 +817,7 @@ export async function reportArtifactTemplateAcceptedVersionInTx(tx: Tx,
 
 /** Internal grant facts for an already admitted resource relationship; never admits a caller. */
 export async function readArtifactAccessGrantsForAdmittedCustodyInTx(tx: Tx,
-    artifactId: string, selfAccountId?: string): Promise<ArtifactAccessGrantsListResponseV1['grants']> {
+    artifactId: string, selfAccountId?: string, recipientAccountId?: string): Promise<ArtifactAccessGrantsListResponseV1['grants']> {
     const { accountGrants: accounts, teamGrants: teams, groupGrants: groups } = projectResourceGrantRows(
         await tx.artifactGrant.findMany({ where: { artifactId, ...(selfAccountId === undefined ? {}
             : { principalKind: 'account', accountId: selfAccountId }) }, include: {
@@ -829,7 +830,9 @@ export async function readArtifactAccessGrantsForAdmittedCustodyInTx(tx: Tx,
             ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
                 createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
             ...groups.map(row => ({ principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.teamGroup.name } })),
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: null },
+                groupName: recipientAccountId === undefined ? { kind: 'unavailable' as const }
+                    : projectTeamGroupNameForRecipient({ serialized: row.teamGroup.name, recipientAccountId }) })),
         ];
 }
 

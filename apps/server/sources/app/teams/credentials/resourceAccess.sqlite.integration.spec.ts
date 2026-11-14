@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -17,7 +18,7 @@ describe("Team credential transactional entitlement", () => {
         const team = await db.team.create({ data: { name: "Credential access" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "guest" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Developers", nameKey: "developers" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Developers") } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
         } });

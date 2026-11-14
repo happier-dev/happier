@@ -3,6 +3,7 @@ import { projectAccountDisplayProfileV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from "
 import { buildShareEligibleAccountWhere } from "@/app/teams/shareEligibility";
 import { resolveGrantableTeamsForActorInTx } from "@/app/teams/queries";
 import { resolveGrantableTeamGroupsForActorInTx } from "@/app/teams/groups/grantableGroups";
+import { projectTeamGroupNameForRecipient } from "@/app/teams/groups/privateLabels";
 import {
     qualifyTeamProjectionReadAuthenticationsInTx,
     resolveTeamActorContextsInTx,
@@ -91,6 +92,14 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         groups: groupSubjects.filter(subject => grantableTeamIds.has(subject.teamId)),
         grantableTeamIds,
     });
+    // Grantability remains the membership owner's identity-only answer. Display
+    // bytes are read separately at this output boundary and projected only to
+    // the admitted requester.
+    const grantableGroupLabels = grantableGroups.size === 0 ? [] : await input.tx.teamGroup.findMany({
+        where: { id: { in: [...grantableGroups.keys()] } },
+        select: { id: true, name: true },
+    });
+    const groupLabelsById = new Map(grantableGroupLabels.map((group) => [group.id, group.name]));
     const result: ResolveSessionAccessPrincipalsResponseV1["principals"] = [];
     for (const subject of subjects) {
         if (subject.kind === "account") {
@@ -107,8 +116,11 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
             continue;
         }
         const group = grantableGroups.get(subject.groupId);
-        if (group?.teamId === subject.teamId) {
-            result.push({ kind: "group", teamId: group.teamId, groupId: group.groupId, name: group.name, teamName: context.team.name });
+        const serializedName = groupLabelsById.get(subject.groupId);
+        if (group?.teamId === subject.teamId && serializedName !== undefined) {
+            result.push({ kind: "group", teamId: group.teamId, groupId: group.groupId,
+                name: projectTeamGroupNameForRecipient({ serialized: serializedName, recipientAccountId: input.actorAccountId }),
+                teamName: context.team.name });
         }
     }
     let creationDecision: ResolveSessionAccessPrincipalsResponseV1["creationDecision"] = null;

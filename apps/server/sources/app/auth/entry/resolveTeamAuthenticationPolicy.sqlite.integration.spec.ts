@@ -10,6 +10,7 @@ import { auth } from "@/app/auth/auth";
 
 import { resolveTeamAuthenticationPolicyInTx } from "./resolveTeamAuthenticationPolicy";
 import { qualifyTeamAuthenticationInTx, qualifyTeamAuthenticationsInTx } from "./qualifyTeamAuthentication";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const managedOidcConfig = {
     v: 1,
@@ -672,7 +673,7 @@ describe("Team authentication policy catalog resolution (SQLite integration)", (
         await expect(auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Ineligible identity",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Ineligible identity"),
             authenticationEvidence: evidence,
         })).rejects.toMatchObject({ code: "credential_authentication_evidence_unavailable" });
         await expect(db.accountApiToken.count({ where: { accountId: account.id } })).resolves.toBe(0);
@@ -694,7 +695,7 @@ describe("Team authentication policy catalog resolution (SQLite integration)", (
         const unknownEligibilityPat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Transient identity state",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Transient identity state"),
             authenticationEvidence: evidence,
         });
         await expect(db.accountApiToken.findUnique({

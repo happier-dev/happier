@@ -1368,8 +1368,8 @@ export type MemoryActionResultById = {
         };
         sources?: undefined | {
             source: {
-                type: 'external_transcript';
                 agentId: string;
+                type: 'external_transcript';
                 sourceKey: string;
             } | {
                 type: 'happier_session';

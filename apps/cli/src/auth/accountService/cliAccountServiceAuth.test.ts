@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import {
   authenticateCliAccountService,
@@ -100,18 +101,23 @@ describe('CLI Account Service authentication', () => {
     if (!address || typeof address === 'string') throw new Error('Missing HTTP test address');
     endpoint = `http://127.0.0.1:${address.port}`;
     try {
+      const recoveryKey = new Uint8Array(32).fill(7);
       const result = authenticateCliAccountService({
         service: { ...selection, endpoint, canonicalServerUrl: endpoint },
-        method: { kind: 'key' }, key: new Uint8Array(32).fill(7),
+        method: { kind: 'key' }, key: recoveryKey,
       });
       if (status === 200) {
-        await expect(result).resolves.toEqual({ kind: 'authenticated', credential: { token: 'restricted-directory-token' } });
+        await expect(result).resolves.toEqual({ kind: 'authenticated', credential: {
+          token: 'restricted-directory-token', accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(recoveryKey),
+        } });
       } else if (status === 307 && crossOrigin) {
         await expect(result).rejects.toMatchObject({
           name: 'CredentialRequestRedirectError', code: 'credential_request_redirect_refused', retryable: false, status,
         });
       } else {
-        await expect(result).resolves.toEqual({ kind: 'authenticated', credential: { token: 'redirected-directory-token' } });
+        await expect(result).resolves.toEqual({ kind: 'authenticated', credential: {
+          token: 'redirected-directory-token', accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(recoveryKey),
+        } });
       }
       expect(proofReceived).toBe(true);
       expect(secondHopRequests).toBe(status === 200 || crossOrigin && status === 307 ? 0 : 1);
@@ -134,7 +140,7 @@ describe('CLI Account Service authentication', () => {
     expect(redirectMode).toBe('manual');
   });
 
-  it('uses the dedicated V2 Account Directory challenge and returns only its restricted token', async () => {
+  it('uses the dedicated V2 Account Directory challenge and retains the derived Account content key with its restricted token', async () => {
     const request = vi.fn(async (path: string) => {
       if (path.endsWith('/challenge')) return new Response(JSON.stringify({
         challengeId: 'challenge_123',
@@ -146,13 +152,16 @@ describe('CLI Account Service authentication', () => {
       return new Response(JSON.stringify({ token: 'restricted-directory-token' }), { status: 200 });
     });
 
+    const recoveryKey = new Uint8Array(32).fill(7);
     const result = await authenticateCliAccountService({
       service: selection,
       method: { kind: 'key' },
-      key: new Uint8Array(32).fill(7),
+      key: recoveryKey,
     }, { request });
 
-    expect(result).toEqual({ kind: 'authenticated', credential: { token: 'restricted-directory-token' } });
+    expect(result).toEqual({ kind: 'authenticated', credential: {
+      token: 'restricted-directory-token', accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(recoveryKey),
+    } });
     expect(request.mock.calls.map(([path]) => path)).toEqual([
       '/v1/auth/account-directory/challenge',
       '/v1/auth/account-directory',
@@ -180,7 +189,10 @@ describe('CLI Account Service authentication', () => {
       randomBytes: () => generatedRecoveryKey,
     })).resolves.toEqual({
       kind: 'authenticated',
-      credential: { token: 'new-restricted-directory-token' },
+      credential: {
+        token: 'new-restricted-directory-token',
+        accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(generatedRecoveryKey),
+      },
       recoveryKey: generatedRecoveryKey,
     });
   });
@@ -265,7 +277,10 @@ describe('CLI Account Service authentication', () => {
 
     expect(result).toEqual({
       kind: 'authenticated',
-      credential: { token: 'keyed-directory-token' },
+      credential: {
+        token: 'keyed-directory-token',
+        accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(recoveryKey),
+      },
       recoveryKey,
     });
   });

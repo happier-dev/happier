@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHomeCredentialDestinationDigestV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { toAccountDirectoryHomeWire } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
 const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn(() => endpointFetchMock));
@@ -14,11 +15,17 @@ function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+const realisticJWT = (subject = 'account-directory') => `header.${btoa(JSON.stringify({ sub: subject }))}.signature`;
+const plainLabelCensus = () => json({ contentEncryptionMode: 'plain', recipients: [] });
+const plainDirectoryMe = () => json({
+    v: 1, accountId: 'account-directory', encryptionMode: 'plain', displayName: null, avatar: null, linkedAuthenticationMethods: [],
+});
+
 describe('account directory client', () => {
     beforeEach(async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         for (const serverIdentityId of ['directory-new', 'srv_dir_1']) {
-            await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: 'https://directory.test', serverIdentityId }, { token: 'directory-token' });
+            await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: 'https://directory.test', serverIdentityId }, { token: realisticJWT() });
         }
     });
     afterEach(() => {
@@ -42,7 +49,7 @@ describe('account directory client', () => {
         expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith({
             endpointUrl: 'https://directory.test',
             serverId: 'directory-new',
-            credentials: { token: 'directory-token' },
+            credentials: { token: realisticJWT() },
         });
     });
 
@@ -54,7 +61,7 @@ describe('account directory client', () => {
         expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith({
             endpointUrl: 'https://directory.test',
             serverId: 'srv_dir_1',
-            credentials: { token: 'directory-token' },
+            credentials: { token: realisticJWT() },
         });
         const requestInit = endpointFetchMock.mock.calls[0]?.[1] as RequestInit;
         expect(new Headers(requestInit.headers).get('Authorization')).toBeNull();
@@ -68,12 +75,13 @@ describe('account directory client', () => {
         const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
         const target = { endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' };
         const original = createAccountDirectoryClient(target);
-        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'replacement-token' });
+        const replacementToken = realisticJWT('replacement-account');
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: replacementToken });
         await expect(original.listHomes()).rejects.toThrow();
         expect(endpointFetchMock).not.toHaveBeenCalled();
         endpointFetchMock.mockResolvedValueOnce(json({ v: 1, homes: [], preferredHomeServerIdentityId: null }));
         expect(await createAccountDirectoryClient(target).listHomes()).toEqual({ v: 1, homes: [], preferredHomeServerIdentityId: null });
-        expect(createServerFetchAtEndpointMock).toHaveBeenLastCalledWith(expect.objectContaining({ credentials: { token: 'replacement-token' } }));
+        expect(createServerFetchAtEndpointMock).toHaveBeenLastCalledWith(expect.objectContaining({ credentials: { token: replacementToken } }));
     });
 
     it('sends the strict versioned body required by directory deletion', async () => {
@@ -92,6 +100,36 @@ describe('account directory client', () => {
         expect(JSON.parse(String(init.body))).toEqual({ v: 1 });
     });
 
+    it('seals Plain Home label writes and opens the opaque response before returning the Home', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const token = `header.${btoa(JSON.stringify({ sub: 'directory-account' }))}.signature`;
+        const target = { endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' };
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token });
+        const connectionDescriptor = {
+            v: 1 as const, homeServerIdentityId: 'srv_home1', canonicalServerUrl: 'https://destination.test',
+            revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://destination.test' }],
+        };
+        const plainLabel = { content: { t: 'plain' as const, v: 'Private Home' }, recipients: [] };
+        endpointFetchMock
+            .mockResolvedValueOnce(plainDirectoryMe())
+            .mockResolvedValueOnce(json({ contentEncryptionMode: 'plain', recipients: [] }))
+            .mockResolvedValueOnce(json({
+                v: 1, homeServerIdentityId: 'srv_home1', canonicalServerUrl: 'https://destination.test',
+                connectionDescriptor, label: { content: plainLabel.content, recipientEnvelope: null },
+                createdAtMs: 1, updatedAtMs: 1, preferred: false,
+            }));
+        const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
+        const result = await createAccountDirectoryClient(target).putHome({
+            homeServerIdentityId: 'srv_home1', connectionDescriptor, label: 'Private Home',
+        });
+        expect(result.label).toBe('Private Home');
+        expect(endpointFetchMock.mock.calls.map(call => call[0])).toEqual([
+            '/v1/account-directory/me', '/v1/account-directory/private-labels/recipient-census', '/v1/account-directory/homes/srv_home1',
+        ]);
+        const sent = JSON.parse(String((endpointFetchMock.mock.calls[2]?.[1] as RequestInit).body));
+        expect(sent).toEqual({ v: 1, connectionDescriptor, label: plainLabel });
+    });
+
     it('publishes the exact destination descriptor with its durable frontier and mixed endpoints', async () => {
         const entry = {
             v: 1 as const,
@@ -105,16 +143,20 @@ describe('account directory client', () => {
                 revision: 27,
                 endpoints: [
                     { kind: 'https' as const, url: 'https://destination.test' },
-                    { kind: 'iroh' as const, endpointId: 'ab'.repeat(32), relayUrls: ['https://relay.test'] },
+                    { endpointId: 'ab'.repeat(32), relayUrls: ['https://relay.test'], kind: 'iroh' as const },
                 ],
             },
             createdAtMs: 1,
             updatedAtMs: 2,
             preferred: true,
         };
+        const wireEntry = toAccountDirectoryHomeWire(entry);
         endpointFetchMock
-            .mockResolvedValueOnce(json(entry))
-            .mockResolvedValueOnce(json({ v: 1, homes: [entry], preferredHomeServerIdentityId: 'srv_home1' }));
+            .mockResolvedValueOnce(plainDirectoryMe())
+            .mockResolvedValueOnce(plainLabelCensus())
+            .mockResolvedValueOnce(json(wireEntry))
+            .mockResolvedValueOnce(json({ v: 1, homes: [wireEntry], preferredHomeServerIdentityId: 'srv_home1' }))
+            .mockResolvedValueOnce(plainDirectoryMe());
         const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
         const client = createAccountDirectoryClient({ endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' });
 
@@ -125,17 +167,22 @@ describe('account directory client', () => {
         })).resolves.toEqual({ kind: 'published', entry });
         await expect(client.readHomeDescriptor('srv_home1')).resolves.toEqual(entry);
 
-        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('/v1/account-directory/homes/srv_home1');
-        expect(JSON.parse(String((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('/v1/account-directory/me');
+        expect(endpointFetchMock.mock.calls[1]?.[0]).toBe('/v1/account-directory/private-labels/recipient-census');
+        expect(endpointFetchMock.mock.calls[2]?.[0]).toBe('/v1/account-directory/homes/srv_home1');
+        expect(JSON.parse(String((endpointFetchMock.mock.calls[2]?.[1] as RequestInit).body))).toEqual({
             v: 1,
-            label: 'Moved Home',
+            label: { content: { t: 'plain', v: 'Moved Home' }, recipients: [] },
             connectionDescriptor: entry.connectionDescriptor,
         });
-        expect(endpointFetchMock.mock.calls[1]?.[0]).toBe('/v1/account-directory/homes');
+        expect(endpointFetchMock.mock.calls[3]?.[0]).toBe('/v1/account-directory/homes');
     });
 
     it('preserves a publication refusal without retrying a different write shape', async () => {
-        endpointFetchMock.mockResolvedValue(json({ error: 'invalid_request' }, 400));
+        endpointFetchMock
+            .mockResolvedValueOnce(plainDirectoryMe())
+            .mockResolvedValueOnce(plainLabelCensus())
+            .mockResolvedValueOnce(json({ error: 'invalid_request' }, 400));
         const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
         const client = createAccountDirectoryClient({ endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' });
 
@@ -145,7 +192,7 @@ describe('account directory client', () => {
             connectionDescriptor: { v: 1, homeServerIdentityId: 'srv_home1', canonicalServerUrl: 'https://destination.test',
                 revision: 8, endpoints: [{ kind: 'https', url: 'https://destination.test' }] },
         })).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
-        expect(endpointFetchMock).toHaveBeenCalledTimes(1);
+        expect(endpointFetchMock).toHaveBeenCalledTimes(3);
     });
 
     it('returns the newer authoritative descriptor when another publication already won', async () => {
@@ -165,7 +212,10 @@ describe('account directory client', () => {
             updatedAtMs: 3,
             preferred: true,
         };
-        endpointFetchMock.mockResolvedValue(json(currentEntry));
+        endpointFetchMock
+            .mockResolvedValueOnce(plainDirectoryMe())
+            .mockResolvedValueOnce(plainLabelCensus())
+            .mockResolvedValueOnce(json(toAccountDirectoryHomeWire(currentEntry)));
         const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
 
         await expect(createAccountDirectoryClient({ endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' }).publishHomeDescriptor({
@@ -177,7 +227,10 @@ describe('account directory client', () => {
     });
 
     it('preserves the typed equal-revision conflict for authoritative readback recovery', async () => {
-        endpointFetchMock.mockResolvedValue(json({ error: 'descriptor_revision_conflict' }, 409));
+        endpointFetchMock
+            .mockResolvedValueOnce(plainDirectoryMe())
+            .mockResolvedValueOnce(plainLabelCensus())
+            .mockResolvedValueOnce(json({ error: 'descriptor_revision_conflict' }, 409));
         const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
 
         await expect(createAccountDirectoryClient({ endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' }).publishHomeDescriptor({
@@ -371,6 +424,88 @@ describe('account directory client', () => {
             new AccountDirectoryRequestError(409, 'directory_link_not_found'),
         )).toBe(false);
         expect(isAccountDirectoryRelinkConflict(new Error('conflict'))).toBe(false);
+    });
+
+    it('refuses a Plain recipient census for an E2EE Directory before disclosing a Home label', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const target = { endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' };
+        const token = realisticJWT('directory-e2ee-owner');
+        const encryption = await createEncryptionFromAuthCredentials({
+            token, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url'),
+        });
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token }, {
+            retainedContentKey: {
+                publicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+                machineKey: encodeBase64(encryption.getContentPrivateKey(), 'base64'),
+            },
+        });
+        const connectionDescriptor = {
+            v: 1 as const, homeServerIdentityId: 'srv_private_home', canonicalServerUrl: 'https://private-home.test',
+            revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://private-home.test' }],
+        };
+        const privateName = 'Private infrastructure label';
+        endpointFetchMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account-directory/me') return json({
+                v: 1, accountId: 'directory-e2ee-owner', encryptionMode: 'e2ee', displayName: null,
+                avatar: null, linkedAuthenticationMethods: [], recoveryKey: 'key_only',
+            });
+            if (path === '/v1/account-directory/private-labels/recipient-census') return plainLabelCensus();
+            if (path === '/v1/account-directory/homes/srv_private_home') return json({
+                v: 1, homeServerIdentityId: 'srv_private_home', canonicalServerUrl: 'https://private-home.test',
+                connectionDescriptor, label: { content: { t: 'plain', v: privateName }, recipientEnvelope: null },
+                createdAtMs: 1, updatedAtMs: 1, preferred: false,
+            });
+            throw new Error(`Unexpected Directory request: ${path}`);
+        });
+        const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
+        await expect(createAccountDirectoryClient(target).putHome({
+            homeServerIdentityId: 'srv_private_home', connectionDescriptor, label: privateName,
+        })).rejects.toMatchObject({ operation: 'home_label_sealing_unavailable' });
+        expect(endpointFetchMock.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+            '/v1/account-directory/me', '/v1/account-directory/private-labels/recipient-census',
+        ]));
+        expect(endpointFetchMock.mock.calls.some(call => (call[1] as RequestInit | undefined)?.method === 'PUT')).toBe(false);
+        expect(endpointFetchMock.mock.calls.every(call => !String((call[1] as RequestInit | undefined)?.body).includes(privateName))).toBe(true);
+    });
+
+    it('refuses Plain Home label projections for the captured E2EE Directory Account', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const target = { endpoint: 'https://directory.test', serverIdentityId: 'srv_dir_1' };
+        const token = realisticJWT('directory-e2ee-owner');
+        const encryption = await createEncryptionFromAuthCredentials({
+            token, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url'),
+        });
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token }, {
+            retainedContentKey: {
+                publicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+                machineKey: encodeBase64(encryption.getContentPrivateKey(), 'base64'),
+            },
+        });
+        const homes = ['srv_private_home', 'srv_other_home'].map(homeServerIdentityId => ({
+            v: 1, homeServerIdentityId, canonicalServerUrl: 'https://private-home.test',
+            connectionDescriptor: { v: 1, homeServerIdentityId, canonicalServerUrl: 'https://private-home.test',
+                revision: 1, endpoints: [{ kind: 'https', url: 'https://private-home.test' }] },
+            label: { content: { t: 'plain', v: 'Injected plaintext label' }, recipientEnvelope: null },
+            createdAtMs: 1, updatedAtMs: 1, preferred: false,
+        }));
+        endpointFetchMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account-directory/homes') return json({
+                v: 1, homes, preferredHomeServerIdentityId: null,
+            });
+            if (path === '/v1/account-directory/me') return json({
+                v: 1, accountId: 'directory-e2ee-owner', encryptionMode: 'e2ee', displayName: null,
+                avatar: null, linkedAuthenticationMethods: [], recoveryKey: 'key_only',
+            });
+            throw new Error(`Unexpected Directory request: ${path}`);
+        });
+        const { createAccountDirectoryClient } = await import('./accountDirectoryClient');
+        await expect(createAccountDirectoryClient(target).listHomes())
+            .rejects.toMatchObject({ operation: 'home_label_unavailable' });
+        expect(endpointFetchMock.mock.calls.filter(call => call[0] === '/v1/account-directory/me')).toHaveLength(1);
     });
 
     it('rejects unknown descriptor fields and overlong assertion windows', async () => {

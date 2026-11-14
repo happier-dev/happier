@@ -753,7 +753,7 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
                 /> : null}
             </ItemGroup></SettingAnchor>
         ) : null}
-        {testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} groupMappings={props.teamId !== null} /> : null}
+        {testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} groupMappings={props.teamId !== null} scope={props.scope} /> : null}
         {props.teamId === null && isWorkos ? <ItemGroup description={t('identityAdministration.homeWorkosOffboarding')}>
             <Item title={t('homeGovernance.signInTitle')} subtitle={t('identityAdministration.homeWorkosEnableDetail')} onPress={() => router.push(homeAdministrationPoliciesPath(props.scope.serverId))} />
         </ItemGroup> : null}

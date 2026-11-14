@@ -50,7 +50,7 @@ describe('exact Directory approval continuation', () => {
     async function input() {
         const { service } = fixture;
         expect(await TokenStorage.accountDirectoryAuthCredentials.set(
-            { endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'directory-token' },
+            { endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: fixture.token },
         )).toBe(true);
         return {
             service,

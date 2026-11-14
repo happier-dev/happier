@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { decodeBase64 } from '../crypto/base64.js';
 import { TeamCredentialUsageQueryResultV1Schema } from '../teams/credentials/usageV1.js';
 import { UsageFileResultSchema } from '../usage/usageExport.js';
+import { UiActionDispatchRequestV1Schema, parseClientActionDispatchResult } from './clientDispatchV1.js';
 
 const tokens = { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 };
 const totals = { eventCount: 1, requestCount: 1, tokens, cost: { reportedUsd: 0, estimatedUsd: 2, effectiveUsd: 2, currency: 'USD' } };
@@ -12,9 +12,43 @@ const result = TeamCredentialUsageQueryResultV1Schema.parse({ v: 1, totals,
     costCoverage: 'complete', unobservedExternalRequestCount: 0 },
   series: [], breakdown: [{ key: 'first', label: 'First', totals }], nextCursor: 'next', limits: [] });
 const query = { resourceId: 'resource-1', startMs: 0, endMs: 1000, granularity: 'day', costMode: 'estimated', breakdown: 'model' } as const;
-const context = { surface: 'cli', serverId: 'home-1', expectedAccountId: 'alice' } as const;
+const context = { surface: 'agent', serverId: 'home-1', expectedAccountId: 'alice' } as const;
 
 describe('Team credential usage export Action', () => {
+  it('delivers the export query to its keyholding client without a resource display name', async () => {
+    const delivered: unknown[] = [];
+    const clientFile = UsageFileResultSchema.parse({
+      v: 1,
+      mediaType: 'text/csv',
+      fileName: 'team-credential-usage.csv',
+      base64: 'YQ==',
+      fields: ['totals'],
+      asOfMs: null,
+    });
+    // The connected app is the real cross-process boundary; Action admission and
+    // the strict client carrier remain under the production executor.
+    const clientActionExecute: NonNullable<ActionExecutorDeps['clientActionExecute']> = async invocation => {
+      const { execute: _execute, executeChild: _executeChild, ...request } = invocation;
+      const wire = UiActionDispatchRequestV1Schema.parse({ v: 1, ...request,
+        context: { surface: invocation.context.surface, authority: invocation.context.authority } });
+      delivered.push(wire);
+      expect(wire.input).toEqual({ query, breakdownRowCount: 2 });
+      expect(wire.input).not.toHaveProperty('resourceName');
+      return parseClientActionDispatchResult(wire.actionId, { v: 1,
+        execution: { ok: true, result: clientFile } })!;
+    };
+
+    const exported = await createActionExecutor({ clientActionExecute } as ActionExecutorDeps)
+      .execute('teams.credentials.usage.export', { query, breakdownRowCount: 2 }, {
+        ...context,
+        authority: 'account_automation',
+        bypassApprovals: true,
+      });
+
+    expect(exported).toEqual({ ok: true, result: clientFile });
+    expect(delivered).toHaveLength(1);
+  });
+
   it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
     'answers the same $kind subject on the agent surface and preserves refusal', async subject => {
       const requests: unknown[] = [];
@@ -34,75 +68,30 @@ describe('Team credential usage export Action', () => {
     },
   );
 
-  it('exports only the selected ranked rows through the existing authorized usage read', async () => {
-    const requests: { actionId: string; input: unknown }[] = [];
-    // Home-domain transport is the network boundary; admission, schemas and CSV remain real.
-    const executor = createActionExecutor({ homeDomainAction: async request => {
-      requests.push({ actionId: request.actionId, input: request.input });
-      expect(request.context.serverId).toBe('home-1');
-      expect(request.context.expectedAccountId).toBe('alice');
-      return 'cursor' in (request.input as typeof query) ? { ...result,
-        totals: { ...totals, tokens: { ...tokens, total: 24 } },
-        breakdown: [{ key: 'first', label: 'Updated first', totals },
-          { key: 'second', label: 'Second', totals }, { key: 'third', label: 'Third', totals }], nextCursor: null } : result;
-    } } as ActionExecutorDeps);
-    const exported = await executor.execute('teams.credentials.usage.export', {
-      query, resourceName: 'Shared model', breakdownRowCount: 2,
-    }, context);
-    expect(exported).toMatchObject({ ok: true });
-    if (!exported.ok) return;
-    const file = UsageFileResultSchema.parse(exported.result);
-    expect(file).toMatchObject({ mediaType: 'text/csv', fields: ['totals', 'coverage', 'breakdowns'], asOfMs: null });
-    const csv = new TextDecoder().decode(decodeBase64(file.base64));
-    const [header, total] = csv.trim().split('\n').map(row => row.split(','));
-    expect(total?.[header!.indexOf('tokens')]).toBe('24');
-    expect(csv).toContain('Updated first');
-    expect(csv).toContain('Second');
-    expect(csv).not.toContain('Third');
-    expect(csv).toContain('loaded_pages');
-    expect(requests).toEqual([
-      { actionId: 'teams.credentials.usage.query', input: query },
-      { actionId: 'teams.credentials.usage.query', input: { ...query, cursor: 'next' } },
-    ]);
-  });
-
-  it('keeps a typed query refusal from producing any file bytes', async () => {
-    const executor = createActionExecutor({ homeDomainAction: async () => ({ ok: false,
-      errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }) } as ActionExecutorDeps);
-    expect(await executor.execute('teams.credentials.usage.export', { query, resourceName: 'Shared model' }, context))
-      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-  });
-
-  it('requires the export root and its Machine target grant without requiring a second query Action grant', async () => {
+  it('requires the export root and its Machine target grant before client delivery', async () => {
     const granted = { ...context, externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1' },
       externalActionCredential: { accountId: 'alice', principalId: 'token', credentialId: 'token', grant: {
         v: 1 as const, actions: { families: [], ids: ['teams.credentials.usage.export'] },
         targets: { sessions: [], machines: ['machine-1'] }, approve: false, origins: [], models: null,
         permissionModes: null, create: null,
       } } };
-    let reads = 0;
-    const executor = createActionExecutor({ homeDomainAction: async () => { reads++; return result; } } as ActionExecutorDeps);
-    expect(await executor.execute('teams.credentials.usage.export', { query, resourceName: 'Shared model' }, granted))
+    let deliveries = 0;
+    const clientFile = UsageFileResultSchema.parse({
+      v: 1, mediaType: 'text/csv', fileName: 'team-credential-usage.csv', base64: 'YQ==', fields: ['totals'], asOfMs: null,
+    });
+    const executor = createActionExecutor({ clientActionExecute: async () => {
+      deliveries += 1;
+      return { ok: true, result: clientFile };
+    } } as ActionExecutorDeps);
+    expect(await executor.execute('teams.credentials.usage.export', { query }, granted))
       .toMatchObject({ ok: true });
-    expect(reads).toBe(1);
+    expect(deliveries).toBe(1);
     for (const denied of [
       { ...granted, externalActionTarget: { kind: 'machine' as const, machineId: 'other-machine' } },
       { ...granted, externalActionCredential: { ...granted.externalActionCredential,
         grant: { ...granted.externalActionCredential.grant, actions: { families: [], ids: ['teams.credentials.usage.query'] } } } },
-    ]) expect(await executor.execute('teams.credentials.usage.export', { query, resourceName: 'Shared model' }, denied))
+    ]) expect(await executor.execute('teams.credentials.usage.export', { query }, denied))
       .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-    expect(reads).toBe(1);
-  });
-
-  it('reports a complete first page honestly and stops disclosure after cancellation', async () => {
-    const controller = new AbortController();
-    const executor = createActionExecutor({ homeDomainAction: async () => ({ ...result, nextCursor: null }) } as ActionExecutorDeps);
-    const exported = await executor.execute('teams.credentials.usage.export', { query, resourceName: 'Shared model' }, context);
-    expect(exported.ok).toBe(true);
-    if (exported.ok) expect(new TextDecoder().decode(decodeBase64(UsageFileResultSchema.parse(exported.result).base64)))
-      .toContain(',complete\n');
-    const retired = createActionExecutor({ homeDomainAction: async () => { controller.abort(); return result; } } as ActionExecutorDeps);
-    expect(await retired.execute('teams.credentials.usage.export', { query, resourceName: 'Shared model' }, { ...context, signal: controller.signal }))
-      .toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(deliveries).toBe(1);
   });
 });

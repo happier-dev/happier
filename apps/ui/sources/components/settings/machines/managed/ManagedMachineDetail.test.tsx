@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 import { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -331,6 +331,33 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.controller-unavailable')).toBeNull();
         } finally { await screen.unmount(); }
     });
+    it('keeps an unreadable preset Machine visible with Retry instead of opening private receipt controls', async () => {
+        const machine = ManagedMachineV1Schema.parse({ id: 'opaque-unreadable', homeId: 'home-unreadable', custodianAccountId: 'owner',
+            preset: { id: 'preset-unreadable', revision: 1, contentEncryptionMode: 'e2ee' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const onChanged = vi.fn();
+        const screen = await renderScreen(<ManagedMachineSections machine={machine} serverId="server-unreadable" current
+            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} onChanged={onChanged} onDenied={() => {}} />);
+        try {
+            const state = screen.tree.findAllByType(SurfaceStateCard).find(row => row.props.diagnosticCode === 'content_unavailable');
+            expect(state?.props.kind).toBe('unavailable');
+            expect(screen.findByTestId('managed-machine.resize')).toBeNull();
+            expect(screen.findByTestId('managed-machine.delete')).toBeNull();
+            await act(async () => state?.props.action.onPress());
+            expect(onChanged).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
+    it('renders the Machine picker mark when a retained preset body cannot be opened', async () => {
+        const { MachineRowMark } = await import('@/components/sessions/new/components/machineSelection/MachineSelectionRowAccessory');
+        const machine = ManagedMachineV1Schema.parse({ id: 'opaque-picker', homeId: 'home-unreadable', custodianAccountId: 'owner',
+            preset: { id: 'preset-unreadable', revision: 1, contentEncryptionMode: 'e2ee' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const screen = await renderScreen(<MachineRowMark machineId={machine.id} serverId="server-unreadable" size={17} managedMachine={machine} />);
+        try { expect(screen.tree.findByType(MachineRowMark).props.managedMachine).toBe(machine); }
+        finally { await screen.unmount(); }
+    });
     it('offers Resize from the managed receipt without changing the machine before review', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-resize-detail.test', scope: 'tab' });
         const homeId = 'srv_managed_resize_detail';
@@ -360,6 +387,132 @@ describe('managed Machine detail', () => {
         await screen.pressByTestIdAsync('managed-machine.resize');
         expect(screen.findByTestId('managed-machine.resize-review')).not.toBeNull();
         expect(resizeRequests).toEqual([]);
+    });
+    it.each(['opaque', 'legacy'] as const)('prepares an Account-hosted %s preset resize at the real Action boundary', async form => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-opaque-resize-detail.test', scope: 'tab' });
+        const homeId = 'srv_managed_opaque_resize_detail';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        const token = createAccountTokenForTests('owner', { currentAccount: true });
+        expect(readOriginalAccountActionAuthentication(token)).toEqual({ kind: 'account', tokenEpoch: 0 });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+            { token });
+        const { PLUGIN_MANIFEST } = await import('@/dev/testkit/fixtures/managedAccountSsh');
+        const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+        const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+        const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+        const provisioner = manifest.contributes.machineProvisioners?.[0];
+        if (!provisioner?.resize?.cpuCores || !provisioner.actions.resize) throw new Error('Expected the Account resize provisioner');
+        const restoreBundles = installBundledPluginUiDeclarationsForTests([{
+            pluginId: manifest.id, pluginVersion: manifest.version, packageName: '@acme/cloud-ssh',
+            displayName: 'Cloud SSH', hasMachineProvisioners: true, entriesById: {}, normalizedManifest: manifest,
+        }]);
+        onTestFinished(restoreBundles);
+        const provider = { pluginId: manifest.id, localId: provisioner.id };
+        const launch = { provider, schemaVersion: provisioner.schemaVersion,
+            name: 'Private Cloud SSH guest', choices: { region: 'ams' } } as const;
+        const opaque = {
+            machine: {
+                id: 'opaque-resize-reviewed', homeId, custodianAccountId: 'owner',
+                preset: { id: 'opaque-resize-preset', revision: 7, contentEncryptionMode: 'plain' as const },
+                allocation: 'bound' as const, creationState: 'active' as const, desired: 'start' as const,
+                desiredWhen: 'now' as const, intentRevision: 3, retention: { kind: 'until-delete' as const },
+                wakeOnAcceptedMessage: false,
+            },
+            presetContent: {
+                content: { t: 'plain' as const, v: {
+                    v: 1 as const, name: 'Private preset name', launch,
+                    reviewedFacts: { launch, optionStatus: 'current' as const, prerequisites: [],
+                        billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+                        retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false },
+                    nativeResult: { kind: 'bound' as const, resource: { contributionRef: launch.provider,
+                        schemaVersion: launch.schemaVersion, value: { id: 'private-cloud-ssh' } } },
+                    observation: { observedAt: 1, availability: 'present' as const, power: 'running' as const,
+                        size: { cpuCores: 2 } },
+                } },
+                recipientEnvelope: null,
+            },
+        };
+        const read = form === 'opaque' ? opaque : { ...opaque.machine,
+            launch, reviewedFacts: opaque.presetContent.content.v.reviewedFacts,
+            resource: opaque.presetContent.content.v.nativeResult.resource,
+            observation: opaque.presetContent.content.v.observation };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [] } });
+        const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection,
+            clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        const scope = { serverId, accountId: 'owner' };
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+        const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+        expect(declarations).toMatchObject({ kind: 'available' });
+        expect(declarations.kind === 'available' && declarations.declarations.some(declaration =>
+            declaration.manifest.id === manifest.id && declaration.manifest.contributes.machineProvisioners?.some(candidate =>
+                candidate.id === provisioner.id && candidate.resize?.cpuCores.kind === 'supported'))).toBe(true);
+        const admissions: unknown[] = [];
+        const actionResults: Array<Readonly<{ actionId: string; result: unknown }>> = [];
+        const frontDoor = createFrontDoorActionExecute(createDefaultActionExecutor());
+        const executeAction = Object.assign(async (...args: Parameters<typeof frontDoor>) => {
+            const result = await frontDoor(...args);
+            actionResults.push({ actionId: args[0], result });
+            return result;
+        }, { confirmed: async (...args: Parameters<typeof frontDoor.confirmed>) => {
+            const result = await frontDoor.confirmed(...args);
+            actionResults.push({ actionId: args[0], result });
+            return result;
+        }, prepare: frontDoor.prepare });
+        setRuntimeFetch(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/machines/managed/actions/get') return Response.json(read);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [read] });
+            if (path === '/v1/machines/managed/actions/birth.get') return Response.json({ source: null });
+            if (path === '/v1/machines/managed/controller/admit-control') {
+                admissions.push(JSON.parse(String(init?.body)));
+                return Response.json({ code: 'permission_denied' }, { status: 403 });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const { openManagedMachineReadSnapshots, prepareManagedMachinePresetResizeOverrideForSnapshot } =
+            await import('@/sync/ops/machines/machinePresetCollectionClient');
+        const [opened] = await openManagedMachineReadSnapshots({ serverId, accountId: 'owner' }, [read]);
+        if (form === 'opaque') expect(await prepareManagedMachinePresetResizeOverrideForSnapshot({ serverId, accountId: 'owner' }, opened!, { cpuCores: 4 }))
+            .toMatchObject({ kind: 'ready', override: { content: expect.any(Object) } });
+        const screen = await renderScreen(<ManagedMachineDetail serverId={target.id} managedId={opaque.machine.id} executeAction={executeAction} />);
+        try {
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('managed-machine.resize')).not.toBeNull();
+            });
+            const renderedMachine = screen.tree.findByType(ManagedMachineSections).props.machine;
+            if (form === 'opaque') expect(await prepareManagedMachinePresetResizeOverrideForSnapshot({ serverId, accountId: 'owner' }, renderedMachine, { cpuCores: 4 }))
+                .toMatchObject({ kind: 'ready', override: { content: expect.any(Object) } });
+            await screen.pressByTestIdAsync('managed-machine.resize');
+            await act(async () => screen.changeTextByTestId('managed-machine.resize-field:cpuCores', '4'));
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('managed-machine.resize-confirm')?.props.disabled).not.toBe(true);
+            });
+            await screen.pressByTestIdAsync('managed-machine.resize-confirm');
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('managed-machine.control-error')?.props.diagnosticCode).toBeUndefined();
+                const action = actionResults.find(candidate => candidate.actionId === 'machines.managed.resize');
+                expect(action?.result).toMatchObject({ ok: false, errorCode: 'permission_denied' });
+                expect(JSON.stringify(action?.result)).not.toContain('Private preset name');
+                expect(JSON.stringify(action?.result)).not.toContain('Private Cloud SSH guest');
+                expect(JSON.stringify(action?.result)).not.toContain('private-cloud-ssh');
+                expect(admissions).toHaveLength(1);
+            });
+            expect(admissions[0]).toMatchObject({ action: 'machines.managed.resize', input: {
+                homeId, managedId: opaque.machine.id, ...(form === 'opaque'
+                    ? { presetContentOverride: { content: expect.any(Object) } } : { size: { cpuCores: 4 } }),
+            } });
+            if (form === 'opaque') expect((admissions[0] as { input: Record<string, unknown> }).input).not.toHaveProperty('size');
+        } finally {
+            await screen.unmount();
+        }
     });
     it.each(['rail', 'settings'] as const)('keeps a removed enrolled resource visible in its saved %s destination without reloading', async door => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-removed-${door}.test`, scope: 'tab' });

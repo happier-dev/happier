@@ -44,6 +44,7 @@ import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretG
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 
 const sourceFixtures: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>[] = [];
+const bindingGrantRef = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 afterEach(async () => {
     vi.restoreAllMocks();
     await Promise.all(sourceFixtures.splice(0).map(fixture => fixture.dispose()));
@@ -146,15 +147,16 @@ it.each([
             source: { kind: 'secret', ref, resourceRevision: 1 } }]
         : preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
             role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
-            : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', source: { kind: 'secret', ref, resourceRevision: 1 } }];
+            : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', grantRef: bindingGrantRef(1),
+                source: { kind: 'secret', ref, resourceRevision: 1 } }];
     if (preTargetWithBuilder) {
         const build: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
-            source: { kind: 'secret', ref, resourceRevision: 1 } };
+            grantRef: bindingGrantRef(2), source: { kind: 'secret', ref, resourceRevision: 1 } };
         bindings.push(build);
         detail.content.bindings = [build];
     }
     if (placementChange) bindings.push({ purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
-        source: { kind: 'secret', ref, resourceRevision: 1 } });
+        grantRef: bindingGrantRef(3), source: { kind: 'secret', ref, resourceRevision: 1 } });
     const content = { ...detail.content, bindings };
     const incumbentOperationalGrants = atomicMove || preTargetWithBuilder ? (preTargetWithBuilder ? [installation] : [installation, builder]).map(recipient => sealMachineSecretGrant({
         subject: { v: 1, kind: 'secret', environmentId: environment.id, machineId: recipient.machineId,
@@ -449,7 +451,10 @@ it.each([
             expect(opened.ok).toBe(true);
             if (!opened.ok) throw new Error(opened.error);
             expect(opened.content.definition).toMatchObject({ kind: 'stored', document: definition.document });
-            expect(opened.content.bindings).toEqual([...operational, ...bindings]);
+            expect(opened.content.bindings.slice(0, operational.length)).toEqual(operational);
+            const materializedVariables = opened.content.bindings.slice(operational.length);
+            expect(materializedVariables).toMatchObject(bindings.map(({ grantRef: _grantRef, ...binding }) => binding));
+            expect(materializedVariables.every(binding => binding.purpose !== 'variable' || binding.grantRef !== bindingGrantRef(1))).toBe(true);
             expect(JSON.stringify(written)).not.toContain('private-runtime-value');
             expect(written.patch).toEqual({});
             return;
@@ -487,9 +492,13 @@ it.each([
                 installationId: controller.installationId, installationPrivateSeed: controllerSeed }))
                 .toEqual({ kind: 'secret', value: 'private-runtime-value' });
         } else {
+            const prepared = readDeploymentEnvironmentArtifactV1(result,
+                await createCredentialedAccountArtifactStore(credentials).read(result.contentArtifactId, {
+                    prepareRecipients: false, includeSharedAudience: false }));
+            if (!prepared.ok) throw new Error(prepared.error);
             const launch = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: detail.environment.id,
                 machineId: installation.machineId, installationId: installation.installationId,
-                installationPrivateSeed: seed, phase: 'runtime', bindings, grants,
+                installationPrivateSeed: seed, phase: 'runtime', bindings: prepared.content.bindings, grants,
 
                 async assertCurrent() {} });
             expect(launch.env.SECRET === 'private-runtime-value').toBe(true);
@@ -578,10 +587,12 @@ it.each([
             const opened = readDeploymentEnvironmentArtifactV1(authoredResult,
                 await createCredentialedAccountArtifactStore(credentials).read(authoredResult.contentArtifactId,
                     { prepareRecipients: false, includeSharedAudience: false }));
-            expect(opened).toMatchObject({ ok: true, content: { ...content, bindings: exact.set } });
+            expect(opened).toMatchObject({ ok: true, content: { ...content,
+                bindings: [{ ...exact.set[0], grantRef: expect.any(String) }] } });
+            if (!opened.ok) throw new Error(opened.error);
             const copied = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: environment.id,
                 machineId: installation.machineId, installationId: installation.installationId,
-                installationPrivateSeed: seed, phase: 'runtime', bindings: exact.set, grants: authoredResult.grants,
+                installationPrivateSeed: seed, phase: 'runtime', bindings: opened.content.bindings, grants: authoredResult.grants,
 
                 async assertCurrent() {} });
             expect(copied.env.COPIED).toBe('private-runtime-value');
@@ -622,9 +633,13 @@ it.each([
         const moved = await prepare({ input: { ...input, expectedRevision: environment.revision }, context: {} });
         expect(moved).not.toHaveProperty('errorCode');
         if ('errorCode' in moved) throw new Error(moved.errorCode);
+        const movedContent = readDeploymentEnvironmentArtifactV1(moved,
+            await createCredentialedAccountArtifactStore(credentials).read(moved.contentArtifactId, {
+                prepareRecipients: false, includeSharedAudience: false }));
+        if (!movedContent.ok) throw new Error(movedContent.error);
         const build = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: environment.id,
             machineId: installation.machineId, installationId: installation.installationId,
-            installationPrivateSeed: seed, phase: 'build', bindings, grants: moved.grants,
+            installationPrivateSeed: seed, phase: 'build', bindings: movedContent.content.bindings, grants: moved.grants,
 
             async assertCurrent() {} });
         expect(build.env.BUILD_SECRET).toBe('private-runtime-value');

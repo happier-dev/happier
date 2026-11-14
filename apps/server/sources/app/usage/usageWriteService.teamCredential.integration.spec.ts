@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import type { UsageEventIngestRequest } from "@happier-dev/protocol";
 import { EphemeralUpdateSchema } from "@happier-dev/protocol/updates";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -249,13 +250,13 @@ describe("usageWriteService Team credential attribution", () => {
             },
         });
         const admittedGroupA = await db.teamGroup.create({
-            data: { teamId: fixture.team.id, name: "Admitted A", nameKey: "admitted-a" },
+            data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Admitted A") },
         });
         const admittedGroupB = await db.teamGroup.create({
-            data: { teamId: fixture.team.id, name: "Admitted B", nameKey: "admitted-b" },
+            data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Admitted B") },
         });
         const currentOnlyGroup = await db.teamGroup.create({
-            data: { teamId: fixture.team.id, name: "Current only", nameKey: "current-only" },
+            data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Current only") },
         });
         await db.teamGroupMembership.createMany({
             data: [admittedGroupA, admittedGroupB, currentOnlyGroup].map((group) => ({
@@ -388,7 +389,7 @@ describe("usageWriteService Team credential attribution", () => {
             },
         });
         const admittedGroup = await db.teamGroup.create({
-            data: { teamId: fixture.team.id, name: "Run group", nameKey: "run-group" },
+            data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Run group") },
         });
         const turnId = "run-local-turn-1";
         await inTx((tx) => recordTeamCredentialAdmissionUsageEventInTx(tx, {

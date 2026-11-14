@@ -21,7 +21,7 @@ function contentWith(bindings: readonly unknown[]) {
 
 describe('Environment binding purpose contracts', () => {
     it('round-trips the five purposes and both data-role addresses through the existing content owner', () => {
-        const variable = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: secret });
+        const variable = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(), source: secret });
         const bindings = [variable, registry, backup, domain, serviceRole, managedRole];
         expect(DeploymentEnvironmentContentV1Schema.parse(contentWith(bindings)).bindings).toEqual(bindings);
     });
@@ -86,14 +86,14 @@ describe('Environment binding purpose contracts', () => {
         const sources: unknown[] = ['primaryUrl', 'commitSha', 'deploymentId', 'environmentName'].map(fact => ({ kind: 'deploymentFact', fact }));
         sources.push({ kind: 'deploymentFact', fact: 'domainUrl', domainId: 'domain-a' });
         for (const source of sources) {
-            const binding = { purpose: 'variable', phase: 'runtime', name: 'FACT', source };
+            const binding = { purpose: 'variable', phase: 'runtime', name: 'FACT', grantRef: crypto.randomUUID(), source };
             expect(EnvironmentVariableBindingV1Schema.parse(binding)).toEqual(binding);
             expect(EnvironmentSecretBindingV1Schema.parse(binding)).toEqual(binding);
         }
         for (const source of [{ kind: 'deploymentFact', fact: 'domainUrl' },
             { kind: 'deploymentFact', fact: 'primaryUrl', domainId: 'domain-a' },
             { kind: 'deploymentFact', fact: 'domainUrl', domainId: '' }, { kind: 'deploymentFact', fact: 'unknown' }]) {
-            expect(EnvironmentVariableBindingV1Schema.safeParse({ purpose: 'variable', phase: 'runtime', name: 'FACT', source }).success).toBe(false);
+            expect(EnvironmentVariableBindingV1Schema.safeParse({ purpose: 'variable', phase: 'runtime', name: 'FACT', grantRef: crypto.randomUUID(), source }).success).toBe(false);
         }
     });
 });

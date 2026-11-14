@@ -3,6 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { getMachinePoolCandidateSnapshots } from './machinePoolService';
+import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+
+function storedPlainPoolLabel(value: string): string {
+    return serializePrivateLabelStoredV1({ content: { t: 'plain', v: value }, recipients: [] });
+}
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Bulk Pool snapshot native SQL (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
@@ -29,9 +34,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('B
             operationProtocolCapabilitiesRevision: 1,
         } });
         const ids = Array.from({ length: 1100 }, () => randomUUID());
-        await db.machinePool.createMany({ data: ids.map((id, index) => ({ id, accountId: owner.id, name: `Pool ${index}`, revision: index })) });
+        await db.machinePool.createMany({ data: ids.map((id, index) => ({ id, accountId: owner.id, name: storedPlainPoolLabel(`Pool ${index}`), revision: index })) });
         await db.machinePoolMember.createMany({ data: ids.map(poolId => ({ poolId, machineId: machine.id, priorityTier: 0, enabled: true })) });
-        const foreign = await db.machinePool.create({ data: { id: randomUUID(), accountId: other.id, name: 'Foreign Pool' } });
+        const foreign = await db.machinePool.create({ data: { id: randomUUID(), accountId: other.id, name: storedPlainPoolLabel('Foreign Pool') } });
         const missing = randomUUID();
         const pool = db.machinePool;
         const original = pool.findMany;

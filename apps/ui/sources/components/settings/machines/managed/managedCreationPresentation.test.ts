@@ -15,6 +15,13 @@ import {
   isManagedGuestPayloadStale,
 } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+
+it('presents the typed acquire cause instead of its generic Action wrapper', () => {
+  expect(describeManagedInstallationFailure({ errorCode: 'action_failed', error: 'Private native diagnostic',
+    failureCause: { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
+      errorCode: 'credential_scope_denied', httpStatus: null } }, undefined)).toBe(t('errors.permissionDenied'));
+});
+
 import {
   ProviderObservationV1Schema,
   type RetentionCapabilitiesV1,
@@ -46,9 +53,18 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it.each(['unsubmitted', 'may-exist'] as const)('classifies an unreadable preset row for list/work status without private launch (%s)', allocation => {
+    const { launch: _launch, resource: _resource, ...structural } = machine;
+    const opaque = { ...structural, allocation, preset: { id: 'sealed', revision: 1, contentEncryptionMode: 'e2ee' as const } };
+    expect(managedCreationState(opaque)).toMatchObject({
+      kind: allocation === 'unsubmitted' ? 'creationWaiting' : 'mayExist', name: t('common.machine'),
+    });
+    expect(describeManagedCreation(opaque).line).toContain(t('common.machine'));
+  });
+
   it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const)(
     'keeps Update after a successful %s receipt only for a stale installed guest', actionId => {
-      const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+      const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true } satisfies ManagedMachineV1;
       const operation: ActionOperationProjection = {
         serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
         snapshot: { version: 1, operationId: 'install', revision: 2, actionId, state: 'succeeded',
@@ -68,13 +84,13 @@ describe('managed creation presentation', () => {
 
   it('offers retained guest update when the installed CLI identity is older than the controller payload', () => {
     expect(isManagedGuestPayloadStale({ installedVersion: 'local-stable-1794304155359', payloadVersion: 'local-stable-1794304155360' })).toBe(true);
-    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true } satisfies ManagedMachineV1;
     expect(canRetryManagedInstallation(enrolled, undefined, { guestPayloadStale: true })).toBe(true);
   });
 
   it('does not offer retained guest update when installed identity matches the controller payload', () => {
     expect(isManagedGuestPayloadStale({ installedVersion: 'local-stable-1794304155359', payloadVersion: 'local-stable-1794304155359' })).toBe(false);
-    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true } satisfies ManagedMachineV1;
     expect(canRetryManagedInstallation(enrolled, undefined, { guestPayloadStale: false })).toBe(false);
   });
 

@@ -1,6 +1,7 @@
+import type { ManagedMachinePresetLaunchNameOverrideV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { z } from 'zod/mini';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { ValidatedLaunchSnapshotV1Schema, type ManagedControllerV1, type ValidatedLaunchSnapshotV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ValidatedLaunchSnapshotV1Schema, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ValidatedLaunchSnapshotV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -10,7 +11,6 @@ import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contribut
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
-import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -47,8 +47,6 @@ export type ManagedConfiguratorDraft = Readonly<{
     categoryPreferences?: MachineRetentionDefaultsV1;
     override?: MachineRetentionOverrideV1;
     preset?: Readonly<{ id: string; revision: number; name?: string }> & MachineRetentionOverrideV1;
-    /** Exact public preset review; a member cannot replace its launch or spending policy. */
-    delegatedFacts?: ManagedConfigurationFactsV1;
 }>;
 export type ManagedConfiguratorDimension = MachineProvisionerDimensionV1;
 /** A choice assignment owns its nested input fields (for example `image` owns `image.id`). */
@@ -195,15 +193,11 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
     if (!pluginJsonValuesEqual(selectors, draft.optionsSelectors ?? {})) next = setManagedConfiguratorOptionsSelectors(next, selectors);
     return next;
 }
-export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'controllerPoolId' | 'name' | 'enrollmentIdentity' | 'credentials' | 'setup' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset' | 'delegatedFacts'>): ManagedConfiguratorDraft {
+export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'controllerPoolId' | 'name' | 'enrollmentIdentity' | 'credentials' | 'setup' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
     return { ...input,
         enrollmentIdentity: input.enrollmentIdentity ?? managedConfiguratorEnrollmentDefault({ provisioner: input.provisioner, selected: null }).identity,
         enrollmentIdentityDefaulted: input.enrollmentIdentity === undefined ? true : undefined,
-        options: null, selected: input.delegatedFacts ? { id: `preset:${input.preset?.id}`, title: input.name,
-            launch: input.delegatedFacts.launch.choices, nativeFacts: input.delegatedFacts.nativeFacts,
-            prices: input.delegatedFacts.prices, billing: input.delegatedFacts.billing, retention: input.delegatedFacts.retentionCapabilities } : null,
-        optionStatus: input.delegatedFacts?.optionStatus ?? 'loading',
-        ...(input.delegatedFacts ? { check: { available: input.delegatedFacts.optionStatus === 'current', prerequisites: input.delegatedFacts.prerequisites } } : {}),
+        options: null, selected: null, optionStatus: 'loading',
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
 }
 /** Authoring validates the declared recipe without claiming a native availability or options review. */
@@ -230,12 +224,12 @@ export function setManagedConfiguratorOptionsSelectors(draft: ManagedConfigurato
     selectors: Readonly<Record<string, unknown>>): ManagedConfiguratorDraft {
     return { ...draft, optionsSelectors: selectors, optionsSelectorsEdited: true, optionStatus: 'loading' };
 }
-/** Only the current occurrence's purpose options authorize a retained qualified ref. */
+/** Retain only the exact personal or Team choice offered by this occurrence. */
 export function managedConfiguratorCredentialSelections(draft: Pick<ManagedConfiguratorDraft, 'credentials'> & Partial<Pick<ManagedConfiguratorDraft, 'selected' | 'optionsSelectors'>>,
     provisioner: ManagedConfiguratorDraft['provisioner']): NonNullable<ManagedConfiguratorDraft['credentials']> {
     return (provisioner.credentialPurposes ?? []).flatMap(({ purpose, options }) => {
         const selected = draft.credentials?.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose)
-            && options.some(option => sameQualifiedConnectedAccountRef(option.value, credential.account)));
+            && options.some(option => pluginJsonValuesEqual(option.value, readManagedCredentialSelectionValueV1(credential))));
         return selected ? [selected] : [];
     });
 }
@@ -291,14 +285,6 @@ export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraf
         optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited });
 }
 export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projection?: ReturnType<typeof managedConfiguratorProjection>): ManagedConfigurationFactsV1 | null {
-    if (draft.delegatedFacts) {
-        const facts = draft.delegatedFacts;
-        // The Machine's own name is this draft's; the rest stays exactly what the preset owner reviewed.
-        return draft.preset?.id === facts.preset?.id && draft.preset?.revision === facts.preset?.revision
-            && !!draft.name.trim() && pluginJsonValuesEqual(draft.controller ?? null, facts.controller ?? null)
-            && pluginJsonValuesEqual(draft.selected?.launch, facts.launch.choices)
-            ? facts.launch.name === draft.name ? facts : { ...facts, launch: { ...facts.launch, name: draft.name } } : null;
-    }
     const selected = draft.selected;
     if (!selected || selected.launch === undefined || !draft.name.trim()) return null;
     const current = projection === undefined ? managedConfiguratorProjection(draft) : projection;
@@ -321,12 +307,27 @@ export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projec
         throw error;
     }
 }
-export function managedConfiguratorAcquireInput(draft: ManagedConfiguratorDraft, homeId: string): ManagedAcquireInputV1 | null {
+/** Own-preset launch edits use direct acquire; name and identity stay in the sealed preset delta. */
+export function resolveManagedConfiguratorAcquireDraft(draft: ManagedConfiguratorDraft, savedLaunch: ValidatedLaunchSnapshotV1,
+    currentLaunch: ValidatedLaunchSnapshotV1): ManagedConfiguratorDraft {
+    const unchanged = pluginJsonValuesEqual(currentLaunch.provider, savedLaunch.provider)
+        && currentLaunch.schemaVersion === savedLaunch.schemaVersion
+        && pluginJsonValuesEqual(currentLaunch.choices, savedLaunch.choices)
+        && pluginJsonValuesEqual(currentLaunch.credentials ?? [], savedLaunch.credentials ?? []);
+    if (!draft.preset || unchanged) return draft;
+    return { ...draft, preset: undefined, override: {
+        ...(draft.preset.retention ? { retention: draft.preset.retention } : {}),
+        ...(draft.preset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: draft.preset.wakeOnAcceptedMessage } : {}),
+        ...draft.override,
+    } };
+}
+export function managedConfiguratorAcquireInput(draft: ManagedConfiguratorDraft, homeId: string,
+    presetContentOverride?: ManagedMachinePresetLaunchNameOverrideV1): ManagedAcquireInputV1 | null {
     const facts = managedConfiguratorFacts(draft);
-    if (!facts || facts.optionStatus !== 'current' || draft.check?.available === false || !draft.enrollmentIdentity) return null;
-    if (draft.preset) return ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: draft.enrollmentIdentity,
-        selection: { kind: 'preset', homeId, id: draft.preset.id, revision: draft.preset.revision, ...(draft.name.trim() ? { name: draft.name.trim() } : {}) },
-        controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage, reviewedFacts: facts });
+    if (!facts || (facts.optionStatus !== 'current' || draft.check?.available === false) || !draft.enrollmentIdentity) return null;
+    if (draft.preset) return presetContentOverride ? ManagedAcquireInputV1Schema.parse({
+        selection: { kind: 'preset', homeId, id: draft.preset.id, revision: draft.preset.revision },
+        controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage, presetContentOverride }) : null;
     const { setup: _environment, ...oneOffFacts } = facts;
     return ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: draft.enrollmentIdentity, selection: { kind: 'one-off', homeId, launch: facts.launch,
         controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage }, reviewedFacts: oneOffFacts });

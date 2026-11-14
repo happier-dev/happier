@@ -7,6 +7,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
+import { useResourceGrantGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
@@ -249,6 +250,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     const isOwner = response?.access === 'owner';
     const editable = isOwner || response?.access === 'admin';
     const grants = response?.grants ?? NO_GRANTS;
+    const groupDisplayNames = useResourceGrantGroupDisplayNames({ scope, grants });
     const repairChoice = React.useCallback(async (choice: PrivateChoice, repair: 'remove' | 'viewer') => {
         if (!editable || !choice.inputPath || current.current !== identity) return;
         setRepairs(previous => ({ ...previous, [choice.id]: { kind: 'saving' } }));
@@ -284,7 +286,8 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
             ...(operation?.kind === 'error' ? { issue: operation.error } : {}) };
     }), [repairChoice, repairs, review]);
     const rows = React.useMemo<readonly ShareGrantRowModel[]>(() => grants.map((row) => {
-        const principal = presentSharePrincipal({ ref: row.principal, name: row.display.name,
+        const principal = presentSharePrincipal({ ref: row.principal,
+            name: row.principal.kind === 'group' ? groupDisplayNames.get(row.principal.groupId) ?? null : row.display.name,
             username: row.display.username, viewerAccountId: scope.accountId,
             profile: row.principal.kind === 'account' && row.principal.accountId === scope.accountId ? viewerProfile : null });
         const operation = state.operations[principal.key] ?? IDLE;
@@ -296,7 +299,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
                 ? { kind: 'confirming', consequences: removalConsequences(row.principal, principal.displayName, grants, dashboard) } : { kind: 'allowed' },
             operation,
         };
-    }), [grants, isOwner, state.operations, state.confirmingRemoval, scope.accountId, viewerProfile, dashboard]);
+    }), [grants, groupDisplayNames, isOwner, state.operations, state.confirmingRemoval, scope.accountId, viewerProfile, dashboard]);
     const owner = response && response.ownerAccountId === scope.accountId ? { principal: presentSharePrincipal({
         ref: { kind: 'account', accountId: response.ownerAccountId },
         profile: viewerProfile, viewerAccountId: scope.accountId,

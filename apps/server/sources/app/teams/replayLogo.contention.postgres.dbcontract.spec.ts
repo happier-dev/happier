@@ -12,6 +12,7 @@ import { initEncrypt } from "@/modules/encrypt";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { initFilesLocalFromEnv, loadFiles, readPublicFile } from "@/storage/blob/files";
+import { plainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { createTeamGroupForActorInTx } from "./groups/groupService";
 import { registerTeamGroupRoutes } from "./groups/registerTeamGroupRoutes";
 import { createTeamInvitationForActorInTx, reissueTeamInvitationForActorInTx } from "./invitations/invitationService";
@@ -84,6 +85,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
 
     it.each(["group", "invitation"] as const)("rechecks %s authority after an earlier Team mutation commits", async kind => {
         const input = { ...await fixture(), requestKey: randomUUID() };
+        const groupInput = { ...input, groupId: randomUUID(), name: plainPrivateLabel("Demoted group") };
         let ready!: (pid: number) => void;
         let release!: () => void;
         const started = new Promise<number>(resolve => { ready = resolve; });
@@ -99,7 +101,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         });
         const holderOutcome = Promise.allSettled([holder]);
         const mutate = () => inTx(async tx => kind === "group"
-            ? createTeamGroupForActorInTx(tx, { ...input, name: "Demoted group" })
+            ? createTeamGroupForActorInTx(tx, groupInput)
             : createTeamInvitationForActorInTx(tx, { ...input, role: "member", historyAccess: "from_membership",
                 recipientEmailNormalized: null, emailDeliveryAvailable: true }), { isolationLevel: "ReadCommitted" });
         let mutation: ReturnType<typeof mutate> | undefined;
@@ -133,6 +135,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
 
     it.each(["group", "invitation", "reissue"] as const)("replays one %s intent after concurrent absence reads under ReadCommitted", async kind => {
         const input = { ...await fixture(), requestKey: randomUUID() };
+        const groupInput = { ...input, groupId: randomUUID(), name: plainPrivateLabel("Exactly one group") };
         const initialInvitation = kind === "reissue" ? await inTx(tx => createTeamInvitationForActorInTx(tx, {
             ...input, requestKey: randomUUID(), role: "member", historyAccess: "from_membership",
             recipientEmailNormalized: null, emailDeliveryAvailable: true,
@@ -146,7 +149,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         let ready!: (pid: number) => void;
         const started = new Promise<number>(resolve => { ready = resolve; });
         const mutate = () => inTx(async tx => kind === "group"
-            ? createTeamGroupForActorInTx(tx, { ...input, name: "Exactly one group" })
+            ? createTeamGroupForActorInTx(tx, groupInput)
             : initialInvitation?.ok
                 ? reissueTeamInvitationForActorInTx(tx, { ...input, invitationId: initialInvitation.value.invitation.id,
                     replacementRecipientEmailNormalized: null, emailDeliveryAvailable: true })

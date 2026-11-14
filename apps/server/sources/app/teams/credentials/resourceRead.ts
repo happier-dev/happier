@@ -7,6 +7,7 @@ import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguratio
 import { readManagedNativeCredentialTargetInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialSourceResourceAdministrationV1Schema, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { MachinePoolPrivateLabelProjectionV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -43,7 +44,9 @@ import { matchesTeamCredentialRecipientBinding } from "./recipientMaterialCurren
 import { hasTeamCredentialDirectDeliveryActivityInTx } from "./resourceActivity";
 import { resolveCurrentTeamCredentialUsageCapabilitiesForResource } from './usageCapabilities';
 import { classifyTeamCredentialBrokerMachineEligibility } from './brokerMachineEligibility';
+import { projectMachinePoolPrivateLabelForRecipient } from '@/app/machines/pools/privateLabels';
 import { projectTeamCredentialResourceAdministrationCapabilities } from './resourceAdministrationCapabilities';
+import { projectTeamCredentialResourceDisplayNameForRecipient } from './privateLabels';
 import {
     evaluateTeamCredentialUsageAdmissionLimitsForResourcesInTx,
     type TeamCredentialUsageAdmissionLimitEvaluation,
@@ -249,7 +252,7 @@ type BrokerPresentationChoices = Readonly<{
     }>[];
     eligiblePools: readonly Readonly<{
         poolId: string;
-        displayName: string;
+        displayName: MachinePoolPrivateLabelProjectionV1 | null;
         availability: "not_verified";
         availableMachineCount: null;
     }>[];
@@ -279,7 +282,7 @@ async function projectTeamCredentialBrokerPresentationsInTx(tx: Tx, accountIds: 
     ]);
     const result = new Map<string, {
         eligibleTargets: { machineId: string; displayName: null; availability: "not_verified" | "update_required" }[];
-        eligiblePools: { poolId: string; displayName: string; availability: "not_verified"; availableMachineCount: null }[];
+        eligiblePools: { poolId: string; displayName: MachinePoolPrivateLabelProjectionV1 | null; availability: "not_verified"; availableMachineCount: null }[];
     }>();
     for (const accountId of uniqueAccountIds) {
         result.set(accountId, { eligibleTargets: [], eligiblePools: [] });
@@ -300,7 +303,10 @@ async function projectTeamCredentialBrokerPresentationsInTx(tx: Tx, accountIds: 
     for (const pool of pools) {
         result.get(pool.accountId)?.eligiblePools.push({
             poolId: pool.id,
-            displayName: pool.name,
+            displayName: projectMachinePoolPrivateLabelForRecipient({
+                serialized: pool.name,
+                recipientAccountId: pool.accountId,
+            }),
             availability: 'not_verified',
             availableMachineCount: null,
         });
@@ -401,6 +407,13 @@ async function projectSummary(
     authority: ResourceAdministrationAuthority,
     listFacts: ResourceListFacts = {},
 ) {
+    const displayName = projectTeamCredentialResourceDisplayNameForRecipient({
+        serialized: row.displayName,
+        recipientAccountId: viewerAccountId,
+    });
+    // A malformed/unreadable current label has no safe summary carrier. Do not
+    // reinterpret its stored String as a display value.
+    if (displayName === null) return { ok: false as const, issues: [] };
     const sourceOwnerDisplayName = listFacts.sourceOwnerDisplayName !== undefined
         ? listFacts.sourceOwnerDisplayName
         : await tx.account.findUnique({
@@ -478,16 +491,24 @@ async function projectSummary(
     const selectedPool = !sourceOwnerView || row.brokerPoolId === null ? null
         : listFacts.brokerPresentation
             ? listFacts.brokerPresentation.eligiblePools.find(pool => pool.poolId === row.brokerPoolId) ?? null
-            : (await tx.machinePool.findFirst({
+            : await tx.machinePool.findFirst({
                 where: { id: row.brokerPoolId, accountId: row.custodianAccountId },
                 select: { id: true, name: true },
-            })) satisfies { id: string; name: string } | null;
+            }).then(pool => pool ? {
+                poolId: pool.id,
+                displayName: projectMachinePoolPrivateLabelForRecipient({
+                    serialized: pool.name,
+                    recipientAccountId: row.custodianAccountId,
+                }),
+                availability: 'not_verified' as const,
+                availableMachineCount: null,
+            } : null);
     const result = TeamCredentialResourceSummaryV1Schema.safeParse({
         id: row.id,
         teamId: row.teamId,
         custodianAccountId: row.custodianAccountId,
         sourceOwnerDisplayName,
-        displayName: row.displayName,
+        displayName,
         enabled: row.enabled,
         revision: row.revision,
         deliveryPolicy: parsedCeiling.success ? parsedCeiling.data.policy : { preferredAllowedModes: ['brokered'] },
@@ -525,13 +546,7 @@ async function projectSummary(
         brokerPresentation: {
             selectedTarget: brokerChoices.eligibleTargets.find(target => target.machineId === row.brokerMachineId) ?? null,
             eligibleTargets: brokerChoices.eligibleTargets,
-            selectedPool: selectedPool === null ? null
-                : 'poolId' in selectedPool ? selectedPool : {
-                    poolId: selectedPool.id,
-                    displayName: selectedPool.name,
-                    availability: "not_verified",
-                    availableMachineCount: null,
-                },
+            selectedPool,
             eligiblePools: brokerChoices.eligiblePools,
         },
         capabilities: projectTeamCredentialResourceAdministrationCapabilities({
@@ -710,6 +725,11 @@ async function projectCatalogEntryInTx(
     prefetchedDirectMaterial?: ReturnType<typeof projectCurrentDirectMaterialReferences>,
     prefetchedWasDirectlyDelivered?: boolean,
 ) {
+    const displayName = projectTeamCredentialResourceDisplayNameForRecipient({
+        serialized: row.displayName,
+        recipientAccountId: actorAccountId,
+    });
+    if (displayName === null) return null;
     const usageCapabilities = resolveCurrentTeamCredentialUsageCapabilitiesForResource({
         allMembersDeliveryMode: row.allMembersDeliveryMode,
         groupGrants: audience.groupGrants,
@@ -720,7 +740,7 @@ async function projectCatalogEntryInTx(
     const projectCorruptCatalogEntry = () => TeamCredentialResourceCatalogEntryV1Schema.parse({
         id: row.id,
         teamId: row.teamId,
-        displayName: row.displayName,
+        displayName,
         resourceRevision: row.revision,
         readiness: { kind: "resource_corrupt" },
         recoveryAction: "source_owner_action",
@@ -742,7 +762,7 @@ async function projectCatalogEntryInTx(
         const projected = TeamCredentialResourceCatalogEntryV1Schema.safeParse({
             id: row.id,
             teamId: row.teamId,
-            displayName: row.displayName,
+            displayName,
             resourceRevision: row.revision,
             readiness: entitlement.reason === "resource_corrupt"
                 ? { kind: "resource_corrupt" }
@@ -845,7 +865,7 @@ async function projectCatalogEntryInTx(
     const projected = TeamCredentialResourceCatalogEntryV1Schema.safeParse({
         id: row.id,
         teamId: row.teamId,
-        displayName: row.displayName,
+        displayName,
         resourceRevision: row.revision,
         readiness,
         recoveryAction,
@@ -930,7 +950,6 @@ type CredentialReadInput = Readonly<{
     executionMachineId?: string;
     cursor?: string;
     limit?: number;
-    search?: string;
     filter?: 'all' | 'needs_attention' | 'brokered' | 'direct' | 'external_api';
 }>;
 
@@ -1154,7 +1173,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
     return { ok: true as const, page: {
         resources,
         nextCursor: hasMoreCandidates && lastProcessedRow ? encodeTeamCredentialResourcesCursorV1({
-            queryKey, displayName: lastProcessedRow.displayName, id: lastProcessedRow.id,
+            queryKey, id: lastProcessedRow.id,
         }) : null,
     }, projectionRequests,
     // Private inputs for the route's live placement projection; never serialized
@@ -1180,7 +1199,7 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
     const filter = input.filter ?? 'all';
     const limit = input.limit ?? 50;
     const queryKey = teamCredentialResourcesQueryKeyV1({
-        teamId: input.teamId, search: input.search, filter,
+        teamId: input.teamId, filter,
     });
     const decoded = input.cursor ? decodeTeamCredentialResourcesCursorV1(input.cursor, queryKey) : null;
     if (decoded?.status === 'invalid') return { ok: false as const, error: 'invalid_resource_input' as const };
@@ -1191,13 +1210,9 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
         where: {
             teamId: input.teamId,
             ...(!qualifiedViewer.manageCredentials ? { custodianAccountId: input.actorAccountId } : {}),
-            ...(input.search ? { displayName: { contains: input.search } } : {}),
             ...(deliveryMode ? { AND: [
                 teamCredentialAudienceDeliveryWhere(deliveryMode),
-                ...(candidateAfter ? [{ OR: [
-                    { displayName: { gt: candidateAfter.displayName } },
-                    { displayName: candidateAfter.displayName, id: { gt: candidateAfter.id } },
-                ] }] : []),
+                ...(candidateAfter ? [{ id: { gt: candidateAfter.id } }] : []),
             ] }
                 : filter === 'external_api' ? {
                     enabled: true,
@@ -1208,12 +1223,9 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
                     } },
                 }
                 : {}),
-            ...(!deliveryMode && candidateAfter ? { OR: [
-                { displayName: { gt: candidateAfter.displayName } },
-                { displayName: candidateAfter.displayName, id: { gt: candidateAfter.id } },
-            ] } : {}),
+            ...(!deliveryMode && candidateAfter ? { id: { gt: candidateAfter.id } } : {}),
         },
-        orderBy: [{ displayName: 'asc' }, { id: 'asc' }],
+        orderBy: { id: 'asc' },
         take: windowSize + 1,
     });
     let externalApiAudiences: Map<string, ResourceAudience> | null = null;
@@ -1262,7 +1274,7 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
                 break;
             }
             if (retained.length === limit || !moreCandidates || lastCandidate === null) break;
-            windowAfter = { displayName: lastCandidate.displayName, id: lastCandidate.id };
+            windowAfter = { id: lastCandidate.id };
         }
         externalApiAudiences = retainedAudiences;
         administrationRowsWithLookahead = retained;
@@ -1372,7 +1384,7 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
     return { ok: true as const, readinessResources, page: {
         resources,
         nextCursor: hasMore && lastRow ? encodeTeamCredentialResourcesCursorV1({
-            queryKey, displayName: lastRow.displayName, id: lastRow.id,
+            queryKey, id: lastRow.id,
         }) : null,
         viewer: {
             manageCredentials: qualifiedViewer.manageCredentials,
@@ -1529,7 +1541,7 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
         page: {
             resources: resources.map(row => row.resource),
             nextCursor: candidateWindow.length > limit && lastProcessedCandidate ? encodeTeamCredentialResourcesCursorV1({
-                queryKey, displayName: lastProcessedCandidate.displayName, id: lastProcessedCandidate.id,
+                queryKey, id: lastProcessedCandidate.id,
             }) : null,
         },
     };

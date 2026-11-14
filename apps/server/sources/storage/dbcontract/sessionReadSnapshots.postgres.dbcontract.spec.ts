@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
@@ -364,7 +365,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         const manager = await db.account.create({ data: { publicKey: randomUUID() } });
         const target = await db.account.create({ data: { publicKey: randomUUID(), name: "before" } });
         const team = await db.team.create({ data: { name: "before" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "before", nameKey: "before" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("before") } });
         const session = await db.session.create({ data: { accountId: manager.id, tag: randomUUID(), metadata: "{}", primaryTeamId: team.id } });
         await inTx(tx => admitTeamMemberInTx(tx, { teamId: team.id, accountId: manager.id, role: "owner", historyAccess: "all_existing" }));
         await inTx(tx => admitTeamMemberInTx(tx, { teamId: team.id, accountId: target.id, role: "member", historyAccess: "all_existing" }));
@@ -378,7 +379,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                     : tx.$executeRaw`LOCK TABLE "Team" IN ACCESS EXCLUSIVE MODE`,
                 write: async tx => {
                     await tx.account.update({ where: { id: target.id }, data: { name: "after" } });
-                    await tx.teamGroup.update({ where: { id: group.id }, data: { name: "after", nameKey: "after" } });
+                    await tx.teamGroup.update({ where: { id: group.id }, data: { name: storedPlainPrivateLabel("after") } });
                     await tx.team.update({ where: { id: team.id }, data: { name: "after" } });
                     await tx.session.update({ where: { id: session.id }, data: { primaryTeamId: null } });
                 },

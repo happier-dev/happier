@@ -1,7 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
     type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readProfileCatalogInContext } from '@/sync/api/account/apiProfileCatalog';
 import { listAutomationDefinitions } from '@/sync/api/automations/apiAutomations';
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
@@ -29,15 +29,16 @@ export function createUiManagedMachineReferenceReader(account: LazyActionAccount
             homeId: input.homeId, machineId: null, coverage: 'partial', references: [], unavailable: [reason],
         });
         if (!account.serverIdentityId || input.homeId !== account.serverIdentityId) return unavailable('target');
-        let machine: ManagedMachineActionOutputV1<'machines.managed.get'>;
+        let read: ManagedMachineActionOutputV1<'machines.managed.get'>;
         try {
-            machine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', input, { signal });
+            read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', input, { signal });
         } catch {
             account.assertCurrent();
             signal?.throwIfAborted();
             return unavailable('target');
         }
         account.assertCurrent();
+        const machine = unwrapManagedMachineReadV1(read);
         if (machine.homeId !== input.homeId || machine.id !== input.managedId) return unavailable('target');
         const census = await readMachineReferenceCensusV1({ homeId: input.homeId,
             machineId: machine.enrolledMachineId ?? null, homeAliases: [account.serverId], signal }, {

@@ -886,7 +886,10 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 if (!principal) return createPlacementError({ code: 'target_unavailable', refusalBranch: 'principal_not_current',
                     requestId: request.envelope.requestId, machineId });
                 admissionStarted = true;
-                managedAdmission = await admitManagedAcquire({ custodianAccountId: executionAuthorization.binding.custodianAccountId,
+                // An opaque request with unresolved public policy is inserted by
+                // the same signed native admission after the custodian opens it.
+                // The unchanged root envelope binds that first write to this proof.
+                if (review.retention !== undefined && review.wakeOnAcceptedMessage !== undefined) managedAdmission = await admitManagedAcquire({ custodianAccountId: executionAuthorization.binding.custodianAccountId,
                     requesterAccountId: request.principal.accountId,
                     authentication: { authenticationAuthority: principal.authority,
                         authenticationEvidence: principal.authenticationEvidence },

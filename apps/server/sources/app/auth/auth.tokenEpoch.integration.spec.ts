@@ -6,6 +6,7 @@ import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const MASTER_SECRET = "compat-probe-0";
 
@@ -36,7 +37,7 @@ describe("auth (token epoch)", () => {
     it.each(["suspended", "disabled"] as const)("rejects every credential boundary for a %s Account, including warm signed tokens", async (status) => {
         const account = await db.account.create({ data: { publicKey: `status-admission-${status}` } });
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Before status change" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Before status change") });
         await expect(auth.verifyToken(token)).resolves.toMatchObject({ userId: account.id });
         await db.account.update({ where: { id: account.id }, data: { status } });
 
@@ -44,14 +45,14 @@ describe("auth (token epoch)", () => {
         await expect(auth.verifyPat(pat.token)).resolves.toEqual({ ok: false, reason: "invalid_token" });
         await expect(auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" })).rejects.toMatchObject({ code: "account-disabled" });
         await expect(inTx((tx) => auth.createTokenInTx(tx, account.id, undefined, { kind: "terminal", authority: "account_automation" }))).rejects.toMatchObject({ code: "account-disabled" });
-        await expect(auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "After status change" })).rejects.toMatchObject({ code: "account-disabled" });
+        await expect(auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "After status change") })).rejects.toMatchObject({ code: "account-disabled" });
         expect(await db.accountApiToken.count({ where: { accountId: account.id } })).toBe(1);
     });
 
     it("retires an inconsistent Account durably and idempotently without touching retained encryption state", async () => {
         const account = await db.account.create({ data: { encryptionMode: "e2ee", publicKey: null } });
         const machine = await db.machine.create({ data: { accountId: account.id, id: "retained-lifecycle-machine", metadata: "retained", metadataVersion: 1 } });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Retire me" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Retire me") });
         await inTx((tx) => setAccountStatusInTx(tx, { actorAccountId: account.id, targetAccountId: account.id, status: "disabled", authority: "account_erasure" }));
         const retired = await db.account.findUniqueOrThrow({ where: { id: account.id } });
         expect(retired).toEqual({ ...account, status: "disabled", tokenEpoch: 1, seq: account.seq + 1, updatedAt: expect.any(Date) });
@@ -170,7 +171,7 @@ describe("auth (token epoch)", () => {
     it("commits all-credential revocation with its caller's Account mutation", async () => {
         const account = await db.account.create({ data: { publicKey: "credential-revocation-commit" } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Revoked automation" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Revoked automation") });
         await expect(auth.verifyToken(signed)).resolves.not.toBeNull();
 
         await inTx(async (tx) => {
@@ -189,7 +190,7 @@ describe("auth (token epoch)", () => {
     it("rolls back Account mutation, signed revocation and complete PAT rows together", async () => {
         const account = await db.account.create({ data: { publicKey: "credential-revocation-rollback" } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Retained automation" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Retained automation") });
         const originalPat = await db.accountApiToken.findUniqueOrThrow({ where: { id: pat.tokenId } });
 
         await expect(inTx(async (tx) => {
@@ -207,7 +208,7 @@ describe("auth (token epoch)", () => {
     it("keeps transaction-scoped session sign-out and PAT-only revocation independent", async () => {
         const account = await db.account.create({ data: { publicKey: "credential-revocation-independent" } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Separate automation" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Separate automation") });
         const originalPat = await db.accountApiToken.findUniqueOrThrow({ where: { id: pat.tokenId } });
 
         await expect(inTx((tx) => auth.signOutEverywhereInTx(tx, account.id))).resolves.toBe(1);

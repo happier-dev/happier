@@ -1,14 +1,16 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import * as SecureStore from 'expo-secure-store';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, withAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
+import { createDirectoryHttpFixture, toAccountDirectoryHomeWire } from './accountDirectoryTestFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -23,6 +25,7 @@ beforeAll(loadSyncSingletonForTests);
 
 /** Non-secret binding to the Account credential that created the continuation. */
 const TEST_CREDENTIAL_TOKEN_DIGEST = 'sha256:test-account-credential';
+const realisticJWT = (subject = 'account-directory') => `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: subject })), 'base64')}.signature`;
 
 
 const request = vi.hoisted(() => vi.fn());
@@ -58,7 +61,7 @@ describe('exact Account post-auth continuation', () => {
             }
             return request(`${url.pathname}${url.search}`, init);
         });
-        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'restricted-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: realisticJWT() });
     });
     afterEach(async () => {
         await disconnectActiveServerConnection();
@@ -300,15 +303,15 @@ describe('exact Account post-auth continuation', () => {
         const result = completeAccountServicePostAuth({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service, session: original, intent: { kind: 'enter', target: { kind: 'automatic' } } });
         await vi.waitFor(() => expect(release).toBeTypeOf('function'));
         const target = { endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId };
-        if (replacement) await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: replacement });
+        if (replacement) await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: realisticJWT(replacement) });
         else await TokenStorage.accountDirectoryAuthCredentials.logout(target);
-        release(new Response(JSON.stringify({ v: 1, homes: [fixture.home], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId })));
+        release(new Response(JSON.stringify({ v: 1, homes: [toAccountDirectoryHomeWire(fixture.home)], preferredHomeServerIdentityId: fixture.home.homeServerIdentityId })));
         expect(await result).toEqual({ kind: 'stopped', reason: 'superseded' });
         expect(request.mock.calls.map(([path]) => path)).toEqual(['/v1/account-directory/homes']);
         expect(original.snapshot.homes).toEqual([]);
         // An obsolete session must not remove the replacement credential.
         await original.logout();
-        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual(replacement ? { token: replacement } : null);
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual(replacement ? { token: realisticJWT(replacement) } : null);
         if (replacement) {
             request.mockResolvedValue(new Response(JSON.stringify({ v: 1, homes: [], preferredHomeServerIdentityId: null })));
             expect(await completeAccountServicePostAuth({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service, session: session(), intent: { kind: 'enter', target: { kind: 'automatic' } } }))
@@ -324,12 +327,17 @@ describe('exact Account post-auth continuation', () => {
         await adoptHomeProfile({ descriptor, source: 'qr' });
         const oldToken = fixture.token.replace('signature', 'revoked-signature');
         const material = { secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
-        await TokenStorage.setCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId }, { token: oldToken, ...material });
+        const initialCredentials = mode === 'plain'
+            ? withAccountE2eeCustody({ token: oldToken, ...material }, 'historical')
+            : { token: oldToken, ...material };
+        await TokenStorage.setCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId }, initialCredentials);
         request.mockImplementation((path: string, init?: RequestInit) => fixture.request(path.startsWith('/v1/account-directory/') ? fixture.service.endpointUrl : descriptor.canonicalServerUrl, path, init));
         expect(await completeAccountServicePostAuth({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service, session: session(), intent: { kind: 'enroll', homeServerIdentityId: descriptor.homeServerIdentityId } }))
             .toEqual({ kind: 'home_enrolled', homeServerIdentityId: descriptor.homeServerIdentityId });
         expect(await TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId }))
-            .toEqual({ token: fixture.token, ...material });
+            .toEqual(mode === 'plain'
+                ? withAccountE2eeCustody({ token: fixture.token, ...material }, 'historical')
+                : { token: fixture.token, ...material });
     });
 
     it.each(['legacy secret', 'current encryption'] as const)('retains historical %s material when authoritative Home Account mode is plain', async (shape) => {
@@ -338,15 +346,16 @@ describe('exact Account post-auth continuation', () => {
         fixture.state.mode = 'plain';
         const descriptor = fixture.home.connectionDescriptor;
         await adoptHomeProfile({ descriptor, source: 'qr' });
+        const initialCredentials = shape === 'legacy secret'
+            ? { token: fixture.token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }
+            : { token: fixture.token, encryption: {
+                machineKey: encodeBase64(new Uint8Array(32).fill(7), 'base64'),
+                publicKey: encodeBase64(tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(7)).publicKey, 'base64'),
+            } };
         await TokenStorage.setCredentialsForServerUrl(
             descriptor.canonicalServerUrl,
             { serverId: descriptor.homeServerIdentityId },
-            shape === 'legacy secret'
-                ? { token: fixture.token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }
-                : { token: fixture.token, encryption: {
-                    machineKey: encodeBase64(new Uint8Array(32).fill(7), 'base64'),
-                    publicKey: encodeBase64(tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(7)).publicKey, 'base64'),
-                } },
+            withAccountE2eeCustody(initialCredentials, 'historical'),
         );
         const historicalCredentials = await TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId });
         request.mockImplementation((path: string, init?: RequestInit) => fixture.request(
@@ -379,7 +388,7 @@ describe('exact Account post-auth continuation', () => {
         await TokenStorage.setCredentialsForServerUrl(
             descriptor.canonicalServerUrl,
             { serverId: descriptor.homeServerIdentityId },
-            { token: fixture.token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') },
+            withAccountE2eeCustody({ token: fixture.token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }, 'historical'),
         );
         request.mockImplementation((path: string, init?: RequestInit) => fixture.request(
             path.startsWith('/v1/account-directory/') ? fixture.service.endpointUrl : descriptor.canonicalServerUrl,
@@ -414,7 +423,7 @@ describe('exact Account post-auth continuation', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(
             descriptor.canonicalServerUrl,
             { serverId: descriptor.homeServerIdentityId },
-        )).toEqual({ token: fixture.token, secret: expect.any(String) });
+        )).toEqual({ token: fixture.token, secret: expect.any(String), custody: 'historical' });
     });
 
     it('commits the fresh same-Account bearer and retains invalid material for pinned recovery', async () => {
@@ -439,7 +448,7 @@ describe('exact Account post-auth continuation', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId }))
             .toEqual({ token: fixture.token, encryption });
         expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }))
-            .toEqual({ token: 'restricted-token' });
+            .toEqual({ token: realisticJWT() });
         expect(getActiveServerSnapshot()).toMatchObject({ serverId: focus.serverId, serverUrl: focus.serverUrl });
         expect(fixture.state.calls.filter((call) => call.path === '/v1/account/encryption/currentness'))
             .toEqual([expect.objectContaining({ endpoint: descriptor.canonicalServerUrl })]);
@@ -526,7 +535,7 @@ describe('exact Account post-auth continuation', () => {
         const resumed = resumePendingDirectoryHomeEnrollment();
         await vi.waitFor(() => expect(release).toBeTypeOf('function'));
         const before = await TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl, { serverId: fixture.home.homeServerIdentityId });
-        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'replacement' });
+        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: realisticJWT('replacement-account') });
         release();
         expect(await resumed).toMatchObject({ kind: 'stopped' });
         expect(await TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl, { serverId: fixture.home.homeServerIdentityId })).toEqual(before);

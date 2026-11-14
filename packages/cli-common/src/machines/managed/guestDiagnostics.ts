@@ -1,4 +1,4 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedGuestDiagnosticsV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { BugReportMachineDiagnosticsSnapshotSchema } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
@@ -9,7 +9,7 @@ import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecu
 
 /** Explicit finite read: the installed collector owns selection, redaction and tail budgets. */
 export async function readManagedGuestDiagnostics(input: Readonly<{
-    machine: ManagedMachineV1; requesterAccountId: string | undefined; requestId?: string;
+    machine: ManagedMachineFullV1; requesterAccountId: string | undefined; requestId?: string;
     transport: MachineProvisionerContributionV1['bootstrapTransport'];
     channel: 'stable' | 'preview' | 'dev'; native?: Pick<ManagedNativeBootstrapIO, 'exec'>; signal?: AbortSignal;
 }>): Promise<ManagedGuestDiagnosticsV1> {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -61,6 +61,67 @@ describe('managed approval references', () => {
         ]));
         expect(harness.requests.some(request => request.path.includes('different-enrolled-id'))).toBe(false);
         await hook.unmount();
+    });
+
+    it.each(['plain', 'e2ee'] as const)('opens the exact %s preset snapshot for a pre-enrollment confirmation name', async mode => {
+        const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
+        const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+        const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+        const { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1 } = await import(
+            '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const { ManagedGetOutputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const credentials = mode === 'e2ee' ? { token: createAccountTokenForTests('account', { currentAccount: true }),
+            secret: encodeBase64(new Uint8Array(32).fill(67), 'base64url') } : undefined;
+        const encryption = credentials ? await createEncryptionFromAuthCredentials(credentials) : null;
+        const home = await harness.addHome({ name: 'Snapshot Home', serverUrl: 'https://snapshot-approval.test',
+            accountId: 'account', serverIdentityId: 'srv_snapshot_approval', accountEncryptionMode: mode, credentials,
+            currentAccount: true });
+        const controller = { machineId: 'controller', installationId: 'installed' };
+        const launch = { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,
+            name: 'Private snapshot guest', choices: {} };
+        const setup = { scripts: [], items: [] };
+        const content = { v: 1 as const, name: 'Private preset title', launch, setup };
+        const reviewedFacts = { launch, optionStatus: 'current' as const,
+            billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const }, prerequisites: [],
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] as const },
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        const nativeResult = { kind: 'bound' as const,
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native-private' } } };
+        const sealed = mode === 'plain' ? sealManagedMachinePresetContentV1({ presetId: 'snapshot-preset', mode, content })
+            : sealManagedMachinePresetContentV1({ presetId: 'snapshot-preset', mode, content, randomBytes: length => new Uint8Array(length).fill(19),
+                recipientCensus: [{ account: { kind: 'account', accountId: 'account', firstName: null, lastName: null,
+                    username: null, avatarUrl: null }, envelopeStatus: 'missing', readiness: { status: 'available',
+                    contentPublicKey: encodeBase64(encryption!.contentDataKey, 'base64'),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption!.contentDataKey) } }] });
+        const { ManagedOpaquePresetMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { prepareManagedOpaquePresetReportV1 } = await import('@happier-dev/cli-common/machines/managed');
+        const machine = ManagedOpaquePresetMachineV1Schema.parse({
+            id: 'snapshot-guest', homeId: 'srv_snapshot_approval', custodianAccountId: 'account', controller,
+            preset: { id: 'snapshot-preset', revision: 2, contentEncryptionMode: mode }, allocation: 'bound',
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        const admittedSnapshot = prepareManagedOpaquePresetReportV1({ machine, content: sealed.content,
+            recipients: sealed.recipients, opened: { ...content, reviewedFacts }, accountId: 'account', reviewedFacts, nativeResult,
+            ...(mode === 'e2ee' ? { accountKey: encryption!.getContentPrivateKey() } : {}),
+            randomBytes: length => new Uint8Array(length).fill(23) });
+        if (!admittedSnapshot) throw new Error('Expected daemon-sealed managed preset snapshot');
+        const read = ManagedGetOutputV1Schema.parse({ machine: {
+            ...machine,
+        }, presetContent: projectManagedMachinePresetForRecipientV1({ content: admittedSnapshot.content, recipients: sealed.recipients,
+            recipientAccountId: 'account' }) });
+        if (mode === 'e2ee') expect(JSON.stringify(read)).not.toContain(launch.name);
+        harness.answer(home, 'POST /v1/machines/managed/actions/get', { body: read });
+        await harness.addHome({ name: 'Other Home', serverUrl: 'https://other-snapshot-approval.test',
+            accountId: 'other', serverIdentityId: 'srv_other_snapshot', currentAccount: true });
+        const account = await captureLazyActionAccountContext(home);
+        try {
+            const confirmation = await readApprovalReferenceForConfirmation({ kind: 'managedMachine',
+                homeId: 'srv_snapshot_approval', id: 'snapshot-guest' }, account);
+            expect(confirmation).toMatchObject({ subject: 'managedMachine', named: true, text: launch.name });
+        } finally { account.dispose(); }
+        expect(harness.requestsFor('/v1/machines/managed/actions/get')).toHaveLength(1);
+        expect(harness.requests.filter(request => request.path.startsWith('/v1/machines/presets/'))).toEqual([]);
     });
 
     it('leaves a still-unread managed machine out of the approval title instead of naming it "Machine"', async () => {

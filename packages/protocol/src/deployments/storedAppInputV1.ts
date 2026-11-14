@@ -200,10 +200,20 @@ export const DeploymentVariableBindingSourceV1Schema = lazyZodSchema(() => z.dis
 const variableIdentity = () => ({
     purpose: z.literal('variable'), name: z.string().check(z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)), phase: z.enum(['build', 'runtime']),
 });
+/** Opaque per-binding address used outside Account-encrypted Environment content. */
+export const EnvironmentVariableBindingGrantReferenceV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
+export type EnvironmentVariableBindingGrantReferenceV1 = z.infer<typeof EnvironmentVariableBindingGrantReferenceV1Schema>;
+const persistedVariableIdentity = () => ({ ...variableIdentity(), grantRef: EnvironmentVariableBindingGrantReferenceV1Schema });
+const authoredVariableIdentity = () => ({ ...variableIdentity(), grantRef: z.optional(EnvironmentVariableBindingGrantReferenceV1Schema) });
 export const EnvironmentVariableBindingV1Schema = lazyZodSchema(() => z.strictObject({
-    ...variableIdentity(), source: DeploymentVariableBindingSourceV1Schema,
+    ...persistedVariableIdentity(), source: DeploymentVariableBindingSourceV1Schema,
 }));
 export type EnvironmentVariableBindingV1 = z.infer<typeof EnvironmentVariableBindingV1Schema>;
+/** Authored intent may carry a writer-minted reference; persisted bindings always require one. */
+export const EnvironmentVariableBindingInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...authoredVariableIdentity(), source: DeploymentVariableBindingSourceV1Schema,
+}));
+export type EnvironmentVariableBindingInputV1 = z.infer<typeof EnvironmentVariableBindingInputV1Schema>;
 
 const registryBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('registry'), targetLinkId: id,
     registryOrigin: CanonicalHttpOriginSchema }));
@@ -238,7 +248,17 @@ function backupDestinationBindingSchema<TSource extends z.core.$ZodType>(source:
 }
 function environmentSecretBindingSchema<TSource extends z.core.$ZodType>(secretSource: TSource) {
     return z.union([
-        z.strictObject({ ...variableIdentity(), source: z.union([secretSource, DeploymentNonSecretVariableBindingSourceV1Schema]) }),
+        z.strictObject({ ...persistedVariableIdentity(), source: z.union([secretSource, DeploymentNonSecretVariableBindingSourceV1Schema]) }),
+        z.strictObject({ ...registryBindingIdentity.shape, access: z.enum(['pull', 'pushPull']), source: secretSource }),
+        backupDestinationBindingSchema(secretSource),
+        z.strictObject({ ...domainBindingIdentity.shape, source: secretSource }),
+        z.strictObject({ ...serviceDataBindingIdentity.shape, source: secretSource }),
+        z.strictObject({ ...managedDataBindingIdentity.shape, source: secretSource }),
+    ]);
+}
+function environmentSecretBindingInputSchema<TSource extends z.core.$ZodType>(secretSource: TSource) {
+    return z.union([
+        z.strictObject({ ...authoredVariableIdentity(), source: z.union([secretSource, DeploymentNonSecretVariableBindingSourceV1Schema]) }),
         z.strictObject({ ...registryBindingIdentity.shape, access: z.enum(['pull', 'pushPull']), source: secretSource }),
         backupDestinationBindingSchema(secretSource),
         z.strictObject({ ...domainBindingIdentity.shape, source: secretSource }),
@@ -247,7 +267,9 @@ function environmentSecretBindingSchema<TSource extends z.core.$ZodType>(secretS
     ]);
 }
 export const EnvironmentSecretBindingV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(DeploymentSecretBindingSourceV1Schema));
-export type EnvironmentSecretBindingV1 = z.infer<typeof EnvironmentSecretBindingV1Schema>;
+/** The pre-reference stored producer has no grantRef; reads preserve that absence until a normal save. */
+export const EnvironmentSecretBindingStoredReadV1Schema = lazyZodSchema(() => environmentSecretBindingInputSchema(DeploymentSecretBindingSourceV1Schema));
+export type EnvironmentSecretBindingV1 = z.infer<typeof EnvironmentSecretBindingStoredReadV1Schema>;
 const bindingIdentityProjectionSchema = lazyZodSchema(() => z.union(
     EnvironmentSecretBindingIdentityV1Schema._zod.def.options.map(identity => z.object(identity.shape)),
 ));
@@ -260,7 +282,7 @@ const secretBindingInputSource = lazyZodSchema(() => z.union([
     DeploymentSecretBindingSourceV1Schema, z.strictObject({ kind: z.literal('secret'), ref: z.literal('person_selects') }),
 ]));
 export const EnvironmentBackupDestinationBindingInputV1Schema = lazyZodSchema(() => backupDestinationBindingSchema(secretBindingInputSource));
-export const EnvironmentSecretBindingInputV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(secretBindingInputSource));
+export const EnvironmentSecretBindingInputV1Schema = lazyZodSchema(() => environmentSecretBindingInputSchema(secretBindingInputSource));
 export type EnvironmentSecretBindingInputV1 = z.infer<typeof EnvironmentSecretBindingInputV1Schema>;
 /** Effects consume settled rows only; a pending person choice is resolved by approval first. */
 export function isSettledEnvironmentSecretBindingV1(binding: EnvironmentSecretBindingInputV1): binding is EnvironmentSecretBindingV1 {
@@ -287,7 +309,7 @@ export const DeploymentTemplateRefV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type DeploymentTemplateRefV1 = z.infer<typeof DeploymentTemplateRefV1Schema>;
 export const StoredAppPresetBindingV1Schema = lazyZodSchema(() => z.strictObject({
-    ...variableIdentity(), source: z.discriminatedUnion('kind', [
+    ...authoredVariableIdentity(), source: z.discriminatedUnion('kind', [
         publicValue, DeploymentSecretBindingSourceV1Schema,
         // The pinned descriptor owns the generator profile. Saving selects a key, never a value or seed.
         z.strictObject({ kind: z.literal('generated'), key: DeploymentTextV1Schema }),

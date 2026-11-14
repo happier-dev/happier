@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { createMachinePresetCollectionClient, type MachinePresetCollectionOptions } from '@/components/settings/machines/managed/machinePresetCollectionClient';
 import { useMachinePresetQuery } from '@/components/settings/machines/managed/useMachinePresets';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -15,7 +15,7 @@ export function useStorePresetEditor(input: Readonly<{ serverId: string; presetI
     const client = React.useMemo(() => binding && homeId
         ? createMachinePresetCollectionClient(binding.scope, homeId) : null, [binding, homeId]);
     const read = React.useMemo(() => client && homeId && presetId
-        ? async (options: MachinePresetCollectionOptions<ManagedMachinePresetV1>) => {
+        ? async (options: MachinePresetCollectionOptions<OpenedManagedMachinePresetV1>) => {
             const result = await client.read('machines.presets.get', { homeId, id: presetId }, {
                 signal: options.signal, onApprovalPending: options.onApprovalPending, onApprovalSettled: options.onApprovalSettled,
             });

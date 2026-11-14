@@ -1,6 +1,7 @@
 import { ConnectedAccountDirectExportProjectionV1Schema } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
 
 import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
 import {
@@ -57,7 +58,7 @@ export type TeamCredentialSourceResourceListInputV1 = z.infer<
  */
 export const TeamCredentialSourceResourceAdministrationV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1), z.maxLength(256)),
-  displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
+  displayName: PrivateLabelReadV1Schema,
   enabled: z.boolean(),
   revision: z.number().check(z.int(), z.nonnegative()),
   deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,

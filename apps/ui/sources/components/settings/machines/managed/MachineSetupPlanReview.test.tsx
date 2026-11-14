@@ -67,7 +67,7 @@ it('explains a second package configuration conflict before any native work or a
     runNative: async () => { throw new Error('Conflicting intent must not run a process'); },
   });
   expect(refusal).toMatchObject({ ok: false, errorCode: 'machine_setup_conflict' });
-  if (refusal.ok) throw new Error('Expected conflicting package configurations');
+  if (!('errorCode' in refusal)) throw new Error('Expected conflicting package configurations');
   const { resolveActionExecutionFailureMessage } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
   expect(resolveActionExecutionFailureMessage(refusal, 'fallback')).toBe(t('machinePresets.setup.sourceConflict'));
   expect(describeMachineSetupPlanFailure({ ...refusal, details: { target: { homeId: 'home', machineId: 'shop' } } },
@@ -155,6 +155,48 @@ describe('MachineSetupPlanReview', () => {
     // rendered text operand to prove newlines and shell bytes survive intact.
     expect(screen.tree.findAll(node => node.props?.children === body).length).toBeGreaterThan(0);
     expect(screen.tree.findAll(node => node.props?.children === checkBody).length).toBeGreaterThan(0);
+    await screen.unmount();
+  });
+  it('uses the exact opened opaque setup projection for review details without placing its setup on the Action input', async () => {
+    const { MachineSetupApplyInputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+    const body = 'echo retained private setup\n';
+    const prepared: MachineSetupPreparedReview = {
+      ok: true,
+      input: MachineSetupApplyInputV1Schema.parse({
+        homeId: 'home',
+        machineId: 'vps',
+        targets: [{
+          ...target('vps'),
+          sources: [
+            { kind: 'direct', setup: {} },
+            { kind: 'accountPresetOpaque', presetId: 'historical', presetRevision: 3, contentEncryptionMode: 'plain' },
+          ],
+          recipePlans: [],
+        }],
+      }),
+      facts: [{ homeId: 'home', machineId: 'vps', support: [] }],
+      sourcePresentations: [{
+        homeId: 'home',
+        machineId: 'vps',
+        sources: [{
+          kind: 'opened',
+          source: { kind: 'direct', setup: {} },
+        }, {
+          kind: 'opened',
+          presetName: 'Historical',
+          source: {
+            kind: 'accountPreset',
+            presetId: 'historical',
+            presetRevision: 3,
+            setup: { scripts: [{ body }] },
+          },
+        }],
+      }],
+    };
+    expect(prepared.input.targets[0]!.sources[1]).not.toHaveProperty('setup');
+    const screen = await renderScreen(<MachineSetupPlanReview testID="review" prepared={prepared} nameOf={(id) => names[id] ?? id} />);
+    await act(async () => { await screen.pressByTestId('review.changes.commands'); });
+    expect(screen.getTextContent()).toContain('$ echo retained private setup');
     await screen.unmount();
   });
   it('reviews a removal input as one named removal without counting retained scripts or toolchain', async () => {
@@ -291,7 +333,10 @@ describe('MachineSetupPlanReview', () => {
       input: {
         homeId: 'home',
         machineId: 'vps',
-        targets: [{ ...target('vps'), sources: [source] }],
+        targets: [{ ...target('vps'), sources: [
+          { kind: 'direct', setup: {} },
+          { kind: 'accountPresetOpaque', presetId: 'web', presetRevision: 3, contentEncryptionMode: 'plain' },
+        ] }],
       },
       facts: [
         {
@@ -316,16 +361,24 @@ describe('MachineSetupPlanReview', () => {
             administratorRequired: false,
             downtime: 'unknown',
             apps: [
-              { sourceIndex: 0, itemIndex: 0, kind: 'new' },
-              { sourceIndex: 0, itemIndex: 1, kind: 'completed', environmentId: 'env-kuma' },
-              { sourceIndex: 0, itemIndex: 2, kind: 'not_completed' },
-              { sourceIndex: 0, itemIndex: 3, kind: 'failed' },
-              { sourceIndex: 0, itemIndex: 4, kind: 'unknown' },
-              { sourceIndex: 0, itemIndex: 5, kind: 'completed' },
+              { sourceIndex: 1, itemIndex: 0, kind: 'new' },
+              { sourceIndex: 1, itemIndex: 1, kind: 'completed', environmentId: 'env-kuma' },
+              { sourceIndex: 1, itemIndex: 2, kind: 'not_completed' },
+              { sourceIndex: 1, itemIndex: 3, kind: 'failed' },
+              { sourceIndex: 1, itemIndex: 4, kind: 'unknown' },
+              { sourceIndex: 1, itemIndex: 5, kind: 'completed' },
             ],
           },
         },
       ],
+      sourcePresentations: [{
+        homeId: 'home',
+        machineId: 'vps',
+        sources: [
+          { kind: 'opened', source: { kind: 'direct', setup: {} } },
+          { kind: 'opened', presetName: 'Web', source },
+        ],
+      }],
     } as unknown as MachineSetupPreparedReview;
     const screen = await renderScreen(
       <MachineSetupPlanReview
@@ -335,7 +388,7 @@ describe('MachineSetupPlanReview', () => {
       />,
     );
     const { t } = await import('@/text');
-    const appRow = (index: number) => row(screen, `review.app.vps.0.${index}`);
+    const appRow = (index: number) => row(screen, `review.app.vps.1.${index}`);
     // Each app by its own name, with what this setup does to it; only a new one deploys.
     expect(appRow(0)).toMatchObject({ title: 'Plausible', detail: t('machinePresets.setup.review.appNew') });
     expect(appRow(1)?.detail).toBe(t('machinePresets.setup.review.appDeployed'));
@@ -377,6 +430,11 @@ describe('MachineSetupPlanReview', () => {
       input: { homeId: 'home', machineId: 'vps', targets: [{ ...target('vps'), sources: [source] }] },
       // An older daemon: no review at all, so nothing about its apps.
       facts: [{ homeId: 'home', machineId: 'vps', support: [] }],
+      sourcePresentations: [{
+        homeId: 'home',
+        machineId: 'vps',
+        sources: [{ kind: 'opened', source }],
+      }],
     } as unknown as MachineSetupPreparedReview;
     const screen = await renderScreen(
       <MachineSetupPlanReview testID="review" prepared={prepared} nameOf={(id) => names[id] ?? id} />,

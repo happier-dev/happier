@@ -58,7 +58,7 @@ describe('team credential source candidates', () => {
   it('keeps source-owned administration rows closed and free of Team audience details', () => {
     const row = {
       id: 'resource-1',
-      displayName: 'Shared source',
+      displayName: { content: { t: 'plain', v: 'Shared source' }, recipientEnvelope: null },
       enabled: true,
       revision: 2,
       deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },

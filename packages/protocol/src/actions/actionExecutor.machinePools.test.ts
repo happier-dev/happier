@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
+const plainLabel = (value: string) => ({ content: { t: 'plain' as const, v: value }, recipients: [] });
 const poolView = {
   pool: {
     id: poolId,
@@ -32,16 +34,77 @@ describe('createActionExecutor (Machine Pools family)', () => {
     const inputs = {
       'machines.pools.list': {},
       'machines.pools.get': { poolId },
-      'machines.pools.create': { poolId, name: 'Fast', members: [] },
-      'machines.pools.update': { poolId, expectedRevision: 0, name: 'Fast', members: [] },
+      'machines.pools.create': { poolId, name: plainLabel('Fast'), members: [] },
+      'machines.pools.update': { poolId, expectedRevision: 0, name: plainLabel('Fast'), members: [] },
       'machines.pools.delete': { poolId, expectedRevision: 0 },
       'machines.pools.resolve': { poolId, requestKey: 'request-1' },
     } as const;
 
     for (const actionId of MACHINE_POOL_ACTION_IDS_V1) {
-      await expect(executor.execute(actionId, inputs[actionId], { surface: 'ui' })).resolves.toMatchObject({ ok: true });
+      await expect(executor.execute(actionId, inputs[actionId], { surface: 'ui' }), actionId).resolves.toMatchObject({ ok: true });
     }
     expect(machinePoolAction.mock.calls.map(([call]) => call.actionId)).toEqual(MACHINE_POOL_ACTION_IDS_V1);
+  });
+
+  it('keeps an automated Pool create deferred until the canonical approval replay', async () => {
+    let stored: ApprovalRequest | null = null;
+    const effects: unknown[] = [];
+    const input = { poolId, name: plainLabel('Fast'), members: [] };
+    const executor = createActionExecutor({
+      machinePoolAction: async (request) => {
+        effects.push(request);
+        return poolView;
+      },
+      isActionApprovalRequired: (actionId) => actionId === 'machines.pools.create',
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'pool-create-approval' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    } as unknown as ActionExecutorDeps);
+    const context = {
+      surface: 'agent' as const,
+      authority: 'account_automation' as const,
+      actionCaller: { kind: 'host' as const },
+      serverId: 'home',
+      runtimeAccountId: 'alice',
+      actionRequestId: 'pool-create-attempt',
+    };
+
+    await expect(executor.execute('machines.pools.create', input, context)).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'pool-create-approval' },
+    });
+    expect(effects).toEqual([]);
+    expect(stored).toMatchObject({
+      actionId: 'machines.pools.create',
+      actionArgs: input,
+      approval: { flow: 'deferred', result: 'optional' },
+      executionOriginV1: { surface: 'agent', authority: 'account_automation', accountId: 'alice' },
+    });
+    if (!stored) throw new Error('Missing Pool create approval');
+    stored = ApprovalRequestV2Schema.parse({
+      ...stored,
+      status: 'approved',
+      updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+    });
+
+    await expect(executor.replayApprovedApprovalRequest({ artifactId: 'pool-create-approval' }))
+      .resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(effects).toEqual([expect.objectContaining({
+      actionId: 'machines.pools.create',
+      input,
+      context: expect.objectContaining({
+        surface: 'agent', authority: 'account_automation', runtimeAccountId: 'alice',
+      }),
+    })]);
+    expect(stored).toMatchObject({ status: 'executed', execution: { result: poolView } });
   });
 
   it('fails closed when the Account server adapter is absent', async () => {

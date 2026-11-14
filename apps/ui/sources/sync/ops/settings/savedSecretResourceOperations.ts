@@ -48,6 +48,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
 import type { SavedSecretPrivateCreationApprovalOptions } from '@/components/secrets/useSavedSecretCatalog';
+import { prepareManagedMachinePresetSavedSecretPromotionRewritesInContext } from '@/sync/ops/machines/machinePresetCollectionClientImpl';
 
 export type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/savedSecretTypes';
 export { openSavedSecretDisclosureInContext, recordSavedSecretDisclosureInContext, isSavedSecretDisclosureStorageCurrentInContext } from './savedSecretDisclosure';
@@ -1200,6 +1201,18 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                 if (prepared.accountMode !== accountMode) {
                     return { status: 'rejected', error: new Error('saved_secret_account_mode_changed') };
                 }
+                const opaquePresetPromotion = personalSourceId === undefined ? null : context.serverIdentityId
+                    ? await prepareManagedMachinePresetSavedSecretPromotionRewritesInContext({
+                        scope: params.scope,
+                        homeId: context.serverIdentityId,
+                        account: context,
+                        rewrites: [{ personalSecretId: personalSourceId, resourceId, resourceRevision: 1 }],
+                        signal: approval?.signal ?? context.invocationSignal,
+                    })
+                    : { kind: 'unavailable' as const };
+                if (opaquePresetPromotion?.kind === 'unavailable') {
+                    return { status: 'rejected', error: new Error('saved_secret_opaque_preset_capture_unavailable') };
+                }
                 const profileMutations = await prepareProfileRecordMutationsInContext(context, {
                     records: profiles.records.flatMap((row, index) => promotedRecords[index] === row.record
                         ? [] : [{ record: promotedRecords[index]!, revision: row.revision }]),
@@ -1274,11 +1287,13 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                         ...(keyEnvelopes.length > 0 ? { keyEnvelopes } : {}),
                         expectedSettingsVersion: prepared.expectedSettingsVersion,
                         nextSettings: prepared.content,
-                        referenceCensus,
+                        referenceCensus: opaquePresetPromotion
+                            ? { ...referenceCensus, opaquePresetReferences: opaquePresetPromotion.opaquePresetReferences }
+                            : referenceCensus,
                         profileMutations,
                         ...(personalSourceId !== undefined ? { personalSecretPromotions: [{
                             personalSecretId: personalSourceId, resourceId,
-                        }] } : {}),
+                        },], opaquePresetRewrites: opaquePresetPromotion?.rewrites } : {}),
                         ...(Object.keys(catalogMutations).length ? { catalogMutations } : {}),
                     },
                     parse: (value) => SharedSavedSecretPromoteOutputV1Schema.parse(value),

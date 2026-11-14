@@ -578,6 +578,61 @@ describe("registerAutomationV3Routes", () => {
         });
     });
 
+    it("forwards a plain retained Event display carrier through full reconciliation", async () => {
+        reconcileAutomationDefinition.mockResolvedValueOnce(eventAutomation as any);
+        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v3/automations/:id",
+            registerRoutes(app) { registerAutomationV3Routes(app as any); },
+        });
+        const triggerDefinitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: "plain",
+            binding: {
+                v: 1,
+                automationId: "automation-event-1",
+                triggerId: AutomationTriggerIdSchema.parse("trigger-event-1"),
+                triggerRevision: 2,
+                triggerKind: "pluginEvent",
+                eventRef: { pluginId: "happier.scm.github", localId: "repository-event-v1" },
+                sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
+                    "9d5af559-2c82-4c22-b6a0-ecabce38a631",
+                ),
+            },
+            definition: {
+                v: 1,
+                automationDisplay: { name: "Repository updates", description: null },
+                sourceInstanceId: "github:repository:1234",
+                sourceConfig: { repository: "happier-dev/happier" },
+                displayLabel: "happier-dev/happier",
+                filter: null,
+                maximumObservationAgeMs: 60_000,
+            },
+        });
+        const body = {
+            expectedTemplateVersion: 1,
+            name: "Automation",
+            description: null,
+            enabled: true,
+            assignments: [{ machineId: "machine-1" }],
+            triggers: [{
+                kind: "existing",
+                triggerId: "trigger-event-1",
+                expectedRevision: 1,
+                enabled: false,
+                triggerDefinitionEnvelope,
+            }],
+            removedTriggers: [],
+        };
+
+        await route.invoke({ userId: "account-1", params: { id: "automation-event-1" }, body });
+        expect(reconcileAutomationDefinition).toHaveBeenCalledWith({
+            accountId: "account-1",
+            automationId: "automation-event-1",
+            input: body,
+        });
+    });
+
     it("routes independent trigger create, patch, and delete through the canonical trigger owner", async () => {
         const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
         const createRoute = createRouteTestBuilder({

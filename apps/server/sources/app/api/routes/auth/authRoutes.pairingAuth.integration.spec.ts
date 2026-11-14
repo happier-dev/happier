@@ -18,6 +18,7 @@ import { enableAuthentication } from "../../utils/enableAuthentication";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { initializeServerIdentityCache } from "@/app/serverIdentity/serverIdentity";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -218,7 +219,7 @@ describe("authRoutes (pairing auth) (integration)", () => {
             createPresentUserToken(other.id),
             auth.createToken(owner.id, undefined, { kind: "account_directory", authority: "present_user" }),
             auth.createToken(owner.id, { session: "pairing-admission-terminal" }, { kind: "terminal", authority: "account_automation" }),
-            auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: "Pairing admission PAT" }),
+            auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, "Pairing admission PAT") }),
         ]);
         const restrictedTokens = [directoryToken, terminalToken, apiToken.token];
         const app = createTestApp();
@@ -903,7 +904,7 @@ describe("authRoutes (pairing auth) (integration)", () => {
         const [directoryToken, terminalToken, apiToken] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "account_directory", authority: "present_user" }),
             auth.createToken(account.id, { session: "reverse-start-terminal" }, { kind: "terminal", authority: "account_automation" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Reverse start PAT" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Reverse start PAT") }),
         ]);
         for (const restricted of [directoryToken, terminalToken, apiToken.token]) {
             const response = await app.inject({

@@ -3,8 +3,12 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 
 import { AccountSettingsStoredContentEnvelopeSchema } from './accountSettingsStoredContentEnvelope.js';
-import { SavedSecretCatalogResultV1Schema } from './savedSecretCatalogV1.js';
+import { SavedSecretCatalogResultV1Schema, SavedSecretResourceRecipientEnvelopeV1Schema } from './savedSecretCatalogV1.js';
 import { SavedSecretResourceStoredContentV1Schema } from './savedSecretResourceContentSchemaV1.js';
+import {
+  ManagedMachinePresetRecipientsV1Schema,
+  ManagedMachinePresetStoredContentCarrierV1Schema,
+} from '../../machines/managed/managedMachinePresetContentV1.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { ProfileRecordIdV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowMutationV1Schema, ProfileRowRevisionV1Schema } from '../../profiles/profileRecordSchemaV1.js';
@@ -48,6 +52,86 @@ const SavedSecretNotificationChannelReferenceCensusV1Schema = lazyZodSchema(() =
   resourceRefs: z.array(SharedResourceReferenceSchema),
 }));
 
+/** Keyholding discovery may refuse deletion without asking Home to inspect sealed preset bodies. */
+export const SavedSecretOpaquePresetReferencesV1Schema = lazyZodSchema(() => z.strictObject({
+  presets: z.array(z.strictObject({ presetId: ResourceIdSchema })),
+  snapshots: z.array(z.strictObject({ managedId: ResourceIdSchema, presetId: ResourceIdSchema })),
+}).check(z.superRefine((value, context) => {
+  const presets = new Set<string>();
+  value.presets.forEach((reference, index) => {
+    if (presets.has(reference.presetId)) context.addIssue({ code: 'custom', path: ['presets', index, 'presetId'],
+      message: 'Duplicate opaque Preset reference' });
+    presets.add(reference.presetId);
+  });
+  const snapshots = new Set<string>();
+  value.snapshots.forEach((reference, index) => {
+    if (snapshots.has(reference.managedId)) context.addIssue({ code: 'custom', path: ['snapshots', index, 'managedId'],
+      message: 'Duplicate opaque Managed Machine reference' });
+    snapshots.add(reference.managedId);
+  });
+})));
+export type SavedSecretOpaquePresetReferencesV1 = z.infer<typeof SavedSecretOpaquePresetReferencesV1Schema>;
+
+const SavedSecretOpaquePresetSourceRewriteV1Schema = lazyZodSchema(() => z.strictObject({
+  presetId: ResourceIdSchema,
+  expectedRevision: z.number().check(z.int(), z.nonnegative()),
+  replacement: z.strictObject({
+    content: ManagedMachinePresetStoredContentCarrierV1Schema,
+    recipients: ManagedMachinePresetRecipientsV1Schema,
+  }),
+}));
+
+const SavedSecretOpaquePresetSnapshotRewriteV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: ResourceIdSchema,
+  presetId: ResourceIdSchema,
+  expectedContentEncryptionMode: z.enum(['plain', 'e2ee']),
+  expectedContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+  expectedRecipientEnvelope: z.nullable(SavedSecretResourceRecipientEnvelopeV1Schema),
+  replacementContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+}).check(z.superRefine((value, context) => {
+  const expectedEncrypted = value.expectedContentEncryptionMode === 'e2ee';
+  if ((value.expectedContent.t === 'encrypted') !== expectedEncrypted) {
+    context.addIssue({ code: 'custom', path: ['expectedContent'],
+      message: 'Expected opaque snapshot content must match its persisted mode' });
+  }
+  if ((value.replacementContent.t === 'encrypted') !== expectedEncrypted) {
+    context.addIssue({ code: 'custom', path: ['replacementContent'],
+      message: 'Replacement opaque snapshot content must retain its persisted mode' });
+  }
+  if (expectedEncrypted && value.expectedRecipientEnvelope === null) {
+    context.addIssue({ code: 'custom', path: ['expectedRecipientEnvelope'],
+      message: 'Encrypted opaque snapshot content requires the captured recipient envelope' });
+  }
+  if (!expectedEncrypted && value.expectedRecipientEnvelope !== null) {
+    context.addIssue({ code: 'custom', path: ['expectedRecipientEnvelope'],
+      message: 'Plain opaque snapshot content cannot carry a recipient envelope' });
+  }
+})));
+
+/**
+ * Exact client-opened Preset/snapshot replacements consumed by the Saved Secret
+ * promotion transaction. The server validates authority/currentness/envelopes,
+ * but never parses the sealed body to discover or rewrite references.
+ */
+export const SavedSecretOpaquePresetRewritesV1Schema = lazyZodSchema(() => z.strictObject({
+  presets: z.array(SavedSecretOpaquePresetSourceRewriteV1Schema),
+  snapshots: z.array(SavedSecretOpaquePresetSnapshotRewriteV1Schema),
+}).check(z.superRefine((value, context) => {
+  const presets = new Set<string>();
+  value.presets.forEach((rewrite, index) => {
+    if (presets.has(rewrite.presetId)) context.addIssue({ code: 'custom', path: ['presets', index, 'presetId'],
+      message: 'Opaque Preset rewrites must be unique' });
+    presets.add(rewrite.presetId);
+  });
+  const snapshots = new Set<string>();
+  value.snapshots.forEach((rewrite, index) => {
+    if (snapshots.has(rewrite.managedId)) context.addIssue({ code: 'custom', path: ['snapshots', index, 'managedId'],
+      message: 'Opaque Managed Machine rewrites must be unique' });
+    snapshots.add(rewrite.managedId);
+  });
+})));
+export type SavedSecretOpaquePresetRewritesV1 = z.infer<typeof SavedSecretOpaquePresetRewritesV1Schema>;
+
 /** Complete opened Profile inventory; the guard covers concurrent new identities. */
 export const SavedSecretReferenceCensusV1Schema = lazyZodSchema(() => z.strictObject({
   accountMode: z.enum(['plain', 'e2ee']),
@@ -63,6 +147,7 @@ export const SavedSecretReferenceCensusV1Schema = lazyZodSchema(() => z.strictOb
   catalogs: z.optional(SavedSecretCatalogRevisionsV1Schema),
   remoteHosts: z.optional(SavedSecretRemoteHostReferenceCensusV1Schema),
   notificationChannels: z.optional(SavedSecretNotificationChannelReferenceCensusV1Schema),
+  opaquePresetReferences: z.optional(SavedSecretOpaquePresetReferencesV1Schema),
 }).check(z.superRefine((value, context) => {
   const ids = new Set<string>();
   value.profiles.rows.forEach((row, index) => {
@@ -243,6 +328,7 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
   catalogMutations: z.optional(SavedSecretCatalogMutationsV1Schema),
   additionalSavedSecretResources: z.optional(z.array(SharedSavedSecretCreateInputV1Schema)),
   personalSecretPromotions: z.optional(SavedSecretPersonalPromotionsV1Schema),
+  opaquePresetRewrites: z.optional(SavedSecretOpaquePresetRewritesV1Schema),
   remoteHostMutation: z.optional(RemoteHostCatalogRowMutationV1Schema),
   notificationChannelMutation: z.optional(z.safeExtend(NotificationChannelCatalogMutationV1Schema, {
     // The outer resource transaction remains the sole paired Settings writer.
@@ -260,6 +346,7 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     if (value.nextSettings !== null) context.addIssue({ code: 'custom', path: ['nextSettings'], message: 'Catalog-only promotion cannot write Settings' });
     if (value.profileMutations.length !== 0) context.addIssue({ code: 'custom', path: ['profileMutations'], message: 'Catalog-only promotion cannot mutate Profiles' });
     if (value.personalSecretPromotions?.length) context.addIssue({ code: 'custom', path: ['personalSecretPromotions'], message: 'Catalog-only promotion cannot rewrite personal source references' });
+    if (value.opaquePresetRewrites !== undefined) context.addIssue({ code: 'custom', path: ['opaquePresetRewrites'], message: 'Catalog-only promotion cannot rewrite opaque Preset references' });
   } else if (value.expectedSettingsVersion === undefined) {
     context.addIssue({ code: 'custom', path: ['expectedSettingsVersion'], message: 'Full reference census requires captured Settings currentness' });
   }
@@ -315,6 +402,15 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
       context.addIssue({ code: 'custom', path: ['personalSecretPromotions', index, 'resourceId'], message: 'Personal promotion destination must be a resource in this request' });
     }
   });
+  const hasPersonalSourcePromotions = (value.personalSecretPromotions?.length ?? 0) > 0;
+  if (hasPersonalSourcePromotions && value.opaquePresetRewrites === undefined) {
+    context.addIssue({ code: 'custom', path: ['opaquePresetRewrites'],
+      message: 'Personal source promotion requires its keyholding opaque Preset rewrite capture' });
+  }
+  if (!hasPersonalSourcePromotions && value.opaquePresetRewrites !== undefined) {
+    context.addIssue({ code: 'custom', path: ['opaquePresetRewrites'],
+      message: 'Opaque Preset rewrites require a personal source promotion' });
+  }
 })));
 export type SharedSavedSecretPromoteInputV1 = z.infer<typeof SharedSavedSecretPromoteInputV1Schema>;
 

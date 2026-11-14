@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
@@ -177,7 +178,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             sessionAccessStartsAt: effectiveAt } });
         const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest!.id, role: 'guest' } });
         const groupName = randomUUID();
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: groupName, nameKey: groupName } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel(groupName) } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: guestMembership.id } });
         const ids = Array.from({ length: 1100 }, () => randomUUID());
         await db.session.createMany({ data: ids.map(id => ({ id, accountId: owner!.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' })) });

@@ -1,8 +1,9 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { hasCurrentTeamCredentialAudienceMatchInTx, resolveTeamCredentialEntitlementInTx } from "./resourceAccess";
+import { resolveTeamCredentialEntitlementInTx } from "./resourceAccess";
 import { resolveTeamGroupMembershipsForAccountInTx } from "../groups/effectiveGroupMembership";
 import { retainEntitledTeamCredentialRecipientMaterialInTx } from "./recipientMaterial";
 
@@ -26,7 +27,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team credential
         const members = Array.from({ length: recipientCount }, () => ({ id: randomUUID(), accountId: randomUUID(), teamId: team.id, role: "member" as const }));
         await client.account.createMany({ data: members.map(member => ({ id: member.accountId, encryptionMode: "plain" })) });
         await client.teamMembership.createMany({ data: members });
-        const group = await client.teamGroup.create({ data: { teamId: team.id, name: "Direct recipients", nameKey: "direct" } });
+        const group = await client.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Direct recipients") } });
         await client.teamGroupMembership.createMany({ data: members.map(member => ({ teamId: team.id,
             teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true })) });
         const resource = await client.teamCredentialResource.create({ data: {
@@ -114,7 +115,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team credential
         try {
             await client.teamMembership.create({ data: { teamId: team.id, accountId: custodian!.id, role: "owner" } });
             const membership = await client.teamMembership.create({ data: { teamId: team.id, accountId: recipient!.id, role: "guest" } });
-            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: `Group ${index}`, nameKey: `group-${index}` }));
+            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: storedPlainPrivateLabel(`Group ${index}`) }));
             await client.teamGroup.createMany({ data: groups });
             const resource = await client.teamCredentialResource.create({ data: {
                 teamId: team.id, custodianAccountId: custodian!.id, displayName: "Cost fixture",
@@ -126,27 +127,23 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team credential
                 selects = 0;
                 const entitlement = await client.$transaction(tx => resolveTeamCredentialEntitlementInTx(tx, input), { isolationLevel: "RepeatableRead" });
                 const entitlementSelects = selects;
-                selects = 0;
-                const match = await client.$transaction(tx => hasCurrentTeamCredentialAudienceMatchInTx(tx, input), { isolationLevel: "RepeatableRead" });
-                return { entitlement, match, entitlementSelects, matchSelects: selects };
+                return { entitlement, entitlementSelects };
             };
             const single = await read();
             await client.teamCredentialGroupGrant.createMany({ data: groups.slice(1).map(group => ({ resourceId: resource.id, teamGroupId: group.id, deliveryMode: "brokered" })) });
             const page = await read();
-            console.info("TEAM_CREDENTIAL_AUDIENCE_QUERY_COST", { single: [single.entitlementSelects, single.matchSelects], groups120: [page.entitlementSelects, page.matchSelects] });
+            console.info("TEAM_CREDENTIAL_AUDIENCE_QUERY_COST", { single: single.entitlementSelects, groups120: page.entitlementSelects });
             expect(page.entitlement).toEqual({ ok: false, reason: "access_removed" });
-            expect(page.match).toBe(false);
             expect(page.entitlementSelects).toBe(single.entitlementSelects);
-            expect(page.matchSelects).toBe(single.matchSelects);
             await client.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: groups[119]!.id, teamMembershipId: membership.id, nativeContribution: true } });
-            expect(await read()).toMatchObject({ entitlement: { ok: true, mayBroker: true }, match: true });
+            expect(await read()).toMatchObject({ entitlement: { ok: true, mayBroker: true } });
             await client.teamMembership.update({ where: { id: membership.id }, data: { status: "suspended" } });
-            expect(await read()).toMatchObject({ entitlement: { ok: false, reason: "access_removed" }, match: false });
+            expect(await read()).toMatchObject({ entitlement: { ok: false, reason: "access_removed" } });
             await client.teamMembership.update({ where: { id: membership.id }, data: { status: "active" } });
             await client.teamGroup.update({ where: { id: groups[119]!.id }, data: { archivedAt: new Date() } });
-            expect(await read()).toMatchObject({ entitlement: { ok: false, reason: "access_removed" }, match: false });
+            expect(await read()).toMatchObject({ entitlement: { ok: false, reason: "access_removed" } });
             await client.teamGroup.update({ where: { id: groups[119]!.id }, data: { archivedAt: null } });
-            const unrelatedGroup = await client.teamGroup.create({ data: { teamId: team.id, name: "Not granted", nameKey: "not-granted" } });
+            const unrelatedGroup = await client.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Not granted") } });
             await client.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: unrelatedGroup.id, teamMembershipId: membership.id, nativeContribution: true } });
             selects = 0;
             const selected = await client.$transaction(tx => resolveTeamGroupMembershipsForAccountInTx(tx, {

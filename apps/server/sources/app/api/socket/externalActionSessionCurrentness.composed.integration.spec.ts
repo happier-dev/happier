@@ -65,6 +65,7 @@ import { createMemoryDocInLibrary } from '@happier-dev/protocol/prompts/library/
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('original external Session Action currentness composition', () => {
     let harness: LightSqliteHarness;
@@ -522,7 +523,7 @@ describe('original external Session Action currentness composition', () => {
                 const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
                     actions: { families: [], ids: ['workflow.trigger.run_now'] },
                     targets: { machines: [machineId], sessions: [] }, automationIds: [automationIds[0]] });
-                const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'QA exact wait', grant });
+                const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'QA exact wait'), grant });
                 const prepareRun = (automationId: string | undefined, idempotencyKey?: string,
                     signedKey = idempotencyKey, credential = pat) => {
                     const root = { serverIdentityId: homeId, accountId: account.id, credentialId: credential.tokenId,
@@ -590,7 +591,7 @@ describe('original external Session Action currentness composition', () => {
                 expect(runReceipt(keyedExecution).run.id).not.toBe(runReceipt(originalExecution).run.id);
                 const differentKey = await approveRun(await sendRun(prepareRun(automationIds[0], 'qa-different-key')));
                 expect(runReceipt(differentKey).run.id).not.toBe(runReceipt(keyedExecution).run.id);
-                const secondPat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'QA second', grant });
+                const secondPat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'QA second'), grant });
                 try {
                     const separate = await sendRun(prepareRun(automationIds[0], 'qa-manual-key', 'qa-manual-key', secondPat));
                     const separateExecution = await approveRun(separate);

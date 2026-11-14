@@ -9,6 +9,7 @@ import { useShareViewerProfile } from '../useShareViewerProfile';
 import { useAudienceDraftShareController } from '../useAudienceDraftShareController';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import type {
     SharePrincipalPresentation,
     ShareSheetActions,
@@ -17,7 +18,12 @@ import type {
 } from '../shareSheetTypes';
 import type { SavedSecretGrantDraft } from './savedSecretGrantDraft';
 
-export function savedSecretAudiencePresentations(audience: SavedSecretCatalogAudienceV1 | undefined, viewerAccountId: string, viewerProfile: AccountDisplayProfileV1 | null): Readonly<Record<string, SharePrincipalPresentation>> {
+export function savedSecretAudiencePresentations(
+    audience: SavedSecretCatalogAudienceV1 | undefined,
+    viewerAccountId: string,
+    viewerProfile: AccountDisplayProfileV1 | null,
+    openedGroupDisplayNames: ReadonlyMap<string, string | null> = new Map(),
+): Readonly<Record<string, SharePrincipalPresentation>> {
     const values: Record<string, SharePrincipalPresentation> = {};
     for (const account of audience?.accounts ?? []) {
         const ref: PrincipalRefV1 = { kind: 'account', accountId: account.accountId };
@@ -31,7 +37,11 @@ export function savedSecretAudiencePresentations(audience: SavedSecretCatalogAud
     }
     for (const group of audience?.groups ?? []) {
         const ref: PrincipalRefV1 = { kind: 'group', teamId: group.teamId, groupId: group.groupId };
-        values[sessionAccessSubjectKey(ref)] = presentSharePrincipal({ ref, name: group.name, teamName: group.teamName });
+        values[sessionAccessSubjectKey(ref)] = presentSharePrincipal({
+            ref,
+            name: openedGroupDisplayNames.get(group.groupId) ?? t('common.unavailable'),
+            teamName: group.teamName,
+        });
     }
     return values;
 }
@@ -49,8 +59,17 @@ export function useSavedSecretShareController(input: Readonly<{
     retainedAudience?: SavedSecretCatalogAudienceV1;
 }>): Readonly<{ model: ShareSheetModel; actions: ShareSheetActions; notice?: ShareUiReason }> {
     const viewerProfile = useShareViewerProfile(input.scope);
-    const retainedNames = React.useMemo(() => savedSecretAudiencePresentations(input.retainedAudience, input.scope.accountId, viewerProfile),
-        [input.retainedAudience, input.scope.accountId, viewerProfile]);
+    const groupLabelInputs = React.useMemo(() => (input.retainedAudience?.groups ?? []).map((group) => ({
+        id: group.groupId,
+        name: group.name,
+    })), [input.retainedAudience?.groups]);
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope: input.scope, groups: groupLabelInputs });
+    const retainedNames = React.useMemo(() => savedSecretAudiencePresentations(
+        input.retainedAudience,
+        input.scope.accountId,
+        viewerProfile,
+        openedGroupDisplayNames,
+    ), [input.retainedAudience, input.scope.accountId, openedGroupDisplayNames, viewerProfile]);
     const lockReason = React.useMemo<ShareUiReason>(() => ({ code: 'saved_secret_single_level', message: t('shareSheet.secrets.oneLevel') }), []);
     return useAudienceDraftShareController({ scope: input.scope, draft: input.draft, onChange: input.onChange,
         disabled: input.disabled, lockReason, retainedNames });

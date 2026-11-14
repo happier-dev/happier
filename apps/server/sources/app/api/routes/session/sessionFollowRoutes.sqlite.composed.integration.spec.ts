@@ -24,6 +24,7 @@ import { auth } from '@/app/auth/auth';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { resolveAccountVoiceSelection } from '@/app/session/follow/accountFollowService';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 async function buildApp(accountId: string, sessionRuntimePrincipal?: VerifiedEphemeralSessionRunnerPrincipal) {
     const app = Fastify({ logger: false });
@@ -209,13 +210,13 @@ describe('Account Session Follow HTTP resource', () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const receiver = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        const createToken = (sessionIds: string[]) => auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: 'Follow only',
+        const createToken = async (sessionIds: string[]) => auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, 'Follow only'),
             // Routing still requires the incumbent destination input capability;
             // the exact Follow Action and both resource ceilings are checked too.
             grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['follow.get', 'follow.set', 'follow.list', 'follow.remove', 'session.message.send'] },
                 targets: { sessions: sessionIds, machines: [] } } });
         const [both, receiverOnly, full] = await Promise.all([createToken([source.id, receiver.id]), createToken([receiver.id]),
-            auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: 'Full Account' })]);
+            auth.createApiToken({ accountId: owner.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, 'Full Account') })]);
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         sessionRoutes(app);
         await app.ready();

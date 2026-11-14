@@ -527,7 +527,6 @@ const groupLoader = createScopedSnapshotLoader<TeamGroupTarget>({
 type TeamCredentialResourcesTarget = ScopedLoadTarget & Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
-    search?: string;
     filter: TeamCredentialResourceListFilterV1;
     queryKey: string;
 }>;
@@ -535,15 +534,13 @@ type TeamCredentialResourcesTarget = ScopedLoadTarget & Readonly<{
 function credentialResourcesTargetFor(
     scope: ServerAccountScope,
     address: TeamAddress,
-    search?: string,
     filter: TeamCredentialResourceListFilterV1 = 'all',
 ): TeamCredentialResourcesTarget | null {
     if (scope.serverId !== address.serverId) return null;
-    const queryKey = search || filter !== 'all'
+    const queryKey = filter !== 'all'
         ? teamCredentialResourcesQueryKeyV1({
             teamId: address.teamId,
             filter,
-            ...(search ? { search } : {}),
         })
         : '';
     return {
@@ -553,7 +550,6 @@ function credentialResourcesTargetFor(
         address,
         filter,
         queryKey,
-        ...(search ? { search } : {}),
     };
 }
 
@@ -564,11 +560,11 @@ function credentialResourcesTargetFor(
  * door so per-Action settings apply. The shared loader owns demand and freshness.
  */
 const credentialResourcesLoader = createScopedSnapshotLoader<TeamCredentialResourcesTarget>({
-    load: async ({ scope, address, search, filter, queryKey }, loadContext) => {
+    load: async ({ scope, address, filter, queryKey }, loadContext) => {
         beginTeamCredentialResourcesLoad(scope, address, queryKey);
         let outcome: Awaited<ReturnType<typeof listTeamCredentialResources>>;
         try {
-            outcome = await listTeamCredentialResources({ scope, address, search, filter, signal: loadContext.signal });
+            outcome = await listTeamCredentialResources({ scope, address, filter, signal: loadContext.signal });
         } catch {
             // Ask-first reads settle through the Action owner. A thrown fault
             // is not a Home answer and must not revive an abandoned observer.
@@ -806,10 +802,9 @@ const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentia
 export function observeTeamCredentialResources(
     scope: ServerAccountScope,
     address: TeamAddress,
-    search?: string,
     filter: TeamCredentialResourceListFilterV1 = 'all',
 ): () => void {
-    const target = credentialResourcesTargetFor(scope, address, search, filter);
+    const target = credentialResourcesTargetFor(scope, address, filter);
     return target ? credentialResourcesLoader.observe(target) : () => {};
 }
 
@@ -861,10 +856,9 @@ export async function refreshTeamCredentialResourceCatalog(
 export async function refreshTeamCredentialResources(
     scope: ServerAccountScope,
     address: TeamAddress,
-    search?: string,
     filter: TeamCredentialResourceListFilterV1 = 'all',
 ): Promise<void> {
-    const target = credentialResourcesTargetFor(scope, address, search, filter);
+    const target = credentialResourcesTargetFor(scope, address, filter);
     if (target) await credentialResourcesLoader.refresh(target);
 }
 
@@ -872,10 +866,9 @@ export async function refreshTeamCredentialResources(
 export async function loadMoreTeamCredentialResources(
     scope: ServerAccountScope,
     address: TeamAddress,
-    search?: string,
     filter: TeamCredentialResourceListFilterV1 = 'all',
 ): Promise<void> {
-    const target = credentialResourcesTargetFor(scope, address, search, filter);
+    const target = credentialResourcesTargetFor(scope, address, filter);
     if (!target) return;
     const cursor = getTeamCredentialResourcesSnapshot(scope, address, target.queryKey)?.nextCursor ?? null;
     if (!cursor || paginating.has(target.key)) return;
@@ -883,7 +876,7 @@ export async function loadMoreTeamCredentialResources(
     paginating.add(target.key);
     try {
         await credentialResourcesLoader.readContinuation(target, async signal => {
-            const outcome = await listTeamCredentialResources({ scope, address, cursor, search, filter, signal });
+            const outcome = await listTeamCredentialResources({ scope, address, cursor, filter, signal });
             if (signal.aborted) return;
             if ((getTeamCredentialResourcesSnapshot(scope, address, target.queryKey)?.nextCursor ?? null) !== cursor) return;
             if (outcome.kind === 'succeeded') {

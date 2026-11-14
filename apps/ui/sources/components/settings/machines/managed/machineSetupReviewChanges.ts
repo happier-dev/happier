@@ -1,6 +1,8 @@
 import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupApplyInputV1, MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupSourceEntryV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import type { MachineSetupTargetSourcePresentations } from './machineSetupReview';
 
 /** The kinds a setup review groups its changes under (lab `setup/review` Changes), in the lab's order. */
 export const MACHINE_SETUP_CHANGE_KINDS = ['packages', 'files', 'users', 'ports', 'services', 'commands'] as const;
@@ -35,10 +37,47 @@ export function machineSetupScriptCommandLines(scripts: readonly Readonly<{ body
 }
 
 /** Count the same Plan operands that the grouped review describes. */
-export function countMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget): number {
+export function countMachineSetupTargetChanges(
+    target: MachineSetupReviewChangeTarget,
+    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+): number {
     let count = 0;
-    visitMachineSetupTargetChanges(target, (_kind, _line, weight) => { count += weight ?? 1; });
+    visitMachineSetupTargetChanges(target, (_kind, _line, weight) => { count += weight ?? 1; }, sourcePresentations);
     return count;
+}
+
+/**
+ * Local source copies used only for review presentation. Opaque preset entries
+ * need the exact caller projection supplied by the Plan; direct and bundled
+ * entries are already safe action-wire source bodies.
+ */
+export function readMachineSetupTargetOpenedSources(
+    target: MachineSetupReviewChangeTarget,
+    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+) {
+    if (sourcePresentations) {
+        return sourcePresentations.flatMap((presentation) =>
+            presentation.kind === 'opened' ? [presentation.source] : [],
+        );
+    }
+    return target.sources.flatMap((source) => {
+        const local = MachineSetupSourceEntryV1Schema.safeParse(source);
+        return local.success ? [local.data] : [];
+    });
+}
+
+/** The indexed form preserves the Plan's source identity for app review facts. */
+export function readMachineSetupTargetOpenedSource(
+    target: MachineSetupReviewChangeTarget,
+    sourceIndex: number,
+    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+) {
+    if (sourcePresentations) {
+        const presentation = sourcePresentations[sourceIndex];
+        return presentation?.kind === 'opened' ? presentation.source : null;
+    }
+    const local = MachineSetupSourceEntryV1Schema.safeParse(target.sources[sourceIndex]);
+    return local.success ? local.data : null;
 }
 
 type LineFacts = Omit<MachineSetupChangeLine, 'machineIds'> & Readonly<{ machineId: string }>;
@@ -48,7 +87,10 @@ type LineFacts = Omit<MachineSetupChangeLine, 'machineIds'> & Readonly<{ machine
  * that Apply carries. The same change on several Machines is one line naming them all. Presentation only: the Plan
  * stays the authority for what runs.
  */
-export function groupMachineSetupChanges(targets: readonly MachineSetupReviewChangeTarget[]): MachineSetupChangeGroup[] {
+export function groupMachineSetupChanges(
+    targets: readonly MachineSetupReviewChangeTarget[],
+    sourcePresentations?: readonly MachineSetupTargetSourcePresentations[],
+): MachineSetupChangeGroup[] {
     const groups = new Map<MachineSetupChangeKind, { lines: Map<string, { machineIds: string[] } & MachineSetupChangeLine>; weights: Map<string, number>; added: number; removed: number }>();
     const add = (kind: MachineSetupChangeKind, { machineId, ...change }: LineFacts, weight = 1) => {
         const group = groups.get(kind) ?? { lines: new Map(), weights: new Map(), added: 0, removed: 0 };
@@ -65,7 +107,13 @@ export function groupMachineSetupChanges(targets: readonly MachineSetupReviewCha
         }
         group.lines.set(key, { ...change, machineIds: [machineId] });
     };
-    for (const target of targets) visitMachineSetupTargetChanges(target, add);
+    for (const target of targets) visitMachineSetupTargetChanges(
+        target,
+        add,
+        sourcePresentations?.find((presentation) =>
+            presentation.homeId === target.homeId && presentation.machineId === target.machineId,
+        )?.sources,
+    );
     return MACHINE_SETUP_CHANGE_KINDS.flatMap(kind => {
         const group = groups.get(kind);
         return group ? [{ kind, lines: [...group.lines.values()], added: group.added, removed: group.removed }] : [];
@@ -74,9 +122,12 @@ export function groupMachineSetupChanges(targets: readonly MachineSetupReviewCha
 
 /** One projection of executable Plan facts; presentation never parses or resolves toolchain config. */
 function visitMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget,
-    add: (kind: MachineSetupChangeKind, change: LineFacts, weight?: number) => void): void {
+    add: (kind: MachineSetupChangeKind, change: LineFacts, weight?: number) => void,
+    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+): void {
     if ('recipePlans' in target) {
-        const merged = mergeMachineSetupsV1(target.sources.map(source => source.setup));
+        const openedSources = readMachineSetupTargetOpenedSources(target, sourcePresentations);
+        const merged = mergeMachineSetupsV1(openedSources.map(source => source.setup));
         if (merged.ok) {
             const { toolchain, scripts } = merged.setup;
             if (toolchain) add('files', { machineId: target.machineId,

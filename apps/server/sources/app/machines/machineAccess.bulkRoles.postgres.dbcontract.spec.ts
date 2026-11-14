@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
@@ -45,7 +46,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
         const team = await db.team.create({ data: { name: 'Actor projection team' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Actor projection group', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Actor projection group') } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
@@ -174,7 +175,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const [owner, otherOwner, direct, administrator, member, groupMember, removed, inactive, outsider] = people;
         await db.account.update({ where: { id: inactive!.id }, data: { status: 'suspended' } });
         const team = await db.team.create({ data: { name: 'Machine permission team' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Machine permission group', nameKey: 'machine-permission-group' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Machine permission group') } });
         const memberships = await Promise.all([member!, groupMember!, removed!].map(person => db.teamMembership.create({
             data: { teamId: team.id, accountId: person.id, role: 'member' },
         })));

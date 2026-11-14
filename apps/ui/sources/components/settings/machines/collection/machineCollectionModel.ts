@@ -10,7 +10,7 @@ import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { describeManagedCreation, isManagedMachineListArchived, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
 import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
@@ -92,7 +92,7 @@ export type MachinePresetCollectionRow = Readonly<{
     presetId: string;
     serverId: string;
     title: string;
-    preset: ManagedMachinePresetV1;
+    preset: ManagedMachinePresetListEntryV1;
     audience: string;
     teamName?: string;
 }>;
@@ -154,7 +154,7 @@ export function buildMachineCollection(input: Readonly<{
     managedByServerId?: Readonly<Record<string, readonly ManagedMachineV1[]>>;
     /** The managed inventory has not answered with the membership needed to partition enrolled rows. */
     managedFirstAnswerPending?: boolean;
-    presetsByServerId?: Readonly<Record<string, readonly ManagedMachinePresetV1[]>>;
+    presetsByServerId?: Readonly<Record<string, readonly ManagedMachinePresetListEntryV1[]>>;
     teamNamesByServerId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
     /** Managed creations whose installer is waiting on the user's consent, as `managedMachineConsentKey`. */
     awaitingConsent?: ReadonlySet<string>;
@@ -293,9 +293,9 @@ export function buildMachineCollection(input: Readonly<{
     });
     const presetSections = input.groups.map((group): MachinePresetCollectionSection => {
         const rows = (input.presetsByServerId?.[group.serverId] ?? [])
-            .filter(preset => !query || preset.name.toLocaleLowerCase().includes(query))
+            .filter(preset => !query || (preset.name ?? t('common.machine')).toLocaleLowerCase().includes(query))
             .map((preset): MachinePresetCollectionRow => ({ kind: 'preset', presetId: preset.id,
-                serverId: group.serverId, title: preset.name, preset,
+                serverId: group.serverId, title: preset.name ?? t('common.machine'), preset,
                 audience: preset.owner.kind === 'account' ? t('machinePresets.ownerPersonal')
                     : input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] ?? t('common.loading'),
                 ...(preset.owner.kind === 'team' ? { teamName: input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] } : {}) }))

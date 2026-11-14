@@ -12,7 +12,7 @@ import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema,
   type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1,
   ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createAdmittedPluginRuntimeFixture } from '../../../../../apps/cli/src/plugins/testkit/admittedRuntime';
@@ -71,19 +71,19 @@ else process.exit(23);
     controller, launch: { provider: lima, schemaVersion: 1, name: 'Contract guest', choices: launch },
     creationState: 'active', allocation: 'bound', desired: 'start', desiredWhen: 'now', intentRevision: 1,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } as const;
-  const inspected = ManagedMachineV1Schema.parse({ ...base, id: 'output-managed-inspect',
+  const inspected = ManagedMachineFullV1Schema.parse({ ...base, id: 'output-managed-inspect',
     resource: { contributionRef: lima, schemaVersion: 1, value: resource },
     enrolledMachineId: 'output-managed-enrolled', bootstrapInstalled: true });
-  const terminal = ManagedMachineV1Schema.parse({ ...base, id: 'output-managed-terminal',
+  const terminal = ManagedMachineFullV1Schema.parse({ ...base, id: 'output-managed-terminal',
     allocation: 'confirmed-absent', creationState: 'canceled', desired: 'delete' });
   const digest = 'a'.repeat(64);
   const rebuildLaunch = { runtime: 'docker', configuration: { kind: 'image', image: 'example/guest:1' } };
-  const rebuilt = ManagedMachineV1Schema.parse({ ...base, id: 'output-managed-rebuild', desired: 'rebuild',
+  const rebuilt = ManagedMachineFullV1Schema.parse({ ...base, id: 'output-managed-rebuild', desired: 'rebuild',
     launch: { provider: container, schemaVersion: 1, name: 'Rebuilt guest', choices: rebuildLaunch },
     resource: { contributionRef: container, schemaVersion: 1, value: { ...rebuildLaunch,
       reviewedEffectDigest: digest, managedMachineId: 'output-managed-rebuild', containerId: 'b'.repeat(64),
       user: 'happier', workspaceRoot: '/workspace', storage: { kind: 'child', childPath: '/workspace' }, volumes: [] } } });
-  let machine: ManagedMachineV1 = inspected;
+  let machine: ManagedMachineFullV1 = inspected;
   const home = createServer((request, response) => {
     void (async () => {
       if (request.method !== 'POST') { response.writeHead(404).end(); return; }
@@ -106,7 +106,7 @@ else process.exit(23);
         case '/v1/machines/managed/controller/report':
         case '/v1/machines/managed/controller/report-resize':
           // Retain the native observation actually computed by the SDK producer.
-          machine = ManagedMachineV1Schema.parse({ ...machine, ...(body.observation ? { observation: body.observation } : {}) });
+          machine = ManagedMachineFullV1Schema.parse({ ...machine, ...(body.observation ? { observation: body.observation } : {}) });
           output = { machine }; break;
         case '/v1/machines/managed/actions/get': output = machine; break;
         default: throw new Error(`Unexpected managed Home boundary: ${request.url}`);
@@ -271,7 +271,7 @@ export async function createManagedBootstrapResponseOutputFixture(options: Manag
     headers: { Authorization: `Bearer ${options.ownerToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ homeId: options.homeId, managedId: seeded.managedId }) });
   if (!response.ok) throw new Error(`Bootstrap response fixture read failed: HTTP ${response.status}`);
-  const machine = ManagedMachineV1Schema.parse(await response.json());
+  const machine = ManagedMachineFullV1Schema.parse(await response.json());
   const tasks = getLiveSystemTasksRunnerAdapter();
   let taskId: string | undefined;
   let operationId: string | undefined;

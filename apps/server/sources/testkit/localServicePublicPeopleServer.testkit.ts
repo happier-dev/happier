@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { LocalServicePublicExposureAudienceV1 } from '@happier-dev/protocol/local/services/public/v1';
@@ -27,7 +28,7 @@ export async function createLocalServicePublicPeopleServer() {
             { teamId: team.id, accountId: owner.id, role: 'owner' },
             { teamId: team.id, accountId: recipient.id, role: 'member' },
         ] });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Preview viewers', nameKey: 'preview-viewers' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Preview viewers') } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}' } });
         const preview: LocalServicePreviewResourceV1 = { previewId: 'preview_people', sessionId: session.id,
             machineId: 'machine_people', owner: { kind: 'session', id: session.id },

@@ -5,6 +5,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { isManagedOpaquePresetReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { expect } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -270,7 +271,8 @@ export async function exerciseManagedCreatorSetupRecovery() {
     expect(running.machine).not.toHaveProperty('bootstrapCredentialRef');
     await reportMachineSetup({ ...params, input: { ...input, state: 'failed', errorCode: 'setup_failed' } });
     const skipped = await skipManagedMachineSetup({ actorAccountId: creator.id, input: { homeId, managedId: row.id, expectedIntentRevision: 0 } });
-    expect(skipped).toMatchObject({ id: row.id, enrolledMachineId: guest.id, machineSetup: { state: 'skipped' } });
-    expect(skipped.launch).not.toHaveProperty('credentials');
-    expect(skipped).not.toHaveProperty('bootstrapCredentialRef');
+    const skippedMachine = isManagedOpaquePresetReadV1(skipped) ? skipped.machine : skipped;
+    expect(skippedMachine).toMatchObject({ id: row.id, enrolledMachineId: guest.id, machineSetup: { state: 'skipped' } });
+    expect(skippedMachine.launch).not.toHaveProperty('credentials');
+    expect(skippedMachine).not.toHaveProperty('bootstrapCredentialRef');
 }

@@ -5,17 +5,17 @@ import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/mana
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 /** Configured unused Stops consume rule consent; other policy effects retain shared Ask. */
-export async function executeManagedMachinePolicyAction(input: Readonly<{
-    machine: ManagedMachineV1;
+export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineV1>(input: Readonly<{
+    machine: Machine;
     purpose: ManagedPolicyPurposeV1;
     context: ActionExecutorContext;
     serverId: string;
-    runApproved(context: ActionExecutorContext): Promise<ManagedMachineV1>;
+    runApproved(context: ActionExecutorContext): Promise<Machine>;
     createExecutor(options: Readonly<{
         hostActionApprovalLifetime: Readonly<{ operationId: string; signal: AbortSignal }>;
         managedMachineAction: NonNullable<ActionExecutorDeps['managedMachineAction']>;
     }>): Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
-}>): Promise<ManagedMachineV1> {
+}>): Promise<Machine> {
     const { machine, context } = input;
     const operationId = context.operationAcceptance?.operationId;
     const signal = context.signal;
@@ -34,7 +34,7 @@ export async function executeManagedMachinePolicyAction(input: Readonly<{
         when: 'now', expectedRevision: machine.intentRevision,
         ...(machine.desired === 'delete' ? { reviewedDependencies: true } : {}),
     };
-    let settledMachine: ManagedMachineV1 | undefined;
+    let settledMachine: Machine | undefined;
     let approvedFailure: Readonly<{ error: unknown }> | undefined;
     const result = await input.createExecutor({
         hostActionApprovalLifetime: { operationId, signal },

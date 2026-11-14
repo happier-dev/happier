@@ -42,6 +42,7 @@ import { registerSessionMessageRoutes } from "../routes/session/registerSessionM
 import { sessionPendingRoutes } from "../routes/session/pendingRoutes";
 import { machinesRoutes } from "../routes/machines/machinesRoutes";
 import { startSocket } from "../socket";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 type TestRpcHandler = (
     input: unknown,
@@ -191,7 +192,7 @@ describe("protected SDK Session-targeted transport dispatch to a restricted Runn
         const apiToken = await auth.createApiToken({
             accountId: account.id,
             tokenId,
-            label: "Restricted Runner composition",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Restricted Runner composition"),
             encryption: { access: encryptionAccess },
         });
         const credential = formatAccountApiTokenCredentialV1({

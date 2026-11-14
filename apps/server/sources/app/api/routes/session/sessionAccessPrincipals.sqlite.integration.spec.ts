@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -47,9 +48,9 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
             });
             if (!result.ok) throw new Error("fixture membership admission failed");
         });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Visible Group", nameKey: "visible group" } });
-        const hiddenGroup = await db.teamGroup.create({ data: { teamId: hiddenTeam.id, name: "Hidden Group", nameKey: "hidden group" } });
-        const unrequestedGroup = await db.teamGroup.create({ data: { teamId: team.id, name: "Not requested", nameKey: "not requested" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Visible Group") } });
+        const hiddenGroup = await db.teamGroup.create({ data: { teamId: hiddenTeam.id, name: storedPlainPrivateLabel("Hidden Group") } });
+        const unrequestedGroup = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Not requested") } });
         const response = await app.inject({
             method: "POST", url: "/v1/session-access/principals/resolve",
             headers: { "x-test-user-id": actor.id },
@@ -100,7 +101,7 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         await inTx((tx) => admitTeamMemberInTx(tx, {
             teamId: team.id, accountId: actor.id, role: "member", historyAccess: "all_existing",
         }));
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Restricted selected Group", nameKey: "restricted selected group" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Restricted selected Group") } });
         const payload = { v: 1, subjects: [
             { kind: "team", teamId: team.id },
             { kind: "group", teamId: team.id, groupId: group.id },

@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { JsonValue } from '@happier-dev/protocol';
-import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { AcquireResultV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { bindManagedMachineRoleCredentials, captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
     reconcileManagedMachine, type ManagedMachineReconciliation } from './reconcile.js';
 import { executeManagedMachineAcquire } from './acquire.js';
+import { executeManagedMachineDeleteIntent, prepareManagedMachineDeleteIntent } from './destroy.js';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal } from './controllerErrors.js';
 
-const machine = ManagedMachineV1Schema.parse({
+const machine = ManagedMachineFullV1Schema.parse({
     id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
@@ -31,12 +32,12 @@ const provisioner = MachineProvisionerContributionV1Schema.parse({
 });
 
 describe('portable issued native identity', () => {
-    const correlation = (row: ManagedMachineV1) => ({ homeId: row.homeId, managedId: row.id,
+    const correlation = (row: ManagedMachineFullV1) => ({ homeId: row.homeId, managedId: row.id,
         expectedIntentRevision: row.intentRevision, requestId: 'request', ...(row.controller ? { controller: row.controller } : {}) });
     it.each([true, false])('reports only the exact submitted identity (controller present: %s)', withController => {
-        const row = ManagedMachineV1Schema.parse({ ...machine, ...(withController ? {} : { controller: undefined }), allocation: 'may-exist' });
+        const row = ManagedMachineFullV1Schema.parse({ ...machine, ...(withController ? {} : { controller: undefined }), allocation: 'may-exist' });
         const captured = captureManagedSubmittedNativeIdentity({ kind: 'acquire', machine: row, provisioner });
-        const report = (candidate: ManagedMachineV1, value: NonNullable<ManagedMachineV1['resource']>['value'] = resource.value) => readManagedIssuedNativeFact({
+        const report = (candidate: ManagedMachineFullV1, value: NonNullable<ManagedMachineFullV1['resource']>['value'] = resource.value) => readManagedIssuedNativeFact({
             machine: candidate, fact: { kind: 'bound', resource: { ...resource, value } },
             action: 'machines.managed.acquire', kind: 'acquire', captured, correlation });
         expect(report(row).result).toEqual({ kind: 'bound', resource });
@@ -48,9 +49,9 @@ describe('portable issued native identity', () => {
         const recovering = MachineProvisionerContributionV1Schema.parse({ ...provisioner, reconciliation: {
             action: 'reconcile', nativeOperationSchema: provisioner.resourceSchema,
         } });
-        const row = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist', nativeOperationRef: resource });
+        const row = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist', nativeOperationRef: resource });
         const captured = captureManagedPendingNativeIdentity({ machine: row, current: row, provisioner: recovering });
-        const report = (candidate: ManagedMachineV1, fact: Parameters<typeof readManagedIssuedNativeFact>[0]['fact']) =>
+        const report = (candidate: ManagedMachineFullV1, fact: Parameters<typeof readManagedIssuedNativeFact>[0]['fact']) =>
             readManagedIssuedNativeFact({ machine: candidate, fact, action: 'machines.managed.bootstrap.retry',
                 kind: 'pending-acquire', captured, correlation });
         expect(report(row, { kind: 'bound', resource }).result).toEqual({ kind: 'bound', resource });
@@ -100,7 +101,7 @@ it('binds role authority only to one selected Account in its declared service sc
     const service = { pluginId: 'acme.accounts', localId: 'cloud' };
     const credential = { purpose: { ...purpose, consumer: machine.launch.provider },
         account: { service, accountId: 'selected-account' }, configurationRevision: null };
-    const bind = (credentials: ManagedMachineV1['launch']['credentials']) => bindManagedMachineRoleCredentials({
+    const bind = (credentials: ManagedMachineFullV1['launch']['credentials']) => bindManagedMachineRoleCredentials({
         authorizations: [{ purpose, serviceRefs: [service] }], provider: machine.launch.provider, credentials,
     });
     expect(bind([credential])).toEqual([{ purpose, serviceRefs: [service], credential }]);
@@ -109,7 +110,7 @@ it('binds role authority only to one selected Account in its declared service sc
             source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode,
             ...(deliveryMode === 'direct' ? { disclosedMember: credential.account } : {}),
         } };
-        const retained = ManagedMachineV1Schema.parse({ ...machine, launch: { ...machine.launch, credentials: [teamCredential] } });
+        const retained = ManagedMachineFullV1Schema.parse({ ...machine, launch: { ...machine.launch, credentials: [teamCredential] } });
         expect(bind(retained.launch.credentials)).toEqual([{ purpose, serviceRefs: [service], credential: teamCredential }]);
     }
     for (const credentials of [[], [credential, credential], [{ ...credential,
@@ -121,7 +122,7 @@ it('binds role authority only to one selected Account in its declared service sc
 });
 
 /** Home transport and vendor invocation are the actual external boundaries of this owner. */
-function boundary(initial: ManagedMachineV1 = machine) {
+function boundary(initial: ManagedMachineFullV1 = machine) {
     let retained = initial;
     const events: string[] = [];
     const roles: string[] = [];
@@ -134,7 +135,7 @@ function boundary(initial: ManagedMachineV1 = machine) {
                 events.push(path);
                 if (path === 'report') {
                     const report = ManagedControllerReportV1Schema.parse(body);
-                    retained = ManagedMachineV1Schema.parse({ ...retained,
+                    retained = ManagedMachineFullV1Schema.parse({ ...retained,
                         ...(report.observation ? { observation: report.observation } : {}),
                         ...(report.bootstrapInstalled ? { bootstrapInstalled: true } : {}) });
                 }
@@ -170,10 +171,24 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it('refuses unsupported or unidentified opaque cleanup at the native owner without IO', async () => {
+        const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist',
+            creationState: 'canceled', desired: 'delete', preset: { id: 'preset', revision: 0, contentEncryptionMode: 'plain' } });
+        const run = boundary(initial);
+        const invoke = run.input.createNative(() => initial, () => undefined).invoke;
+        await expect(prepareManagedMachineDeleteIntent({ machine: initial, requestId: 'cleanup',
+            provisioner, home: run.input.home, invoke })).rejects.toMatchObject({ code: 'provider_unavailable' });
+        await expect(executeManagedMachineDeleteIntent({ machine: initial, invoke }))
+            .rejects.toMatchObject({ code: 'native_resource_unavailable' });
+        expect(run.roles).toEqual([]);
+        expect(run.events).toEqual([]);
+        expect(run.read()).toEqual(initial);
+    });
+
     it.each(['present', 'unavailable'] as const)('observes retained power custody through its original correlation when native availability is %s', async availability => {
         const outstanding = { intent: 'stop' as const, requestId: 'original-power', intentRevision: 2,
             controller: machine.controller };
-        const retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', resource, intentRevision: 4,
+        const retained = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource, intentRevision: 4,
             submittedNativeEffect: outstanding });
         const run = boundary(retained);
         const reports: Array<{ path: string; body: unknown }> = [];
@@ -273,7 +288,7 @@ describe('portable managed reconciliation', () => {
                 kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/report', category: 'status', status: 503,
             });
             // Home HTTP and guest completion are host transport boundaries; reconciliation stays real.
-            const bootstrap = { ...run.input.bootstrap, complete: async (row: ManagedMachineV1) => {
+            const bootstrap = { ...run.input.bootstrap, complete: async (row: ManagedMachineFullV1) => {
                 expect(row.enrolledMachineId).toBe('guest');
                 completed += 1;
             } };
@@ -444,7 +459,7 @@ describe('portable managed reconciliation', () => {
         await expect(reconcileManagedMachine({ ...run.input, bootstrap: { ...run.input.bootstrap,
             enroll: async () => { throw failure; },
         } })).rejects.toBe(failure);
-        const afterRestart = boundary(ManagedMachineV1Schema.parse(JSON.parse(JSON.stringify(run.read()))));
+        const afterRestart = boundary(ManagedMachineFullV1Schema.parse(JSON.parse(JSON.stringify(run.read()))));
         const roles: string[] = [];
         const observed = await reconcileManagedMachine({ ...afterRestart.input, action: 'machines.managed.inspect',
             createNative: () => ({ prepareRoles: async () => {}, invoke: async (role): Promise<JsonValue | null> => { roles.push(role); return observation; } }),
@@ -489,7 +504,7 @@ describe('portable managed reconciliation', () => {
     });
 
     it('records a failed native reconciliation read without losing its typed cause or claiming absence', async () => {
-        const initial = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist' });
+        const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist' });
         const run = boundary(initial);
         const reports: unknown[] = [];
         await reconcileManagedMachine({ ...run.input, action: 'machines.managed.inspect',
@@ -507,15 +522,15 @@ describe('portable managed reconciliation', () => {
     });
 
     it.each(['absent', 'present', 'unavailable'] as const)('settles a recovered identity from its exact %s inspection in one Home report', async availability => {
-        const initial = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist' });
+        const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist' });
         const run = boundary(initial);
         const reports: unknown[] = [];
         const result = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.inspect',
             provisioner: { ...provisioner, reconciliation: { action: 'reconcile', nativeOperationSchema: provisioner.resourceSchema } },
             home: { ...run.input.home, row: async (_path, body) => {
                 reports.push(body);
-                const report = body as { result: { kind: string }; observation?: ManagedMachineV1['observation'] };
-                return ManagedMachineV1Schema.parse({ ...initial,
+                const report = body as { result: { kind: string }; observation?: ManagedMachineFullV1['observation'] };
+                return ManagedMachineFullV1Schema.parse({ ...initial,
                     ...(report.result.kind === 'bound' ? { allocation: 'bound', resource } : { allocation: 'confirmed-absent' }),
                     observation: report.observation });
             } },
@@ -536,15 +551,15 @@ describe('portable managed reconciliation', () => {
             nativeCause: { httpStatusClass: '5xx' as const } },
         { kind: 'pending' as const, nativeOperationRef: resource },
     ])('records the latest $kind acquisition check, including an unchanged unknown outcome', async result => {
-        const initial = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist' });
+        const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist' });
         const run = boundary(initial);
         let saved = initial;
         const missing = result.kind === 'rejected' && result.code === 'managed_not_found';
         await reconcileManagedMachine({ ...run.input, action: 'machines.managed.inspect',
             provisioner: { ...provisioner, reconciliation: { action: 'reconcile', nativeOperationSchema: provisioner.resourceSchema } },
             home: { ...run.input.home, row: async (_path, body) => {
-                const report = body as { result: typeof result; observation?: ManagedMachineV1['observation'] };
-                saved = ManagedMachineV1Schema.parse({ ...saved,
+                const report = body as { result: typeof result; observation?: ManagedMachineFullV1['observation'] };
+                saved = ManagedMachineFullV1Schema.parse({ ...saved,
                     allocation: report.result.kind === 'rejected' ? 'confirmed-absent' : 'may-exist', observation: report.observation });
                 return saved;
             } },
@@ -573,7 +588,7 @@ describe('portable managed reconciliation', () => {
         const acquire = { provisioner,
             admit: async () => { admissions++; return machine; },
             onAccepted: () => { run.events.push('accepted'); },
-            run: (row: ManagedMachineV1) => reconcileManagedMachine({ ...run.input, machine: row }),
+            run: (row: ManagedMachineFullV1) => reconcileManagedMachine({ ...run.input, machine: row }),
         };
         await expect(executeManagedMachineAcquire({ ...acquire, host: 'browser' })).rejects.toMatchObject({ code: 'provider_unavailable' });
         expect(admissions).toBe(0);

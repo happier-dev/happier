@@ -1,6 +1,6 @@
 import type { QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import type { PluginContributionRef } from '../../plugins/registration/contracts.js';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isMachineProvisionerCredentialPurposeRequiredV1,
     type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachineControllerError } from './controllerErrors.js';
@@ -11,9 +11,9 @@ export function bindManagedMachineRoleCredentials<T extends Readonly<{
 }>>(input: Readonly<{
     authorizations: readonly T[];
     provider: PluginContributionRef;
-    credentials: ManagedMachineV1['launch']['credentials'];
+    credentials: ManagedMachineFullV1['launch']['credentials'];
     qualification?: Readonly<{ descriptor: MachineProvisionerContributionV1; launch: unknown }>;
-}>): Array<T & { credential: NonNullable<ManagedMachineV1['launch']['credentials']>[number] }> {
+}>): Array<T & { credential: NonNullable<ManagedMachineFullV1['launch']['credentials']>[number] }> {
     const { qualification } = input;
     return input.authorizations.filter(authorization => !qualification || isMachineProvisionerCredentialPurposeRequiredV1(
         qualification.descriptor, authorization.purpose.purpose, qualification.launch)).map(authorization => {
@@ -32,7 +32,7 @@ export function bindManagedMachineRoleCredentials<T extends Readonly<{
 /** Each role consumes the exact selected launch credential through its own declared purpose. */
 export function projectManagedMachineRolePurposeBindingsV1(authorizations: readonly Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
-    credential: NonNullable<ManagedMachineV1['launch']['credentials']>[number];
+    credential: NonNullable<ManagedMachineFullV1['launch']['credentials']>[number];
 }>[]): QualifiedConnectedAccountPurposeBindingsV1 {
     const bindings = authorizations.flatMap(({ purpose, credential }) => 'account' in credential
         ? [{ purpose, target: { kind: 'account' as const, account: credential.account } }] : []);
@@ -42,7 +42,7 @@ export function projectManagedMachineRolePurposeBindingsV1(authorizations: reado
 }
 
 export function readManagedMachineRoleCredentialConfigurationsV1(authorizations: readonly Readonly<{
-    credential: NonNullable<ManagedMachineV1['launch']['credentials']>[number];
+    credential: NonNullable<ManagedMachineFullV1['launch']['credentials']>[number];
 }>[]) {
     return authorizations.flatMap(({ credential }) => !('account' in credential) || credential.configurationRevision === undefined
         ? [] : [{ account: credential.account, revision: credential.configurationRevision }]);

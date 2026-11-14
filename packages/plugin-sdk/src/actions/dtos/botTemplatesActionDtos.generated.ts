@@ -319,7 +319,7 @@ export type BotTemplatesActionInputById = {
             machineSetupPlanInput?: undefined | {
                 homeId: string;
                 machineId: string;
-                sources?: unknown;
+                sources?: undefined | unknown[];
                 exclusions?: undefined | {
                     ref: {
                         pluginId: string;
@@ -1414,6 +1414,10 @@ export type BotTemplatesActionInputById = {
                     };
                     maximumObservationAgeMs: null | number;
                     enabled: boolean;
+                    automationDisplay?: undefined | {
+                        name: string;
+                        description: null | string;
+                    };
                 } | {
                     kind: 'pluginEvent';
                     eventRef: {
@@ -1481,8 +1485,8 @@ export type BotTemplatesActionInputById = {
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -1850,13 +1854,17 @@ export type BotTemplatesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
+                approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
-                inputs?: Record<string, unknown> | undefined;
-                approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2894,6 +2902,7 @@ export type BotTemplatesActionResultById = {
             failureCause?: undefined | {
                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                actionCause?: ActionFailureCauseV1 | undefined;
                 code?: string | undefined;
                 retryable?: boolean | undefined;
                 requestId?: string | undefined;

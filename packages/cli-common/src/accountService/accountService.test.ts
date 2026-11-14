@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createHomeCredentialDestinationDigestV1,
-  type AccountDirectoryHomeEntryV1,
+  type OpenedAccountDirectoryHomeEntryV1,
   type HomeLoginAssertionV1,
   type HomeLoginRedemptionResultV1,
 } from '@happier-dev/protocol';
@@ -21,11 +21,12 @@ import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestR
 const HOME_A = createHome('srv_home_a', false);
 const HOME_B = createHome('srv_home_b', true);
 const HOME_C = createHome('srv_home_c', false);
+const ACCOUNT_SUBJECT = { accountId: 'account-1', encryptionMode: 'e2ee' } as const;
 
 function createHome(
   homeServerIdentityId: string,
   preferred: boolean,
-): AccountDirectoryHomeEntryV1 {
+): OpenedAccountDirectoryHomeEntryV1 {
   const canonicalServerUrl = `https://${homeServerIdentityId}.example.test`;
   return {
     v: 1,
@@ -109,7 +110,7 @@ function createEnrollmentHarness(options: Readonly<{
     reconcileAuthenticatedHome: vi.fn(async () => {}),
     closeHomeTransport: vi.fn(async () => {}),
   };
-  const adoptHome = vi.fn(async (home: AccountDirectoryHomeEntryV1) => {
+  const adoptHome = vi.fn(async (home: OpenedAccountDirectoryHomeEntryV1) => {
     adoptionOrder.push(home.homeServerIdentityId);
   });
   return { adapters, adoptHome, adoptionOrder };
@@ -629,7 +630,7 @@ describe('Account Service deterministic domain operations', () => {
 
     const result = await runAccountServiceDirectoryJourney({
       directory: {
-        homes: [home as AccountDirectoryHomeEntryV1],
+        homes: [home as OpenedAccountDirectoryHomeEntryV1],
         preferredHomeServerIdentityId: home.homeServerIdentityId,
       },
       issuerServerIdentityId: 'srv_directory',
@@ -753,7 +754,7 @@ describe('Account Service deterministic domain operations', () => {
     const accountServiceCredential = { kind: 'account_service' as const, token: 'directory-token' };
     const readHomeCredential = vi.fn(async () => homeCredential);
     const readAccountServiceCredential = vi.fn(async () => accountServiceCredential);
-    const readAccountSubject = vi.fn(async () => 'account-1');
+    const readAccountSubject = vi.fn(async () => ACCOUNT_SUBJECT);
     const publishLinkToHome = vi.fn(async () => {});
     const publishHomeToAccountService = vi.fn(async () => {});
 
@@ -777,6 +778,7 @@ describe('Account Service deterministic domain operations', () => {
     expect(publishHomeToAccountService).toHaveBeenCalledWith(expect.objectContaining({
       credential: accountServiceCredential,
       home: HOME_B,
+      issuer: ACCOUNT_SUBJECT,
     }));
     expect(publishLinkToHome).not.toHaveBeenCalledWith(expect.objectContaining({ credential: accountServiceCredential }));
     expect(publishHomeToAccountService).not.toHaveBeenCalledWith(expect.objectContaining({ credential: homeCredential }));
@@ -795,7 +797,7 @@ describe('Account Service deterministic domain operations', () => {
       adapters: {
         readHomeCredential: vi.fn(async () => ({ token: 'home-token' })),
         readAccountServiceCredential: vi.fn(async () => ({ token: 'directory-token' })),
-        readAccountSubject: vi.fn(async () => 'account-1'),
+        readAccountSubject: vi.fn(async () => ACCOUNT_SUBJECT),
         publishLinkToHome: vi.fn(async () => {}),
         publishHomeToAccountService: vi.fn(async () => {
           cancelled = true;
@@ -822,7 +824,7 @@ describe('Account Service deterministic domain operations', () => {
       adapters: {
         readHomeCredential: vi.fn(async () => ({ token: 'home-token' })),
         readAccountServiceCredential: vi.fn(async () => ({ token: 'directory-token' })),
-        readAccountSubject: vi.fn(async () => 'account-1'),
+        readAccountSubject: vi.fn(async () => ACCOUNT_SUBJECT),
         publishLinkToHome,
         publishHomeToAccountService,
       },
@@ -846,7 +848,7 @@ describe('Account Service deterministic domain operations', () => {
       adapters: {
         readHomeCredential: vi.fn(async () => ({ token: 'home-token' })),
         readAccountServiceCredential: vi.fn(async () => ({ token: 'directory-token' })),
-        readAccountSubject: vi.fn(async () => 'account-1'),
+        readAccountSubject: vi.fn(async () => ACCOUNT_SUBJECT),
         publishLinkToHome,
         publishHomeToAccountService,
       },
@@ -872,7 +874,7 @@ describe('Account Service deterministic domain operations', () => {
       adapters: {
         readHomeCredential: vi.fn(async () => ({ token: 'home-token' })),
         readAccountServiceCredential: vi.fn(async () => ({ token: 'directory-token' })),
-        readAccountSubject: vi.fn(async () => 'account-1'),
+        readAccountSubject: vi.fn(async () => ACCOUNT_SUBJECT),
         publishLinkToHome,
         publishHomeToAccountService,
       },
@@ -895,7 +897,7 @@ describe('Account Service deterministic domain operations', () => {
       adapters: {
         readHomeCredential: vi.fn(async () => ({ token: 'home-token' })),
         readAccountServiceCredential: vi.fn(async () => ({ token: 'directory-token' })),
-        readAccountSubject: vi.fn(async () => '   '),
+        readAccountSubject: vi.fn(async () => ({ ...ACCOUNT_SUBJECT, accountId: '   ' })),
         publishLinkToHome,
         publishHomeToAccountService,
       },

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { parseOrganizationPolicyV1 } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 import {
@@ -116,6 +117,31 @@ describe('CLI Account Service session owner', () => {
       expect((await stat(dirname(recordPath))).mode & 0o777).toBe(0o700);
       expect((await stat(recordPath)).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it('retains only the derived Account content key inside the existing protected credential record', async () => {
+    const happyHomeDir = await createHome();
+    const owner = createCliAccountServiceSessionOwner({ happyHomeDir });
+    const selected = service();
+    const accountContentPrivateKey = new Uint8Array(32).fill(19);
+
+    await owner.selectService(selected);
+    await owner.replaceCredential({
+      service: selected,
+      credential: { token: 'keyed-account-service-token', accountContentPrivateKey },
+    });
+
+    const recordPath = resolveCliAccountServiceSessionRecordPath(happyHomeDir);
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toMatchObject({
+      restrictedCredential: {
+        token: 'keyed-account-service-token',
+        accountContentPrivateKey: encodeBase64(accountContentPrivateKey),
+      },
+    });
+    const reloaded = createCliAccountServiceSessionOwner({ happyHomeDir });
+    await expect(reloaded.readCredential(selected)).resolves.toEqual({
+      token: 'keyed-account-service-token', accountContentPrivateKey,
+    });
   });
 
   it('atomically replaces the exact endpoint/identity selection without carrying its credential', async () => {

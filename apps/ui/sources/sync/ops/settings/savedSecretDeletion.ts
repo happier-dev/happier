@@ -14,6 +14,7 @@ import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMeta
 import { getSavedSecretCatalogSnapshot } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { captureSavedSecretReferenceStateInContext, operationFailureReason,
     type SavedSecretAdmittedMutationExecute, type SavedSecretResourceOperationResult } from './savedSecretResourceOperations';
+import { captureManagedMachinePresetSavedSecretReferencesInContext } from '@/sync/ops/machines/machinePresetCollectionClientImpl';
 
 /** Deletion names current references rather than leaving their bindings dangling. */
 export type SavedSecretResourceDeleteResult =
@@ -70,10 +71,18 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 const references = listAccountSettingsSavedSecretReferences(baseline.source.raw, resourceRef, catalogs);
                 if (references.length > 0) return { ok: false, reason: 'in_use', references };
                 context.assertCurrent();
+                const opaquePresetReferences = context.serverIdentityId
+                    ? await captureManagedMachinePresetSavedSecretReferencesInContext({
+                        scope: params.scope,
+                        homeId: context.serverIdentityId,
+                        account: context,
+                    })
+                    : { kind: 'unavailable' as const };
+                if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable' };
                 const outcome = await (params.executeAdmittedMutation ?? runTeamAction)({ scope: params.scope, actionId: 'secrets.shared.delete',
                     input: { resourceId: params.resourceId, expectedRevision,
                         expectedSettingsVersion: baseline.source.version,
-                        referenceCensus,
+                        referenceCensus: { ...referenceCensus, opaquePresetReferences: opaquePresetReferences.opaquePresetReferences },
                         ...(params.managedResourceDispositions ? { managedResourceDispositions: params.managedResourceDispositions } : {}),
                     },
                     parse: value => SharedSavedSecretDeleteOutputV1Schema.parse(value),

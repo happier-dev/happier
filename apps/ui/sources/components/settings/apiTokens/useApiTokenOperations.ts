@@ -1,7 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
-
-import type { ApiTokenSettingsController } from './apiTokenSettingsController';
+import type { ApiTokenSettingsController, ApiTokenSettingsToken } from './apiTokenSettingsController';
 import { showApiTokenCreateModal, showApiTokenEditAccessModal } from './showApiTokenCreateModal';
 
 /**
@@ -12,11 +10,11 @@ export function useApiTokenOperations(controller: ApiTokenSettingsController) {
         showApiTokenCreateModal(controller);
     }, [controller]);
 
-    const editAccess = React.useCallback((token: AccountApiTokenSummaryV1) => {
+    const editAccess = React.useCallback((token: ApiTokenSettingsToken) => {
         showApiTokenEditAccessModal(controller, token.tokenId);
     }, [controller]);
 
-    const revoke = React.useCallback(async (token: Pick<AccountApiTokenSummaryV1, 'tokenId' | 'label'>): Promise<boolean> => {
+    const revoke = React.useCallback(async (token: Pick<ApiTokenSettingsToken, 'tokenId' | 'label'>): Promise<boolean> => {
         return await controller.revokeToken(token.tokenId);
     }, [controller]);
 

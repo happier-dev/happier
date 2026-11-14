@@ -6,7 +6,8 @@ describe('MachineSecretGrantV1', () => {
         const base = { v: 1, machineId: 'machine', installationId: 'installation', sealedContent: 'opaque' };
         const subjects = [
             { kind: 'secret', environmentId: 'environment', resourceId: 'resource', resourceRevision: 3 },
-            { kind: 'environmentValues', environmentId: 'environment', binding: { purpose: 'variable', phase: 'runtime', name: 'PORT' } },
+            { kind: 'environmentValues', environmentId: 'environment', binding: { purpose: 'variable', phase: 'runtime',
+                grantRef: '00000000-0000-4000-8000-000000000001' } },
             { kind: 'connectorToken', provider: { pluginId: 'example.tunnel', localId: 'tunnel' }, connectorId: 'connector' },
             { kind: 'connectorToken', provider: { kind: 'builtin', id: 'tailscale' }, connectorId: 'connector' },
             { kind: 'connectorToken', provider: { kind: 'builtin', id: 'cloudflare' }, connectorId: 'connector' },
@@ -19,6 +20,7 @@ describe('MachineSecretGrantV1', () => {
             const admitted = contract.MachineSecretGrantSubjectV1Schema.parse({ v: 1, machineId: 'machine', installationId: 'installation', ...subject });
             const ref = contract.machineSecretGrantSubjectKey(admitted);
             expect(contract.parseMachineSecretGrantSubjectKey(ref)).toEqual(admitted);
+            if (admitted.kind === 'environmentValues') expect(ref).not.toContain('PORT');
             expect(contract.parseMachineSecretGrantSubjectKey(ref.slice(0, -1) + ',"extra"]')).toBeNull();
             expect(contract.parseMachineSecretGrantSubjectKey(' ' + ref)).toBeNull();
         }
@@ -26,7 +28,8 @@ describe('MachineSecretGrantV1', () => {
             expect(contract.parseMachineSecretGrantSubjectKey(invalid)).toBeNull();
         }
         expect(contract.MachineSecretGrantV1Schema.safeParse({ ...base, ...subjects[0], resourceRevision: 0 }).success).toBe(false);
-        expect(contract.MachineSecretGrantV1Schema.safeParse({ ...base, ...subjects[1], binding: { purpose: 'variable', phase: 'runtime', name: 'PORT', source: {} } }).success).toBe(false);
+        expect(contract.MachineSecretGrantV1Schema.safeParse({ ...base, ...subjects[1], binding: { purpose: 'variable', phase: 'runtime',
+            grantRef: '00000000-0000-4000-8000-000000000001', name: 'PORT' } }).success).toBe(false);
         expect(contract.MachineSecretGrantV1Schema.safeParse({ ...base, ...subjects[2], provider: { pluginId: 'example.tunnel', localId: 'tunnel', credential: 'invalid' } }).success).toBe(false);
         expect(contract.MachineSecretGrantV1Schema.safeParse({ ...base, ...subjects[2], environmentId: 'environment' }).success).toBe(false);
 

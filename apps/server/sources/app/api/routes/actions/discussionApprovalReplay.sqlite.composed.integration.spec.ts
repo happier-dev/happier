@@ -98,6 +98,7 @@ import { ConnectedServiceRuntimeRegistry } from '../../../../../../cli/src/daemo
 import { createRequesterSessionControlRuntimeFixture } from '../../../../../../cli/src/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { createCurrentMachineExecutionOriginContextResolver } from '../../../../../../cli/src/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createServerUrlServerFeaturesSnapshotStore } from '../../../../../../cli/src/features/serverFeaturesSnapshotStore';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const document = (text: string) => ({ t: 'plain' as const, v: { v: 1 as const, parts: [{ t: 'text' as const, text }] } });
 
@@ -780,7 +781,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                         // APPR-S3 admits ordinary terminal Actions; scoped API
                         // credentials still cannot attest an installed publisher.
                         const scopedCredential = await auth.createApiToken({ accountId: account.id,
-                            tokenId: randomUUID(), label: 'Discussion publisher negative' });
+                            tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Discussion publisher negative') });
                         expect((await probe(sign(fresh()), scopedCredential.token)).statusCode).toBe(403);
                         const differentAccount = await db.account.create({ data: { encryptionMode: 'plain' } });
                         const differentTerminal = await auth.createToken(differentAccount.id, undefined, { kind: 'terminal', authority: 'account_automation' });

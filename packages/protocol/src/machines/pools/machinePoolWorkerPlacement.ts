@@ -1,13 +1,13 @@
 import { ProjectWorkerStatusResultV1Schema, type ProjectWorkerStatusInputV1 } from '../../actions/specs/projectWorkers.js';
 import type { ActionExecuteResult } from '../../actions/actionExecutionResult.js';
 import { selectMachinePoolCandidate, type MachinePoolWorkerObservationV1 } from './machinePoolPlacement.js';
-import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolViewV1 } from './v1.js';
+import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolRoutingViewV1 } from './v1.js';
 import { ProjectWorkerNoAcceptanceReasonV1Schema } from '../../workspaces/projectWorkerExecutionV1.js';
 
 /** Exact target reads through the Action front door; selection remains advisory and never wakes. */
 export async function resolveMachinePoolWorkerCandidateV1(input: Readonly<{
   request: Extract<MachinePoolResolveInputV1, { purpose: 'finite' | 'service-start' }>;
-  pool: MachinePoolViewV1;
+  pool: MachinePoolRoutingViewV1;
   status(request: ProjectWorkerStatusInputV1): Promise<ActionExecuteResult>;
   signal?: AbortSignal;
 }>): Promise<MachinePoolResolveResultV1> {

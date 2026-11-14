@@ -884,15 +884,27 @@ dispatch when the negotiated Machine-operation compatibility projection does not
 positively support it. The exact target remains authoritative; Pool selection policy
 does not enter the daemon/session spawn protocol.
 
-Pool-backed managed presets retain a `controllerPoolId` in the existing preset
-launch storage alongside the saved display label; the reference survives Pool
+Pool-backed managed presets retain `controllerPoolId` in their public routing
+fields; the display label belongs to private content. The reference survives Pool
 deletion and becomes unavailable rather than turning into a controller-free
 preset. The `managed-preset` purpose on the existing resolve Action binds an exact
-controller plus its public reviewed facts before signed managed acquisition.
-Candidates share one compatible public provisioner/billing/retention description;
-native prerequisites without observations remain unknown. The selected controller
-continues through the existing managed custody and requester-enrollment protocol.
-There is no Pool candidate list or placement policy in daemon dispatch.
+controller and its scoped installation custody before signed acquisition. Exact
+presets obtain the same custody through authenticated
+`POST /v1/machines/presets/resolve-acquire`, using the selected revision and exact
+controller. Both resolve through the preset acquire admission owner; the response
+lets the client encrypt to the installation without a controller grant. Saved
+preset replies carry no custody tuple or native readiness. The installed custodian
+opens the admitted private content and decides launch compatibility and native
+prerequisites. There is no Pool candidate list or placement policy in daemon dispatch.
+
+Preset acquire inputs may omit `retention`, `wakeOnAcceptedMessage`, and the
+sealed `presetContentOverride`; one-off inputs retain their required reviewed
+policy. Missing preset policy is resolved once by the native custodian before
+the non-null Home allocation is created. This admission adds `presetPolicy` and
+the unchanged `originalActionEnvelope` as ephemeral proof, bound by the existing
+execution authorization and public compute projection. It does not replace the
+signed requester input. Replays hydrate the Home-retained private snapshot and
+its original override rather than a later source-preset read.
 
 These audience and preset additions belong to unreleased 0.3. Stable 0.2 has no
 Machine Pool or managed-preset contract; the existing 0.3 upgrade requirement

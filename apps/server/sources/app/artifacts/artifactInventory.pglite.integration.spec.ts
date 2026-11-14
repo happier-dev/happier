@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -160,7 +161,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         const team = await db.team.create({ data: { name: 'Resource guest audience' } });
         const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit guests', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Explicit guests') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: guestMembership.id, nativeContribution: true } });
         const [teamArtifact, groupArtifact, directArtifact] = await Promise.all(['team', 'group', 'direct'].map(() => db.artifact.create({ data: {
@@ -210,7 +211,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         const team = await db.team.create({ data: { name: 'Machine guest audience' } });
         const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Machine explicit guests', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Machine explicit guests') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: guestMembership.id, nativeContribution: true } });
         const [teamMachine, groupMachine, directMachine] = await Promise.all(['team', 'group', 'direct'].map(() => db.machine.create({
@@ -244,7 +245,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
             const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
-            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Secret explicit guests', nameKey: randomUUID() } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Secret explicit guests') } });
             await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
                 teamMembershipId: guestMembership.id, nativeContribution: true } });
             const groupResourceId = randomUUID();
@@ -479,7 +480,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             accessLevel: 'view', createdByAccountId: owner.id } });
         const team = await db.team.create({ data: { name: 'Inventory Team' } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Inventory Group', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Inventory Group') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: member.id, nativeContribution: true } });
         await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifacts[1].id, teamId: team.id,

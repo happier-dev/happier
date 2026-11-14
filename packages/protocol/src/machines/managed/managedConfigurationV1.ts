@@ -31,8 +31,6 @@ const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
 export const ManagedPresetSelectionV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('preset'), homeId: id(), id: id(), revision: revision(),
-  /** This Machine's own name; without it the Machine takes its provider's default name, not the preset's. */
-  name: z.optional(id()),
 }));
 
 export function createManagedOneOffSelectionV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {

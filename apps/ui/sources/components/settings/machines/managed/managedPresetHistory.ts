@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import type { ManagedMachineV1, ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -24,7 +25,7 @@ export function buildManagedPresetHistory(input: Readonly<{
     return input.machines.flatMap(machine => {
         if (machine.homeId !== input.homeId || machine.preset?.id !== input.presetId) return [];
         return [{ managedId: machine.id, presetRevision: machine.preset.revision,
-            title: machine.launch.name, subtitle: describeManagedCreation(machine).line,
+            title: machine.launch?.name ?? t('common.machine'), subtitle: describeManagedCreation(machine).line,
             href: machineCollectionHref({ kind: 'managed', managedId: machine.id, serverId: input.serverId }), machine }];
     });
 }

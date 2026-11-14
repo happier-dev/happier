@@ -27,7 +27,11 @@ function ruleTitle(kind: IdentityConnectionTestDiagnosticsV1['eligibility']['rul
  */
 export function identityTestDiagnosticsRows(
     diagnostics: IdentityConnectionTestDiagnosticsV1,
-    options: Readonly<{ groupMappings?: boolean }> = {},
+    options: Readonly<{
+        groupMappings?: boolean;
+        /** Labels are opened locally by the Group presentation owner. */
+        openedGroupDisplayNames?: ReadonlyMap<string, string | null>;
+    }> = {},
 ): readonly IdentityTestDiagnosticsRow[] {
     const groupsComplete = diagnostics.groups.state === 'complete';
     const rows: IdentityTestDiagnosticsRow[] = [
@@ -98,7 +102,9 @@ export function identityTestDiagnosticsRows(
                 ? t('identityAdministration.diagnosticsMappedGroupsUnavailable')
                 : diagnostics.mappedGroups.length === 0
                     ? t('identityAdministration.diagnosticsMappedGroupsEmpty')
-                    : diagnostics.mappedGroups.map((group) => group.name).join(', '),
+                    : diagnostics.mappedGroups.map((group) =>
+                        options.openedGroupDisplayNames?.get(group.id) ?? t('common.unavailable'),
+                    ).join(', '),
         });
     }
 

@@ -1,7 +1,9 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { TeamCredentialRouteV1Schema } from '../../teams/credentials/resourceV1.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
 import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema, GroupPrincipalRefV1Schema } from '../../teams/principal.js';
+import { TeamGroupNameProjectionV1Schema } from '../../teams/groupLabel.js';
 import { SessionAccessGrantV1Schema, SessionAccessLevelV1Schema, SessionGrantMutationV1Schema, type SessionAccessLevelV1 } from './sessionAccessGrantV1.js';
 import { SessionAccessAccountSummaryV1Schema } from './sessionAccessPrincipalV1.js';
 import { TeamExternalSharingPolicyV1Schema } from '../../teams/team.js';
@@ -56,7 +58,7 @@ export type SessionAccessCandidatesInspectResponseV1 = z.infer<typeof SessionAcc
 export const SessionAccessPrincipalSummaryV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   SessionAccessAccountSummaryV1Schema,
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(TeamPrincipalRefV1Schema, { name: z.string() })),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(GroupPrincipalRefV1Schema, { name: z.string(), teamName: z.string() })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(GroupPrincipalRefV1Schema, { name: TeamGroupNameProjectionV1Schema, teamName: z.string() })),
 ]));
 export type SessionAccessPrincipalSummaryV1 = z.infer<typeof SessionAccessPrincipalSummaryV1Schema>;
 
@@ -198,15 +200,15 @@ export type SessionAccessGrantsListRequestV1 = z.infer<typeof SessionAccessGrant
  * either confirmation claiming a consequence the other one causes.
  *
  * It is a consequence preview, never an admission fact: the credential admission
- * repeats every decision in its own transaction and still fails closed. Only the
- * resource's display name travels, so an access edit can say what stops working
- * without disclosing the credential itself.
+ * repeats every decision in its own transaction and still fails closed. The
+ * preview carries only the viewer's recipient projection. The UI opens that
+ * label locally under the resource binding; the Home never learns its text.
  */
 export const SessionTeamCredentialBindingConsequenceV1Schema = lazyZodSchema(() => z.strictObject({
   resourceId: z.string().check(z.minLength(1)),
   teamId: z.string().check(z.minLength(1)),
-  displayName: z.string(),
   policy: z.enum(['team_visibility_required', 'team_context_required']),
+  displayName: PrivateLabelReadV1Schema,
 }));
 export type SessionTeamCredentialBindingConsequenceV1 = z.infer<typeof SessionTeamCredentialBindingConsequenceV1Schema>;
 

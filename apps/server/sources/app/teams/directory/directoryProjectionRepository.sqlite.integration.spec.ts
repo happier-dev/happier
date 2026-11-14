@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -584,7 +585,7 @@ describe("directoryProjectionRepository", () => {
             })),
         });
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Mixed Group", nameKey: "mixed group" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Mixed Group")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {
@@ -812,8 +813,7 @@ describe("directoryProjectionRepository", () => {
         const nativeGroup = await db.teamGroup.create({
             data: {
                 teamId: team.id,
-                name: "Archived Group",
-                nameKey: "archived group",
+                name: storedPlainPrivateLabel("Archived Group"),
                 archivedAt: new Date("2026-09-12T09:00:00.000Z"),
             },
         });
@@ -979,7 +979,7 @@ describe("directoryProjectionRepository", () => {
             },
         });
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Old Engineering", nameKey: "old engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Old Engineering")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {
@@ -1296,7 +1296,7 @@ describe("directoryProjectionRepository", () => {
             },
         });
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Native Engineering", nameKey: "native engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Native Engineering")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {
@@ -1398,7 +1398,7 @@ describe("directoryProjectionRepository", () => {
         // Admitted by this directory: it owns this lifetime.
         const ownedAccount = await db.account.create({ data: { publicKey: `offboarding-owned-${team.id}` } });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Offboarding Engineering", nameKey: "offboarding engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Offboarding Engineering")},
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {

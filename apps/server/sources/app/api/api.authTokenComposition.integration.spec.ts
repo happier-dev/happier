@@ -48,6 +48,7 @@ import type { Fastify as TypedFastify } from "./types";
 import { enableAuthentication } from "./utils/enableAuthentication";
 import { resolveApiRateLimitPluginOptions } from "./utils/apiRateLimitPolicy";
 import { canonicalHomeLoginAssertionBytes } from "@/app/accountDirectory/accountDirectorySigner";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const DIRECTORY_PROOF = "directory-composition-proof";
 const DIRECTORY_PROOF_HASH = createHash("sha256")
@@ -147,7 +148,7 @@ describe("API auth-token composition (integration)", () => {
                 kind: "terminal",
                 authority: "account_automation",
             }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Composition PAT" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Composition PAT") }),
         ]);
         const app = createProductionCompositionApp();
 

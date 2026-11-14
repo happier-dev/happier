@@ -91,6 +91,19 @@ describe('reviewManagedResourceRemoval', () => {
     expect(links.every(link => link.label === t('managedMachines.actions.openProvider', { provider: 'Hetzner' }))).toBe(true);
   });
 
+  it('reviews opaque preset custody using only its admitted lifecycle', async () => {
+    const resource: ManagedResourceDependencyV1 = {
+      managedId: 'opaque-preset-machine', homeId: 'srv_home', custodianAccountId: 'acct_c',
+      intentRevision: 7, allocation: 'may-exist', opaquePreset: true,
+    };
+    const { modal, calls } = recordingModal(true);
+    await expect(reviewManagedResourceRemoval([resource], modal)).resolves.toEqual([{
+      managedId: resource.managedId, expectedIntentRevision: 7, expectedAllocation: 'may-exist',
+      opaquePreset: true, responsibility: 'manual',
+    }]);
+    expect(calls[0]?.paragraphs.join('\n')).toContain(t('common.machine'));
+  });
+
   it('returns null when the person keeps the connection', async () => {
     const { modal } = recordingModal(false);
     expect(

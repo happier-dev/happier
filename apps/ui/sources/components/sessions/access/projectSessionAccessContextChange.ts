@@ -31,6 +31,8 @@ export function projectSessionAccessContextChange(input: Readonly<{
      * context-required credential selections, which is a fact only the Home has.
      */
     credentialBindings?: readonly SessionTeamCredentialBindingConsequenceV1[];
+    /** Locally opened names keyed by the exact resource binding id. */
+    openedCredentialDisplayNames?: Readonly<Record<string, string | null>>;
 }>): readonly string[] {
     const consequences: string[] = [];
     if (input.target?.sessionCreationPolicy === 'team_required') {
@@ -60,7 +62,7 @@ export function projectSessionAccessContextChange(input: Readonly<{
         consequences.push(...projectSessionAccessCredentialConsequences(input.credentialBindings, {
             teamId: input.current?.teamId ?? null,
             policy: 'team_context_required',
-        }));
+        }, input.openedCredentialDisplayNames));
     }
     return consequences;
 }

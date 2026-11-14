@@ -35,7 +35,7 @@ export { buildMachineSetupTargetApplyInput } from '@happier-dev/protocol/machine
 /** Authored apps and their reviewed children both require the Setup app flow. */
 export function machineSetupTargetHasApps(target: MachineSetupApplyTargetV1): boolean {
   return Boolean(target.appChildren?.length)
-    || target.sources.some(source => source.setup.items?.some(item => item.kind === 'app'));
+    || target.sources.some(source => source.kind !== 'accountPresetOpaque' && source.setup.items?.some(item => item.kind === 'app'));
 }
 
 /** Resolve native placement from the admitted exact leaf or the incumbent Run owner. */
@@ -142,7 +142,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       if (context.signal?.aborted) return failure('cancelled');
       let exclusions = target.exclusions ?? [];
       let observedPlan: MachineSetupPlanResultV1 | undefined;
-      if (!nativeLeaf && (target.removeItemKeys !== undefined || target.exclusions === undefined
+      const opaqueSources = target.sources.some(source => source.kind === 'accountPresetOpaque');
+      if (!nativeLeaf && (opaqueSources || target.removeItemKeys !== undefined || target.exclusions === undefined
         || machineSetupTargetHasApps(target))) {
         const requestedExclusions = target.exclusions;
         const result = await targetPlan({ input: { homeId: target.homeId, machineId: target.machineId,
@@ -161,7 +162,13 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         exclusions = observed.data.exclusions;
         observedPlan = observed.data;
       }
-      const allRecipes = selectMachineSetupRecipeItemsV1(target.sources.map(source => source.setup), exclusions)
+      if (opaqueSources) {
+        // The target owns private source opening and native review. An already
+        // admitted exact leaf spends its signed review; roots compare the fresh
+        // target Plan without recreating private recipes in the composer.
+        if (!nativeLeaf && !sameStrictJsonValue(observedPlan?.recipePlans ?? [], target.recipePlans)) return failure('plan_changed');
+      } else {
+      const allRecipes = selectMachineSetupRecipeItemsV1(target.sources.filter(source => source.kind !== 'accountPresetOpaque').map(source => source.setup), exclusions)
         .map(({ sourceIndex, itemIndex, item }) => ({ sourceIndex, itemIndex, selection: item.selection }));
       // Update uses the exact freshly rechecked subset at original coordinates.
       const recipes = target.removeItemKeys === undefined ? allRecipes : target.recipePlans.map(plan =>
@@ -173,6 +180,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           || reviewed.plan.basis.desiredRevision !== target.desiredRevision
           || !sameStrictJsonValue(reviewed.plan.basis.selection, recipe.selection);
       })) return failure('machine_setup_plan_required');
+      }
       // This exact accepted native leaf retains desired app intent, but does
       // not prepare or execute it. Separate app leaves keep their own fresh
       // requester custody and deployment preflight. Roots dispatch only newly

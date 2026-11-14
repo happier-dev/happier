@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
@@ -50,6 +51,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
         filter: 'all',
         enabled: true,
     });
+    const groupDisplayNames = useTeamGroupDisplayNames({ scope: context.scope, groups: groups.rows });
     const modes = offeredDeliveryModes({
         deliveryPolicy: draft.deliveryPolicy,
         directExportSupport: resource.directExportSupport,
@@ -145,7 +147,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
                     {groupPrincipals.map((groupId) => {
                         const mode = draft.audience.groups.get(groupId) ?? null;
                         const group = groups.rows.find((row) => row.id === groupId);
-                        const name = group?.name
+                        const name = (group === undefined ? null : groupDisplayNames.get(group.id))
                             ?? pickedNames.get(`group:${groupId}`)
                             ?? t('teams.credentials.limits.unknownSubject');
                         const key = `group:${groupId}`;

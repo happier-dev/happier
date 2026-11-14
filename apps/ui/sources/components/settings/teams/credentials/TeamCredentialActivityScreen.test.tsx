@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -18,6 +18,11 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load real owners after HTTP installation, outside a timed per-case setup.
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+const { TeamCredentialActivityScreen } = await import('./TeamCredentialActivityScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const CREDENTIAL_GET_PATH = '/v1/teams/credential-resources/get';
@@ -42,7 +47,6 @@ async function addHome(): Promise<string> {
 }
 
 async function renderActivity(serverId: string) {
-    const { TeamCredentialActivityScreen } = await import('./TeamCredentialActivityScreen');
     return renderScreen(
         <TeamCredentialActivityScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
     );
@@ -58,9 +62,6 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
-    const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
-    const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
-    const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     resetTeamActionClientForTests();
@@ -72,16 +73,17 @@ afterEach(() => standardCleanup());
 
 describe('TeamCredentialActivityScreen', () => {
     it.each([
-        ['audience_changed', 'audienceChanged'],
-        ['external_key_created', 'externalKeyCreated'],
-    ])('renders only the Home-projected administrative metadata for %s', async (kind, label) => {
+        ['audience_changed', 'audienceChanged', teamCredentialDisplayNameFixture('Engineering'), undefined],
+        ['external_key_created', 'externalKeyCreated', teamCredentialDisplayNameFixture('Engineering'), '550e8400-e29b-41d4-a716-446655440000'],
+    ])('renders only the Home-projected administrative metadata for %s', async (kind, label, subjectDisplayName, externalApiKeyId) => {
         const serverId = await addHome();
         harness.answer(serverId, ACTIVITY_LIST_PATH, {
             body: {
                 items: [{
                     kind,
                     actorDisplayName: 'Ada Lovelace',
-                    subjectDisplayName: 'Engineering',
+                    subjectDisplayName,
+                    ...(externalApiKeyId ? { externalApiKeyId } : {}),
                     createdAt: '2026-09-11T12:00:00.000Z',
                 }],
                 nextCursor: null,
@@ -90,6 +92,9 @@ describe('TeamCredentialActivityScreen', () => {
 
         const screen = await renderActivity(serverId);
         await waitForTestId(screen, 'team-credential-activity-row:0');
+        await vi.waitFor(() => {
+            expect(screen.getTextContent()).toContain('Engineering');
+        });
 
         expect(screen.getTextContent()).toContain(`teams.credentials.activity.kind.${label}`);
         expect(screen.getTextContent()).toContain('Ada Lovelace');
@@ -104,7 +109,7 @@ describe('TeamCredentialActivityScreen', () => {
                 items: [{
                     kind: 'resource_created',
                     actorDisplayName: 'Ada Lovelace',
-                    subjectDisplayName: 'Acme Claude',
+                    subjectDisplayName: teamCredentialDisplayNameFixture('Acme Claude'),
                     createdAt: '2026-09-11T12:00:00.000Z',
                 }],
                 nextCursor: 'activity-page-2',
@@ -116,14 +121,16 @@ describe('TeamCredentialActivityScreen', () => {
         harness.answer(serverId, ACTIVITY_LIST_PATH, { status: 503, body: { error: 'unavailable' } });
         await screen.pressByTestIdAsync('team-credential-activity-load-more');
         await waitForTestId(screen, 'team-credential-activity-retry');
-        expect(screen.getTextContent()).toContain('Acme Claude');
+        await vi.waitFor(() => {
+            expect(screen.getTextContent()).toContain('Acme Claude');
+        });
 
         harness.answer(serverId, ACTIVITY_LIST_PATH, {
             body: {
                 items: [{
                     kind: 'limits_changed',
                     actorDisplayName: null,
-                    subjectDisplayName: 'Monthly request limit',
+                    subjectDisplayName: teamCredentialDisplayNameFixture('Monthly request limit'),
                     createdAt: '2026-09-11T13:00:00.000Z',
                 }],
                 nextCursor: null,

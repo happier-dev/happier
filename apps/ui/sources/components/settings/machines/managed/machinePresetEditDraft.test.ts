@@ -7,7 +7,7 @@ describe('Preset edit intent', () => {
             name: 'Guest', choices: { cpu: 2 } };
         const pool = '6be84651-2df7-4125-aac4-0d093217b198';
         const content = machinePresetEditDraftContent({ name: 'Pooled guest', creation: { launch, controllerPoolId: pool } });
-        expect(content).toMatchObject({ launch, controllerPoolId: pool });
+        expect(content).toMatchObject({ privateContent: { launch }, controllerPoolId: pool });
         expect(content).not.toHaveProperty('controller');
         expect(machinePresetEditDraftUpdatePatch({ name: 'Pooled guest', creation: { launch, controllerPoolId: pool } }))
             .toMatchObject({ controllerPoolId: pool, controller: null });
@@ -25,8 +25,8 @@ describe('Preset edit intent', () => {
         expect(result).toMatchObject({ ok: true, draft: { setup: { items: [legacy, { ...item, authoredKey: expect.any(String) }] } } });
         if (!result.ok) throw new Error('Expected a new app draft');
         const content = machinePresetEditDraftContent(result.draft);
-        expect(content.setup).toBe(result.draft.setup);
-        expect(content.setup?.items?.[0]).not.toHaveProperty('authoredKey');
+        expect(content.privateContent.setup).toBe(result.draft.setup);
+        expect(content.privateContent.setup?.items?.[0]).not.toHaveProperty('authoredKey');
         expect(item).not.toHaveProperty('authoredKey');
         expect(draft.setup?.items).toEqual([legacy]);
     });
@@ -48,18 +48,18 @@ describe('Preset edit intent', () => {
     it('removes the complete creation pair and delegated acquire without changing retained setup', () => {
         const setup = { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' as const }] };
         const patch = machinePresetEditDraftUpdatePatch({ name: 'Setup only', setup, creation: undefined });
-        expect(patch).toEqual({ name: 'Setup only', setup, launch: null, controller: null, controllerPoolId: null,
+        expect(patch).toEqual({ privateContent: { v: 1, name: 'Setup only', setup }, controller: null, controllerPoolId: null,
             teamAcquireDelegated: false, retention: null, wakeOnAcceptedMessage: null, simultaneousLimit: null });
-        expect(patch.setup).toBe(setup);
+        expect(patch.privateContent?.setup).toBe(setup);
     });
 
     it('keeps name and exact setup independent of creation facts or receipts', () => {
         const setup = { scripts: [{ body: '\r\necho unchanged\r\n', affects: 'none' as const }, { body: '' }],
             toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"\n' } };
         const content = machinePresetEditDraftContent({ name: 'Build tools', setup });
-        expect(content).toEqual({ name: 'Build tools', setup });
-        expect(content.setup).toBe(setup);
-        expect(content).not.toHaveProperty('launch');
+        expect(content).toEqual({ privateContent: { v: 1, name: 'Build tools', setup } });
+        expect(content.privateContent.setup).toBe(setup);
+        expect(content.privateContent).not.toHaveProperty('launch');
         expect(content).not.toHaveProperty('controller');
         expect(content).not.toHaveProperty('reviewedFacts');
     });
@@ -71,15 +71,15 @@ describe('Preset edit intent', () => {
             id: 'retained-preset', homeId: 'home', name: 'Old name', setup: { scripts: [{ body: 'old setup' }] } };
         const draft: MachinePresetEditDraft = { name: 'Reusable guest', creation };
         const content = machinePresetEditDraftContent(draft);
-        expect(content).toEqual({ name: draft.name, launch: creation.launch, controller: creation.controller,
+        expect(content).toEqual({ privateContent: { v: 1, name: draft.name, launch: creation.launch }, controller: creation.controller,
             retention: creation.retention, wakeOnAcceptedMessage: false, simultaneousLimit: creation.simultaneousLimit });
-        expect(content.launch).toBe(creation.launch);
+        expect(content.privateContent.launch).toBe(creation.launch);
         expect(content.controller).toBe(creation.controller);
         expect(content).not.toHaveProperty('id');
         expect(content).not.toHaveProperty('homeId');
-        expect(content).not.toHaveProperty('setup');
+        expect(content.privateContent).not.toHaveProperty('setup');
         const setup = { scripts: [{ body: '' }] };
-        expect(machinePresetEditDraftContent({ ...draft, creation: undefined, setup })).toEqual({ name: draft.name, setup });
-        expect(machinePresetEditDraftContent({ ...draft, setup: undefined })).not.toHaveProperty('setup');
+        expect(machinePresetEditDraftContent({ ...draft, creation: undefined, setup })).toEqual({ privateContent: { v: 1, name: draft.name, setup } });
+        expect(machinePresetEditDraftContent({ ...draft, setup: undefined }).privateContent).not.toHaveProperty('setup');
     });
 });

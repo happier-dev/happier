@@ -32,7 +32,7 @@ describe('installed Environment secret launch reader', () => {
         serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine', installationId: 'installation',
         environmentId: 'environment', targetLinkId: 'link', materialization: { kind: 'deployment', deploymentId: 'deployment' },
         context: { operationAcceptance: { operationId: 'operation', accept() {} } }, signal: new AbortController().signal };
-    const binding: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'S0_SECRET', phase: 'runtime',
+    const binding: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'S0_SECRET', phase: 'runtime', grantRef: crypto.randomUUID(),
         source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('resource'), resourceRevision: 1 } };
 
     function install() {

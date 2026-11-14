@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
@@ -166,7 +167,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
             const team = await db.team.create({ data: { name: 'Append authority' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: current.owner.id, role: 'owner' } });
             const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
-            const group = kind === 'group' ? await db.teamGroup.create({ data: { teamId: team.id, name: 'Append readers', nameKey: 'append-readers' } }) : null;
+            const group = kind === 'group' ? await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Append readers') } }) : null;
             if (group) await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true } });
             expect(await setDiscussionGrant({ authentication, actorAccountId: current.owner.id, discussionId: current.discussionId,
                 request: { principal: group ? { kind: 'group', teamId: team.id, groupId: group.id } : { kind: 'team', teamId: team.id }, accessLevel: 'edit' } }))
@@ -355,7 +356,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
                     await db.teamMembership.create({ data: { teamId: team.id, accountId: sourceOwner.id, role: 'owner' } });
                     const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
                     if (withdrawal === 'group') {
-                        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Source readers', nameKey: 'source-readers' } });
+                        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Source readers') } });
                         groupId = group.id;
                         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
                             teamMembershipId: member.id, nativeContribution: true } });

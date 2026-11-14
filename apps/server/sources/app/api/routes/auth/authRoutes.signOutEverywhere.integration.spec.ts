@@ -11,6 +11,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { authRoutes } from "./authRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const SIGN_OUT_EVERYWHERE_PATH = "/v1/auth/sessions/sign-out-everywhere";
 
@@ -127,7 +128,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Retained by sign out everywhere",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Retained by sign out everywhere"),
         });
         const app = createTestApp();
         await app.ready();
@@ -178,7 +179,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
         });
         const [signedToken, pat] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Automation cannot sign out" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Automation cannot sign out") }),
         ]);
         const app = createTestApp();
         await app.ready();

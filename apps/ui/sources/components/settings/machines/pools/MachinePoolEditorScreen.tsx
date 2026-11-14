@@ -470,7 +470,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         } catch (cause) {
             if (!lifetimeCurrentRef.current) return;
             if (cause instanceof MachinePoolActionApprovalPendingError) setApprovalId(cause.artifactId);
-            else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_changed') setConflict(cause.detail.current ?? null);
+            else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_changed') setConflict(cause.currentView ?? null);
             else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'member_machine_not_eligible') {
                 setInvalidMemberIds(new Set(cause.detail.machineIds));
                 setError(t('machinePools.memberNotEligible'));
@@ -500,7 +500,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 pendingDeleteFocusTargetRef.current = nextFocusTarget;
                 setApprovalId(cause.artifactId);
             }
-            else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_changed') setConflict(cause.detail.current ?? null);
+            else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_changed') setConflict(cause.currentView ?? null);
             else setError(t('machinePools.deleteFailed'));
         }
         finally { if (lifetimeCurrentRef.current) setSaving(false); }

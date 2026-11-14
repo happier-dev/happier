@@ -1,3 +1,5 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { parsePrivateLabelStoredV1 } from "@happier-dev/protocol/crypto/privateLabelV1";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -34,7 +36,7 @@ describe("external Group binding administration", () => {
     afterAll(async () => { if (harness) await harness.close(); });
 
     async function fixture() {
-        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
         const managed = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
         const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
@@ -104,7 +106,7 @@ describe("external Group binding administration", () => {
             },
         });
         const nativeGroup = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Operators", nameKey: "operators" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Operators")},
         });
         await inTx((tx) => applyTeamGroupContributionInTx(tx, {
             teamId: team.id,
@@ -144,7 +146,14 @@ describe("external Group binding administration", () => {
                 owner: { kind: "directory_source", directorySourceId: f.source.id },
                 externalGroupId: "group_1",
                 mode: "native_target",
-                target: { teamGroupId: f.nativeGroup.id, name: "Operators", archivedAt: null },
+                target: {
+                    teamGroupId: f.nativeGroup.id,
+                    name: {
+                        kind: "available",
+                        label: { content: { t: "plain", v: "Operators" }, recipientEnvelope: null },
+                    },
+                    archivedAt: null,
+                },
             },
         });
         expect(await db.teamGroupMembershipExternalContribution.count({
@@ -209,11 +218,23 @@ describe("external Group binding administration", () => {
         });
         expect(created).toMatchObject({
             ok: true,
-            value: { mode: "directory_created", target: { name: "Engineering Team", archivedAt: null } },
+            value: {
+                mode: "directory_created",
+                target: {
+                    name: {
+                        kind: "available",
+                        label: { content: { t: "plain", v: "Engineering Team" }, recipientEnvelope: null },
+                    },
+                    archivedAt: null,
+                },
+            },
         });
         if (!created.ok) throw new Error("expected mapping");
-        await expect(db.teamGroup.findUniqueOrThrow({ where: { id: created.value.target.teamGroupId } }))
-            .resolves.toMatchObject({ name: "Engineering Team", nameKey: "engineering team" });
+        const persisted = await db.teamGroup.findUniqueOrThrow({ where: { id: created.value.target.teamGroupId } });
+        expect(parsePrivateLabelStoredV1(persisted.name)).toMatchObject({
+            kind: "current",
+            stored: { content: { t: "plain", v: "Engineering Team" } },
+        });
 
         await db.teamDirectoryGroup.update({
             where: {
@@ -322,7 +343,7 @@ describe("external Group binding administration", () => {
         });
         if (!first.ok) throw new Error("expected initial mapping");
         const replacementTarget = await db.teamGroup.create({
-            data: { teamId: f.team.id, name: "Responders", nameKey: "responders" },
+            data: { teamId: f.team.id, name: storedPlainPrivateLabel("Responders")},
         });
 
         const retargeted = await setExternalGroupBindingForActor({
@@ -403,7 +424,7 @@ describe("external Group binding administration", () => {
             data: { teamId: team.id, accountId: person.id, role: "member" },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering")},
         });
         const bindingIds: string[] = [];
         for (const index of [1, 2]) {
@@ -534,7 +555,7 @@ describe("external Group binding administration", () => {
             });
         }
         const target = await db.teamGroup.create({
-            data: { teamId: f.team.id, name: "Mapped roster", nameKey: "mapped roster" },
+            data: { teamId: f.team.id, name: storedPlainPrivateLabel("Mapped roster")},
         });
         const readSeq = async () => (await db.account.findUniqueOrThrow({
             where: { id: f.member.id },

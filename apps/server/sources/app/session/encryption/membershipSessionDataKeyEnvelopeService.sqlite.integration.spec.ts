@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 import { decodeBase64, encodeBase64 as encodeBase64Bytes } from "privacy-kit";
@@ -254,7 +255,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
         }));
         if (!admitted.manager.ok || !admitted.target.ok) throw new Error("team admission failed");
         const group = await db.teamGroup.create({ data: {
-            teamId: team.id, name: "Historical readers", nameKey: crypto.randomUUID(),
+            teamId: team.id, name: storedPlainPrivateLabel("Historical readers"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,
@@ -636,7 +637,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
         let subject: MembershipSessionDataKeyEnvelopeSubject = teamSubject;
         if (kind === "group") {
             const group = await db.teamGroup.create({ data: {
-                teamId: team.id, name: crypto.randomUUID(), nameKey: crypto.randomUUID(),
+                teamId: team.id, name: storedPlainPrivateLabel(crypto.randomUUID()),
             } });
             await db.teamGroupMembership.create({ data: {
                 teamId: team.id,

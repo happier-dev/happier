@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { createManagedMachineV1Schema } from './managedMachineV1.js';
+import { createManagedMachineV1Schema, ManagedMachineV1Schema } from './managedMachineV1.js';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, ManagedCancelInputV1Schema,
   ManagedControllerCurrentnessV1Schema, ManagedControllerContextInputV1Schema, ManagedEnrollmentCorrelationV1Schema,
   ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerUpdateInputV1Schema } from './actionsV1.js';
@@ -24,6 +24,12 @@ describe('managed resource persistence and input contracts', () => {
     allocation: 'bound', resource: { contributionRef: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, value: { instance: 'guest', store: '/lima' } },
     creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+  };
+  const presetContentOverride = {
+    content: {
+      t: 'plain' as const,
+      v: { v: 1 as const, name: 'Private preset override', launch: row.launch, enrollmentIdentity },
+    },
   };
   it('retains Account cloud resources and admitted follow-ups without a controller while rejecting partial pairs', () => {
     const { controller, ...portable } = row;
@@ -87,22 +93,32 @@ describe('managed resource persistence and input contracts', () => {
         retention: row.retention, wakeOnAcceptedMessage: false }, enrollmentIdentity, enrollmentAccountId: 'selected-by-caller',
     }, requestId: 'request', continuationPresent: false }).success).toBe(false);
   });
-  it('requires reviewed identity on both acquire arms and keeps its public projection strict and secret-free', () => {
-    const requests = [
-      { selection: { kind: 'one-off', homeId: row.homeId, launch: row.launch, controller: row.controller, retention: row.retention, wakeOnAcceptedMessage: false } },
-      { selection: { kind: 'preset', homeId: row.homeId, id: 'preset', revision: 1 }, controller: row.controller, retention: row.retention, wakeOnAcceptedMessage: false },
-    ];
-    for (const input of requests) {
-      expect(ManagedAcquireInputV1Schema.safeParse(input).success).toBe(false);
-      expect(ManagedAcquireInputV1Schema.parse({ ...input, enrollmentIdentity }).enrollmentIdentity).toEqual(enrollmentIdentity);
-      expect(ManagedAcquireInputV1Schema.safeParse({ ...input, enrollmentIdentity: { ...enrollmentIdentity, password: 'not-retained' } }).success).toBe(false);
-    }
+  it('reads a legacy retained preset snapshot as Plain while refusing an E2EE full carrier', () => {
+    const legacy = { ...row, preset: { id: 'old-preset', revision: 4, contentEncryptionMode: 'plain' } };
+    expect(ManagedMachineV1Schema.parse(legacy)).toEqual(legacy);
+    expect(ManagedMachineV1Schema.safeParse({ ...legacy,
+      preset: { ...legacy.preset, contentEncryptionMode: 'e2ee' } }).success).toBe(false);
+  });
+  it('keeps one-off enrollment identity explicit while preset identity stays inside its opaque override', () => {
+    const oneOff = { selection: { kind: 'one-off', homeId: row.homeId, launch: row.launch, controller: row.controller,
+      retention: row.retention, wakeOnAcceptedMessage: false } };
+    expect(ManagedAcquireInputV1Schema.safeParse(oneOff).success).toBe(false);
+    expect(ManagedAcquireInputV1Schema.parse({ ...oneOff, enrollmentIdentity }).enrollmentIdentity).toEqual(enrollmentIdentity);
+    expect(ManagedAcquireInputV1Schema.safeParse({ ...oneOff,
+      enrollmentIdentity: { ...enrollmentIdentity, password: 'not-retained' } }).success).toBe(false);
+
+    const preset = { selection: { kind: 'preset', homeId: row.homeId, id: 'preset', revision: 1 }, controller: row.controller,
+      retention: row.retention, wakeOnAcceptedMessage: false };
+    expect(ManagedAcquireInputV1Schema.safeParse(preset).success).toBe(false);
+    expect(ManagedAcquireInputV1Schema.parse({ ...preset, presetContentOverride }))
+      .not.toHaveProperty('enrollmentIdentity');
+    expect(ManagedAcquireInputV1Schema.safeParse({ ...preset, presetContentOverride, enrollmentIdentity }).success).toBe(false);
     expect(schema.parse({ ...row, enrollmentIdentity }).enrollmentIdentity).toEqual(enrollmentIdentity);
     expect(schema.parse(row)).toEqual(row);
   });
   it('normalizes a retained creation snapshot before retry without changing its lifecycle facts', () => {
     const body = 'echo retained\r\n';
-    const stored = { ...row, preset: { id: 'preset', revision: 4 }, enrolledMachineId: 'guest',
+    const stored = { ...row, preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' }, enrolledMachineId: 'guest',
       machineSetup: { setup: { setupScript: body, setupScriptAffects: 'none' }, state: 'failed',
         errorCode: 'setup_failed', operation: { operationId: 'retained-setup' } } };
     const canonical = { ...stored, machineSetup: { ...stored.machineSetup,
@@ -112,7 +128,7 @@ describe('managed resource persistence and input contracts', () => {
     expect(schema.safeParse(stored).success).toBe(false);
   });
   it('retains the exact preset environment and independent setup outcome on the creation row', () => {
-    const setup = { ...row, preset: { id: 'preset', revision: 4 }, enrolledMachineId: 'guest',
+    const setup = { ...row, preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' }, enrolledMachineId: 'guest',
       machineSetup: { setup: { scripts: [{ body: 'echo prepared' }] }, state: 'failed', errorCode: 'setup_failed' } };
     expect(schema.parse(setup)).toEqual(setup);
     expect(createStoredReadSchema(schema).parse({ ...setup, machineSetup: { ...setup.machineSetup, future: true } })).toEqual(setup);
@@ -121,7 +137,7 @@ describe('managed resource persistence and input contracts', () => {
   });
   it.each(['succeeded', 'failed', 'skipped'] as const)('retains historical %s setup when lifecycle retires the current enrollment', state => {
     const retired = { ...row, creationState: 'canceled', allocation: 'confirmed-absent', desired: 'delete',
-      preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state,
+      preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state,
         operation: { operationId: 'finished-setup' }, ...(state === 'failed' ? { errorCode: 'setup_failed' } : {}) } };
     expect(schema.parse(retired)).toEqual(retired);
     expect(createStoredReadSchema(schema).parse({ ...retired, machineSetup: { ...retired.machineSetup, future: true } })).toEqual(retired);

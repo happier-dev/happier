@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -85,7 +86,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team credential
 
         const foreign = await fixture(1);
         expect((await validate(f.team.id, [...ids, foreign.members[0]!.id])).result).toEqual(denied);
-        const group = await client.teamGroup.create({ data: { teamId: f.team.id, name: "Recipients", nameKey: "recipients" } });
+        const group = await client.teamGroup.create({ data: { teamId: f.team.id, name: storedPlainPrivateLabel("Recipients") } });
         expect((await validate(f.team.id, ids, [group.id])).result).toEqual({ ok: true });
         await client.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
         expect((await validate(f.team.id, ids, [group.id])).result).toEqual(denied);

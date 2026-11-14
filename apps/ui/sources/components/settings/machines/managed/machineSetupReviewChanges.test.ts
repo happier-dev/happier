@@ -8,7 +8,7 @@ const target = (overrides: Partial<MachineSetupApplyTargetV1> = {}): MachineSetu
 });
 const effects = (steps: MachineRecipeStepV1[], satisfied = false): MachineSetupEffectPlanV1 => ({
     v: 1, basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 }, planDigest: 'a'.repeat(64), steps,
-    nativeFacts: steps.map(step => ({ stepId: step.id, status: satisfied ? 'satisfied' : 'unsatisfied' })),
+    nativeFacts: steps.map(step => ({ stepId: step.id, status: satisfied ? 'satisfied' as const : 'drifted' as const, facts: {} })),
 });
 const toolchain = { adapterId: 'mise', config: '[tools]\nnode = "22.14.0"' };
 
@@ -58,16 +58,23 @@ describe('Machine setup review changes', () => {
     });
 
     it('counts a shared toolchain once and keeps every non-empty source script beside pending installs and removals', () => {
+        const direct = { kind: 'direct' as const, setup: { toolchain, scripts: [{ body: 'echo first' }] } };
+        const privateSource = { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 1,
+            setup: { toolchain, scripts: [{ body: 'echo second' }] } };
         const plan = target({ sources: [
-            { kind: 'direct', setup: { toolchain, scripts: [{ body: 'echo first' }] } },
-            { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { toolchain, scripts: [{ body: 'echo second' }] } },
+            direct,
+            { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' },
         ], recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: effects([
             { id: 'install', kind: 'package', manager: 'brew', packages: [{ name: 'firefox', kind: 'cask', version: '132.0' }] },
         ]) }], removalPlans: [{ itemKey: 'old', plan: effects([
             { id: 'remove', kind: 'package', manager: 'winget', state: 'absent', packages: [{ name: 'Mozilla.Firefox', source: 'winget', scope: 'user' }] },
         ]) }] });
-        expect(countMachineSetupTargetChanges(plan)).toBe(5);
-        const groups = groupMachineSetupChanges([plan]);
+        const presentations = [{ homeId: 'home', machineId: 'machine', sources: [
+            { kind: 'opened', source: direct },
+            { kind: 'opened', presetName: 'Historical preset', source: privateSource },
+        ] }];
+        expect(countMachineSetupTargetChanges(plan, presentations[0]!.sources)).toBe(5);
+        const groups = groupMachineSetupChanges([plan], presentations);
         expect(groups.find(group => group.kind === 'commands')?.lines.map(line => line.operand)).toEqual(['$ echo first', '$ echo second']);
         expect(groups.find(group => group.kind === 'packages')).toMatchObject({ added: 1, removed: 1,
             lines: [expect.objectContaining({ operand: 'brew · firefox 132.0 · cask', removes: false }),

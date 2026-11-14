@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { io as ioClient, type Socket } from "socket.io-client";
@@ -645,7 +646,7 @@ describe("authenticated human presence over real memory-adapter sockets", () => 
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: "guest" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Guests", nameKey: "guests" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Guests") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "edit", effectiveAt: new Date() } });
         expect(await setDiscussionGrant({ actorAccountId: owner.id, discussionId: discussion.id, authentication: ownerAuthentication(),

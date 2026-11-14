@@ -1,8 +1,13 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import sodium from 'libsodium-wrappers';
+import sodium from '@/encryption/libsodium.lib';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
+    bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
@@ -10,6 +15,7 @@ import {
     isDeploymentEnvironmentUpdateNativeAdmissionV1,
     createDeploymentCandidatePublicationV1,
     ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
     ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionResponseEnvelopeV1Schema,
     ExternalActionRequestEnvelopeSchema,
@@ -17,7 +23,7 @@ import {
     type ExternalActionRequestEnvelopeV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionResolvedTargetV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -55,11 +61,14 @@ export async function answerExternalActionAccountForHome(homes: Pick<HomeGoverna
             body: await createMachineReadBatchResponseFixture(body,
                 id => boundaries.find(boundary => boundary.machine.id === id)?.machine ?? null).json(),
         }) });
-        for (const path of [`POST ${bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId)}`, `POST /v1/actions/${params.actionId}`]) {
+        for (const path of [`POST ${bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId)}`,
+            `POST ${bindExternalActionExecutionAuthorizationVerifyHttpPathV1(params.actionId)}`, `POST /v1/actions/${params.actionId}`]) {
             homes.answer(serverId, path, { select: async (body, request) => {
                 const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
-                const envelope = ExternalActionRequestEnvelopeSchema.parse(authorized.success ? authorized.data.envelope : body);
-                const target = envelope.target;
+                const signedTarget = new Headers(request.init?.headers).get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
+                const target = path === `POST ${bindExternalActionExecutionAuthorizationVerifyHttpPathV1(params.actionId)}`
+                    ? signedTarget ? decodeExternalActionResolvedTargetV1(signedTarget) : null
+                    : ExternalActionRequestEnvelopeSchema.parse(authorized.success ? authorized.data.envelope : body).target;
                 const boundary = target?.kind === 'machine' ? boundaries.find(entry => entry.machine.id === target.machineId) : null;
                 if (!boundary) throw new Error('Unexpected external Action Home fixture target');
                 const response = await boundary.handle(new URL(request.url), request.init);
@@ -127,6 +136,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
         execute(input: unknown, context: Readonly<{
             target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
             invocation?: ExternalActionRequesterInvocationV1;
+            /** The same verified Home binding exposed by the required-invocation boundary. */
+            authorization?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
+            envelope: ExternalActionRequestEnvelope;
             requestId?: string;
             /** Actual network headers, for policy assertions at the HTTP boundary. */
             requestHeaders: Headers;
@@ -162,6 +174,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             resourceMode: codec ? 'e2ee' as const : 'plain' as const, accessState: 'ready' as const } } : {}),
         installationPublicKey: encodeBase64(installation.publicKey, 'base64'),
     };
+    const roots = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
     return {
         machine,
         installationPrivateKey: installation.privateKey,
@@ -175,6 +188,25 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             }
             if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                 id => id === machine.id ? machine : null);
+            const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(params.actionId);
+            if (url.pathname === verifyPath && init?.method === 'POST') {
+                const body: unknown = JSON.parse(String(init.body));
+                ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(body);
+                const headers = new Headers(init.headers);
+                const token = headers.get(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER);
+                const root = token ? roots.get(token) : undefined;
+                const signature = headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER);
+                const effectActionId = headers.get(EXTERNAL_ACTION_EFFECT_ACTION_HEADER);
+                const encodedTarget = headers.get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
+                const target = encodedTarget ? decodeExternalActionResolvedTargetV1(encodedTarget) : null;
+                if (!root || !signature || !effectActionId || !target || !machine.installationId
+                    || !verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId, target,
+                        installationId: machine.installationId, requestId: root.binding.requestId,
+                        method: 'POST', path: verifyPath, body, publicKey: installation.publicKey, signature })) {
+                    return Response.json({ error: 'action_forbidden' }, { status: 403 });
+                }
+                return Response.json({ ok: true });
+            }
             const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId);
             if (url.pathname !== mintPath && url.pathname !== `/v1/actions/${params.actionId}`) return null;
             const body: unknown = JSON.parse(String(init?.body));
@@ -200,8 +232,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const deploymentCandidatePublication = params.deploymentSource && native && !deploymentNativeAdmission
                     ? createDeploymentCandidatePublicationV1({ ...params, requestId: envelope.requestId!, requestEnvelopeDigest,
                         environmentId: native.environmentId, source: params.deploymentSource }) : undefined;
-                return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
-                    v: 1, token: 'test-external-action-authorization', binding: {
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+                    v: 1, token: `test-external-action-authorization:${envelope.requestId}`, binding: {
                         accountId: params.accountId, authentication: { kind: 'account', tokenEpoch: params.tokenEpoch },
                         serverIdentityId: params.serverIdentityId, machineId: machine.id,
                         custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
@@ -215,7 +247,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         ...(deploymentCandidatePublication ? { deploymentCandidatePublication } : {}),
                         requestEnvelopeDigest,
                     },
-                }));
+                });
+                roots.set(authorization.token, authorization);
+                return Response.json(authorization);
             }
             if (request && request.executionAuthorization?.binding.requestEnvelopeDigest
                 !== computeExternalActionRequestEnvelopeDigestV1(envelope)) throw new Error('Invalid external Action request binding');
@@ -229,7 +263,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const requestHeaders = new Headers(init?.headers);
             let result: unknown;
             if (params.requesterInvocation === 'optional' && !request?.executionAuthorization) {
-                result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
+                result = await params.execute(input, { target, envelope, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else if (params.requesterInvocation === 'none') {
                 if (request?.executionAuthorization?.requesterAccountContext) throw new Error('Unexpected private requester Account carrier');
                 result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
@@ -242,6 +276,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 if (params.requesterInvocation === 'optional') {
                     if (!opened.invocation) throw new Error('Missing private requester invocation');
                     result = await params.execute(input, { target, invocation: opened.invocation,
+                        authorization: request.executionAuthorization, envelope,
                         requestId: envelope.requestId, signal: init?.signal, requestHeaders });
                 } else if (params.requesterInvocation === 'credentials') result = await params.execute(input, {
                     target, requesterAccountContext: opened.credentials, requestId: envelope.requestId, signal: init?.signal, requestHeaders,

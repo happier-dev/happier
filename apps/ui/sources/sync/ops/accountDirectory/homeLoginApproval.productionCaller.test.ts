@@ -1,4 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 import sodium from '@/encryption/libsodium.lib';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -12,6 +14,9 @@ import { createReactNativeNativeMock } from '@/dev/testkit/mocks/reactNative';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+installDisconnectedServerSocketBoundary();
 
 /** Non-secret binding to the Account credential that created the continuation. */
 const TEST_CREDENTIAL_TOKEN_DIGEST = 'sha256:test-account-credential';
@@ -33,13 +38,32 @@ vi.mock('@/sync/http/client', () => ({
     createServerFetchAtEndpoint: vi.fn(() => endpointFetchMock),
     serverFetch: vi.fn(),
 }));
-vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/runtime/nativeIrohTunnels/runtime')>();
-    return {
-        ...actual,
-        acquireIrohHomeRuntimeOrigin: (...args: unknown[]) => acquireIrohHomeRuntimeOriginMock(...args),
-    };
-});
+vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
+    acquireIrohHomeRuntimeOrigin: (...args: unknown[]) => acquireIrohHomeRuntimeOriginMock(...args),
+}));
+
+// Install the native platform and storage boundaries before loading the real production
+// caller. The composed graph is intentionally cached once; per-case scope and profile
+// reset below provide isolation without paying its cold transform inside a timed test.
+vi.resetModules();
+vi.doMock('react-native', async () => createReactNativeNativeMock({ platformOS: 'ios' }));
+vi.doMock('expo-secure-store', () => ({
+    getItemAsync: async (key: string) => secureStoreValues.get(key) ?? null,
+    setItemAsync: async (key: string, value: string) => { secureStoreValues.set(key, value); },
+    deleteItemAsync: async (key: string) => { secureStoreValues.delete(key); },
+}));
+vi.doMock('@react-native-async-storage/async-storage', () => ({
+    default: {
+        getItem: vi.fn(async () => null),
+        setItem: vi.fn(async () => {}),
+        removeItem: vi.fn(async () => {}),
+    },
+}));
+vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
+    acquireIrohHomeRuntimeOrigin: (...args: unknown[]) => acquireIrohHomeRuntimeOriginMock(...args),
+}));
+const { completeAccountServicePostAuth } = await import('./completeAccountServicePostAuth');
+const preloadedServerProfiles = await import('@/sync/domains/server/serverProfiles');
 
 describe('Directory enrollment production composition', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
@@ -52,23 +76,28 @@ describe('Directory enrollment production composition', () => {
     beforeEach(() => {
         secureStoreValues.clear();
         restoreLocalStorage = installLocalStorageMock().restore;
+        preloadedServerProfiles.resetServerProfilesRuntimeForTests();
     });
 
     afterEach(() => {
+        preloadedServerProfiles.resetServerProfilesRuntimeForTests();
         restoreLocalStorage?.();
         restoreLocalStorage = null;
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         endpointFetchMock.mockReset();
         acquireIrohHomeRuntimeOriginMock.mockReset();
-        vi.resetModules();
     });
 
     it('enrolls an Iroh-only Home using the transport-authenticated EndpointId destination', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `directory_enrollment_iroh_${Date.now()}_${Math.random()}`;
+        const runtimeSodium = (await import('@/encryption/libsodium.lib')).default;
+        const { encodeBase64: runtimeEncodeBase64 } = await import('@/encryption/base64');
+        const { encryptBox: runtimeEncryptBox } = await import('@/encryption/libsodium');
+        await runtimeSodium.ready;
         const now = Date.now();
         const endpointId = 'c'.repeat(64);
-        const keyPair = sodium.crypto_box_keypair();
+        const keyPair = runtimeSodium.crypto_box_keypair();
         const descriptor = {
             v: 1 as const,
             homeServerIdentityId: 'srv_home_iroh_only',
@@ -83,14 +112,14 @@ describe('Directory enrollment production composition', () => {
             issuerSubjectId: 'account-1',
             audienceHomeServerIdentityId: descriptor.homeServerIdentityId,
             credentialDestinationDigestBase64Url: createHomeCredentialDestinationDigestV1(descriptor),
-            clientBoxPublicKeyBase64: encodeBase64(keyPair.publicKey, 'base64'),
+            clientBoxPublicKeyBase64: runtimeEncodeBase64(keyPair.publicKey, 'base64'),
             issuedAtMs: now - 1_000,
             expiresAtMs: now + 2 * 60_000,
             keyId: 'a'.repeat(64),
             signatureBase64Url: 'A'.repeat(86),
         };
-        const sealedHomeTokenBase64Url = encodeBase64(
-            encryptBox(
+        const sealedHomeTokenBase64Url = runtimeEncodeBase64(
+            runtimeEncryptBox(
                 new TextEncoder().encode(JSON.stringify({ token: 'iroh-home-token' })),
                 keyPair.publicKey,
             ),
@@ -188,7 +217,10 @@ describe('Directory enrollment production composition', () => {
         let requesterPublicKey: Uint8Array | null = null;
         const client = {
             isCurrent: () => true,
-            getMe: vi.fn(async () => ({ accountId: 'account-1' })),
+            getMe: vi.fn(async () => ({
+                v: 1 as const, accountId: 'account-1', encryptionMode: 'plain' as const,
+                displayName: null, avatar: null, linkedAuthenticationMethods: [],
+            })),
             listHomes: vi.fn(async () => ({ homes: [home], preferredHomeServerIdentityId: 'srv_home_b' })),
             requestLoginAssertion: vi.fn(async (_homeServerIdentityId: string, body: { clientBoxPublicKeyBase64: string }) => {
                 requesterPublicKey = decodeBase64(body.clientBoxPublicKeyBase64, 'base64');
@@ -334,7 +366,6 @@ describe('Directory enrollment production composition', () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         const { AccountDirectorySession } = await import('@/sync/domains/accountDirectory/accountDirectorySession');
-        const { completeAccountServicePostAuth } = await import('./completeAccountServicePostAuth');
         await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'manual' });
         const incumbent = {
             token: `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({
@@ -347,7 +378,7 @@ describe('Directory enrollment production composition', () => {
         }
         await TokenStorage.accountDirectoryAuthCredentials.set(
             { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId },
-            { token: 'directory-fixture-credential' },
+            { token: fixture.token },
         );
         endpointFetchMock.mockImplementation((path: string, init?: RequestInit) => fixture.request(
             fixture.service.endpointUrl, path, init,
@@ -394,8 +425,9 @@ describe('Directory enrollment production composition', () => {
         };
         const { AccountDirectorySession } = await import('@/sync/domains/accountDirectory/accountDirectorySession');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        const target = { endpoint: 'https://directory.test', serverIdentityId: 'srv_directory' };
-        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' });
+        const fixture = createDirectoryHttpFixture();
+        const target = { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId };
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: fixture.token });
         const session = new AccountDirectorySession(target, { capability: {
             version: 1, homeDirectory: true, homeEnrollment: true,
             homeLoginAssertion: { keyId: 'a'.repeat(64), publicKeyBase64Url: 'A'.repeat(43) },
@@ -419,7 +451,7 @@ describe('Directory enrollment production composition', () => {
             })));
         const { enrollDirectoryHome } = await import('./enrollDirectoryHome');
 
-        await expect(enrollDirectoryHome({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, session, service: createDirectoryHttpFixture().service,
+        await expect(enrollDirectoryHome({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, session, service: fixture.service,
             intent: { kind: 'enroll', homeServerIdentityId: home.homeServerIdentityId } }, {
             home, shouldCancel: () => false,
             complete: async () => ({ kind: 'home_enrolled', homeServerIdentityId: home.homeServerIdentityId }),

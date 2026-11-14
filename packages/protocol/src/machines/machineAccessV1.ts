@@ -5,6 +5,7 @@ export { MachinePresenceTransitionsV1Schema, MachinePresenceReadInputV1Schema,
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
+import { TeamGroupNameProjectionV1Schema } from '../teams/groupLabel.js';
 import { ContentPublicKeyFingerprintSchema } from './identity/contentPublicKeyFingerprint.js';
 import { MachineInstallationPublicIdentityV1Schema } from './identity/installationKeySchemas.js';
 import { SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema, SessionDataKeyEnvelopePageQueryV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
@@ -75,7 +76,7 @@ export const MachinePresenceReadResultV1Schema = lazyZodSchema(() => z.union([
   MachineAccessRefusalV1Schema,
 ]));
 export const MachineAccessGrantRowV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineAccessGrantV1Schema, {
-  display: z.strictObject({ name: z.nullable(z.string()) }),
+  display: z.strictObject({ name: z.nullable(z.string()), groupName: z.optional(TeamGroupNameProjectionV1Schema) }),
   readiness: MachineAccessReadinessV1Schema,
   /** Current member facts; a Team's aggregate refusal does not refuse its eligible members. */
   audience: z.array(z.strictObject({ accountId: z.string().check(z.minLength(1)), displayName: z.string(),
@@ -88,7 +89,8 @@ export type MachineAccessGrantRowV1 = z.infer<typeof MachineAccessGrantRowV1Sche
 export const MachineAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.minLength(1)), custodian: MachineCustodianV1Schema, access: AccessibleMachineAccessV1Schema,
   canManage: z.boolean(), grants: z.array(MachineAccessGrantRowV1Schema), ownDirectGrant: z.boolean(),
-  ownAccessSources: z.array(z.strictObject({ principal: PrincipalRefV1Schema, displayName: z.nullable(z.string()) })),
+  ownAccessSources: z.array(z.strictObject({ principal: PrincipalRefV1Schema, displayName: z.nullable(z.string()),
+    groupName: z.optional(TeamGroupNameProjectionV1Schema) })),
   /** Safe display only; absent for Use recipients and pre-extension responses. */
   currentRequesterDisplayIdentities: z.optional(z.array(MachineCustodianV1Schema)),
 }));

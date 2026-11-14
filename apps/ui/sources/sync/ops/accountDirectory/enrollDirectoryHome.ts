@@ -1,7 +1,7 @@
 import { encodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
 import { verifyAccountServiceHomeAssertionRequest, type AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
-import type { AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { OpenedAccountDirectoryHomeEntryV1 as AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/openedAccountDirectoryHome';
 import { continueHomeLoginEnrollment, type HomeLoginContinuationResult } from './homeLoginApproval';
 import type { AccountPostAuthInput, AccountPostAuthResult } from './completeAccountServicePostAuth';
 import { Platform } from 'react-native';

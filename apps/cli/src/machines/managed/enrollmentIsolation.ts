@@ -1,13 +1,13 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { applyManagedMachineEnrollmentIsolation, type ManagedEnrollmentIsolationRequest } from '@happier-dev/cli-common/machines/managed';
-import { resolveManagedMachineEnrollmentAgentIsolationV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineEnrollmentAgentIsolationV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { dispatchManagedMachineAgentIsolation, dispatchLocalManagedMachineAgentIsolation } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { resolveManagedCreationChildMaterial } from './creationChildMaterial';
 
 /** Creation/recovery consumes the same reviewed guest policy owner as manual changes. */
-export async function initializeManagedMachineEnrollmentIsolation(machine: ManagedMachineV1, input: ManagedMachineAcquisitionDriverInput,
+export async function initializeManagedMachineEnrollmentIsolation(machine: ManagedMachineFullV1, input: ManagedMachineAcquisitionDriverInput,
     options: ManagedMachineExecutionOptions): Promise<void> {
     const policy = resolveManagedMachineEnrollmentAgentIsolationV1(machine.enrollmentIdentity);
     if (!policy) return;

@@ -7,6 +7,7 @@ import { adoptHomeProfile, getActiveServerSnapshot, resolveServerProfileForPorta
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/http/client', () => ({ createServerFetchAtEndpoint: () => request }));
+const realisticJWT = (subject: string) => `header.${btoa(JSON.stringify({ sub: subject }))}.signature`;
 
 describe('refreshAccountHomeDirectory', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
@@ -22,7 +23,7 @@ describe('refreshAccountHomeDirectory', () => {
         request.mockReset();
         request.mockImplementation((path: string, init?: RequestInit) => fixture.request(fixture.service.endpointUrl, path, init));
         const target = { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId };
-        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: fixture.token });
         session = new AccountDirectorySession(target, { capability: fixture.service.capability });
     });
     afterEach(() => {
@@ -38,12 +39,12 @@ describe('refreshAccountHomeDirectory', () => {
         expect((await session.refresh()).status).toBe('ready');
         await TokenStorage.accountDirectoryAuthCredentials.set(
             { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId },
-            { token: 'replacement-token' },
+            { token: realisticJWT('replacement-account') },
         );
         const result = await refreshAccountHomeDirectory(session);
         expect(result.reconciliation).toMatchObject({ kind: 'cancelled', adopted: [] });
         expect(resolveServerProfileForPortableIdentity(fixture.home.homeServerIdentityId).kind).toBe('missing');
-        expect(request).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.filter(([path]) => path === '/v1/account-directory/homes')).toHaveLength(1);
     });
 
     it('adopts advisory metadata without changing focus or requesting enrollment', async () => {
@@ -54,7 +55,7 @@ describe('refreshAccountHomeDirectory', () => {
         expect(resolved.kind).toBe('resolved');
         if (resolved.kind === 'resolved') expect(resolved.profile.descriptorProvenance).toBe('advisory-only');
         expect(getActiveServerSnapshot()).toMatchObject({ serverId: focus.serverId, serverUrl: focus.serverUrl, isSelectionExplicit: focus.isSelectionExplicit });
-        expect(request.mock.calls.map(([path]) => path)).toEqual(['/v1/account-directory/homes']);
+        expect(request.mock.calls.map(([path]) => path)).toEqual(['/v1/account-directory/homes', '/v1/account-directory/me']);
     });
 
     it('does not adopt a held response after cancellation', async () => {
@@ -108,7 +109,7 @@ describe('refreshAccountHomeDirectory', () => {
         await cancelledResult;
         expect((await validResult).reconciliation).toMatchObject({ kind: 'completed', adopted: [{ homeServerIdentityId: fixture.home.homeServerIdentityId }] });
         expect(session.snapshot.status).toBe('ready');
-        expect(request).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.filter(([path]) => path === '/v1/account-directory/homes')).toHaveLength(1);
     });
 
     it.each([0, 1])('continues independent entries after a real identity conflict at index %s', async (failedIndex) => {

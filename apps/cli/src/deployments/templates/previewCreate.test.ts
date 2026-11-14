@@ -46,8 +46,10 @@ it.each([
                 getJson: async () => ({ ok: true, value: catalog, fetchedAt: 1 }),
                 getText: async () => { throw new Error('Unexpected text'); }, getBytes: async () => { throw new Error('Unexpected bytes'); },
             } });
-            return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
+            const item = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
                 sourceId: 'apps', kind: 'app', itemId: 'postgresql' })).item;
+            if (item.payload.kind !== 'app' || item.payload.state !== 'ready') throw new Error('Expected a ready PostgreSQL app');
+            return { ...item, payload: item.payload };
         };
         let selected = await readTemplate();
         if ((storage === 'missing' || storage === 'ephemeral' || storage === 'otherService') && selected.payload.kind === 'app') {
@@ -213,8 +215,8 @@ it.each([
         if (storage === 'blueprintRepository' || storage === 'blueprintCompanionMain') {
             const { materializePreviewTemplateBindingsForHost } = await import('./previewCreate');
             const bindings = await fixture.inHome(() => materializePreviewTemplateBindingsForHost(plan, context, host));
-            expect(bindings).toContainEqual({ purpose: 'variable', phase: 'runtime', name: 'PREVIEW_LABEL',
-                source: { kind: 'value', value: 'review' } });
+            expect(bindings).toContainEqual(expect.objectContaining({ purpose: 'variable', phase: 'runtime', name: 'PREVIEW_LABEL',
+                grantRef: expect.any(String), source: { kind: 'value', value: 'review' } }));
             expect(bindings).not.toContainEqual(parent.content.previewTemplate.bindingBlueprints[0]);
             expect(bindings).not.toContainEqual(parent.content.previewTemplate.bindingBlueprints[1]);
             if (storage === 'blueprintRepository') {
@@ -269,7 +271,7 @@ it.each([
         expect(passwords[1]).not.toEqual(passwords[0]);
         expect(fixture.writes).toHaveLength(2);
         for (const write of fixture.writes) {
-            const password = fixture.opened(write)?.value;
+            const password = fixture.openedValue(write);
             expect(typeof password).toBe('string');
             expect(JSON.stringify({ plan, first, second })).not.toContain(password);
         }

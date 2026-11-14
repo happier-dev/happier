@@ -722,6 +722,7 @@ export type OperationOutputActionResultById = {
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
+                                grantRef?: string | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -1128,6 +1129,7 @@ export type OperationOutputActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
+                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
@@ -1288,6 +1290,7 @@ export type OperationOutputActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
                                     repository: {
@@ -2771,6 +2774,7 @@ export type OperationOutputActionResultById = {
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
+                                grantRef?: string | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -3177,6 +3181,7 @@ export type OperationOutputActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
+                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
@@ -3337,6 +3342,7 @@ export type OperationOutputActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
                                     repository: {

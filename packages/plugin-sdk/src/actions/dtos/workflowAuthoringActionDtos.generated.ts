@@ -707,6 +707,10 @@ export type WorkflowAuthoringActionInputById = {
                         };
                         maximumObservationAgeMs: null | number;
                         enabled: boolean;
+                        automationDisplay?: undefined | {
+                            name: string;
+                            description: null | string;
+                        };
                     } | {
                         kind: 'pluginEvent';
                         eventRef: {
@@ -1021,6 +1025,10 @@ export type WorkflowAuthoringActionResultById = {
                             };
                             maximumObservationAgeMs: null | number;
                             enabled: boolean;
+                            automationDisplay?: undefined | {
+                                name: string;
+                                description: null | string;
+                            };
                         } | {
                             kind: 'pluginEvent';
                             eventRef: {

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -609,7 +610,7 @@ describe("Team credential resource lifecycle", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "member" } });
         const directMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: directMember.id, role: "member" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: bothMember.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Both", nameKey: "both" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Both") } });
         const broker = await db.machine.create({ data: {
             id: `narrowing-broker-${custodian.id}`,
             accountId: custodian.id,
@@ -658,7 +659,7 @@ describe("Team credential resource lifecycle", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "member" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
         const directMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: directMember.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Both", nameKey: "both" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Both") } });
         const brokerFor = (accountId: string) => db.machine.create({ data: {
             id: `replacement-narrowing-broker-${accountId}`, accountId, metadata: "{}", kind: "persistent",
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
@@ -778,7 +779,7 @@ describe("Team credential resource lifecycle", () => {
             db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "owner" } }),
             db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } }),
         ]);
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Builders", nameKey: "builders" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Builders") } });
         const broker = await db.machine.create({ data: {
             id: `replacement-broker-${custodian.id}`, accountId: custodian.id, metadata: "{}", kind: "persistent",
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },

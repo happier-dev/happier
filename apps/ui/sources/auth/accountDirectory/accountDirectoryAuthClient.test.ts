@@ -1,25 +1,28 @@
 import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
-import { parseAuthenticatedAccountEntryRoute } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NativeAbortController, NativeAbortSignal } from '@/dev/testkit/fixtures/reactNativeFetchPrimitives';
 import { installAbortSignalThrowIfAborted } from '@/boot/installAbortSignalThrowIfAborted';
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
-import {
-    ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY,
-    PENDING_ACCOUNT_DIRECTORY_AUTH_STORAGE_KEY,
-    TokenStorage,
-} from '@/auth/storage/tokenStorage';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
-import { adoptHomeProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
-import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { checkAccountServiceEndpoint } from '@/sync/ops/accountDirectory/selectAccountServiceEndpoint';
+import { encodeBase64 } from '@/encryption/base64';
+import { createPasswordEnvelopeAadV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
+import { deriveKey } from '@/encryption/deriveKey';
+import { sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 
 // The network and browser storage are the boundaries. Feature probing and decoding, the auth-entry
 // client, the key challenge, the OAuth provider and TokenStorage custody all run their real owners.
+vi.stubGlobal('window', globalThis);
 installTokenStorageWebPlatformMocks();
 installTokenStorageTestIsolation('account_directory_auth_client');
+const {
+    ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY,
+    PENDING_ACCOUNT_DIRECTORY_AUTH_STORAGE_KEY,
+    captureAccountDirectoryCredentialCustody,
+    TokenStorage,
+} = await import('@/auth/storage/tokenStorage');
 type Route = (endpoint: string, path: string, init?: RequestInit) => Response | Promise<Response>;
 const network = vi.hoisted(() => ({
     calls: [] as Array<{ endpoint: string; path: string; init?: RequestInit }>,
@@ -45,7 +48,12 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
     return mocked;
 });
 
-import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority } from './accountDirectoryAuthClient';
+const { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority } = await import('./accountDirectoryAuthClient');
+const { parseAuthenticatedAccountEntryRoute } = await import('@/components/navigation/accountEntry/authenticatedAccountEntryRoute');
+const { checkAccountServiceEndpoint } = await import('@/sync/ops/accountDirectory/selectAccountServiceEndpoint');
+const { Encryption } = await import('@/sync/encryption/encryption');
+const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+const { createDirectoryHttpFixture } = await import('@/sync/ops/accountDirectory/accountDirectoryTestFixtures');
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -125,6 +133,24 @@ function oauthParamsRoute(service: Readonly<{ endpointUrl: string; serverIdentit
     };
 }
 
+async function expectRestartedDirectoryCustodyToOpen(
+    target: Readonly<{ endpoint: string; serverIdentityId: string }>,
+    secret: Uint8Array,
+    dataKey: Uint8Array,
+) {
+    const source = await Encryption.create(secret);
+    const encryptedDataKey = encodeBase64(await source.encryptEncryptionKey(dataKey), 'base64');
+    const beforeRestart = captureAccountDirectoryCredentialCustody(target);
+    const capturedCredentials = await beforeRestart.read();
+    await expect(beforeRestart.decryptEncryptionKey!(encryptedDataKey)).resolves.toEqual(dataKey);
+    vi.resetModules();
+    const restarted = await import('@/auth/storage/tokenStorage');
+    const custody = restarted.captureAccountDirectoryCredentialCustody(target);
+    await expect(custody.read()).resolves.toEqual(capturedCredentials);
+    expect(custody.decryptEncryptionKey).toBeTypeOf('function');
+    await expect(custody.decryptEncryptionKey!(encryptedDataKey)).resolves.toEqual(dataKey);
+}
+
 describe('accountDirectoryAuthClient', () => {
     let storage: LocalStorageMockHandle;
     let restoreLocks: () => void;
@@ -134,6 +160,7 @@ describe('accountDirectoryAuthClient', () => {
     ));
 
     beforeEach(() => {
+        vi.stubGlobal('window', globalThis);
         storage = installLocalStorageMock();
         restoreLocks = installWebLockManagerMock().restore;
         directory = createDirectoryHttpFixture();
@@ -566,7 +593,7 @@ describe('accountDirectoryAuthClient', () => {
         network.routes.set('/v1/auth/account-directory', () => json({ token: 'restricted-directory-token' }));
     }
 
-    it.each(['standard', 'native'] as const)('logs in by key with a %s signal and stores only Directory credentials', async (signalKind) => {
+    it.each(['standard', 'native'] as const)('logs in by key with a %s signal and retains only the derived Directory content key', async (signalKind) => {
         const { service } = directory;
         serveDirectoryKeyChallenge();
         // React Native's installed AbortSignal predates throwIfAborted and reason.
@@ -591,6 +618,8 @@ describe('accountDirectoryAuthClient', () => {
         await expect(TokenStorage.accountDirectoryAuthCredentials.get(target))
             .resolves.toEqual({ token: 'restricted-directory-token' });
         await expect(TokenStorage.getPendingAccountDirectoryAuth(target)).resolves.toBeNull();
+        expect(storedDirectoryKeys()).toHaveLength(1);
+        await expectRestartedDirectoryCustodyToOpen(target, new Uint8Array(32).fill(11), new Uint8Array(32).fill(71));
     });
 
     it('logs in by password with a native signal and stores only Directory credentials', async () => {
@@ -616,6 +645,84 @@ describe('accountDirectoryAuthClient', () => {
         await expect(TokenStorage.accountDirectoryAuthCredentials.get({
             endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId,
         })).resolves.toEqual({ token: 'password-directory-token' });
+        const source = await Encryption.create(new Uint8Array(32).fill(44));
+        const encryptedDataKey = encodeBase64(await source.encryptEncryptionKey(new Uint8Array(32).fill(72)), 'base64');
+        const custody = captureAccountDirectoryCredentialCustody({
+            endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId,
+        });
+        await expect(custody.decryptEncryptionKey!(encryptedDataKey)).resolves.toBeNull();
+    });
+
+    it('retains the derived Directory content key from an encrypted password login across restart', async () => {
+        const { service } = directory;
+        const password = 'exact encrypted password';
+        const root = new Uint8Array(32).fill(9);
+        const secret = new Uint8Array(32).fill(4);
+        const wrapKey = await deriveKey(root, 'Happier Password Envelope', ['v1', 'wrap']);
+        const authKey = await deriveKey(root, 'Happier Password Envelope', ['v1', 'auth']);
+        const kdf = {
+            algorithm: 'argon2id13', salt: encodePasswordCredentialFieldV1(new Uint8Array(16)),
+            opsLimit: 3, memLimitBytes: 64 * 1024 * 1024, outputBytes: 32,
+        } as const;
+        const header = {
+            v: 1,
+            accountSigningPublicKey: encodePasswordCredentialFieldV1(deriveAccountSigningPublicKey(secret)),
+            kdf,
+            cipher: { algorithm: 'aes256gcm', nonce: encodePasswordCredentialFieldV1(new Uint8Array(12)) },
+        } as const;
+        const ciphertext = await sealAes256GcmBytes({
+            key: wrapKey,
+            nonce: new Uint8Array(12),
+            aad: createPasswordEnvelopeAadV1(header),
+            plaintext: secret,
+        });
+        const envelope = { ...header, cipher: { ...header.cipher, ciphertext: encodePasswordCredentialFieldV1(ciphertext) } };
+        const challenge = {
+            challengeId: 'password-directory-challenge', nonce: 'password-directory-nonce',
+            issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            audience: { origin: service.canonicalServerUrl, serverIdentityId: service.serverIdentityId },
+        } as const;
+        vi.stubGlobal('Worker', class {
+            onmessage: ((event: { data: unknown }) => void) | null = null;
+            onerror = null;
+            onmessageerror = null;
+            postMessage(input: { password: Uint8Array }) {
+                expect(input.password).toEqual(new TextEncoder().encode(password));
+                queueMicrotask(() => this.onmessage?.({ data: { ok: true, key: root.slice() } }));
+            }
+            terminate() {}
+        });
+        network.routes.set('/v1/auth/email/prelogin', () => json({ v: 1, kind: 'e2ee_password_unlock', kdf }));
+        network.routes.set('/v1/auth/email/unlock', (_endpoint, _path, init) => {
+            expect(JSON.parse(String(init?.body))).toEqual({
+                v: 1, email: 'person@example.test', authKey: encodePasswordCredentialFieldV1(authKey),
+            });
+            return json({ envelope, expectedAccountId: 'encrypted-account', challenge });
+        });
+        network.routes.set('/v1/auth/account-directory/challenge', () => json(challenge));
+        network.routes.set('/v1/auth/account-directory', (_endpoint, _path, init) => {
+            expect(JSON.parse(String(init?.body))).toMatchObject({
+                expectedAccountId: 'encrypted-account', challengeId: challenge.challengeId, requireExistingAccount: true,
+            });
+            return json({ token: 'password-e2ee-directory-token' });
+        });
+
+        await expect(accountDirectoryAuthClient.loginWithPassword({
+            endpointUrl: service.endpointUrl,
+            endpointServerIdentityId: service.serverIdentityId,
+            canonicalServerUrl: service.canonicalServerUrl,
+            email: 'person@example.test',
+            password,
+            verifiedServerFeaturesSnapshot: service.snapshot,
+        })).resolves.toEqual({
+            credentials: { token: 'password-e2ee-directory-token' },
+            keyAuthSecret: secret,
+        });
+        await expectRestartedDirectoryCustodyToOpen(
+            { endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId },
+            secret,
+            new Uint8Array(32).fill(73),
+        );
     });
 
     it.each(['key', 'password'] as const)('refuses %s login before network or storage when a native signal is aborted', async (method) => {

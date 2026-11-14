@@ -26,6 +26,7 @@ import { createManagedProviderOperationAuthority } from '../connectedServices/pu
 import { createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
 import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
 import { dispatchManagedMachineSetup, dispatchManagedSessionStart, prepareExternalActionRequesterAccountAuthorization, projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -61,8 +62,11 @@ import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema,
     AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MachineSetupApplyInputV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema, ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
+    replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { createPluginContributionIdentity } from '@happier-dev/protocol';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerManagedFiniteWake } from '@/rpc/handlers/managedFiniteWake';
@@ -172,7 +176,8 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
     privateKey: string | Uint8Array = 'not-used-by-passive-discovery', accountCredentials = credentials,
     observeRecordedApprovalExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeRecordedApprovalExecution'],
     executeEnvironmentSetup?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['executeEnvironmentSetup'],
-    observeActionExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeActionExecution']) {
+    observeActionExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeActionExecution'],
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry) {
     // The module-loading boundary has no installed plugin. The empty catalog
     // itself is produced by the real contribution registry owner.
     const registry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
@@ -187,7 +192,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
         resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
             serverUrl, resolveCurrentMachineId: () => 'controller',
         }),
-        acquireRuntimeRegistryLease: async () => ({ registry, source: 'active', durableRevision: 1, release: async () => {} }),
+        acquireRuntimeRegistryLease: async () => ({ registry: runtimeRegistry ?? registry, source: 'active', durableRevision: 1, release: async () => {} }),
     });
 }
 
@@ -1036,7 +1041,7 @@ describe('daemon managed Machine Action factory', () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller,
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const machine = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+        const machine = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
             controller: selection.controller, allocation: 'may-exist', creationState: 'active', desired: 'start',
             desiredWhen: 'now', intentRevision: 0, retention: selection.retention, wakeOnAcceptedMessage: false };
         const input = policy === 'cancel-default-ask'
@@ -1172,15 +1177,39 @@ describe('daemon managed Machine Action factory', () => {
         setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
             settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(ownCredentials) });
         const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(38));
-        const input = { enrollmentIdentity, selection: { kind: 'preset' as const, homeId: 'srv_home', id: 'preset', revision: 4 },
-            controller: { machineId: 'controller', installationId: 'installation' }, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        let machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
-            controller: input.controller, preset: { id: 'preset', revision: 4 }, enrolledMachineId: 'actual-guest',
-            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
-            allocation: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
-            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
-            retention: input.retention, wakeOnAcceptedMessage: false,
-            machineSetup: { setup: { scripts: [{ body: 'echo reviewed' }] }, state: 'pending' } });
+        const native = nativeFixture({ privateNative: true });
+        const presetId = 'preset';
+        const retention = { kind: 'until-delete' as const };
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} };
+        const resource = { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} };
+        const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch, optionStatus: 'current', prerequisites: [],
+            billing: { location: 'cloud', stoppedBilling: 'unknown' }, retentionCapabilities: { supportedIntents: ['delete'] },
+            retention, wakeOnAcceptedMessage: false });
+        const authored = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: {
+            v: 1, name: 'Voice setup preset', launch,
+            setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] },
+        } });
+        const snapshotContent = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'plain', content: authored.content,
+            launchName: launch.name, reviewedFacts, nativeResult: { kind: 'bound', resource } });
+        if (!snapshotContent) throw new Error('Could not create the Voice opaque preset snapshot');
+        const presetContent = { ...authored, content: snapshotContent };
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({ content: presetContent.content,
+                recipients: presetContent.recipients, recipientAccountId: 'account' }),
+            enrollmentIdentity,
+        });
+        if (!presetContentOverride) throw new Error('Could not create the Voice opaque preset override');
+        const input = { selection: { kind: 'preset' as const, homeId: 'srv_home', id: presetId, revision: 4 }, controller,
+            retention, wakeOnAcceptedMessage: false, presetContentOverride };
+        let readMachine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
+            controller, preset: { id: presetId, revision: 4, contentEncryptionMode: 'plain' }, enrolledMachineId: 'actual-guest',
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention, wakeOnAcceptedMessage: false, machineSetup: { state: 'pending' } });
+        const readerProjection = projectManagedMachinePresetForRecipientV1({ content: presetContentOverride.content,
+            recipients: [], recipientAccountId: 'account' });
+        let machine = ManagedMachineFullV1Schema.parse({ ...readMachine, enrollmentIdentity, launch, resource, reviewedFacts,
+            machineSetup: { setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] }, state: 'pending' } });
         type ArtifactWire = { id: string; header: string; body: string; dataEncryptionKey: string;
             headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number; provenance?: unknown };
         let artifact: ArtifactWire | undefined;
@@ -1197,6 +1226,7 @@ describe('daemon managed Machine Action factory', () => {
         const controllerPaths: string[] = [];
         const setupContexts: ActionExecutorContext[] = [];
         let childHeaders: unknown;
+        let setupChildInput: unknown;
         // Home and private Artifact HTTP are the substituted boundaries. Policy,
         // approval transitions/replay, signatures, the adapter and driver stay real.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -1253,15 +1283,19 @@ describe('daemon managed Machine Action factory', () => {
                 const request = ChildRequestSchema.parse(body);
                 expect(request.managedContinuation).toEqual({ managedId: machine.id, creationRequestId: 'voice-acquire', expectedIntentRevision: 0 });
                 expect(request.envelope).not.toHaveProperty('sessionSpawnAdmission');
-                machine = ManagedMachineV1Schema.parse({ ...machine, machineSetup: { ...machine.machineSetup!, state: 'succeeded' } });
+                setupChildInput = request.envelope.v === 1 ? request.envelope.input : request.envelope;
+                machine = ManagedMachineFullV1Schema.parse({ ...machine, machineSetup: { ...machine.machineSetup!, state: 'succeeded' } });
+                readMachine = ManagedMachineV1Schema.parse({ ...readMachine,
+                    machineSetup: { ...readMachine.machineSetup!, state: 'succeeded' } });
                 return { status: 200, data: { v: 1, actionId: 'machines.setup.apply', requestId: request.envelope.requestId,
                     execution: { ok: true, result: { operationId: 'actual-setup' } } } };
             }
             if (path.startsWith('/v1/machines/managed/')) {
                 expect(approved).toBe(true);
                 controllerPaths.push(path);
-                return { status: 200, data: path.endsWith('/admit') ? { machine, replayed: true }
-                    : path === '/v1/machines/managed/actions/get' ? machine : { machine } };
+                return { status: 200, data: path.endsWith('/admit') ? { machine: readMachine, presetContent, presetContentOverride, replayed: true }
+                    : path === '/v1/machines/managed/actions/get' ? { machine: readMachine, presetContent: readerProjection }
+                        : { machine: readMachine } };
             }
             throw new Error(`Unexpected Voice approval POST ${path}`);
         });
@@ -1274,15 +1308,25 @@ describe('daemon managed Machine Action factory', () => {
             setupContexts.push(context);
             const authorization = context.externalActionExecutionAuthorization;
             if (!authorization) throw new Error('Approved acquisition lost its original proof');
-            return dispatchManagedMachineSetup({ input: MachineSetupApplyInputV1Schema.parse({ homeId: current.homeId, machineId: current.enrolledMachineId!, targets: [{
-                homeId: current.homeId, machineId: current.enrolledMachineId!, desiredRevision: 0, recipePlans: [], sources: [
-                { kind: 'accountPreset', presetId: current.preset!.id, presetRevision: current.preset!.revision, setup: current.machineSetup!.setup },
-                { kind: 'direct', setup: {} },
-            ] }] }), authority: context.authority,
+            const target = { homeId: current.homeId, machineId: current.enrolledMachineId! };
+            const input = await prepareManagedMachineSetupApplyInput({ target, creation: {
+                preset: current.preset!, setup: current.machineSetup!.setup,
+            }, readPlan: async planInput => ({ ok: true, result: MachineSetupPlanResultV1Schema.parse({
+                desiredRevision: 0,
+                sources: planInput.sources ?? [
+                    { kind: 'accountPresetOpaque', presetId: current.preset!.id, presetRevision: current.preset!.revision,
+                        contentEncryptionMode: current.preset!.contentEncryptionMode },
+                    { kind: 'direct', setup: {} },
+                ],
+                exclusions: [], support: [],
+                ...(planInput.mode === 'effects' ? { recipePlans: [] } : {}),
+            }) }) });
+            if ('ok' in input) return input;
+            return dispatchManagedMachineSetup({ input, authority: context.authority,
                 authorization, serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl,
                 continuation: { managedId: current.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: current.intentRevision },
                 installationId: 'installation', privateKey: signing.secretKey, signal: context.signal });
-        });
+        }, undefined, native.runtimeRegistry);
         const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: 'controller', serverId: configuration.activeServerId,
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials: ownCredentials }), isAccountCurrent: async () => true, listAccountApiTokens: unavailable,
@@ -1322,11 +1366,23 @@ describe('daemon managed Machine Action factory', () => {
         const decision = await executor.execute('approval.request.decide', { artifactId: artifact.id, decision: 'approve' },
             { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account' });
         expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-        expect(await execution).toMatchObject({ ok: true, result: { managedId: 'managed', operation: { operationId: 'voice-parent' } } });
-        expect(await operations.handlers.getV2({ operationId: 'voice-parent', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+        const executionResult = await execution;
+        expect(executionResult, JSON.stringify(executionResult)).toMatchObject({ ok: true, result: { managedId: 'managed', operation: { operationId: 'voice-parent' } } });
+        const voiceOperation = await operations.handlers.getV2({ operationId: 'voice-parent', waitForTerminal: true });
+        expect(voiceOperation, JSON.stringify({ voiceOperation, setupChildInput })).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+        const setupInput = MachineSetupApplyInputV1Schema.parse(setupChildInput);
+        expect(setupInput.targets[0]?.sources).toEqual([
+            { kind: 'accountPresetOpaque', presetId: machine.preset!.id, presetRevision: machine.preset!.revision,
+                contentEncryptionMode: 'plain' },
+            { kind: 'direct', setup: {} },
+        ]);
+        expect(JSON.stringify(setupInput)).not.toContain('echo reviewed');
         expect(setupContexts).toMatchObject([{ authority: 'account_automation', surface: 'ui', actionRequestId: 'voice-acquire',
             externalActionExecutionAuthorization: { token: root.token, binding: { requestId: 'voice-acquire' } } }]);
         expect(childHeaders).toMatchObject({ [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+        expect(controllerPaths.filter(path => path === '/v1/machines/managed/actions/get')).toEqual([
+            '/v1/machines/managed/actions/get',
+        ]);
     });
 
     it('uses ordinary exact-Machine availability for a fresh guest instead of the controller receiver', async () => {
@@ -1351,7 +1407,7 @@ describe('daemon managed Machine Action factory', () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
             controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false };
@@ -1398,7 +1454,7 @@ describe('daemon managed Machine Action factory', () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
             controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false };
@@ -1503,7 +1559,7 @@ describe('daemon managed Machine Action factory', () => {
             const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
                 launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
                 retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-            const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+            const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
                 controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } },
                 creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
                 enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false };
@@ -1856,7 +1912,7 @@ describe('daemon managed Machine Action factory', () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
             controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: {} },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false });
@@ -1969,7 +2025,7 @@ describe('daemon managed Machine Action factory', () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', launch: selection.launch,
+        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
             controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false };

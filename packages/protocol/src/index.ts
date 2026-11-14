@@ -100,6 +100,7 @@ export * from './sessions/identity/sessionBotV1.js';
 export * from './machines/managed/providerFactsV1.js';
 export * from './machines/managed/managedMachineV1.js';
 export * from './machines/managed/managedDependencyV1.js';
+export * from './machines/managed/managedMachinePresetContentV1.js';
 export { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from './connect/qualifiedConnectedAccountsV4.js';
 export * from './machines/managed/actionsV1.js';
 export * from './machines/managed/managedPolicyV1.js';
@@ -503,6 +504,11 @@ export {
   type HomeLoginRedemptionResponseV1,
   type HomeLoginRedemptionResultV1,
 } from './auth/accountDirectory.js';
+
+export {
+  OpenedAccountDirectoryHomeEntryV1Schema,
+  type OpenedAccountDirectoryHomeEntryV1,
+} from './auth/openedAccountDirectoryHome.js';
 
 export {
   TERMINAL_CONNECT_LINK_WIRE_VERSION_V4,
@@ -3345,6 +3351,30 @@ export {
   sealEncryptedDataKeyEnvelopeV1,
   type EncryptedDataKeyEnvelopeV1,
 } from './crypto/encryptedDataKeyEnvelopeV1.js';
+export {
+  PrivateLabelBindingV1Schema,
+  PrivateLabelContentV1Schema,
+  PrivateLabelReadV1Schema,
+  PrivateLabelRecipientEnvelopeV1Schema,
+  PrivateLabelRecipientV1Schema,
+  PrivateLabelStoredV1Schema,
+  openPrivateLabelV1,
+  parsePrivateLabelStoredV1,
+  projectPrivateLabelForRecipientV1,
+  sealPrivateLabelV1,
+  serializePrivateLabelStoredV1,
+  validatePrivateLabelStoredForModeV1,
+  type PrivateLabelBindingV1,
+  type PrivateLabelContentV1,
+  type PrivateLabelReadV1,
+  type PrivateLabelReadPolicyV1,
+  type PrivateLabelRecipientEnvelopeV1,
+  type PrivateLabelRecipientV1,
+  type PrivateLabelStoredModeValidationV1,
+  type PrivateLabelStoredParseV1,
+  type PrivateLabelStoredV1,
+} from './crypto/privateLabelV1.js';
+export * from './crypto/privateLabelRecipientCensusV1.js';
 export {
   signAccountContentKeyBindingV1,
   verifyAccountContentKeyBindingV1,
@@ -8943,6 +8973,8 @@ export * from './automations/automationSessionLifecycle.js';
 export * from './automations/automationEventV1.js';
 export * from './automations/automationEventTestV1.js';
 export * from './automations/automationStoredContentEnvelopeV1.js';
+export * from './automations/automationDefinitionDisplayV1.js';
+export * from './automations/automationDefinitionDisplayReaderV1.js';
 export * from './automations/automationReplyHandoffIdentityV1.js';
 export * from './automations/automationReplyHandoffStateV1.js';
 export * from './automations/automationRunExecutionRecipeV1.js';

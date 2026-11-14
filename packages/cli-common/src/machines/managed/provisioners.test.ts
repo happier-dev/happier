@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readMachineProvisionerHostAvailability, prepareManagedPowerProvisionerAdmissionV1 } from './provisioners.js';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { qualifyManagedOpaquePresetProvisionerV1, readMachineProvisionerHostAvailability,
+    prepareManagedPowerProvisionerAdmissionV1 } from './provisioners.js';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'Compute', icon: 'cloud', resourceKind: 'compute',
@@ -9,7 +10,7 @@ const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', tit
     billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'delete'] },
     actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'observe', destroy: 'destroy', power: 'change-power' } });
 const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
-const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner', launch,
+const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner', launch,
     allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
@@ -118,5 +119,22 @@ describe('provisioner host availability before acquisition', () => {
             .toEqual({ available: true, executionTarget: 'account' });
         expect(readMachineProvisionerHostAvailability({ host: 'native', provisioner: {} }))
             .toEqual({ available: true, executionTarget: 'account' });
+    });
+});
+
+describe('opaque preset launch qualification', () => {
+    const selected = [{ contribution: launch.provider, occurrenceId: 'selected', descriptor: provisioner,
+        acquireExecutionTarget: 'account' as const }];
+
+    it('selects and validates the exact opened declaration once for every keyholding host', () => {
+        expect(qualifyManagedOpaquePresetProvisionerV1({ launch, provisioners: selected })).toBe(provisioner);
+    });
+
+    it('rejects schema drift or an absent acquire role before any host can issue a private child', () => {
+        expect(qualifyManagedOpaquePresetProvisionerV1({ launch: { ...launch, choices: { stale: true } }, provisioners: selected }))
+            .toBeNull();
+        expect(qualifyManagedOpaquePresetProvisionerV1({ launch, provisioners: [{ ...selected[0]!,
+            // @ts-expect-error -- Simulates a malformed declaration at the external plugin boundary.
+            descriptor: { ...provisioner, actions: { ...provisioner.actions, acquire: undefined } } }], })).toBeNull();
     });
 });

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NO_TEAM_CAPABILITIES_V1, TeamSummaryV1Schema } from '@happier-dev/protocol';
 
@@ -460,7 +461,7 @@ describe('Team directory (SQLite integration)', () => {
       return TeamSummaryV1Schema.parse(result.team);
     };
     expect((await read()).counts).toMatchObject({ groups: 0, archivedGroups: 0 });
-    const group = await db.teamGroup.create({ data: { teamId: counted.id, name: 'Archived', nameKey: 'archived-counts', archivedAt: new Date() } });
+    const group = await db.teamGroup.create({ data: { teamId: counted.id, name: storedPlainPrivateLabel('Archived'), archivedAt: new Date() } });
     expect((await read()).counts).toMatchObject({ groups: 0, archivedGroups: 1 });
     await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: null } });
     expect((await read()).counts).toMatchObject({ groups: 1, archivedGroups: 0 });
@@ -485,12 +486,11 @@ describe('Team directory (SQLite integration)', () => {
     });
     await db.teamGroup.createMany({
       data: [
-        { teamId: counted.id, name: 'Engineering', nameKey: 'engineering' },
-        { teamId: counted.id, name: 'On call', nameKey: 'on call' },
+        { teamId: counted.id, name: storedPlainPrivateLabel('Engineering') },
+        { teamId: counted.id, name: storedPlainPrivateLabel('On call') },
         {
           teamId: counted.id,
-          name: 'Retired',
-          nameKey: 'retired',
+          name: storedPlainPrivateLabel('Retired'),
           archivedAt: new Date(),
         },
       ],

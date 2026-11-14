@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import type { MachinePoolMemberEligibilityV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolMemberEligibilityV1, MachinePoolPrivateViewV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -37,8 +37,8 @@ const boundaries = vi.hoisted(() => ({
     memberEligibility: null as null | readonly MachinePoolMemberEligibilityV1[],
     memberEligibilityUnavailable: false,
     machineStatus: 'idle' as 'idle' | 'loading' | 'signedOut' | 'error',
-    create: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<unknown>>(),
-    update: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<unknown>>(),
+    create: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<MachinePoolViewV1>>(),
+    update: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<MachinePoolViewV1>>(),
     remove: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<void>>(),
     back: vi.fn(),
     // The native stack header the page hands its phone actions to (a platform navigation boundary).
@@ -169,6 +169,25 @@ const twoTierPool = (revision: number) => ({
     availability: { state: 'known' as const, connectedCount: 2, enabledCount: 2 },
 }) satisfies MachinePoolViewV1;
 
+function poolWire(view: MachinePoolViewV1): MachinePoolPrivateViewV1 {
+    return {
+        ...view,
+        pool: {
+            ...view.pool,
+            name: {
+                kind: 'available',
+                label: { content: { t: 'plain', v: view.pool.name }, recipientEnvelope: null },
+            },
+            description: view.pool.description === null
+                ? null
+                : {
+                    kind: 'available',
+                    label: { content: { t: 'plain', v: view.pool.description }, recipientEnvelope: null },
+                },
+        },
+    };
+}
+
 const sameTierPool = (revision: number) => ({
     pool: {
         id: '00000000-0000-4000-8000-000000000004',
@@ -233,14 +252,17 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
     if (settingsResponse) return settingsResponse;
     const artifactResponse = artifactStore.handle(pathname, init);
     if (artifactResponse) return artifactResponse;
+    if (pathname === '/v1/account/private-labels/recipient-census') {
+        return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
+    }
     const action = pathname.split('/').at(-1) ?? '';
     try {
-        if (action === 'list') return Response.json({ pools: boundaries.pools ?? [],
+        if (action === 'list') return Response.json({ pools: (boundaries.pools ?? []).map(poolWire),
             ...(Array.isArray(input.memberMachineIds) && !boundaries.memberEligibilityUnavailable ? { memberEligibility: boundaries.memberEligibility
                 ?? input.memberMachineIds.map((machineId) => ({ machineId, eligible: true })) } : {}),
         });
-        if (action === 'create') return Response.json(await boundaries.create(boundaries.serverId, input));
-        if (action === 'update') return Response.json(await boundaries.update(boundaries.serverId, input));
+        if (action === 'create') return Response.json(poolWire(await boundaries.create(boundaries.serverId, input)));
+        if (action === 'update') return Response.json(poolWire(await boundaries.update(boundaries.serverId, input)));
         if (action === 'delete') {
             await boundaries.remove(boundaries.serverId, input);
             boundaries.pools = boundaries.pools?.filter(view => view.pool.id !== input.poolId) ?? null;
@@ -249,7 +271,12 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
         return Response.json({ code: 'invalid_request', message: `Unexpected action ${action}` }, { status: 400 });
     } catch (cause) {
         const { MachinePoolActionError } = await import('@/sync/api/machines/machinePoolActions');
-        if (cause instanceof MachinePoolActionError) return Response.json(cause.detail, { status: cause.status });
+        if (cause instanceof MachinePoolActionError) {
+            const detail = cause.detail?.code === 'pool_changed' && cause.currentView
+                ? { ...cause.detail, current: poolWire(cause.currentView) }
+                : cause.detail;
+            return Response.json(detail, { status: cause.status });
+        }
         throw cause;
     }
 }
@@ -812,7 +839,7 @@ describe('MachinePoolEditorScreen', () => {
             import('@/sync/api/machines/machinePoolActions'),
         ]);
         const current = { ...poolView(4), pool: { ...poolView(4).pool, name: 'Remote' } };
-        boundaries.update.mockRejectedValue(new MachinePoolActionError(409, { code: 'pool_changed', current }));
+        boundaries.update.mockRejectedValue(new MachinePoolActionError(409, { code: 'pool_changed', current: undefined }, current));
         const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} />);
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Local'));
 

@@ -1646,8 +1646,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         return refuseSourceRead('materialization_host', error);
       }
       // Saved/plugin provenance wins. An inline Account Workflow uses the same name as its Library row.
-      const automationTitle = claim.automationName === undefined ? undefined : workflowTriggerDisplayNameV1({
-        name: claim.automationName,
+      const automationDisplayName = storedDefinition.data.display?.name ?? claim.automationName;
+      const automationTitle = automationDisplayName === undefined ? undefined : workflowTriggerDisplayNameV1({
+        name: automationDisplayName,
         ...(source.kind === 'inline' ? { target: { kind: 'inline', definition: source.definition } as const } : {}),
       })?.trim();
       const runMetadata = (source.kind === 'inline' ? undefined : source.metadata)

@@ -1,4 +1,5 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
+import { plainPrivateLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -851,13 +852,13 @@ describe('current Source deployment authority', () => {
             controllerMachineId: machine.id, contentArtifactId: artifact.artifact.id,
             contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [] } });
         // Full-grant roots and narrowed children both authorize this exact Environment.
-        const root = await auth.createApiToken({ accountId: creator.id, tokenId: crypto.randomUUID(), label: 'CI root' });
+        const root = await auth.createApiToken({ accountId: creator.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(creator.id, 'CI root') });
         const principal = (await auth.verifyToken(root.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Expected root API-token principal');
         const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
             actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
             targets: { sessions: [], machines: [], environments: [environment.id] } });
-        const child = await auth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'CI child',
+        const child = await auth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(principal.accountId, 'CI child'),
             expiresAt: new Date(Date.now() + 3_600_000), grant });
         const owner = { kind: 'team' as const, teamId: team.id };
         const flip = () => inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId,
@@ -1172,7 +1173,7 @@ describe('current Source deployment authority', () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
         const createdGroup = await inTx(tx => createTeamGroupForActorInTx(tx, { teamId: team.id,
-            actorAccountId: owner.id, name: 'Explicit deployers', requestKey: crypto.randomUUID() }));
+            actorAccountId: owner.id, groupId: crypto.randomUUID(), name: plainPrivateLabel('Explicit deployers'), requestKey: crypto.randomUUID() }));
         if (!createdGroup.ok) throw new Error(createdGroup.error);
         const group = createdGroup.value;
         const addedMember = await inTx(tx => addTeamGroupMemberForActorInTx(tx, { teamId: team.id,

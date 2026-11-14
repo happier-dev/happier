@@ -7,6 +7,7 @@ import { listTeamsForActorInTx } from "../queries";
 import { readTeamSummaryForActorInTx } from "../lifecycle";
 import { listTeamInvitationsForActorInTx } from "../invitations/invitationService";
 import { listTeamGroupsForActorInTx } from "../groups/groupService";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team member admitted-context read cost (PostgreSQL)", () => {
     const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
@@ -28,7 +29,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team member adm
         try {
             const ownerMembership = await client.teamMembership.create({ data: { teamId: team.id, accountId: owner!.id, role: "owner" } });
             const readerMembership = await client.teamMembership.create({ data: { teamId: team.id, accountId: reader!.id, role: "member" } });
-            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: `Group ${index}`, nameKey: `group-${index}` }));
+            const groups = Array.from({ length: 120 }, (_, index) => ({ id: randomUUID(), teamId: team.id, name: storedPlainPrivateLabel(`Group ${index}`) }));
             const invitations = Array.from({ length: 120 }, () => ({ teamId: team.id, tokenHash: randomBytes(32), role: "member" as const,
                 historyAccess: "from_membership" as const, createdByAccountId: owner!.id, expiresAt: new Date("2099-01-01T00:00:00.000Z") }));
             await client.teamGroup.createMany({ data: groups.slice(0, 1) });

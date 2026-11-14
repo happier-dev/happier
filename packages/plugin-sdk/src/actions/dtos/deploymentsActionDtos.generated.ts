@@ -524,6 +524,7 @@ export type DeploymentsActionInputById = {
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         }[];
         projectSourceId?: string | undefined;
         newProject?: undefined | {
@@ -544,9 +545,9 @@ export type DeploymentsActionInputById = {
         intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
-            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
+            groupGrants?: string[] | undefined;
         };
         connectTo?: undefined | {
             service: string;
@@ -587,9 +588,9 @@ export type DeploymentsActionInputById = {
         createRepository?: undefined | {
             owner: string;
             remoteName: unknown;
-            visibility: 'internal' | 'private' | 'public';
             providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
             repositoryName: string;
+            visibility: 'internal' | 'private' | 'public';
             description?: string | undefined;
             providerId?: string | undefined;
             ownerKind?: 'org' | 'user' | undefined;
@@ -776,6 +777,10 @@ export type DeploymentsActionInputById = {
                 kind: 'path';
                 path: string;
             };
+            executionTarget: {
+                serverId: string;
+                machineId: string;
+            };
             agentTarget: {
                 kind: 'agent';
                 identity: {
@@ -784,13 +789,6 @@ export type DeploymentsActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            executionTarget: {
-                serverId: string;
-                machineId: string;
-            };
-            profileId?: string | undefined;
-            title?: string | undefined;
-            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -821,6 +819,9 @@ export type DeploymentsActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
+            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -912,11 +913,11 @@ export type DeploymentsActionInputById = {
                 }> | undefined;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             roleId?: string | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
-            approvalProfileId?: null | string | undefined;
             configuration?: unknown;
             primaryTeamId?: null | string | undefined;
             capabilitySelection?: undefined | {
@@ -1060,7 +1061,7 @@ export type DeploymentsActionInputById = {
             machineSetupPlanInput?: undefined | {
                 homeId: string;
                 machineId: string;
-                sources?: unknown;
+                sources?: undefined | unknown[];
                 exclusions?: undefined | {
                     ref: {
                         pluginId: string;
@@ -1144,6 +1145,10 @@ export type DeploymentsActionInputById = {
                     };
                     maximumObservationAgeMs: null | number;
                     enabled: boolean;
+                    automationDisplay?: undefined | {
+                        name: string;
+                        description: null | string;
+                    };
                 } | {
                     kind: 'pluginEvent';
                     eventRef: {
@@ -1211,8 +1216,8 @@ export type DeploymentsActionInputById = {
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -1580,8 +1585,12 @@ export type DeploymentsActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
-                inputs?: Record<string, unknown> | undefined;
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
@@ -2061,6 +2070,7 @@ export type DeploymentsActionInputById = {
                     resourceRevision: number;
                     kind: 'secret';
                 };
+                grantRef: string;
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
@@ -2488,11 +2498,12 @@ export type DeploymentsActionInputById = {
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         }[];
         generatedSecretAudience?: undefined | {
-            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
+            groupGrants?: string[] | undefined;
         };
         domainBindings?: undefined | {
             templateDomainId: string;
@@ -2602,6 +2613,7 @@ export type DeploymentsActionInputById = {
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 } | {
                     source: {
                         kind: 'secret';
@@ -2718,6 +2730,7 @@ export type DeploymentsActionInputById = {
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 }[];
                 data: ({
                     kind: 'managed';
@@ -2777,6 +2790,15 @@ export type DeploymentsActionInputById = {
                         configuration: {
                             config: unknown;
                             occurrenceId: string;
+                            retention: {
+                                kind: 'keep';
+                                last?: number | undefined;
+                                daily?: number | undefined;
+                                weekly?: number | undefined;
+                                monthly?: number | undefined;
+                            } | {
+                                kind: 'keepEverything';
+                            };
                             sources: ({
                                 kind: 'dump';
                                 sourceId: string;
@@ -2789,15 +2811,6 @@ export type DeploymentsActionInputById = {
                                 volume: string;
                                 consistency: 'stopDuringCopy';
                             })[];
-                            retention: {
-                                kind: 'keep';
-                                last?: number | undefined;
-                                daily?: number | undefined;
-                                weekly?: number | undefined;
-                                monthly?: number | undefined;
-                            } | {
-                                kind: 'keepEverything';
-                            };
                             credentialBindings: {
                                 purpose: 'backupDestination';
                                 configKey: 'destination';
@@ -2895,6 +2908,7 @@ export type DeploymentsActionInputById = {
         targetKind: string;
         role: 'runtime';
         providerCreate: {
+            providerAccountId: string;
             credentialRef: {
                 service: {
                     pluginId: string;
@@ -2959,7 +2973,6 @@ export type DeploymentsActionInputById = {
                     };
                 };
             };
-            providerAccountId: string;
             providerEnvironment: {
                 kind: 'custom';
                 id: string;
@@ -2982,8 +2995,8 @@ export type DeploymentsActionInputById = {
                 deployment: string;
                 repository: string;
             };
-            targetLinkId?: undefined;
             providerIdentity?: undefined;
+            targetLinkId?: undefined;
             repositoryAccess?: undefined | {
                 status: 'needsGitAccess';
                 repository: {
@@ -3185,6 +3198,7 @@ export type DeploymentsActionInputById = {
                 kind: 'script';
                 scriptName: string;
             };
+            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             repositoryAccess?: undefined | {
                 status: 'needsGitAccess';
                 repository: {
@@ -3247,10 +3261,10 @@ export type DeploymentsActionInputById = {
         title?: string | undefined;
     };
     readonly "deployments.targets.unlink": {
-        serverId: string;
         expectedRevision: number;
-        requestKey: string;
+        serverId: string;
         environmentId: string;
+        requestKey: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         detachKeepRunning?: boolean | undefined;
@@ -3950,6 +3964,56 @@ export type DeploymentsActionInputById = {
         expectedTargetLinkRevision: number;
     };
     readonly "deployments.teardown": {
+        expectedRevision: number;
+        serverId: string;
+        environmentId: string;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        detachKeepRunning: true;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        teardownDeploymentId?: string | undefined;
+    } | {
+        expectedRevision: number;
+        serverId: string;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        environmentId: string;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        dataCreation: {
+            runId: string;
+            invocationId: string;
+        };
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        machines?: string[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        expectedRevision: number;
+        serverId: string;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        environmentId: string;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        machines?: string[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
         contentHeaderVersion: number;
@@ -3974,10 +4038,10 @@ export type DeploymentsActionInputById = {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         nothingDeployed: true;
         removeEnvironment: true;
-        serverId: string;
         expectedRevision: number;
-        requestKey: string;
+        serverId: string;
         environmentId: string;
+        requestKey: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         volumes?: ({
@@ -3988,46 +4052,6 @@ export type DeploymentsActionInputById = {
             name: string;
             disposition: 'keep';
         })[] | undefined;
-    } | {
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        dataCreation: {
-            runId: string;
-            invocationId: string;
-        };
-        machines?: string[] | undefined;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        machines?: string[] | undefined;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        removeEnvironment?: true | undefined;
     } | {
         serverId: string;
         environmentId: string;
@@ -4045,16 +4069,6 @@ export type DeploymentsActionInputById = {
         })[] | undefined;
         machines?: string[] | undefined;
         mode?: 'preview' | undefined;
-    } | {
-        serverId: string;
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        detachKeepRunning: true;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        teardownDeploymentId?: string | undefined;
     };
     readonly "deployments.environments.get": {
         environmentId: string;
@@ -4063,6 +4077,15 @@ export type DeploymentsActionInputById = {
         backupPolicy?: undefined | {
             config: unknown;
             occurrenceId: string;
+            retention: {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
             sources: ({
                 kind: 'dump';
                 sourceId: string;
@@ -4075,15 +4098,6 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            retention: {
-                kind: 'keep';
-                last?: number | undefined;
-                daily?: number | undefined;
-                weekly?: number | undefined;
-                monthly?: number | undefined;
-            } | {
-                kind: 'keepEverything';
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
@@ -4183,6 +4197,7 @@ export type DeploymentsActionInputById = {
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         } | {
             source: {
                 kind: 'secret';
@@ -6401,6 +6416,7 @@ export type DeploymentsActionResultById = {
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 } | {
                     source: {
                         kind: 'secret';
@@ -6807,6 +6823,7 @@ export type DeploymentsActionResultById = {
                             resourceRevision: number;
                             kind: 'secret';
                         };
+                        grantRef: string;
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
@@ -6967,6 +6984,7 @@ export type DeploymentsActionResultById = {
                         kind: 'script';
                         scriptName: string;
                     };
+                    sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                     repositoryAccess?: undefined | {
                         status: 'needsGitAccess';
                         repository: {
@@ -7059,6 +7077,7 @@ export type DeploymentsActionResultById = {
                     resourceRevision: number;
                     kind: 'secret';
                 };
+                grantRef: string;
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
@@ -7555,12 +7574,12 @@ export type DeploymentsActionResultById = {
             };
             createRepository: {
                 owner: string;
-                visibility: 'internal' | 'private' | 'public';
                 providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                 repositoryName: string;
+                visibility: 'internal' | 'private' | 'public';
                 description?: string | undefined;
-                remoteName?: string | undefined;
                 providerId?: string | undefined;
+                remoteName?: string | undefined;
                 ownerKind?: 'org' | 'user' | undefined;
                 providerBaseUrl?: string | undefined;
                 remoteUrlKind?: 'https' | 'ssh' | undefined;
@@ -8772,6 +8791,7 @@ export type DeploymentsActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
+                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
@@ -9199,11 +9219,12 @@ export type DeploymentsActionResultById = {
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
+                grantRef?: string | undefined;
             }[];
             generatedSecretAudience?: undefined | {
-                groupGrants?: string[] | undefined;
                 accountGrants?: string[] | undefined;
                 teamGrants?: string[] | undefined;
+                groupGrants?: string[] | undefined;
             };
             domainBindings?: undefined | {
                 templateDomainId: string;
@@ -9301,6 +9322,7 @@ export type DeploymentsActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
+                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
@@ -9588,6 +9610,7 @@ export type DeploymentsActionResultById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
+            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
@@ -9862,6 +9885,7 @@ export type DeploymentsActionResultById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
+            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
@@ -10009,6 +10033,7 @@ export type DeploymentsActionResultById = {
                     kind: 'script';
                     scriptName: string;
                 };
+                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                 repositoryAccess?: undefined | {
                     status: 'needsGitAccess';
                     repository: {
@@ -12044,6 +12069,15 @@ export type DeploymentsActionResultById = {
         backupPolicy?: undefined | {
             config: Record<string, JsonValue>;
             occurrenceId: string;
+            retention: {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
             sources: ({
                 kind: 'dump';
                 sourceId: string;
@@ -12056,15 +12090,6 @@ export type DeploymentsActionResultById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            retention: {
-                kind: 'keep';
-                last?: number | undefined;
-                daily?: number | undefined;
-                weekly?: number | undefined;
-                monthly?: number | undefined;
-            } | {
-                kind: 'keepEverything';
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';

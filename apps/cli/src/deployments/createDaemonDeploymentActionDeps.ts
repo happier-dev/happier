@@ -217,6 +217,7 @@ const errorCode = (error: unknown) => {
 };
 
 import { createDaemonDeploymentNativeSnapshot, type ExecuteManagedNativeSnapshot } from './daemonDeploymentNativeSnapshot';
+import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 
 /** Installed controller storage composition; the target remains the sole native executor. */
 export function createDaemonDeploymentActionDeps(host: Readonly<{
@@ -433,7 +434,27 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             ...(context.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
             ...(context.signal ? { signal: context.signal } : {}) });
     };
-    const nativeSnapshot = createDaemonDeploymentNativeSnapshot(host, { headers, sendChild });
+    const nativeSnapshot = createDaemonDeploymentNativeSnapshot(host, {
+        headers,
+        sendChild,
+        async openManagedRead(read, context) {
+            await assertCurrent(context);
+            const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
+            if (requester && !await requester.isCurrent()) return null;
+            try {
+                const machine = await openManagedMachineRead({
+                    credentials: requester?.credentials ?? host.credentials,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? host.serverHttpBaseUrl,
+                    read,
+                    ...(context.signal ? { signal: context.signal } : {}),
+                });
+                return requester && !await requester.isCurrent() ? null : machine;
+            } catch {
+                context.signal?.throwIfAborted();
+                return null;
+            }
+        },
+    });
     const readInstallation = async (machineId: string, context: ActionExecutorContext) => {
         if (machineId === host.machineId) {
             const identity = readInstallationIdentityIfExistsSync();

@@ -1,7 +1,7 @@
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityBridgeResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { callSocketRpc, issueSocketRpcCallWithCancellation } from '@happier-dev/sync-client';
 import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
 import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
@@ -11,7 +11,7 @@ import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptio
 import type { ManagedGuestActivityTransport } from './managedIntentReconciler';
 
 /** Only this retained row and the exact guest can invalidate its activity observation. */
-export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey' | 'subscribeManagedMachineChanges'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineV1): ManagedGuestActivityTransport {
+export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey' | 'subscribeManagedMachineChanges'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineFullV1): ManagedGuestActivityTransport {
     // Home derives the guest scope from the current admitted retained row;
     // the admitted Machine signs that exact destination with the original root.
     const authorization = options.context?.externalActionExecutionAuthorization;
@@ -86,7 +86,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
             attemptSignal?.removeEventListener('abort', onDisconnect);
         }
     }).catch(error => { failure = error; rejectReady(error); wake?.(); });
-    const request = (current: ManagedMachineV1) => ({ homeId: current.homeId, managedId: current.id,
+    const request = (current: ManagedMachineFullV1) => ({ homeId: current.homeId, managedId: current.id,
         expectedRevision: current.intentRevision, ...(current.controller ? { controller: current.controller } : {}) });
     const call = async (method: string, params: unknown, signal?: AbortSignal, signed = true) => {
         await waitUntilConnected(signal);
@@ -102,7 +102,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
             } } : {}),
         }));
     };
-    const read = async (current: ManagedMachineV1, signal = options.signal) => {
+    const read = async (current: ManagedMachineFullV1, signal = options.signal) => {
         if (!machineId) throw new ManagedMachineControllerError('admission_unavailable');
         await waitUntilConnected(signal);
         if (failure) throw failure;
@@ -111,7 +111,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         changed = false;
         return call(MANAGED_ACTIVITY_READ_RPC_METHOD, request(current), signal);
     };
-    const drain = async (current: ManagedMachineV1, action: 'begin' | 'resume', signal = options.signal) => {
+    const drain = async (current: ManagedMachineFullV1, action: 'begin' | 'resume', signal = options.signal) => {
         if (!machineId) throw new ManagedMachineControllerError('admission_unavailable');
         // Release retains only this exact drain after its original Action retires.
         return call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...request(current), action },

@@ -54,6 +54,7 @@ import {
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { invalidateTeamCredentialResources } from '@/sync/store/teams/teamsSnapshots';
 
@@ -134,7 +135,6 @@ export function listTeamCredentialResources(params: Readonly<{
     address: TeamAddress;
     cursor?: string | null;
     limit?: number;
-    search?: string;
     filter?: 'all' | 'needs_attention' | 'brokered' | 'direct' | 'external_api';
     signal?: AbortSignal;
 }>): Promise<TeamCredentialOutcome<TeamCredentialResourcePageV1>> {
@@ -145,7 +145,6 @@ export function listTeamCredentialResources(params: Readonly<{
             teamId: params.address.teamId,
             ...(params.cursor ? { cursor: params.cursor } : {}),
             ...(params.limit === undefined ? {} : { limit: params.limit }),
-            ...(params.search === undefined ? {} : { search: params.search }),
             ...(params.filter === undefined ? {} : { filter: params.filter }),
         },
         parse: (value) => TeamCredentialResourcePageV1Schema.parse(value),
@@ -617,7 +616,8 @@ export function createTeamCredentialExternalApiKey(params: Readonly<{
     scope: ServerAccountScope;
     resourceId: string;
     teamMembershipId: string;
-    label: string;
+    keyId: string;
+    label: PrivateLabelStoredV1;
     expiresAt?: string | null;
     handlers?: TeamCredentialApprovalHandlers<TeamCredentialExternalApiKeyCreateOutputV1>;
 }>): Promise<TeamCredentialOutcome<TeamCredentialExternalApiKeyCreateOutputV1>> {
@@ -627,6 +627,7 @@ export function createTeamCredentialExternalApiKey(params: Readonly<{
         input: {
             resourceId: params.resourceId,
             teamMembershipId: params.teamMembershipId,
+            keyId: params.keyId,
             label: params.label,
             expiresAt: params.expiresAt ?? null,
         },

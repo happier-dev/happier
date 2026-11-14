@@ -26,12 +26,13 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { TeamGroupCreateScreen } = await import('./TeamGroupCreateScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const GROUP_CREATE_PATH = '/v1/teams/groups/create';
+const PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
 
 async function renderCreate(serverId: string) {
-    const { TeamGroupCreateScreen } = await import('./TeamGroupCreateScreen');
     return renderScreen(<TeamGroupCreateScreen serverId={serverId} teamId="team-1" />);
 }
 
@@ -45,6 +46,9 @@ async function addHome(granted: Readonly<{ manageGroups: boolean }>): Promise<st
     await harness.selectHomes([serverId]);
     harness.answer(serverId, TEAM_GET_PATH, {
         body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture(granted) }),
+    });
+    harness.answer(serverId, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, {
+        body: { contentEncryptionMode: 'plain', recipients: [] },
     });
     return serverId;
 }
@@ -129,7 +133,11 @@ describe('TeamGroupCreateScreen', () => {
         });
         const request = harness.requestsFor(GROUP_CREATE_PATH)[0];
         expect(request?.serverId).toBe(serverId);
-        expect(request?.input).toMatchObject({ teamId: 'team-1', name: 'Design' });
+        expect(request?.input).toMatchObject({
+            teamId: 'team-1',
+            groupId: expect.any(String),
+            name: { content: { t: 'plain', v: 'Design' }, recipients: [] },
+        });
         // The retry identity travels with the submission so a lost response
         // cannot produce two Groups with the same intent.
         expect((request?.input as { requestKey?: string }).requestKey).toBeTruthy();
@@ -171,11 +179,11 @@ describe('TeamGroupCreateScreen', () => {
         });
     });
 
-    it('names a same-Team name collision and keeps the typed form', async () => {
+    it('keeps the typed form when the Home refuses a create after sealing', async () => {
         const serverId = await addHome({ manageGroups: true });
         harness.answer(serverId, GROUP_CREATE_PATH, {
             status: 409,
-            body: { error: 'group_name_taken' },
+            body: { error: 'team_conflict' },
         });
 
         const screen = await renderCreate(serverId);
@@ -183,9 +191,6 @@ describe('TeamGroupCreateScreen', () => {
         act(() => screen.changeTextByTestId('team-group-create-name', 'Design'));
         await screen.pressByTestIdAsync('team-group-create-submit');
 
-        await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('teams.groups.nameTaken');
-        });
         // A rejected submission is never retyped, and no navigation happened.
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-create-name');
         expect(routerReplace).not.toHaveBeenCalled();

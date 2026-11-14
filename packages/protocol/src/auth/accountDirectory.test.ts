@@ -97,7 +97,36 @@ const ASSERTION = {
   signatureBase64Url: 'A'.repeat(86),
 };
 
+function plainStoredLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipients: [] };
+}
+
+function plainReadLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipientEnvelope: null };
+}
+
 describe('Account Directory protocol DTOs', () => {
+  it('uses sealed label writes, reader projections, and a nullable bootstrap label', () => {
+    const stored = { content: { t: 'plain' as const, v: 'Personal Home' }, recipients: [] };
+    const read = { content: stored.content, recipientEnvelope: null };
+    const entry = {
+      v: 1 as const,
+      homeServerIdentityId: HTTPS_DESCRIPTOR.homeServerIdentityId,
+      canonicalServerUrl: HTTPS_DESCRIPTOR.canonicalServerUrl,
+      label: read,
+      connectionDescriptor: HTTPS_DESCRIPTOR,
+      createdAtMs: 1_700_000_000_000,
+      updatedAtMs: 1_700_000_000_001,
+      preferred: true,
+    };
+
+    expect(AccountDirectoryHomePutRequestV1Schema.safeParse({ v: 1, label: stored, connectionDescriptor: HTTPS_DESCRIPTOR }).success).toBe(true);
+    expect(AccountDirectoryHomePutRequestV1Schema.safeParse({ v: 1, label: 'Personal Home', connectionDescriptor: HTTPS_DESCRIPTOR }).success).toBe(false);
+    expect(AccountDirectoryHomeEntryV1Schema.safeParse(entry).success).toBe(true);
+    expect(AccountDirectoryHomeEntryV1Schema.safeParse({ ...entry, label: stored }).success).toBe(false);
+    expect(AccountDirectoryHomeEntryV1Schema.safeParse({ ...entry, label: null }).success).toBe(true);
+  });
+
   it('owns strict Home approval decision DTOs and canonical parameterized paths', () => {
     expect(HomeDeviceApprovalDecisionRequestV1Schema.parse({ decision: 'approve' }))
       .toEqual({ decision: 'approve' });
@@ -410,7 +439,7 @@ describe('Account Directory protocol DTOs', () => {
       v: 1 as const,
       homeServerIdentityId: HTTPS_DESCRIPTOR.homeServerIdentityId,
       canonicalServerUrl: HTTPS_DESCRIPTOR.canonicalServerUrl,
-      label: 'Personal Home',
+      label: plainReadLabel('Personal Home'),
       connectionDescriptor: HTTPS_DESCRIPTOR,
       createdAtMs: 1_700_000_000_000,
       updatedAtMs: 1_700_000_000_001,
@@ -419,9 +448,9 @@ describe('Account Directory protocol DTOs', () => {
     expect(AccountDirectoryHomeEntryV1Schema.parse(homeEntry)).toEqual(homeEntry);
     expect(AccountDirectoryHomePutRequestV1Schema.parse({
       v: 1,
-      label: 'Personal Home',
+      label: plainStoredLabel('Personal Home'),
       connectionDescriptor: HTTPS_DESCRIPTOR,
-    })).toMatchObject({ label: 'Personal Home' });
+    })).toMatchObject({ label: plainStoredLabel('Personal Home') });
     expect(AccountDirectoryHomeDeleteRequestV1Schema.parse({ v: 1 })).toEqual({ v: 1 });
     expect(AccountDirectoryPreferredHomePatchRequestV1Schema.parse({
       v: 1,
@@ -454,12 +483,12 @@ describe('Account Directory protocol DTOs', () => {
     expect(AccountDirectoryHomePutRequestV1Schema.safeParse({
       v: 1,
       accountId: 'caller-supplied-account',
-      label: 'Personal Home',
+      label: plainStoredLabel('Personal Home'),
       connectionDescriptor: HTTPS_DESCRIPTOR,
     }).success).toBe(false);
     const publication = {
       v: 2 as const,
-      label: 'Personal Home',
+      label: plainStoredLabel('Personal Home'),
       minimumOuterRevisionExclusive: 7,
       canonicalServerUrl: 'https://moved-home.example.test',
       endpoints: [{ kind: 'https' as const, url: 'https://moved-home.example.test' }],
@@ -469,11 +498,13 @@ describe('Account Directory protocol DTOs', () => {
     const me = AccountDirectoryMeResponseV1Schema.parse({
       v: 1,
       accountId: 'account-1',
+      encryptionMode: 'plain',
       displayName: 'Ada Lovelace',
       avatar: null,
       linkedAuthenticationMethods: [{ providerId: 'github', login: 'ada' }],
     });
     expect(me.linkedAuthenticationMethods).toHaveLength(1);
+    expect(me.encryptionMode).toBe('plain');
   });
 
   it('parses directories beyond the former 256-Home product quota', () => {
@@ -485,7 +516,7 @@ describe('Account Directory protocol DTOs', () => {
         v: 1 as const,
         homeServerIdentityId,
         canonicalServerUrl,
-        label: `Home ${suffix}`,
+        label: plainReadLabel(`Home ${suffix}`),
         connectionDescriptor: {
           v: 1 as const,
           homeServerIdentityId,

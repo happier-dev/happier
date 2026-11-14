@@ -1,3 +1,4 @@
+import { isManagedOpaquePresetMachineV1 } from './managedMachineV1.js';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from './providerFactsV1.js';
 import type { ManagedControllerV1, ManagedMachineV1, ManagedMachineInputWakeV1, ManagedMachineNewSessionWakeV1, RetentionV1 } from './managedMachineV1.js';
 import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRetentionOverrideV1, MachineRetentionPolicyV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
@@ -52,7 +53,8 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   const ready = available && machineReachable && !parked
     && (observation?.availability === 'present' || observation?.availability === 'unavailable');
   const nativeTarget = available && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
-    && machine.allocation === 'bound' && Boolean(machine.resource) && observation?.availability === 'present';
+    && machine.allocation === 'bound' && (isManagedOpaquePresetMachineV1(machine) || Boolean(machine.resource))
+    && observation?.availability === 'present';
   const retainedTarget = nativeTarget && machine.desired !== 'delete' && !machine.cleanup && machine.submittedNativeEffect?.intent !== 'delete';
   const pendingPower = resolveManagedMachinePendingPowerIntentV1(machine);
   const starting = retainedTarget && (pendingPower === 'start' || pendingPower === 'resume');

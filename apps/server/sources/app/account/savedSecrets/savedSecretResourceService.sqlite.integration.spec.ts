@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { openPlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 import * as accountCurrentness from "@/app/encryption/accountContentKeyAdmission";
 
@@ -57,6 +58,15 @@ import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { decodeSensitiveContentFromAtRestStorage } from '@/app/encryption/sensitiveContentAtRestStorage';
 
+import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import {
+    createManagedMachinePresetSavedSecretReferenceRewriteV1,
+    openManagedMachinePresetContentV1,
+    projectManagedMachinePresetForRecipientV1,
+    rewriteManagedMachinePresetSavedSecretReferencesV1,
+    sealManagedMachinePresetContentV1,
+} from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from '@/app/machines/managed/managedMachineProjection';
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
 const HOME_OFFERS_EMAIL_PASSWORD = {
@@ -87,7 +97,25 @@ function createE2eeAccountMaterial() {
         },
         contentPublicKey: content.publicKey,
         fingerprint: verified.contentPublicKeyFingerprint,
+        contentSecretKey: content.secretKey,
     };
+}
+
+function managedPresetRecipientCensus(accountId: string, material: ReturnType<typeof createE2eeAccountMaterial>) {
+    return [SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+        account: { kind: 'account', accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+        readiness: {
+            status: 'available',
+            contentPublicKey: Buffer.from(material.contentPublicKey).toString('base64'),
+            contentPublicKeyFingerprint: material.fingerprint,
+        },
+        envelopeStatus: 'missing',
+    })];
+}
+
+function managedPresetRandomBytes(initialValue: number): (length: number) => Uint8Array {
+    let value = initialValue;
+    return (length) => new Uint8Array(length).fill(value++);
 }
 
 function sealTestDataKey(recipientPublicKey: Uint8Array): Uint8Array {
@@ -463,6 +491,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const input = { ...create(resourceId, 'legacy-value'), expectedSettingsVersion: 0,
             nextSettings: { t: 'plain' as const, v: { secrets: [] } }, profileMutations: [],
             personalSecretPromotions: [{ personalSecretId, resourceId }],
+            opaquePresetRewrites: { presets: [], snapshots: [] },
             referenceCensus: { accountMode: 'plain' as const,
                 profiles: { referenceGuardRevision: 'absent' as const, rows: [] } } };
         expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(retained
@@ -790,6 +819,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
                 v: { v: 1 as const, name: 'Credential', kind: 'token' as const, value: 'private' } },
             nextSettings: null, profileMutations: [], personalSecretPromotions: [{ personalSecretId: 'personal-source', resourceId }],
             referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: { connectedConfigurations: 0 } },
+            opaquePresetRewrites: { presets: [], snapshots: [] },
             catalogMutations: { connectedConfigurations: { expectedRevision: 0,
                 content: { t: 'plain' as const, v: { key: 'configurations' as const, value: { v: 1 as const, entries: [{
                     service: { pluginId: 'happier.fixture', localId: 'service' }, modeId: 'api', revision: 'v1', values: {}, secretRefs: { TOKEN: ref },
@@ -843,25 +873,50 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.accountSettingsSnapshot.count()).toBe(0);
     });
 
-    it.each(['plain', 'e2ee'] as const)('retains a shared secret referenced by an archived machine preset for a %s Account', async (accountMode) => {
-        // An E2EE Account holds a Plain resource only when a Plain-to-E2EE switch left a shared one Plain.
-        const owner = await db.account.create({ data: accountMode === 'e2ee' ? { ...createE2eeAccountMaterial().account, encryptionMode: 'plain' } : { encryptionMode: accountMode } });
+    it.each(['plain', 'e2ee'] as const)('refuses deletion when a keyholding opaque Preset census reports a sealed %s reference', async (accountMode) => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: accountMode === 'e2ee' ? material.account : { encryptionMode: 'plain' }, select: { id: true } });
         const resourceId = `preset-setup-${accountMode}`;
-        await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Setup token',
-            kind: 'token', encryptionMode: 'plain', storedContent: { t: 'plain',
-                v: { v: 1, name: 'Setup token', kind: 'token', value: 'private' } } }));
-        if (accountMode === 'e2ee') await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
-        const preset = await db.managedMachinePreset.create({ data: { homeId: 'preset-home', name: 'Archived preset',
-            custodianAccountId: owner.id, controllerMachineId: 'preset-controller', controllerInstallationId: 'preset-install',
-            launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-            archivedAt: new Date(), setup: { setupScript: 'echo setup', futureField: true,
-                secretRefs: { v: 1, bindings: { TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } } } });
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id,
+            resourceId,
+            displayName: 'Setup token',
+            kind: 'token',
+            encryptionMode: accountMode,
+            storedContent: accountMode === 'plain'
+                ? { t: 'plain', v: { v: 1, name: 'Setup token', kind: 'token', value: 'private' } }
+                : sealTestResource(resourceId, 'Setup token'),
+            ...(accountMode === 'e2ee' ? { keyEnvelopes: [{
+                recipientAccountId: owner.id,
+                encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                recipientContentPublicKeyFingerprint: material.fingerprint,
+            }] } : {}),
+        }))).toEqual({ ok: true, value: { resourceId, revision: 1 } });
+
+        const presetId = `preset-setup-${accountMode}`;
+        const privateContent = { v: 1 as const, name: 'Archived preset', setup: {
+            secretRefs: { v: 1 as const, bindings: { TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } },
+        } };
+        const sealed = accountMode === 'plain'
+            ? sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: privateContent })
+            : sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: privateContent,
+                recipientCensus: managedPresetRecipientCensus(owner.id, material), randomBytes: managedPresetRandomBytes(21) });
+        await db.managedMachinePreset.create({ data: {
+            id: presetId,
+            homeId: 'preset-home',
+            name: '',
+            custodianAccountId: owner.id,
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: accountMode, content: sealed.content, recipients: sealed.recipients }),
+            archivedAt: new Date(),
+        } });
+
         const input = { accountId: owner.id, resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
-            referenceCensus: { accountMode, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } } };
+            referenceCensus: { accountMode, profiles: { referenceGuardRevision: 'absent' as const, rows: [] },
+                opaquePresetReferences: { presets: [{ presetId }], snapshots: [] } } };
         expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, input))).toEqual({ ok: false, error: 'resource_in_use' });
-        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).not.toBeNull();
-        await db.managedMachinePreset.delete({ where: { id: preset.id } });
-        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, input))).toEqual({ ok: true, value: { resourceId } });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toMatchObject({ revision: 1 });
+        expect(readStoredOpaquePresetLaunch((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId } })).launch))
+            .toMatchObject({ content: sealed.content, recipients: sealed.recipients });
     });
 
     it("refuses deletion when the reference census Settings version is stale", async () => {
@@ -1472,123 +1527,142 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
     });
 
-    it("returns the committed promotion on a lost-response retry without duplicating the mutable source", async () => {
-        const resourceId = "resource_lost_response_retry";
-        const personalSecretId = "personal_before_lost_response";
+    it.each(['plain', 'e2ee'] as const)('atomically rewrites captured opaque source and retained Preset references for a %s promotion retry', async (accountMode) => {
+        const resourceId = `resource_lost_response_retry_${accountMode}`;
+        const personalSecretId = `personal_before_lost_response_${accountMode}`;
+        const material = createE2eeAccountMaterial();
         const settings = {
-            secrets: [{
-                id: personalSecretId,
-                name: "Shared token",
-                kind: "token" as const,
-                encryptedValue: { _isSecretValue: true as const, value: "promoted-value" },
-                createdAt: 1,
-                updatedAt: 7,
-            }],
-            secretBindingsByProfileId: {
-                default: { API_TOKEN: personalSecretId },
-            },
+            secrets: [{ id: personalSecretId, name: 'Shared token', kind: 'token' as const,
+                encryptedValue: { _isSecretValue: true as const, value: 'promoted-value' }, createdAt: 1, updatedAt: 7 }],
+            secretBindingsByProfileId: { default: { API_TOKEN: personalSecretId } },
         };
-        const nextSettings = promotePersonalSavedSecretReference(settings, {
-            secretId: personalSecretId,
-            expectedUpdatedAt: 7,
-            sharedSecretRef: formatSharedSavedSecretRefV1(resourceId),
+        const nextPlainSettings = promotePersonalSavedSecretReference(settings, {
+            secretId: personalSecretId, expectedUpdatedAt: 7, sharedSecretRef: formatSharedSavedSecretRefV1(resourceId),
         }).settings;
-        const owner = await db.account.create({
-            data: {
-                encryptionMode: "plain",
-                settingsVersion: 1,
-                settings: JSON.stringify({ t: "plain", v: settings }),
-            },
-            select: { id: true },
+        const owner = await db.account.create({ data: accountMode === 'plain'
+            ? { encryptionMode: 'plain', settingsVersion: 1, settings: JSON.stringify({ t: 'plain', v: settings }) }
+            : { ...material.account, settingsVersion: 1, settings: 'captured-e2ee-settings-before' }, select: { id: true } });
+        const presetId = `promotion-source-${accountMode}`;
+        const unlistedPresetId = `promotion-unlisted-${accountMode}`;
+        const privateContent = { v: 1 as const, name: 'Promotion source', setup: {
+            secretRefs: { v: 1 as const, bindings: {
+                TOKEN: { ref: personalSecretId },
+                UNRELATED: { ref: 'unrelated-personal' },
+            } },
+        } };
+        const sealForOwner = (id: string, content: typeof privateContent, seed: number) => accountMode === 'plain'
+            ? sealManagedMachinePresetContentV1({ presetId: id, mode: 'plain', content })
+            : sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee', content,
+                recipientCensus: managedPresetRecipientCensus(owner.id, material), randomBytes: managedPresetRandomBytes(seed) });
+        const initial = sealForOwner(presetId, privateContent, 41);
+        const unlisted = sealForOwner(unlistedPresetId, privateContent, 61);
+        const opened = accountMode === 'plain'
+            ? openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: initial.content })
+            : openManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: initial.content, recipients: initial.recipients,
+                accountId: owner.id, accountKey: material.contentSecretKey });
+        if (!opened) throw new Error('expected client-openable source Preset');
+        const rewrites = [{ personalSecretId, resourceId, resourceRevision: 1 }];
+        const rewrittenSource = rewriteManagedMachinePresetSavedSecretReferencesV1({ content: opened, rewrites });
+        if (!rewrittenSource) throw new Error('expected client source rewrite');
+        const replacement = sealForOwner(presetId, rewrittenSource, 81);
+        const projection = projectManagedMachinePresetForRecipientV1({
+            content: initial.content, recipients: initial.recipients, recipientAccountId: owner.id,
         });
-        const recipient = await db.account.create({
-            data: { encryptionMode: "plain" },
-            select: { id: true },
-        });
-        await db.userRelationship.create({
-            data: { fromUserId: owner.id, toUserId: recipient.id, status: "friend" },
-        });
-        const controller = await db.machine.create({ data: { id: 'promotion-controller', accountId: owner.id, metadata: '{}',
-            installationId: 'promotion-install' } });
-        const otherController = await db.machine.create({ data: { id: 'promotion-other-controller', accountId: recipient.id, metadata: '{}',
-            installationId: 'promotion-other-install' } });
-        const team = await db.team.create({ data: { name: 'Setup team' } });
-        const setupDefinition = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo setup',
-            futureStoredMember: { nested: [null, { opaque: true }] },
-            secretRefs: { v: 1, bindings: { TOKEN: { ref: personalSecretId }, UNRELATED: { ref: 'unrelated-personal' } } } };
-        const setup = { state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] }, setup: setupDefinition };
-        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
-        const preset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Team preset', teamId: team.id,
-            launch, controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', setup: setupDefinition, revision: 4 } });
-        const foreignPreset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Other account',
-            custodianAccountId: recipient.id, launch, controllerMachineId: otherController.id,
-            controllerInstallationId: 'promotion-other-install', setup: setupDefinition } });
-        const managed = await db.managedMachine.create({ data: { homeId: 'promotion-home', custodianAccountId: owner.id,
-            controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', launch, presetId: preset.id, presetRevision: 4,
-            admittedActionRequestId: 'promotion-setup', admittedInput: {}, allocation: 'may-exist',
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            machineSetup: setup } });
+        const snapshotOverride = accountMode === 'plain'
+            ? createManagedMachinePresetSavedSecretReferenceRewriteV1({ presetId, mode: 'plain', projection, rewrites })
+            : createManagedMachinePresetSavedSecretReferenceRewriteV1({ presetId, mode: 'e2ee', projection, rewrites,
+                accountId: owner.id, accountKey: material.contentSecretKey, randomBytes: managedPresetRandomBytes(101) });
+        if (!snapshotOverride) throw new Error('expected client retained snapshot rewrite');
+        const preset = await db.managedMachinePreset.create({ data: {
+            id: presetId, homeId: 'promotion-home', name: '', custodianAccountId: owner.id, revision: 4,
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: accountMode, content: initial.content, recipients: initial.recipients }),
+        } });
+        await db.managedMachinePreset.create({ data: {
+            id: unlistedPresetId, homeId: 'promotion-home', name: '', custodianAccountId: owner.id, revision: 7,
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: accountMode, content: unlisted.content, recipients: unlisted.recipients }),
+        } });
+        const managed = await db.managedMachine.create({ data: {
+            homeId: 'promotion-home', custodianAccountId: owner.id, admittedActionRequestId: `promotion-snapshot-${accountMode}`,
+            admittedInput: {}, presetId, presetRevision: 4,
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: accountMode, content: initial.content, recipients: initial.recipients }),
+            allocation: 'may-exist', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
         const input = {
             accountId: owner.id,
             resourceId,
-            displayName: "Shared token",
-            kind: "token" as const,
-            encryptionMode: "plain" as const,
-            storedContent: {
-                t: "plain" as const,
-                v: { v: 1 as const, name: "Shared token", kind: "token" as const, value: "promoted-value" },
-            },
+            displayName: 'Shared token',
+            kind: 'token' as const,
+            encryptionMode: accountMode,
+            storedContent: accountMode === 'plain'
+                ? { t: 'plain' as const, v: { v: 1 as const, name: 'Shared token', kind: 'token' as const, value: 'promoted-value' } }
+                : sealTestResource(resourceId, 'Shared token'),
+            ...(accountMode === 'e2ee' ? { keyEnvelopes: [{
+                recipientAccountId: owner.id,
+                encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                recipientContentPublicKeyFingerprint: material.fingerprint,
+            }] } : {}),
             expectedSettingsVersion: 1,
-            nextSettings: { t: "plain" as const, v: nextSettings },
-            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } },
+            nextSettings: accountMode === 'plain'
+                ? { t: 'plain' as const, v: nextPlainSettings }
+                : { t: 'encrypted' as const, c: 'captured-e2ee-settings-after' },
+            referenceCensus: { accountMode, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } },
             profileMutations: [],
             personalSecretPromotions: [{ personalSecretId, resourceId }],
+            opaquePresetRewrites: {
+                presets: [{ presetId, expectedRevision: 4, replacement }],
+                snapshots: [{ managedId: managed.id, presetId, expectedContentEncryptionMode: accountMode,
+                    expectedContent: projection.content, expectedRecipientEnvelope: projection.recipientEnvelope,
+                    replacementContent: snapshotOverride.content }],
+            },
         };
-        const unmapped = { ...input, personalSecretPromotions: undefined };
-        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, unmapped))).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, {
+            ...input, opaquePresetRewrites: undefined,
+        }))).toEqual({ ok: false, error: 'references_invalid' });
         expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 4, setup: setupDefinition });
-        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 1 });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 4 });
 
-        await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
-            ok: true,
-            value: { resourceId, settingsVersion: 2 },
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
+            ok: true, value: { resourceId, settingsVersion: 2 },
         });
-        const rewritten = { ...setupDefinition, secretRefs: { ...setupDefinition.secretRefs,
-            bindings: { ...setupDefinition.secretRefs.bindings, TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } };
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, setup: rewritten });
-        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({
-            presetRevision: 4, machineSetup: { ...setup, setup: rewritten } });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id }, select: { setup: true } }))
-            .toEqual({ setup: rewritten });
-        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id }, select: { machineSetup: true } }))
-            .toEqual({ machineSetup: { ...setup, setup: rewritten } });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: foreignPreset.id } })).toMatchObject({ revision: 0, setup: setupDefinition });
-        // Simulate a client retry after the first committed response was lost.
-        await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
-            ok: true,
-            value: { resourceId, settingsVersion: 2 },
+        const sourceRow = await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } });
+        const sourceStored = readStoredOpaquePresetLaunch(sourceRow.launch);
+        expect(sourceRow.revision).toBe(5);
+        expect(sourceStored).toMatchObject({ content: replacement.content, recipients: replacement.recipients });
+        const sourceOpened = accountMode === 'plain'
+            ? openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: sourceStored.content })
+            : openManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: sourceStored.content, recipients: sourceStored.recipients,
+                accountId: owner.id, accountKey: material.contentSecretKey });
+        expect(sourceOpened?.setup?.secretRefs?.bindings).toMatchObject({
+            TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 },
+            UNRELATED: { ref: 'unrelated-personal' },
         });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, setup: rewritten });
-        await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, {
-            ...input,
-            accountGrants: [recipient.id],
-        }))).resolves.toEqual({ ok: false, error: "resource_changed" });
+        const snapshotStored = readStoredOpaquePresetLaunch((await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).launch);
+        expect(snapshotStored).toMatchObject({ content: snapshotOverride.content, recipients: initial.recipients });
+        const snapshotOpened = accountMode === 'plain'
+            ? openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: snapshotStored.content })
+            : openManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: snapshotStored.content, recipients: snapshotStored.recipients,
+                accountId: owner.id, accountKey: material.contentSecretKey });
+        expect(snapshotOpened?.setup?.secretRefs?.bindings).toMatchObject({
+            TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 },
+            UNRELATED: { ref: 'unrelated-personal' },
+        });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: unlistedPresetId } })).toMatchObject({ revision: 7, launch:
+            storeOpaquePresetLaunch({ contentEncryptionMode: accountMode, content: unlisted.content, recipients: unlisted.recipients }) });
 
+        // A lost response retries the exact committed body, rather than generating a second source revision.
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
+            ok: true, value: { resourceId, settingsVersion: 2 },
+        });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, launch: sourceRow.launch });
         await expect(db.savedSecretResource.count({ where: { id: resourceId } })).resolves.toBe(1);
-        await expect(db.accountSettingsSnapshot.count({ where: { accountId: owner.id } })).resolves.toBe(2);
-        const account = await db.account.findUniqueOrThrow({
-            where: { id: owner.id },
-            select: { settingsVersion: true, settings: true },
-        });
+        const account = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settingsVersion: true, settings: true } });
         expect(account.settingsVersion).toBe(2);
-        const currentContent = openPlainAccountSettingsDbValue({
-            accountId: owner.id,
-            dbValue: account.settings,
-        });
-        expect(currentContent).toEqual(input.nextSettings);
-        expect(JSON.stringify(currentContent)).not.toContain(personalSecretId);
-        expect(JSON.stringify(currentContent)).toContain(formatSharedSavedSecretRefV1(resourceId));
+        if (accountMode === 'plain') {
+            const currentContent = openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: account.settings });
+            expect(currentContent).toEqual(input.nextSettings);
+            expect(JSON.stringify(currentContent)).not.toContain(personalSecretId);
+            expect(JSON.stringify(currentContent)).toContain(formatSharedSavedSecretRefV1(resourceId));
+        } else expect(account.settings).toBe('captured-e2ee-settings-after');
     });
 
     it("server-seals a Plain resource at rest while returning its explicit Plain envelope to its owner", async () => {
@@ -1709,7 +1783,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             data: { teamId: team.id, accountId: unrelated.id, role: "owner" },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Unrelated group", nameKey: "unrelated-group" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Unrelated group") },
             select: { id: true },
         });
 
@@ -1742,7 +1816,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             ],
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Credential group", nameKey: "credential-group" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Credential group") },
             select: { id: true },
         });
 
@@ -1936,7 +2010,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             select: { id: true },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Provenance group", nameKey: "provenance-group" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Provenance group") },
             select: { id: true },
         });
         await db.teamGroupMembership.createMany({
@@ -2001,7 +2075,16 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(withEvidence.accessSources).toEqual([
             { kind: "account" },
             { kind: "team", teamId: team.id, name: "Provenance restricted" },
-            { kind: "group", teamId: team.id, teamName: "Provenance restricted", groupId: group.id, name: "Provenance group" },
+            {
+                kind: "group",
+                teamId: team.id,
+                teamName: "Provenance restricted",
+                groupId: group.id,
+                name: {
+                    kind: "available",
+                    label: { content: { t: "plain", v: "Provenance group" }, recipientEnvelope: null },
+                },
+            },
         ]);
 
         // The custodian owns the resource: their audience projection is the
@@ -2011,7 +2094,16 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(ownerView.accessSources).toEqual([]);
         expect(ownerView.audience).toMatchObject({
             teams: [{ kind: "team", teamId: team.id, name: "Provenance restricted" }],
-            groups: [{ kind: "group", teamId: team.id, teamName: "Provenance restricted", groupId: group.id, name: "Provenance group" }],
+            groups: [{
+                kind: "group",
+                teamId: team.id,
+                teamName: "Provenance restricted",
+                groupId: group.id,
+                name: {
+                    kind: "available",
+                    label: { content: { t: "plain", v: "Provenance group" }, recipientEnvelope: null },
+                },
+            }],
         });
     });
 
@@ -2041,7 +2133,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             select: { id: true },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: inherited.id, name: "Inherited group", nameKey: "inherited-group" },
+            data: { teamId: inherited.id, name: storedPlainPrivateLabel("Inherited group") },
             select: { id: true },
         });
         await db.teamGroupMembership.createMany({
@@ -2146,7 +2238,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             select: { id: true },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Suspension group", nameKey: "suspension-group" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Suspension group") },
             select: { id: true },
         });
         await db.teamGroupMembership.createMany({

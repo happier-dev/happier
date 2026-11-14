@@ -10,6 +10,7 @@ import {
     type TeamGroupMemberV1,
     type TeamGroupV1,
 } from '@happier-dev/protocol/teams';
+import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -28,8 +29,11 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamGroup, useTeamGroupMembers } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { sealTeamGroupName } from '@/sync/ops/teams/teamGroupLabels';
 import {
     addTeamGroupMember,
     archiveTeamGroup,
@@ -90,6 +94,8 @@ function contributionLabel(member: TeamGroupMemberV1): string | null {
 const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Readonly<{
     context: TeamSectionContext;
     group: TeamGroupV1;
+    /** Recipient-opened Group name; unavailable content is never overwritten. */
+    name: string | null;
     /**
      * Whether this Group's own projection is current. A retained Group whose
      * point read failed keeps its content on screen, but its capabilities are
@@ -97,7 +103,7 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
      */
     current: boolean;
 }>) {
-    const { context, group, current } = props;
+    const { context, group, current, name: publishedName } = props;
     const navigation = useNavigation();
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -111,7 +117,7 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
     // editor, but it never erases an unfinished draft: this is the same editor
     // owner the Team's own identity section uses.
     const draft = useEditedMetadataDraft({
-        name: group.name,
+        name: publishedName ?? '',
         description: group.description ?? '',
     });
     const { name, description, conflict } = draft;
@@ -123,30 +129,55 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
     });
 
     const nameValidation = validateTeamGroupNameV1(name);
+    const validatedName = nameValidation.status === 'ok' ? nameValidation.name : null;
     const descriptionValidation = validateTeamGroupDescriptionV1(description);
     const archived = group.archivedAt !== null;
     const editable = context.canMutate && current && !archived;
-    const changed = nameValidation.status === 'ok'
+    const nameChanged = publishedName !== null
+        && validatedName !== null
+        && validatedName !== publishedName;
+    const mustSaveName = nameChanged || (group.name.kind === 'available' && group.name.label.legacyPlaintext === true);
+    const changed = (publishedName === null || validatedName !== null)
         && descriptionValidation.status === 'ok'
-        && (nameValidation.name !== group.name
+        && (nameChanged
             || (descriptionValidation.description ?? '') !== (group.description ?? ''));
 
     if (!group.capabilities.updateMetadata) return null;
 
     const save = async () => {
         if (saveInFlightRef.current
-            || nameValidation.status !== 'ok'
+            || (publishedName !== null && validatedName === null)
             || descriptionValidation.status !== 'ok') return;
         saveInFlightRef.current = true;
         setSaving(true);
         setError(null);
         let outcome: Awaited<ReturnType<typeof updateTeamGroup>>;
         try {
+            let sealedName: PrivateLabelStoredV1 | undefined;
+            if (mustSaveName) {
+                if (validatedName === null) {
+                    saveInFlightRef.current = false;
+                    setSaving(false);
+                    return;
+                }
+                sealedName = await sealTeamGroupName({
+                    client: createPrivateLabelClient(context.scope),
+                    teamId: context.address.teamId,
+                    groupId: group.id,
+                    value: validatedName,
+                });
+            }
+            if (mustSaveName && !sealedName) {
+                saveInFlightRef.current = false;
+                setSaving(false);
+                setError(t('teams.errors.generic'));
+                return;
+            }
             outcome = await updateTeamGroup({
                 scope: context.scope,
                 address: context.address,
                 groupId: group.id,
-                name: nameValidation.name,
+                ...(sealedName ? { name: sealedName } : {}),
                 description: descriptionValidation.description,
             });
         } catch (cause) {
@@ -162,13 +193,11 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
         saveInFlightRef.current = false;
         setSaving(false);
         if (outcome.kind === 'failed') {
-            setError(outcome.failure.kind === 'conflict'
-                ? t('teams.groups.nameTaken')
-                : teamMutationFailureLabel(outcome.failure));
+            setError(teamMutationFailureLabel(outcome.failure));
             return;
         }
         draft.commit({
-            name: outcome.value.name,
+            name: nameChanged && validatedName !== null ? validatedName : name,
             description: outcome.value.description ?? '',
         });
     };
@@ -179,7 +208,7 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
                 <AttentionBanner
                     testID="team-group-identity-conflict-notice"
                     title={t('teams.errors.conflict')}
-                    description={[group.name, group.description ?? ''].filter(Boolean).join('\n')}
+                    description={[publishedName ?? t('common.unavailable'), group.description ?? ''].filter(Boolean).join('\n')}
                     accessibilityLiveRegion="assertive"
                     action={{
                         label: t('common.continue'),
@@ -199,10 +228,10 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
                             testID="team-group-name"
                             value={name}
                             onChangeText={draft.setName}
-                            placeholder={t('teams.groups.namePlaceholder')}
+                            placeholder={publishedName === null ? t('common.unavailable') : t('teams.groups.namePlaceholder')}
                             accessibilityLabel={t('teams.groups.nameLabel')}
                             maxLength={TEAM_GROUP_NAME_MAX_LENGTH_V1}
-                            editable={editable}
+                            editable={editable && publishedName !== null}
                         />
                     )}
                 />
@@ -310,6 +339,15 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     // that arrives after the first paint is the ordinary cold path, so the
     // rendered branch may not change how many hooks this component calls.
     const group = detail.group;
+    const groupsForDisplay = React.useMemo<readonly TeamGroupV1[]>(
+        () => group === null ? [] : [group],
+        [group],
+    );
+    const groupDisplayNames = useTeamGroupDisplayNames({
+        scope: context.scope,
+        groups: groupsForDisplay,
+    });
+    const groupName = group === null ? null : groupDisplayNames.get(group.id) ?? null;
     const archived = group !== null && group.archivedAt !== null;
     const managedBy = group === null ? null : groupManagementLabel(group);
     /**
@@ -540,8 +578,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     <ItemLoadStateRows
                         testID="team-group-members-loading"
                         state={{ kind: 'loading' }}
-                        // The Group already says how many members it has: reserve
-                        // their rows so the roster does not resize when it lands.
                         rows={Math.min(Math.max(1, group.memberCount), GROUP_DETAIL_CHUNK_SIZE)}
                         accessibilityLabel={t('teams.loading')}
                     />
@@ -549,7 +585,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             ));
         }
 
-        // Who is in the Group leads the page; their defaults follow.
         for (let start = 0; start < members.rows.length; start += GROUP_DETAIL_CHUNK_SIZE) {
             const chunk = members.rows.slice(start, start + GROUP_DETAIL_CHUNK_SIZE);
             const first = start === 0;
@@ -707,7 +742,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     >
                         <Item
                             testID="team-group-history:from_membership"
-                            title={t('teams.history.fromMembershipNamed', { name: group.name })}
+                            title={t('teams.history.fromMembershipNamed', { name: groupName ?? t('common.unavailable') })}
                             selected={groupHistoryAccess === 'from_membership'}
                             accessibilityRole="radio"
                             webRole="radio"
@@ -717,7 +752,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         />
                         <Item
                             testID="team-group-history:all_existing"
-                            title={t('teams.history.allExistingNamed', { name: group.name })}
+                            title={t('teams.history.allExistingNamed', { name: groupName ?? t('common.unavailable') })}
                             selected={groupHistoryAccess === 'all_existing'}
                             accessibilityRole="radio"
                             webRole="radio"
@@ -835,7 +870,14 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         }
 
         if (group.capabilities.updateMetadata) {
-            add('metadata', () => <GroupMetadataSection context={context} group={group} current={groupCurrent} />);
+            add('metadata', () => (
+                <GroupMetadataSection
+                    context={context}
+                    group={group}
+                    name={groupName}
+                    current={groupCurrent}
+                />
+            ));
         }
 
         // What this Group's members' new sessions start with; an archived Group sets none.
@@ -860,7 +902,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         testID="team-group-archive"
                         size="small"
                         display="destructive"
-                        title={t('teams.groups.archiveAction', { name: group.name })}
+                        title={t('teams.groups.archiveAction', { name: groupName ?? t('common.unavailable') })}
                         titleNumberOfLines="complete"
                         disabled={busy || !context.canMutate || !groupCurrent}
                         onPress={async () => {
@@ -900,7 +942,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         testID="team-group-restore"
                         size="small"
                         display="secondary"
-                        title={t('teams.groups.restoreAction', { name: group.name })}
+                        title={t('teams.groups.restoreAction', { name: groupName ?? t('common.unavailable') })}
                         titleNumberOfLines="complete"
                         // Restore is legitimate *because* the Group is archived,
                         // so it gates on host readiness rather than on the
@@ -955,6 +997,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         groupCurrent,
         groupHistoryAccess,
         groupId,
+        groupName,
         groupStale,
         managedBy,
         members,
@@ -1005,7 +1048,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             <PageHeader
                 testID="team-group-header"
                 alwaysShowTitle
-                title={group.name}
+                title={groupName ?? t('common.unavailable')}
                 description={group.description ?? undefined}
                 leading={(
                     <PageHeaderMarkIcon name="users" />

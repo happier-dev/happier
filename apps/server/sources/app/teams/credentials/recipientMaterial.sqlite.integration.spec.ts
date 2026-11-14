@@ -1,4 +1,5 @@
 import { createTeamDirectActionMaterialFixture } from './directActionMaterial.testkit';
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
@@ -488,7 +489,7 @@ describe("Team credential recipient material", () => {
         });
 
         const overlappingGroup = await db.teamGroup.create({ data: {
-            teamId: team.id, name: 'Direct recipients', nameKey: 'direct-recipients',
+            teamId: team.id, name: storedPlainPrivateLabel('Direct recipients'),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: overlappingGroup.id, teamMembershipId: membership.id,

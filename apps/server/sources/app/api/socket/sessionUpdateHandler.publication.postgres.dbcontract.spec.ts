@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
 import { PrismaClient, type Prisma } from '@prisma/client';
@@ -95,7 +96,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('C
         const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner!.id,
             accountId: direct!.id, accessLevel: 'view' } });
         const team = await db.team.create({ data: { name: 'Stream admission team' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Stream admission group', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Stream admission group') } });
         await db.teamMembership.create({ data: { accountId: member!.id, teamId: team.id, role: 'member' } });
         const guest = await db.teamMembership.create({ data: { accountId: groupMember!.id, teamId: team.id, role: 'guest' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: guest.id, nativeContribution: true } });

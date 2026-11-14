@@ -35,12 +35,14 @@ import { inTx } from "@/storage/inTx";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 import { registerAccountApiTokenManagementRoutes } from "./registerAccountApiTokenManagementRoutes";
 import { registerSessionCreateOrLoadRoute } from "../session/registerSessionCreateOrLoadRoute";
 import { registerSessionMessageRoutes } from "../session/registerSessionMessageRoutes";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import type { Fastify as AppFastify } from "@/app/api/types";
+import { plainPrivateLabel, prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -105,7 +107,7 @@ describe("authRoutes (API-token management) (integration)", () => {
         try {
             const created = await fetch(`${endpoint}${ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1}`, {
                 method: 'POST', headers: { ...bearer(signed), 'content-type': 'application/json' },
-                body: JSON.stringify({ tokenId: randomUUID(), label: 'Scoped HTTP', grant }),
+                body: JSON.stringify({ tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Scoped HTTP'), grant }),
             });
             expect(created.status).toBe(200);
             const issued = AccountApiTokensCreateActionOutputV1Schema.parse(await created.json());
@@ -170,11 +172,11 @@ describe("authRoutes (API-token management) (integration)", () => {
         await app.ready();
         try {
             const created = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
-                headers: bearer(signed), payload: { tokenId, label: 'Restricted', grant, expiresAt } });
+                headers: bearer(signed), payload: { tokenId, label: await preparePlainAccountApiTokenLabel(account.id, 'Restricted'), grant, expiresAt } });
             expect(created.statusCode, created.body).toBe(200);
             expect(created.json().apiToken.grant).toEqual(grant);
             const parent = created.json().token;
-            const childPayload = { tokenId: randomUUID(), label: 'Child', expiresAt, grant };
+            const childPayload = { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Child'), expiresAt, grant };
             const mint = (credential: string, payload: InjectOptions['payload'] = childPayload) => app.inject({ method: 'POST',
                 url: '/v1/auth/api-tokens/children/create', headers: bearer(credential), payload });
             const wider = await mint(parent, { ...childPayload, grant: { ...grant, targets: null } });
@@ -196,7 +198,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             expect(list.json().tokens).toEqual([expect.objectContaining({ tokenId, grant, activeChildCount: 1 })]);
             const edit = (payload: InjectOptions['payload']) => app.inject({ method: 'POST', url: '/v1/auth/api-tokens/update',
                 headers: bearer(signed), payload });
-            expect((await edit({ tokenId, label: 'Renamed' })).statusCode).toBe(200);
+            expect((await edit({ tokenId, label: await preparePlainAccountApiTokenLabel(account.id, 'Renamed') })).statusCode).toBe(200);
             expect((await auth.verifyPat(childCredential)).ok).toBe(true);
             const embedConfig = { v: 1, ui: { attachments: false }, newChat: { enabled: false },
                 organization: { folderId: null, tagIds: [] }, style: null };
@@ -223,14 +225,14 @@ describe("authRoutes (API-token management) (integration)", () => {
         const account = await db.account.create({ data: { publicKey: `creator-${randomUUID()}`, encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { publicKey: `creator-other-${randomUUID()}`, encryptionMode: 'plain' } });
         const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Creator' });
+        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Creator') });
         const app = createTestApp();
         await app.ready();
         try {
             const expiresAt = new Date(Date.now() + 60_000).toISOString();
-            const mintChild = (grant = API_TOKEN_FULL_GRANT_V1, extra = {}) => app.inject({ method: 'POST',
+            const mintChild = async (grant = API_TOKEN_FULL_GRANT_V1, extra = {}) => app.inject({ method: 'POST',
                 url: '/v1/auth/api-tokens/children/create', headers: bearer(root.token),
-                payload: { tokenId: randomUUID(), label: 'Creator child', expiresAt, grant, ...extra } });
+                payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Creator child'), expiresAt, grant, ...extra } });
             const child = await mintChild();
             expect(child.statusCode, child.body).toBe(200);
             const childId = child.json().apiToken.tokenId;
@@ -333,9 +335,9 @@ describe("authRoutes (API-token management) (integration)", () => {
                 child: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, create: { ...creation,
                     agentTargetKey: 'agent:happier.agent.codex/codex' } }), accepted: false });
             for (const testCase of cases) {
-                const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Parent', grant: testCase.parent });
+                const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Parent'), grant: testCase.parent });
                 const response = await app.inject({ method: 'POST', url: '/v1/auth/api-tokens/children/create', headers: bearer(root.token),
-                    payload: { tokenId: randomUUID(), label: 'Child', expiresAt: new Date(Date.now() + 60_000).toISOString(), grant: testCase.child } });
+                    payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Child'), expiresAt: new Date(Date.now() + 60_000).toISOString(), grant: testCase.child } });
                 expect(response.statusCode, response.body).toBe(testCase.accepted ? 200 : 400);
                 if (!testCase.accepted) continue;
                 expect(response.json().apiToken.grant).toEqual(testCase.child);
@@ -356,12 +358,12 @@ describe("authRoutes (API-token management) (integration)", () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
         const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'CI root' });
-        await auth.createApiToken({ accountId: foreignAccount.id, tokenId: randomUUID(), label: 'Foreign CI' });
+        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'CI root') });
+        await auth.createApiToken({ accountId: foreignAccount.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(foreignAccount.id, 'Foreign CI') });
         const verified = await auth.verifyToken(root.token);
         if (!verified?.apiTokenPrincipal) throw new Error('Expected verified root API-token principal');
         const child = await auth.createChildApiToken({ principal: verified.apiTokenPrincipal,
-            tokenId: randomUUID(), label: 'CI child', expiresAt: new Date(Date.now() + 3_600_000),
+            tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(verified.apiTokenPrincipal.accountId, 'CI child'), expiresAt: new Date(Date.now() + 3_600_000),
             grant: API_TOKEN_FULL_GRANT_V1 });
         const app = createTestApp();
         await app.ready();
@@ -387,29 +389,31 @@ describe("authRoutes (API-token management) (integration)", () => {
     });
 
     it("renews a child's own evidence without permitting child configuration, self approval or foreign Account updates", async () => {
-        const account = await db.account.create({ data: { publicKey: randomUUID() } });
-        const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" } });
+        const foreignAccount = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" } });
         const evidence = [{ kind: 'home_method' as const, methodId: 'key_challenge' as const }];
         const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user', authenticationEvidence: evidence });
         const foreignSigned = await auth.createToken(foreignAccount.id, undefined,
             { kind: 'account', authority: 'present_user', authenticationEvidence: evidence });
-        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'CI root' });
+        const rootTokenId = randomUUID();
+        const childTokenId = randomUUID();
+        const root = await auth.createApiToken({ accountId: account.id, tokenId: rootTokenId, label: await prepareE2eeAccountApiTokenLabel(account.id, rootTokenId, 'CI root') });
         const principal = (await auth.verifyToken(root.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Expected verified root API-token principal');
-        const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: 'CI child',
+        const child = await auth.createChildApiToken({ principal, tokenId: childTokenId, label: await prepareE2eeAccountApiTokenLabel(principal.accountId, childTokenId, 'CI child'),
             expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
         const app = createTestApp();
         await app.ready();
         try {
             const input = { tokenId: child.tokenId, authorizeUnattendedTeamAccess: true };
-            for (const patch of [{ label: 'Changed' }, { grant: API_TOKEN_FULL_GRANT_V1 }, { embedConfig: null }, { deployment: null }]) {
+            for (const patch of [{ label: await prepareE2eeAccountApiTokenLabel(account.id, childTokenId, 'Changed') }, { grant: API_TOKEN_FULL_GRANT_V1 }, { embedConfig: null }, { deployment: null }]) {
                 const mixed = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
                     headers: bearer(signed), payload: { ...input, ...patch } });
                 expect(mixed.statusCode).toBe(401);
             }
             const orphanConsent = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
                 headers: bearer(signed), payload: { ...input, deploymentConsent: null } });
-            expect(orphanConsent.statusCode).toBe(403);
+            expect(orphanConsent.statusCode).toBe(400);
             for (const rejected of [foreignSigned, child.token]) {
                 const response = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
                     headers: bearer(rejected), payload: input });
@@ -426,16 +430,19 @@ describe("authRoutes (API-token management) (integration)", () => {
     });
 
     it("reapproves an existing token from current person evidence and preserves its bearer and grant", async () => {
-        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user",
             authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
         const withoutEvidence = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const token = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "Deploy from CI" });
+        const rootTokenId = randomUUID();
+        const childTokenId = randomUUID();
+        const unrelatedTokenId = randomUUID();
+        const token = await auth.createApiToken({ accountId: account.id, tokenId: rootTokenId, label: await prepareE2eeAccountApiTokenLabel(account.id, rootTokenId, "Deploy from CI") });
         const principal = (await auth.verifyToken(token.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Expected verified root API-token principal');
-        const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: 'Independent CI child',
+        const child = await auth.createChildApiToken({ principal, tokenId: childTokenId, label: await prepareE2eeAccountApiTokenLabel(principal.accountId, childTokenId, 'Independent CI child'),
             expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
-        await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Unrelated token' });
+        await auth.createApiToken({ accountId: account.id, tokenId: unrelatedTokenId, label: await prepareE2eeAccountApiTokenLabel(account.id, unrelatedTokenId, 'Unrelated token') });
         const tokenCount = await db.accountApiToken.count({ where: { accountId: account.id } });
         const app = createTestApp();
         const disconnected: string[][] = [];
@@ -451,7 +458,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             } });
             try {
                 const edited = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
-                    headers: bearer(signed), payload: { tokenId: token.tokenId, label: token.label } });
+                    headers: bearer(signed), payload: { tokenId: token.tokenId, label: await prepareE2eeAccountApiTokenLabel(account.id, rootTokenId, "Deploy from CI") } });
                 expect(edited.statusCode, edited.body).toBe(200);
                 expect(edited.json().apiToken.tokenId).toBe(token.tokenId);
             } finally { stopObserving(); }
@@ -502,7 +509,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             method: "POST",
             url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
             headers: bearer(signed),
-            payload: { tokenId: randomUUID(), label: "Must not silently downgrade", authorizeUnattendedTeamAccess: true },
+            payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Must not silently downgrade"), authorizeUnattendedTeamAccess: true },
         });
         expect(response.statusCode, response.body).toBe(409);
         expect(response.json()).toEqual({ error: "credential_authentication_evidence_unavailable" });
@@ -531,6 +538,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }],
         });
         const app = createTestApp();
+        const tokenLabel = await prepareE2eeAccountApiTokenLabel(account.id, tokenId, "Encrypted SDK");
         await app.ready();
         try {
             const create = () => app.inject({
@@ -539,7 +547,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 headers: bearer(signed),
                 payload: {
                     tokenId,
-                    label: "Encrypted SDK",
+                    label: tokenLabel,
                     authorizeUnattendedTeamAccess: true,
                     encryption: { access: encryptionAccess },
                 },
@@ -593,7 +601,9 @@ describe("authRoutes (API-token management) (integration)", () => {
             expect((await app.inject({ method: "POST", url: ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, payload: {} })).statusCode).toBe(401);
             expect((await fetch(signed)).json()).toEqual({ error: 'api_token_required' });
             expect((await fetch(body.token, { tokenId: randomUUID() })).statusCode).toBe(400);
-            const ordinary = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Ordinary' });
+            const ordinaryTokenId = randomUUID();
+            const ordinary = await auth.createApiToken({ accountId: account.id, tokenId: ordinaryTokenId,
+                label: await prepareE2eeAccountApiTokenLabel(account.id, ordinaryTokenId, 'Ordinary') });
             const listed = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, headers: bearer(signed), payload: {} });
             expect(listed.json()).toEqual({
                 tokens: [
@@ -603,7 +613,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             });
             expect((await fetch(ordinary.token)).json()).toEqual({ error: 'api_token_encryption_unavailable' });
             const crossAccount = await db.account.create({ data: { publicKey: 'other-api-token-account' } });
-            const crossToken = await auth.createApiToken({ accountId: crossAccount.id, tokenId: randomUUID(), label: 'Other Account' });
+            const crossToken = await auth.createApiToken({ accountId: crossAccount.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(crossAccount.id, 'Other Account') });
             expect((await fetch(crossToken.token)).json()).toEqual({ error: 'api_token_encryption_unavailable' });
             await auth.signOutEverywhere(account.id);
             expect((await fetch(body.token)).statusCode).toBe(200);
@@ -615,11 +625,15 @@ describe("authRoutes (API-token management) (integration)", () => {
             await auth.revokeApiToken({ accountId: account.id, tokenId });
             expect((await fetch(body.token)).statusCode).toBe(401);
             await db.account.update({ where: { id: account.id }, data: { encryptionMode: 'e2ee' } });
+            const racingEncryptedTokenId = randomUUID();
+            const racingOrdinaryTokenId = randomUUID();
             const races = await Promise.allSettled([
-                auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Racing encrypted', encryption: {
+                auth.createApiToken({ accountId: account.id, tokenId: racingEncryptedTokenId,
+                    label: await prepareE2eeAccountApiTokenLabel(account.id, racingEncryptedTokenId, 'Racing encrypted'), encryption: {
                     access: { ...encryptionAccess, v: 1 },
                 } }),
-                auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Racing ordinary' }),
+                auth.createApiToken({ accountId: account.id, tokenId: racingOrdinaryTokenId,
+                    label: await prepareE2eeAccountApiTokenLabel(account.id, racingOrdinaryTokenId, 'Racing ordinary') }),
                 inTx((tx) => setAccountStatusInTx(tx, { actorAccountId: account.id, targetAccountId: account.id, status: 'disabled', authority: 'account_erasure' })),
             ]);
             expect(races[2]?.status).toBe('fulfilled');
@@ -638,8 +652,10 @@ describe("authRoutes (API-token management) (integration)", () => {
         for (const encryptionMode of ['plain', 'e2ee']) {
             const account = await db.account.create({ data: { encryptionMode,
                 publicKey: encryptionMode === 'plain' ? null : Buffer.from(signing.publicKey).toString('hex') } });
-            await expect(auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Unavailable',
-                encryption: { access } })).rejects.toMatchObject({ code: 'api_token_encryption_not_ready' });
+            await expect(auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: plainPrivateLabel('Unavailable'),
+                encryption: { access } })).rejects.toMatchObject({
+                code: encryptionMode === 'plain' ? 'api_token_encryption_not_ready' : 'api_token_label_mode_mismatch',
+            });
             expect(await db.accountApiToken.count({ where: { accountId: account.id } })).toBe(0);
             expect(await db.account.findUnique({ where: { id: account.id }, select: { contentPublicKey: true, contentPublicKeySig: true } })).toEqual({ contentPublicKey: null, contentPublicKeySig: null });
         }
@@ -647,6 +663,7 @@ describe("authRoutes (API-token management) (integration)", () => {
 
     it("refuses a mint that was waiting behind a committed Account disable fence", async () => {
         const account = await db.account.create({ data: { publicKey: 'waiting-api-token' } });
+        const label = await preparePlainAccountApiTokenLabel(account.id, 'Waiting');
         let releaseFence!: () => void;
         let signalFence!: () => void;
         const held = new Promise<void>((resolve) => { signalFence = resolve; });
@@ -658,7 +675,7 @@ describe("authRoutes (API-token management) (integration)", () => {
             await release;
         });
         await held;
-        const minting = auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Waiting' });
+        const minting = auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label });
         releaseFence();
         await disabling;
         await expect(minting).rejects.toMatchObject({ code: 'account-disabled' });
@@ -668,10 +685,10 @@ describe("authRoutes (API-token management) (integration)", () => {
     it("Disable deletes PATs and refuses late issuance; Re-enable cannot resurrect them", async () => {
         const owner = await db.account.create({ data: { homeRole: 'owner' } });
         const account = await db.account.create({ data: { publicKey: 'disable-api-token' } });
-        const minted = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Before disable' });
+        const minted = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Before disable') });
         await inTx((tx) => setAccountStatusInTx(tx, { actorAccountId: owner.id, targetAccountId: account.id, status: 'suspended', authority: 'home_administration' }));
         expect(await auth.listApiTokens(account.id)).toEqual([]);
-        await expect(auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Late mint' })).rejects.toThrow();
+        await expect(auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Late mint') })).rejects.toThrow();
         await inTx((tx) => setAccountStatusInTx(tx, { actorAccountId: owner.id, targetAccountId: account.id, status: 'active', authority: 'home_administration' }));
         expect(await auth.verifyPat(minted.token)).toEqual({ ok: false, reason: 'invalid_token' });
     });
@@ -691,7 +708,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 method: "POST",
                 url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
                 headers: bearer(signedToken),
-                payload: { tokenId: requestedTokenId, label: "CI deploy", expiresAt: "2030-08-22T12:00:00.000Z" },
+                payload: { tokenId: requestedTokenId, label: await preparePlainAccountApiTokenLabel(account.id, "CI deploy"), expiresAt: "2030-08-22T12:00:00.000Z" },
             });
 
             expect(created.statusCode).toBe(200);
@@ -700,7 +717,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 token: expect.stringMatching(/^hap_v1_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$/u),
                 apiToken: {
                     tokenId: requestedTokenId,
-                    label: "CI deploy",
+                    label: { content: { t: "plain", v: "CI deploy" }, recipientEnvelope: null },
                     displayPrefix: expect.stringMatching(/^hap_v1_[0-9a-f]{8}$/u),
                     createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
                     lastUsedAt: null,
@@ -732,7 +749,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                     method: "POST",
                     url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
                     headers: bearer(createdBody.token),
-                    payload: { tokenId: randomUUID(), label: "forbidden replacement" },
+                    payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "forbidden replacement") },
                 }),
                 app.inject({
                     method: "POST",
@@ -795,7 +812,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 method: "POST",
                 url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
                 headers: bearer(signedToken),
-                payload: { tokenId: randomUUID(), label: "Revocable" },
+                payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Revocable") },
             });
             expect(created.statusCode).toBe(200);
             const createdBody = created.json();
@@ -821,7 +838,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 method: "POST",
                 url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
                 headers: bearer(signedToken),
-                payload: { tokenId: randomUUID(), label: "already expired", expiresAt: "2020-08-22T12:00:00.000Z" },
+                payload: { tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "already expired"), expiresAt: "2020-08-22T12:00:00.000Z" },
             });
             expect(expired.statusCode).toBe(400);
             expect(expired.json()).toEqual({ error: "invalid_request" });

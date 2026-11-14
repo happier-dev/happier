@@ -8,6 +8,7 @@ import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } fr
 import { classifySubjectsExternalToTeamInTx, enforceTeamExternalSharingPolicyInTx } from "./sessionAccessExternalSharingPolicy";
 import { resolveShareSubjectsInTx } from "@/app/teams/shareEligibility";
 import { teamsPolicyStillRequireGrants } from "./sessionAccessGrantService";
+import { projectTeamGroupNameForRecipient } from "@/app/teams/groups/privateLabels";
 
 /** What the grant inspector answers: the roster projection, or a typed refusal. */
 type SessionAccessGrantInspectionResult =
@@ -77,7 +78,9 @@ export async function inspectSessionAccessGrants(params: Readonly<{
             })),
             ...grantArms.groupGrants.map((row) => ({
                 grant: { subject: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroup.id }, accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions },
-                principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroup.id, name: row.teamGroup.name, teamName: row.teamGroup.team.name },
+                principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroup.id,
+                    name: projectTeamGroupNameForRecipient({ serialized: row.teamGroup.name, recipientAccountId: params.actorAccountId }),
+                    teamName: row.teamGroup.team.name },
             })),
         ];
         // Transcript shareability is a disclosure rule owned by the access decision,
@@ -124,6 +127,7 @@ export async function inspectSessionAccessGrants(params: Readonly<{
         // same editor can move away.
         const credentialBindingConsequences = await listSessionTeamCredentialBindingConsequencesInTx(tx, {
             sessionId: params.sessionId,
+            actorAccountId: params.actorAccountId,
             teamIds: [...new Set([
                 ...grantArms.teamGrants.map((row) => row.team.id),
                 ...(primaryTeamId === null ? [] : [primaryTeamId]),

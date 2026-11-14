@@ -1,16 +1,19 @@
 import { USAGE } from './apiTokensHelp';
 import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensServerErrorV1Schema, formatAccountApiTokenCredentialV1, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { AccountApiTokenLabelV1Schema, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensServerErrorV1Schema, formatAccountApiTokenCredentialV1, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openApiTokenEncryptionAccessV1, wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { ActionExecuteResult, AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { fetchAccountProfile } from '@/api/accountProfile';
+import { CliPrivateLabelError, deriveCliPrivateLabelAccountKey, openCliPrivateLabel, prepareCliPrivateLabel } from '@/api/privateLabels';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { CliAccountModeDowngradeUnverifiedError } from '@/api/client/accountModeAdmission';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
@@ -21,6 +24,7 @@ import { assertCommandArguments, readCommandPositionals, readFlagValue } from '@
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 
+const ACCOUNT_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
 
 class ApiTokenCommandError extends Error {
   constructor(
@@ -37,6 +41,7 @@ class ApiTokenCommandError extends Error {
       not_authenticated: 'Run happier auth login for the selected Home first.',
       cancelled: 'The API-token operation was cancelled before creation began.',
       confirmation_declined: 'Confirmation declined. No API-token change was made.',
+      private_label_unavailable: 'The Account label cannot be opened or sealed with the available Account encryption material.',
     };
     super(message ?? messages[code] ?? code);
   }
@@ -71,7 +76,39 @@ function unwrap(result: ActionExecuteResult): unknown {
   return result.result;
 }
 
-function formatTokenAccess(token: AccountApiTokenSummaryV1): string {
+type OpenedAccountApiTokenSummaryV1 = Omit<AccountApiTokenSummaryV1, 'label'> & Readonly<{
+  label: string;
+}>;
+
+function accountContentPrivateKey(credentials: StoredCredentials): Uint8Array | null {
+  return deriveCliPrivateLabelAccountKey(credentials.encryption);
+}
+
+function openTokenLabels(
+  tokens: readonly AccountApiTokenSummaryV1[],
+  credentials: StoredCredentials,
+  accountContentEncryptionMode: AccountEncryptionCurrentnessResponse['mode'],
+): readonly OpenedAccountApiTokenSummaryV1[] {
+  const requiresAccountKey = tokens.some((token) => token.label.content.t === 'encrypted');
+  const accountKey = requiresAccountKey ? accountContentPrivateKey(credentials) : null;
+  if (requiresAccountKey && !accountKey) throw new ApiTokenCommandError('private_label_unavailable');
+  try {
+    return tokens.map((token) => {
+      const label = openCliPrivateLabel({
+        binding: { entity: 'account_api_token', field: 'label', id: token.tokenId },
+        label: token.label,
+        readPolicy: { kind: 'account-owned', contentEncryptionMode: accountContentEncryptionMode },
+        ...(accountKey ? { accountKey } : {}),
+      });
+      if (!label) throw new ApiTokenCommandError('private_label_unavailable');
+      return { ...token, label };
+    });
+  } finally {
+    accountKey?.fill(0);
+  }
+}
+
+function formatTokenAccess(token: OpenedAccountApiTokenSummaryV1): string {
   const grant = token.grant;
   const parts = [isApiTokenGrantRestrictedV1(grant) ? 'Limited' : 'Full access'];
   if (grant.actions) parts.push(`${grant.actions.ids.length} Actions, ${grant.actions.families.length} families`);
@@ -85,7 +122,7 @@ function formatTokenAccess(token: AccountApiTokenSummaryV1): string {
   return parts.join('; ');
 }
 
-function printTokenList(tokens: readonly AccountApiTokenSummaryV1[]): void {
+function printTokenList(tokens: readonly OpenedAccountApiTokenSummaryV1[]): void {
   const rows = [
     ['Label', 'Token', 'Access', 'Expires'],
     ...tokens.map((token) => [token.label.replace(/\s+/gu, ' '), token.tokenId,
@@ -98,15 +135,13 @@ function printTokenList(tokens: readonly AccountApiTokenSummaryV1[]): void {
 async function prepareEncryption(
   credentials: StoredCredentials,
   serverUrl: string,
+  accountId: string,
   tokenId: string,
+  currentness: AccountEncryptionCurrentnessResponse,
   signal?: AbortSignal,
 ) {
   if (!credentials.encryption) throw new ApiTokenCommandError('api_token_encryption_not_ready');
-  const [profile, currentness, features] = await Promise.all([
-    fetchAccountProfile({ token: credentials.token, projection: 'self', signal }),
-    fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, serverBaseUrl: serverUrl, signal }),
-    fetchServerFeaturesSnapshot({ serverUrl, signal }),
-  ]);
+  const features = await fetchServerFeaturesSnapshot({ serverUrl, signal });
   const serverIdentityId = features.status === 'ready' ? features.features.capabilities.serverIdentity.serverIdentityId : null;
   if (!serverIdentityId) throw new ApiTokenCommandError('unsupported');
   if (currentness.mode !== 'e2ee' || !currentness.contentKeyFingerprint) throw new ApiTokenCommandError('api_token_encryption_not_ready');
@@ -123,7 +158,7 @@ async function prepareEncryption(
       || computeAccountEncryptionMigrateKeyFingerprintV1(publicKey) !== currentness.contentKeyFingerprint) {
       throw new ApiTokenCommandError('api_token_encryption_stale');
     }
-    const context = { serverIdentityId, accountId: profile.id, tokenId, contentPublicKey: encodeBase64(publicKey) };
+    const context = { serverIdentityId, accountId, tokenId, contentPublicKey: encodeBase64(publicKey) };
     const wrappingSecret = randomBytes(32);
     let wrappingSecretTransferred = false;
     try {
@@ -138,6 +173,29 @@ async function prepareEncryption(
     }
   } finally {
     contentPrivateKey.fill(0);
+  }
+}
+
+/** Reads the canonical current Account mode before any label representation is chosen. */
+async function readApiTokenAuthorMode(
+  credentials: StoredCredentials,
+  serverUrl: string,
+  signal?: AbortSignal,
+): Promise<AccountEncryptionCurrentnessResponse> {
+  try {
+    return await fetchAccountEncryptionCurrentness({
+      credentials,
+      token: credentials.token,
+      serverBaseUrl: serverUrl,
+      signal,
+    });
+  } catch (error) {
+    // The Account-mode owner refuses active E2EE material for a persisted
+    // Plain Account. A token writer has no alternate plaintext path.
+    if (error instanceof CliAccountModeDowngradeUnverifiedError) {
+      throw new ApiTokenCommandError('api_token_encryption_not_ready');
+    }
+    throw error;
   }
 }
 
@@ -198,12 +256,46 @@ export async function handleAuthApiTokens(args: string[], signal?: AbortSignal):
       ...(signal ? { signal } : {}),
     };
     let data: unknown;
+    let openedListedTokens: readonly OpenedAccountApiTokenSummaryV1[] | null = null;
     if (command === 'create') {
       const tokenId = randomUUID();
       const expiresAt = readFlagValue(args, '--expires-at');
+      const requestedLabel = AccountApiTokenLabelV1Schema.safeParse(readFlagValue(args, '--label'));
+      if (!requestedLabel.success) throw new ApiTokenCommandError('invalid_arguments', USAGE);
+      if (args.includes('--encryption') && !credentials.encryption) {
+        throw new ApiTokenCommandError('api_token_encryption_not_ready');
+      }
+      const author = await runWithServerHttpBaseUrl(serverUrl, async () => {
+        const [profile, currentness] = await Promise.all([
+          fetchAccountProfile({ token: credentials.token, projection: 'self', signal }),
+          readApiTokenAuthorMode(credentials, serverUrl, signal),
+        ]);
+        const label = await prepareCliPrivateLabel({
+          endpoint: serverUrl,
+          token: credentials.token,
+          accountId: profile.id,
+          accountMode: currentness.mode,
+          recipientCensusPath: ACCOUNT_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
+          binding: { entity: 'account_api_token', field: 'label', id: tokenId },
+          value: requestedLabel.data,
+          ...(signal ? { signal } : {}),
+        });
+        return { accountId: profile.id, currentness, label };
+      }).catch((error: unknown) => {
+        if (error instanceof CliPrivateLabelError) throw new ApiTokenCommandError('private_label_unavailable');
+        throw error;
+      });
+      if (author.label.content.t === 'encrypted') {
+        const accountKey = accountContentPrivateKey(credentials);
+        try {
+          if (!accountKey) throw new ApiTokenCommandError('private_label_unavailable');
+        } finally {
+          accountKey?.fill(0);
+        }
+      }
       const parsed = AccountApiTokensCreateActionInputV1Schema.safeParse({
         tokenId,
-        label: readFlagValue(args, '--label'),
+        label: author.label,
         ...(expiresAt ? { expiresAt } : {}),
         ...(args.includes('--authorize-unattended-team-access') ? { authorizeUnattendedTeamAccess: true } : {}),
       });
@@ -212,7 +304,7 @@ export async function handleAuthApiTokens(args: string[], signal?: AbortSignal):
       const prepared = args.includes('--encryption')
         ? await runWithServerHttpBaseUrl(
             serverUrl,
-            () => prepareEncryption(credentials, serverUrl, tokenId, signal),
+            () => prepareEncryption(credentials, serverUrl, author.accountId, tokenId, author.currentness, signal),
           )
         : null;
       try {
@@ -229,13 +321,17 @@ export async function handleAuthApiTokens(args: string[], signal?: AbortSignal):
         ) {
           throw new ApiTokenCommandError('api_token_response_mismatch');
         }
+        const openedCreated = {
+          ...created,
+          apiToken: openTokenLabels([created.apiToken], credentials, author.currentness.mode)[0]!,
+        };
         if (prepared) {
-          data = { ...created, token: formatAccountApiTokenCredentialV1({
+          data = { ...openedCreated, token: formatAccountApiTokenCredentialV1({
             bearer: created.token, wrappingSecret: encodeBase64(prepared.wrappingSecret, 'base64url'),
             serverIdentityId: prepared.context.serverIdentityId, accountId: prepared.context.accountId,
             contentPublicKey: prepared.context.contentPublicKey,
           }) };
-        } else data = created;
+        } else data = openedCreated;
         signal?.throwIfAborted();
       } catch (error) {
         // Known Action settlements are pre-effect or otherwise explicit. Only
@@ -247,14 +343,20 @@ export async function handleAuthApiTokens(args: string[], signal?: AbortSignal):
         throw error;
       } finally { prepared?.wrappingSecret.fill(0); }
     } else if (command === 'list') {
-      data = AccountApiTokensListActionOutputV1Schema.parse(unwrap(await executor.execute('account.apiTokens.list', {}, context)));
+      const [listed, currentness] = await Promise.all([
+        executor.execute('account.apiTokens.list', {}, context)
+          .then((result) => AccountApiTokensListActionOutputV1Schema.parse(unwrap(result))),
+        runWithServerHttpBaseUrl(serverUrl, () => readApiTokenAuthorMode(credentials, serverUrl, signal)),
+      ]);
+      openedListedTokens = openTokenLabels(listed.tokens, credentials, currentness.mode);
+      data = { ...listed, tokens: openedListedTokens };
     } else if (command === 'revoke') {
       const input = AccountApiTokensRevokeActionInputV1Schema.safeParse({ tokenId: readCommandPositionals(args, { startIndex: 1 })[0] });
       if (!input.success) throw new ApiTokenCommandError('invalid_arguments', USAGE);
       data = unwrap(await executor.execute('account.apiTokens.revoke', input.data, context));
     } else data = unwrap(await executor.execute('account.apiTokens.revokeAll', {}, context));
     if (wantsJson(args)) await printJsonEnvelope({ ok: true, kind, data });
-    else if (command === 'list') printTokenList(AccountApiTokensListActionOutputV1Schema.parse(data).tokens);
+    else if (command === 'list') printTokenList(openedListedTokens ?? []);
     else await writeJsonStdout(data, { pretty: true });
   } catch (error) {
     const code = outcomeUnknown ? 'api_token_creation_outcome_unknown' : error instanceof ApiTokenCommandError ? error.code : isAuthenticationError(error) ? 'not_authenticated' : 'api_token_operation_failed';

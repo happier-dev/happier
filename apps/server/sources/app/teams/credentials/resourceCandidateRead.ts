@@ -26,10 +26,10 @@ export async function readTeamCredentialResourceCandidatesInTx(tx: Tx, input: Re
     limit: number;
 }>) {
     const after = input.after;
-    const keyset = after ? [{ OR: [
-        { displayName: { gt: after.displayName } },
-        { displayName: after.displayName, id: { gt: after.id } },
-    ] }] : [];
+    // Labels are recipient-scoped opaque envelopes. Database ordering and
+    // keysets intentionally use the public structural identifier only; the
+    // client sorts/searches labels after opening its loaded projections.
+    const keyset = after ? [{ id: { gt: after.id } }] : [];
     const selection = input.selection;
     if (selection.kind === 'custodian') {
         const source = selection.source;
@@ -51,7 +51,7 @@ export async function readTeamCredentialResourceCandidatesInTx(tx: Tx, input: Re
                     teamCredentialAudienceDeliveryWhere('direct'),
                 ] : [])],
             },
-            orderBy: [{ displayName: 'asc' }, { id: 'asc' }], take: input.limit + 1,
+            orderBy: { id: 'asc' }, take: input.limit + 1,
         });
     }
     let candidates: Awaited<ReturnType<Tx['teamCredentialResource']['findMany']>> = [];
@@ -66,7 +66,7 @@ export async function readTeamCredentialResourceCandidatesInTx(tx: Tx, input: Re
                 ...(selection.resourceId ? [{ id: selection.resourceId }] : []),
                 ...keyset,
             ] },
-            orderBy: [{ displayName: 'asc' }, { id: 'asc' }], take: input.limit + 1,
+            orderBy: { id: 'asc' }, take: input.limit + 1,
         });
     }
     return candidates;

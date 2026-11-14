@@ -27,7 +27,6 @@ import {
     MEMBERSHIP_SESSION_DATA_KEY_ENVELOPE_ERROR_RESPONSES,
 } from "@/app/session/encryption/membershipSessionDataKeyEnvelopeService";
 import { inTx } from "@/storage/inTx";
-import { isPrismaUniqueConstraintError } from "@/storage/prisma";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { createTeamRouteApp } from "../teamRouteApp";
@@ -153,6 +152,7 @@ export function registerTeamGroupRoutes(app: Fastify) {
             teamId: request.body.teamId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),
+            groupId: request.body.groupId,
             name: request.body.name,
             ...(request.body.description === undefined
                 ? {}
@@ -172,29 +172,16 @@ export function registerTeamGroupRoutes(app: Fastify) {
         // this the framework's own validation body would be serialized against the
         // declared 400 schema, fail, and surface as a 500 for a plain client mistake.
         if (request.validationError) return fail(reply, "invalid_team_input");
-        let result;
-        try {
-            result = await inTx(async (tx) => updateTeamGroupForActorInTx(tx, {
-                teamId: request.body.teamId,
-                actorAccountId: request.userId,
-                authentication: readTeamOperationAuthenticationFromRequest(request),
-                groupId: request.body.groupId,
-                ...(request.body.name === undefined ? {} : { name: request.body.name }),
-                ...(request.body.description === undefined
-                    ? {}
-                    : { description: request.body.description }),
-            }), { isolationLevel: "ReadCommitted" /* Existing Team admission precedes current authority; the database owns same-Team name uniqueness. */ });
-        } catch (error) {
-            // A same-name concurrent rename is detected only by the database.
-            // Map it after `inTx` has rolled the transaction back; catching it
-            // inside the callback would try to continue a poisoned PostgreSQL
-            // transaction. This update changes no other unique field, so a
-            // uniqueness refusal has exactly one public meaning here.
-            if (isPrismaUniqueConstraintError(error)) {
-                return fail(reply, "group_name_taken");
-            }
-            throw error;
-        }
+        const result = await inTx(async (tx) => updateTeamGroupForActorInTx(tx, {
+            teamId: request.body.teamId,
+            actorAccountId: request.userId,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
+            groupId: request.body.groupId,
+            ...(request.body.name === undefined ? {} : { name: request.body.name }),
+            ...(request.body.description === undefined
+                ? {}
+                : { description: request.body.description }),
+        }), { isolationLevel: "ReadCommitted" /* Existing Team admission precedes current authority and label-recipient admission. */ });
         if (!result.ok) return fail(reply, result.error);
         return reply.send(result.value);
     });

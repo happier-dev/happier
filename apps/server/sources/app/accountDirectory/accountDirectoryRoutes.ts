@@ -5,6 +5,7 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import { requirePresentUser, PresentUserRequiredResponseSchema } from "@/app/api/utils/requirePresentUser";
 import { auth } from "@/app/auth/auth";
 import { createHomeApprovalGate } from "@/app/api/routes/auth/homeApprovalGate";
+import { registerAccountDirectoryPrivateLabelRecipientCensusRoute } from "@/app/api/routes/account/registerPrivateLabelRecipientCensusRoute";
 import {
     accountDirectoryProtocolErrorResponse,
 } from "./accountDirectoryErrors";
@@ -66,6 +67,7 @@ const ACCOUNT_DIRECTORY_BOUNDARY_ERROR_RESPONSES = {
 } as const;
 
 export function registerAccountDirectoryRoutes(app: Fastify): void {
+    registerAccountDirectoryPrivateLabelRecipientCensusRoute(app);
     app.get(ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, {
         errorHandler: accountDirectoryRouteErrorHandler,
         preHandler: [app.authenticate],

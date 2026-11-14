@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { teamCredentialResourceFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture, teamCredentialResourceFixture } from '@/dev/testkit';
 import { t } from '@/text';
 import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
@@ -76,7 +76,7 @@ describe('teamCredentialPresentation', () => {
     });
     it('presents recipient-only reconnect readiness without requiring manager-private fields or models', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            id: 'shared-resource', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Shared Codex'), resourceRevision: 1,
             sourcePresentation: teamCredentialResourceFixture().sourcePresentation,
             readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
             recoveryAction: 'source_owner_action', allowedRoutes: ['brokered'], mayBroker: true,
@@ -84,7 +84,7 @@ describe('teamCredentialPresentation', () => {
             providerModels: [], connectedServiceSelections: [],
         });
         expect(resourceAdministrationSummaryLines(resource)).toContain(resourceStateLabel(resource.readiness));
-        expect(resourceAccessibilityLabel(resource)).toContain(resourceStateLabel(resource.readiness));
+        expect(resourceAccessibilityLabel(resource, 'Shared Codex')).toContain(resourceStateLabel(resource.readiness));
     });
 
     it('preserves the explicit Team All epoch and host-local Today bounds', () => {
@@ -165,10 +165,10 @@ describe('teamCredentialPresentation', () => {
             sourceOwnerDisplayName: 'Alice', readiness, recoveryAction: 'source_owner_action',
             capabilities: { updateBrokerPlacement: false, narrowDisclosure: false, refreshDirectMaterial: false },
         });
-        expect(resourceAccessibilityLabel(owner)).toContain('Connected account needs reconnect');
+        expect(resourceAccessibilityLabel(owner, 'Claude Enterprise')).toContain('Connected account needs reconnect');
         // Only someone who cannot reconnect it is told whom to ask; the owner is not told to ask themselves.
-        expect(resourceAccessibilityLabel(owner)).not.toContain('Alice');
-        expect(resourceAccessibilityLabel(manager)).toContain('Alice');
+        expect(resourceAccessibilityLabel(owner, 'Claude Enterprise')).not.toContain('Alice');
+        expect(resourceAccessibilityLabel(manager, 'Claude Enterprise')).toContain('Alice');
         expect(credentialFailureMessage({ kind: 'invalid', retryable: false,
             code: 'connected_service_credential_reconnect_required',
         })).toContain(t('teams.credentials.recovery.ownerHandoff'));
@@ -179,14 +179,14 @@ describe('teamCredentialPresentation', () => {
         // theirs to see. Reading that as "nobody has access" would tell them
         // the resource they are entitled to use needs attention.
         expect(resourceState(teamCredentialResourceFixture())).toBe('available');
-        expect(resourceAccessibilityLabel(teamCredentialResourceFixture()))
+        expect(resourceAccessibilityLabel(teamCredentialResourceFixture(), 'Claude Enterprise'))
             .toBe('Claude Enterprise, Connected service pool, Available');
     });
 
     it('puts source, delivery and state in the accessible name rather than the layout', () => {
         const label = resourceAccessibilityLabel(teamCredentialResourceFixture({
             allMembersAllowedRoutes: ['brokered'],
-        }), { audienceKnown: true });
+        }), 'Claude Enterprise', { audienceKnown: true });
         expect(label).toBe('Claude Enterprise, Connected service pool, Brokered, Available');
     });
 
@@ -217,7 +217,10 @@ describe('teamCredentialPresentation', () => {
                 eligibleTargets: [],
                 selectedPool: {
                     poolId: 'pool-private-identifier',
-                    displayName: 'Build machines',
+                    displayName: {
+                        kind: 'available',
+                        label: teamCredentialDisplayNameFixture('Build machines'),
+                    },
                     availability: 'not_verified',
                     availableMachineCount: null,
                 },
@@ -226,8 +229,12 @@ describe('teamCredentialPresentation', () => {
         });
 
         // A Pool is named as one, so the detail line cannot be mistaken for a Machine.
-        expect(brokerPlacementLabel(resource)).toBe('Machine pools · Build machines');
-        expect(brokerPlacementLabel(resource)).not.toContain('pool-private-identifier');
+        expect(brokerPlacementLabel(resource, {
+            poolDisplayNames: { 'pool-private-identifier': 'Build machines' },
+        })).toBe('Machine pools · Build machines');
+        expect(brokerPlacementLabel(resource, {
+            poolDisplayNames: { 'pool-private-identifier': 'Build machines' },
+        })).not.toContain('pool-private-identifier');
     });
 
     it('orders by display name so a status change never moves a row', () => {
@@ -235,7 +242,7 @@ describe('teamCredentialPresentation', () => {
             teamCredentialResourceFixture({ id: 'b', displayName: 'Zeta', updatedAt: '2026-09-01T00:00:00.000Z' }),
             teamCredentialResourceFixture({ id: 'c', displayName: 'Alpha' }),
             teamCredentialResourceFixture({ id: 'a', displayName: 'Alpha' }),
-        ]);
+        ], { a: 'Alpha', b: 'Zeta', c: 'Alpha' });
         expect(ordered.map((row) => row.id)).toEqual(['a', 'c', 'b']);
     });
 

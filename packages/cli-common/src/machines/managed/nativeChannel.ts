@@ -1,5 +1,5 @@
 import { Duplex } from 'node:stream';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineProvisionerNativeStreamResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedNativeInvocation } from './reconcile.js';
 
@@ -71,7 +71,7 @@ export class ManagedNativeChannel extends Duplex {
 }
 
 /** Opens the provider's `stream` role for one argv in the managed guest. */
-export function openManagedNativeChannel(correlation: Pick<ManagedEnrollmentCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation,
+export function openManagedNativeChannel(correlation: Pick<ManagedEnrollmentFullCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation,
     request: Readonly<{ argv: readonly string[]; signal?: AbortSignal }>): ManagedNativeChannel {
     return new ManagedNativeChannel(invoke, { resource: correlation.resource.value, argv: [...request.argv] }, request.signal);
 }

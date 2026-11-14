@@ -462,6 +462,51 @@ describe('generic reviewed host children', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
   });
 
+  it('re-enters a dynamically issued reviewed child through the host route with its private proof', async () => {
+    const input = { homeId: 'home', managedId: 'managed', expectedRevision: 1,
+      when: 'now' as const, intent: 'start' as const };
+    const child = { action: { pluginId: 'acme.fixture', localId: 'power' }, role: 'power', input: { resource: { id: 'private' } } };
+    let routed = 0;
+    const executor = createActionExecutor({
+      managedMachineAction: async ({ context }) => {
+        const parent = context.hostReviewedChild?.parent;
+        expect(parent).toEqual({ actionId: 'machines.managed.power.set', input });
+        if (!parent) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+        const port = createHostReviewedChildPortV1({ actionId: parent.actionId, input: parent.input, context,
+          reviewAdmitted: true, plan: { children: [child] },
+          policies: [{ action: child.action, role: child.role, surface: 'cli' }],
+          execute: async (body, childContext) => {
+            const reenter = childContext.executeHostReviewedChildAction;
+            expect(reenter).toBeTypeOf('function');
+            if (!reenter) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+            return await reenter('action.invoke', body, childContext);
+          } });
+        const result = await port.invoke(child);
+        if (!result.ok) return result;
+        return { kind: 'accepted', managedId: input.managedId, intentRevision: 2 };
+      },
+      routeHostChildAction: async ({ actionId, input: childInput, context: childContext }) => {
+        routed++;
+        expect(actionId).toBe('action.invoke');
+        expect(readHostReviewedChildOperationV1(childContext, actionId, childInput)?.parent)
+          .toEqual({ actionId: 'machines.managed.power.set', input });
+        // The proof and callback are host-local, never part of a serialized child request.
+        expect(readHostReviewedChildOperationV1(JSON.parse(JSON.stringify(childContext)), actionId, childInput)).toBeNull();
+        return { ok: true, result: { kind: 'confirmed' } };
+      },
+    });
+    const requestId = 'dynamic-reviewed-child';
+    const execution = await executor.execute('machines.managed.power.set', input, {
+      ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+      actionRequestId: requestId, presentUserConfirmation: { actionId: 'machines.managed.power.set',
+        inputDigest: computeActionInputApprovalDigestV1('machines.managed.power.set', input), requestId,
+        accountId: context.runtimeAccountId!, serverId: context.serverId!, target: context.externalActionTarget! },
+    });
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true,
+      result: { kind: 'accepted', managedId: input.managedId, intentRevision: 2 } });
+    expect(routed).toBe(1);
+  });
+
   it.each(['settings', 'profile', 'profile-safe', 'profile-danger'] as const)('folds demanded child Require from %s into the parent and supplies its port only after exact review', async policy => {
     const input = { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' };
     const plan = { children: [child] };

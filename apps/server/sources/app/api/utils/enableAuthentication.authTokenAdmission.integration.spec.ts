@@ -11,6 +11,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { enableAuthentication } from "./enableAuthentication";
 import { requirePresentUser } from "./requirePresentUser";
 import { AUTHORITY_CEILING_HEADER_V1 } from "@happier-dev/protocol";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createApp() {
     const app = Fastify({ logger: false }) as any;
@@ -165,7 +166,7 @@ describe("authentication token admission (integration)", () => {
                 kind: "account_directory",
                 authority: "present_user",
             }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "admission PAT" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "admission PAT") }),
         ]);
         const app = createApp();
         await app.ready();
@@ -206,7 +207,7 @@ describe("authentication token admission (integration)", () => {
         const account = await db.account.create({ data: { publicKey: "terminal-http-person" } });
         const [token, pat] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "person-route PAT" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "person-route PAT") }),
         ]);
         const app = createApp();
         try {

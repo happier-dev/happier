@@ -1,7 +1,7 @@
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ActionExecuteFailureSchema, ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
-import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionOutputSchemasV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 /** The same target selection owns original admission and reviewed allocation edits. */
 export function readDeploymentTargetRetentionMachineIds(actionId: string, value: unknown): readonly string[] {
@@ -34,7 +34,8 @@ export async function prepareDeploymentTargetEnablementRetention(
         const failure = ActionExecuteFailureSchema.safeParse(loaded);
         if (failure.success) return failure.data;
         const result = ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(loaded);
-        const machine = result.machines.find(row => row.homeId === host.homeId && row.enrolledMachineId === machineId);
+        const machine = result.machines.map(unwrapManagedMachineReadV1)
+            .find(row => row.homeId === host.homeId && row.enrolledMachineId === machineId);
         if (!machine || machine.retention.kind === 'until-delete') continue;
         children.push({ action: 'machines.managed.retention.update', role: `target-retention:${machineId}`, input: {
             homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,

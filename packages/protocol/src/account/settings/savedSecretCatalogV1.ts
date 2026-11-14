@@ -142,10 +142,14 @@ export const SavedSecretCatalogResourceV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type SavedSecretCatalogResourceV1 = Readonly<z.infer<typeof SavedSecretCatalogResourceV1Schema>>;
 
-const SavedSecretResourceRecipientEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
+/** Canonical per-Account data-key envelope reused by opaque Account-scoped resources. */
+export const SavedSecretResourceRecipientEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
   encryptedDataKey: z.string().check(z.refine(value => readCanonicalPaddedBase64DecodedLength(value) === ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES, 'Expected one canonical encrypted data-key envelope')),
   recipientContentPublicKeyFingerprint: z.string().check(z.minLength(1)),
 }));
+export type SavedSecretResourceRecipientEnvelopeV1 = Readonly<
+  z.infer<typeof SavedSecretResourceRecipientEnvelopeV1Schema>
+>;
 
 const SavedSecretResourceHealthyMaterialV1Schema = lazyZodSchema(() => z.strictObject({
   resourceId: z.string().check(z.minLength(1)),

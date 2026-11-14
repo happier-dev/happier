@@ -10,6 +10,7 @@ import { readRunnerCreatorCurrentnessInTx } from "@/app/ephemeralRunner/activati
 import { TEAM_CHANGE_ENTITY_ID } from "@/app/teams/teamChanges";
 import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from "@happier-dev/protocol/changes";
 import { sessionDraftPhysicalKey } from "@/app/account/sessionDrafts/sessionDraftPhysicalKey";
+import { preparePlainAccountApiTokenLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 
 // Socket.IO transport is the boundary. Real transactions, lifecycle, Account
 // change allocation, authorization and credential revocation all execute.
@@ -64,7 +65,7 @@ describe("Account lifecycle", () => {
         const account = await db.account.create({ data: { publicKey: "invalid-key-is-still-disableable", encryptionMode: "e2ee", settings: "retained" } });
         const machine = await db.machine.create({ data: { id: "lifecycle-retained-machine", accountId: account.id, metadata: "retained" } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Before disable" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Before disable") });
         observeSocketTransport();
         const disable = () => inTx((tx) => setAccountStatusInTx(tx, {
             actorAccountId: actor.id, targetAccountId: account.id, status: "suspended", authority: "home_administration",
@@ -93,7 +94,7 @@ describe("Account lifecycle", () => {
     it("rolls back status, cursor and complete credentials without disconnecting", async () => {
         const actor = await db.account.create({ data: { homeRole: "owner" } });
         const target = await db.account.create({ data: {} });
-        const pat = await auth.createApiToken({ accountId: target.id, tokenId: crypto.randomUUID(), label: "Retained" });
+        const pat = await auth.createApiToken({ accountId: target.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(target.id, "Retained") });
         const row = await db.accountApiToken.findUniqueOrThrow({ where: { id: pat.tokenId } });
         observeSocketTransport();
         await expect(inTx(async (tx) => {
@@ -230,7 +231,7 @@ describe("Account lifecycle", () => {
             data: { teamId: team.id, accountId: target.id, role: "member" },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Operators", nameKey: "operators" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Operators") },
         });
         await db.teamGroupMembership.create({
             data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id },

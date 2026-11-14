@@ -4,6 +4,22 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readCurrentManagedChildMachineMetadata, refreshMachineMetadataForCurrentDaemon } from './metadata';
 
+function opaquePresetRead(row: ReturnType<typeof ManagedMachineV1Schema.parse>) {
+  const { launch, resource, observation, reviewedFacts: _reviewedFacts, ...structural } = row;
+  if (!resource) throw new Error('managed_child_fixture_requires_resource');
+  return {
+    machine: { ...structural, preset: { id: 'managed-child-preset', revision: 1, contentEncryptionMode: 'plain' as const } },
+    presetContent: { content: { t: 'plain' as const, v: {
+      v: 1 as const, name: launch.name, launch,
+      reviewedFacts: { launch, ...(row.controller ? { controller: row.controller } : {}), optionStatus: 'current' as const,
+        billing: { location: 'unknown' as const, stoppedBilling: 'unknown' as const }, prerequisites: [],
+        retentionCapabilities: { supportedIntents: ['start', 'stop'] as const }, retention: row.retention,
+        wakeOnAcceptedMessage: row.wakeOnAcceptedMessage, preset: { id: 'managed-child-preset', revision: 1, name: launch.name } },
+      nativeResult: { kind: 'bound' as const, resource }, ...(observation ? { observation } : {}),
+    } }, recipientEnvelope: null },
+  };
+}
+
 describe('current admitted daemon child metadata', () => {
   it('reads the retained namespace through ordinary Home authority and clears retired enrollment without reaching the parent', async () => {
     const contributionRef = { pluginId: 'happier.devcontainer', localId: 'devcontainer' };
@@ -17,13 +33,14 @@ describe('current admitted daemon child metadata', () => {
       desired: 'start', desiredWhen: 'now', intentRevision: 3, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     // Only the HTTP transport is substituted; admission schemas, currentness,
     // namespace derivation and the daemon-owned field refresher execute unchanged.
-    const post = vi.spyOn(axios, 'post').mockImplementation(async () => ({ status: 200, data: row }));
+    const post = vi.spyOn(axios, 'post').mockImplementation(async () => ({ status: 200, data: opaquePresetRead(row) }));
     onTestFinished(() => post.mockRestore());
     const current = { host: 'child', platform: 'linux', happyCliVersion: 'test', displayName: 'My child',
       homeDir: '/home/child', happyHomeDir: '/home/child/.happier', happyLibDir: '/opt/happier',
       devcontainerChild: { relation: { managedMachineId: row.id, managedMachineKind: 'devcontainer' as const,
         parentMachineId: 'physical-controller' }, observation: { ...observation, nativeResourceId: 'old-native' } } };
-    const input = { current, credentials: { token: 'account-token', encryption: null }, homeId: row.homeId,
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const input = { current, credentials: { token, encryption: null }, homeId: row.homeId,
       machineId: 'child-machine', serverHttpBaseUrl: 'https://child-home.example.test' };
     const projection = await readCurrentManagedChildMachineMetadata(input);
     expect(projection).toEqual({ relation: current.devcontainerChild.relation, observation });

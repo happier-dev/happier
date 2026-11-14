@@ -1,7 +1,6 @@
-import { ManagedAcquireInputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachinePresetAcquireRoutingResultV1Schema, type ManagedMachinePresetAcquireRoutingInputV1, type ManagedMachinePresetAcquireOriginV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { MachinePoolErrorV1Schema, MachinePoolResolveResultV1Schema, type MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -11,22 +10,20 @@ export type ManagedPresetAcquireOriginV1 = Readonly<{
 
 /** Fresh origins select once; admission and later execution consume this exact input. */
 export async function bindManagedPresetAcquireOriginV1(params: Readonly<{
-    input: ManagedAcquireInputV1; preset: ManagedMachinePresetV1; requestKey: string;
+    input: ManagedAcquireInputV1; preset: ManagedMachinePresetAcquireOriginV1; requestKey: string;
     resolvePool: (input: MachinePoolResolveInputV1) => Promise<unknown>;
+    resolveExact: (input: ManagedMachinePresetAcquireRoutingInputV1) => Promise<unknown>;
 }>): Promise<ManagedPresetAcquireOriginV1> {
     const { input, preset } = params;
     const refused = (code: string): ManagedPresetAcquireOriginV1 => ({ kind: 'refused', code });
-    if (!('retention' in input) || input.selection.kind !== 'preset') return refused('invalid_parameters');
+    if (!isManagedPresetAcquireInputV1(input)) return refused('invalid_parameters');
     if (input.selection.id !== preset.id || input.selection.homeId !== preset.homeId) return refused('managed_response_invalid');
     if (input.selection.revision !== preset.revision) return refused('request_conflict');
-    const selectedName = input.selection.name;
-    // Public facts already own the provider default; only bind this Machine's requested name.
-    const withSelectedName = (facts: ManagedConfigurationFactsV1) => selectedName === undefined ? facts
-        : { ...facts, launch: { ...facts.launch, name: selectedName } };
-    const delegated = preset.delegatedAcquire;
-    if (delegated?.kind === 'unavailable') return refused(delegated.code);
-    if (delegated?.kind === 'ready' && (!sameStrictJsonValue(input.retention, delegated.reviewedFacts.retention)
-        || input.wakeOnAcceptedMessage !== delegated.reviewedFacts.wakeOnAcceptedMessage)) return refused('permission_denied');
+    // Retention and wake are the only public preset acquisition choices. The
+    // launch, setup, provider review, and Team authorization stay respectively
+    // in the private content, the installed custodian, and Home admission.
+    if (preset.retention !== undefined && input.retention !== undefined && !sameStrictJsonValue(input.retention, preset.retention)
+        || preset.wakeOnAcceptedMessage !== undefined && input.wakeOnAcceptedMessage !== undefined && input.wakeOnAcceptedMessage !== preset.wakeOnAcceptedMessage) return refused('permission_denied');
     if (preset.controllerPoolId) {
         // An already-bound invocation must retain its original carrier, never select again.
         if (input.controller) return refused('controller_unavailable');
@@ -42,15 +39,17 @@ export async function bindManagedPresetAcquireOriginV1(params: Readonly<{
         if (placement.kind === 'unavailable') return refused(placement.code ?? placement.reason);
         const bound = placement.managedPreset;
         if (!bound || bound.controller.machineId !== placement.machineId) return refused('managed_response_invalid');
-        if (!sameStrictJsonValue(input.retention, bound.reviewedFacts.retention)
-            || input.wakeOnAcceptedMessage !== bound.reviewedFacts.wakeOnAcceptedMessage) return refused('request_conflict');
         return { kind: 'bound', controllerAccess: bound.controllerAccess,
-            input: ManagedAcquireInputV1Schema.parse({ ...input, controller: bound.controller, reviewedFacts: withSelectedName(bound.reviewedFacts) }) };
+            input: ManagedAcquireInputV1Schema.parse({ ...input, controller: bound.controller }) };
     }
     if (input.controller && !sameStrictJsonValue(preset.controller, input.controller)) return refused('controller_retired');
-    return { kind: 'bound',
-        input: ManagedAcquireInputV1Schema.parse({ ...input,
-            ...(preset.controller ? { controller: preset.controller } : {}),
-            ...(input.reviewedFacts === undefined && delegated?.kind === 'ready' ? { reviewedFacts: withSelectedName(delegated.reviewedFacts) } : {}) }),
-        ...(delegated?.kind === 'ready' ? { controllerAccess: delegated.controller } : {}) };
+    if (!preset.controller) return { kind: 'bound', input };
+    const payload = await params.resolveExact({ homeId: preset.homeId, id: preset.id,
+        revision: preset.revision, controller: preset.controller });
+    const resolved = ManagedMachinePresetAcquireRoutingResultV1Schema.safeParse(payload);
+    if (!resolved.success) return refused('managed_response_invalid');
+    if (resolved.data.kind === 'refused') return refused(resolved.data.code);
+    if (!sameStrictJsonValue(resolved.data.controller, preset.controller)) return refused('controller_retired');
+    return { kind: 'bound', input: ManagedAcquireInputV1Schema.parse({ ...input, controller: resolved.data.controller }),
+        controllerAccess: resolved.data.controllerAccess };
 }

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { sessionDraftPhysicalKey } from "@/app/account/sessionDrafts/sessionDraftPhysicalKey";
@@ -55,7 +56,7 @@ describe("Account-status Session access effects (SQLite integration)", () => {
             data: { teamId: team.id, accountId: target.id, role: "member" },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Lifecycle group", nameKey: `lifecycle-${crypto.randomUUID()}` },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Lifecycle group") },
         });
         await db.teamGroupMembership.create({
             data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id },

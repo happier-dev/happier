@@ -1,12 +1,13 @@
 import * as React from 'react';
 import {
+  machineSetupSourceApplyOriginKeyV1,
   ManagedMachineActionOutputSchemasV1,
   MachineSetupPlanResultV1Schema,
   type MachineSetupPlanResultV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -29,11 +30,34 @@ import {
 } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachineField } from '@/sync/store/hooks';
+import {
+  openManagedMachineSetupPlanSourcesV1,
+  type ManagedMachineSetupSourcePresentationV1,
+} from '@/sync/ops/machines/managedMachinePresetCustody';
 
 const execute = createFrontDoorActionExecute();
+
+export type MachineSetupSourcePresentationV1 = ManagedMachineSetupSourcePresentationV1;
+export type MachineSetupOpenedSourceV1 = Readonly<{
+  sourceIndex: number;
+  source: MachineSetupSourceEntryV1;
+  presetName?: string;
+}>;
+
+/** Local display copies retain the Plan source index; opaque rows remain present as unavailable. */
+export function readOpenedMachineSetupSources(
+  presentations: readonly MachineSetupSourcePresentationV1[] | null,
+): readonly MachineSetupOpenedSourceV1[] {
+  return presentations?.flatMap((presentation, sourceIndex) =>
+    presentation.kind === 'opened'
+      ? [{ sourceIndex, source: presentation.source, ...(presentation.presetName === undefined ? {} : { presetName: presentation.presetName }) }]
+      : [],
+  ) ?? [];
+}
 
 /** What the person asked to review: the reviewed change decides which Action Apply runs and how it re-plans. */
 export type MachineSetupReviewIntent =
@@ -87,6 +111,7 @@ export function useMachineSetup(
   const [current, setCurrent] = React.useState<Readonly<{
     key: string;
     plan: MachineSetupPlanResultV1;
+    sourcePresentations: readonly MachineSetupSourcePresentationV1[];
     checkedAt: number;
   }> | null>(null);
   const [checking, setChecking] = React.useState(false);
@@ -100,12 +125,16 @@ export function useMachineSetup(
   const [pending, setPending] = React.useState<'review' | 'apply' | null>(null);
   const [operationId, setOperationId] = React.useState<string | null>(null);
   const plan = current?.key === scopeKey ? current.plan : null;
+  const sourcePresentations = current?.key === scopeKey
+    ? current.sourcePresentations
+    : null;
 
   const context = React.useCallback(
     () =>
       binding
         ? {
             surface: 'ui' as const,
+            authority: 'present_user' as const,
             serverId,
             expectedAccountId: binding.accountId,
           }
@@ -143,11 +172,24 @@ export function useMachineSetup(
           setFailure({ code: 'managed_response_invalid', during: 'check' });
           return;
         }
-        setCurrent({ key: scopeKey, plan: parsed.data, checkedAt: Date.now() });
+        const presentations = await openManagedMachineSetupPlanSourcesV1({
+          serverId,
+          accountId: binding.accountId,
+          plan: parsed.data,
+        });
+        if (!binding.isCurrent()) return;
+        setCurrent({
+          key: scopeKey,
+          plan: parsed.data,
+          sourcePresentations: presentations,
+          checkedAt: Date.now(),
+        });
         setFailure((previous) =>
           previous?.during === 'check' ? null : previous,
         );
-      } catch {
+      } catch (error) {
+        const reason = classifyAccountStorageReadFailure(error);
+        if (reason === 'cancelled' || reason === 'scope-retired') return;
         if (binding.isCurrent())
           setFailure({ code: 'managed_request_failed', during: 'check' });
       } finally {
@@ -157,7 +199,7 @@ export function useMachineSetup(
     })();
     readCurrent.current = promise;
     return promise;
-  }, [binding, context, homeId, machineId, scopeKey]);
+  }, [binding, context, homeId, machineId, scopeKey, serverId]);
 
   // Opening the tab (or the Machine coming back) is the demand for a check; publications never start one.
   const demanded =
@@ -255,7 +297,7 @@ export function useMachineSetup(
                         sources:
                           intent.kind === 'stop'
                             ? parsed.data.sources.filter(
-                                (source) => machineSetupSourceOriginKeyV1(source) !== intent.sourceKey,
+                                (source) => machineSetupSourceApplyOriginKeyV1(source) !== intent.sourceKey,
                               )
                             : parsed.data.sources,
                         ...(intent.kind === 'stop' ? { current: parsed.data } : {}),
@@ -359,6 +401,7 @@ export function useMachineSetup(
   return {
     observation,
     plan,
+    sourcePresentations,
     checkedAt: current?.key === scopeKey ? current.checkedAt : null,
     checking,
     failure,
@@ -389,6 +432,8 @@ export type MachineSetupRecipeRow = Readonly<{
     requiredFact: string | null;
     /** The Plan source that holds it, so the row can name the preset it came from. */
     sourceIndex: number;
+    /** Exact historical name from the opened recipient projection, never a current preset lookup. */
+    presetName: string | null;
     /** From the Machine's preset (changed through the preset), or added on this Machine (removable here). */
     fromPreset: boolean;
     removable: boolean;
@@ -398,10 +443,10 @@ const NO_RECIPES: readonly MachineSetupRecipeRow[] = Object.freeze([]);
 const sameRef = (a: SetupItem['selection']['ref'], b: SetupItem['selection']['ref']) =>
     a.pluginId === b.pluginId && a.recipeId === b.recipeId && a.revision === b.revision;
 
-/** The apps the Machine's setup sources hold, in source order: read only, since their state lives on their Environment. */
-export function readMachineSetupApps(sources: readonly MachineSetupPlanResultV1['sources'][number][]) {
-    return sources.flatMap((source, sourceIndex) => (source.setup.items ?? []).flatMap((item, itemIndex) =>
-        item.kind === 'app' ? [{ key: `${sourceIndex}.${itemIndex}`, item, sourceIndex, source }] : []));
+/** The apps in locally opened sources, in their original Plan order. */
+export function readMachineSetupApps(sources: readonly MachineSetupOpenedSourceV1[]) {
+    return sources.flatMap(({ source, sourceIndex, presetName }) => (source.setup.items ?? []).flatMap((item, itemIndex) =>
+        item.kind === 'app' ? [{ key: `${sourceIndex}.${itemIndex}`, item, sourceIndex, source, presetName }] : []));
 }
 
 /**
@@ -410,11 +455,12 @@ export function readMachineSetupApps(sources: readonly MachineSetupPlanResultV1[
  */
 export function readMachineSetupRecipes(
     plan: MachineSetupPlanResultV1 | null,
+    sources: readonly MachineSetupOpenedSourceV1[],
     observation: Readonly<{ recipes: readonly Readonly<{ ref: SetupItem['selection']['ref']; status: RecipeStatus; reason?: MachineSetupPlanResultV1['support'][number]['reason'] }>[] }> | null | undefined,
 ): readonly MachineSetupRecipeRow[] {
     if (!plan) return NO_RECIPES;
     const rows: MachineSetupRecipeRow[] = [];
-    plan.sources.forEach((source, sourceIndex) => {
+    sources.forEach(({ source, sourceIndex, presetName }) => {
         (source.setup.items ?? []).forEach((item, itemIndex) => {
             if (item.kind === 'app') return;
             const ref = item.selection.ref;
@@ -428,6 +474,7 @@ export function readMachineSetupRecipes(
                 reason: (checked ?? observed)?.reason ?? null,
                 requiredFact: checked?.requiredFact ?? null,
                 sourceIndex,
+                presetName: source.kind === 'accountPreset' ? presetName ?? null : null,
                 fromPreset: source.kind !== 'direct',
                 removable: source.kind === 'direct',
             });

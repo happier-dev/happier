@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePresetItemV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
-import { readMachineSetupApps, readMachineSetupRecipes } from './useMachineSetup';
+import {
+  readMachineSetupApps,
+  readMachineSetupRecipes,
+  readOpenedMachineSetupSources,
+} from './useMachineSetup';
 
 const docker = {
   pluginId: 'happier.machine-recipes',
@@ -26,10 +30,39 @@ describe('readMachineSetupApps', () => {
       definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [],
     } });
     const rows = readMachineSetupApps([
-      { kind: 'accountPreset', presetId: 'web', presetRevision: 3, setup: { items: [item(docker), app('Status page')] } },
-      { kind: 'direct', setup: { items: [app('Analytics')] } },
+      { sourceIndex: 0, source: { kind: 'accountPreset', presetId: 'web', presetRevision: 3, setup: { items: [item(docker), app('Status page')] as never } } },
+      { sourceIndex: 1, source: { kind: 'direct', setup: { items: [app('Analytics')] as never } } },
     ]);
     expect(rows.map(row => [row.key, row.item.definition.name, row.sourceIndex])).toEqual([['0.1', 'Status page', 0], ['1.0', 'Analytics', 1]]);
+  });
+});
+
+describe('readOpenedMachineSetupSources', () => {
+  it('keeps an unavailable opaque attachment out of private presentation while retaining later opened source indexes', () => {
+    const opened = readOpenedMachineSetupSources([
+      {
+        kind: 'unavailable',
+        source: {
+          kind: 'accountPresetOpaque',
+          presetId: 'team-only',
+          presetRevision: 4,
+          contentEncryptionMode: 'e2ee',
+        },
+      },
+      {
+        kind: 'opened',
+        presetName: 'Exact retained name',
+        source: {
+          kind: 'direct',
+          setup: { items: [item(docker)] },
+        },
+      },
+    ]);
+
+    expect(opened).toMatchObject([
+      { sourceIndex: 1, source: { kind: 'direct' } },
+    ]);
+    expect(readMachineSetupApps(opened)).toEqual([]);
   });
 });
 
@@ -39,18 +72,19 @@ describe('readMachineSetupRecipes', () => {
       desiredRevision: 4,
       exclusions: [],
       sources: [
-        {
-          kind: 'accountPreset',
-          presetId: 'web',
-          presetRevision: 3,
-          setup: { items: [item(firewall), item(docker)] },
-        },
+        { kind: 'accountPresetOpaque', presetId: 'web', presetRevision: 3, contentEncryptionMode: 'plain' },
         { kind: 'direct', setup: { items: [item(docker)] } },
       ],
       support: [{ sourceIndex: 0, itemIndex: 0, status: 'drifted' }],
       recipeTitles: [{ ref: docker, title: 'Docker' }],
     });
-    const rows = readMachineSetupRecipes(plan, {
+    const rows = readMachineSetupRecipes(plan, [
+      { sourceIndex: 0, source: {
+        kind: 'accountPreset', presetId: 'web', presetRevision: 3,
+        setup: { items: [item(firewall), item(docker)] },
+      }, presetName: 'Historical web' },
+      { sourceIndex: 1, source: { kind: 'direct', setup: { items: [item(docker)] } } },
+    ], {
       recipes: [
         { ref: docker, status: 'satisfied' },
         { ref: firewall, status: 'satisfied' },
@@ -63,10 +97,11 @@ describe('readMachineSetupRecipes', () => {
         row.fromPreset,
         row.removable,
         row.title,
+        row.presetName,
       ]),
     ).toEqual([
-      ['firewall', 'drifted', true, false, null],
-      ['docker', 'satisfied', true, false, 'Docker'],
+      ['firewall', 'drifted', true, false, null, 'Historical web'],
+      ['docker', 'satisfied', true, false, 'Docker', 'Historical web'],
     ]);
   });
 
@@ -76,7 +111,9 @@ describe('readMachineSetupRecipes', () => {
       sources: [{ kind: 'direct', setup: { items: [item(docker)] } }],
       support: [{ sourceIndex: 0, itemIndex: 0, status: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'packageManager' }],
     });
-    expect(readMachineSetupRecipes(plan, null)).toMatchObject([
+    expect(readMachineSetupRecipes(plan, [{ sourceIndex: 0, source: {
+      kind: 'direct', setup: { items: [item(docker)] },
+    } }], null)).toMatchObject([
       { status: 'unavailable', reason: 'required_fact_unavailable', requiredFact: 'packageManager', removable: true },
     ]);
   });
@@ -90,18 +127,18 @@ describe('readMachineSetupRecipes', () => {
       sources: [{ kind: 'direct', setup: { items: [curl] } }],
       support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }],
     });
-    expect(readMachineSetupRecipes(plan, null)).toMatchObject([
+    expect(readMachineSetupRecipes(plan, [{ sourceIndex: 0, source: { kind: 'direct', setup: { items: [curl] } } }], null)).toMatchObject([
       { item: curl, sourceIndex: 0, removable: true, status: 'satisfied' },
     ]);
     expect(readMachineSetupRecipes({ ...plan, desiredRevision: 2,
-      sources: [{ kind: 'direct', setup: {} }], support: [] }, {
+      sources: [{ kind: 'direct', setup: {} }], support: [] }, [], {
         recipes: [{ ref: curl.selection.ref, status: 'satisfied' }],
       })).toEqual([]);
   });
 
   it('shows nothing until the setup has been read', () => {
     expect(
-      readMachineSetupRecipes(null, {
+      readMachineSetupRecipes(null, [], {
         recipes: [{ ref: docker, status: 'satisfied' }],
       }),
     ).toHaveLength(0);

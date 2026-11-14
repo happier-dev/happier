@@ -38,7 +38,7 @@ import { endpointFor, type WorkspaceSyncRelationshipEndpoint, type WorkspaceSync
 import { formatWorkspaceSyncRelationshipTitle } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 import { useProjectedQualifiedConnectedAccountTargetPresentations, type ProjectedQualifiedConnectedAccountTarget } from '@/hooks/server/connectedServices/useProjectedQualifiedConnectedAccountTargetPresentations';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -109,9 +109,18 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     if (reference.kind === 'managedMachine' && reference.homeId === account.serverIdentityId) {
         try {
             account.assertCurrent();
-            const machine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
+            const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
                 { homeId: reference.homeId, managedId: reference.id }, { signal });
-            if (machine.id === reference.id && machine.homeId === reference.homeId) sources.managedMachine = machine;
+            const { createManagedMachinePresetReadCustodyV1 } = await import('@/sync/ops/machines/managedMachinePresetCustody');
+            const { openManagedMachineReadSnapshotsAtCustody } = await import('@/sync/ops/machines/machinePresetCollectionClient');
+            const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
+            let machine: ManagedMachineV1 | undefined;
+            try {
+                [machine] = await openManagedMachineReadSnapshotsAtCustody([read], custody);
+            } finally {
+                await custody?.dispose();
+            }
+            if (machine && machine.id === reference.id && machine.homeId === reference.homeId) sources.managedMachine = machine;
         } catch {
             // A display reference may be unreadable; it never grants resource access.
         }
@@ -218,7 +227,9 @@ function useManagedReferenceSources(reference: ApprovalReference | undefined, ap
 
 /** The managed guest's name: its enrolled Machine's current display name, else the launch name it was created with. */
 function readManagedMachineName(sources: Pick<ApprovalReferenceSources, 'managedMachine' | 'managedEnrolledMachine'>): string | undefined {
-    return getSettledMachineDisplayName(sources.managedEnrolledMachine) ?? sources.managedMachine?.launch.name.trim();
+    const fullMachine: ManagedMachineFullV1 | null = sources.managedMachine && !isManagedOpaquePresetMachineV1(sources.managedMachine)
+        ? sources.managedMachine : null;
+    return getSettledMachineDisplayName(sources.managedEnrolledMachine) ?? fullMachine?.launch.name.trim();
 }
 
 /**

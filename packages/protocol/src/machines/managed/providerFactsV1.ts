@@ -129,11 +129,31 @@ export const RetentionCapabilitiesV1Schema = lazyDefinition(() => z.strictObject
     z.strictObject({ kind: z.literal('deadline'), at: instant() }),
   ])),
 }));
+/** Lifecycle facts which remain useful to Home without disclosing a native provider payload. */
+function providerObservationLifecycleFieldsV1() {
+  return {
+    observedAt: instant(),
+    availability: z.enum(['present', 'absent', 'unavailable']),
+    power: z.optional(z.enum(['running', 'stopped', 'suspended', 'unknown'])),
+    storage: z.optional(z.enum(['retained', 'lost', 'unknown'])),
+  };
+}
+
+function hasConsistentProviderObservationLifecycleV1(value: Readonly<{ availability: string; power?: string }>): boolean {
+  return value.availability === 'present' || value.power === undefined || value.power === 'unknown';
+}
+
+/** Opaque preset rows disclose only lifecycle state; native diagnostics stay sealed with the preset snapshot. */
+export const ManagedOpaquePresetObservationV1Schema = lazyDefinition(() => z.strictObject({
+  ...providerObservationLifecycleFieldsV1(),
+}).check(z.superRefine((value, context) => {
+  if (!hasConsistentProviderObservationLifecycleV1(value)) {
+    context.addIssue({ code: 'custom', path: ['power'], message: 'Unavailable resources cannot confirm power.' });
+  }
+})));
+
 export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
-  observedAt: instant(),
-  availability: z.enum(['present', 'absent', 'unavailable']),
-  power: z.optional(z.enum(['running', 'stopped', 'suspended', 'unknown'])),
-  storage: z.optional(z.enum(['retained', 'lost', 'unknown'])),
+  ...providerObservationLifecycleFieldsV1(),
   billing: z.optional(BillingCapabilitiesV1Schema),
   prices: z.optional(z.array(ProviderPriceV1Schema)),
   size: z.optional(MachineProvisionerSizeV1Schema),
@@ -142,7 +162,7 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   reason: z.optional(id()),
   nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
 }).check(z.superRefine((value, context) => {
-  if (value.availability !== 'present' && value.power !== undefined && value.power !== 'unknown') {
+  if (!hasConsistentProviderObservationLifecycleV1(value)) {
     context.addIssue({ code: 'custom', path: ['power'], message: 'Unavailable resources cannot confirm power.' });
   }
 })));
@@ -180,7 +200,7 @@ export const ManagedBootstrapSshCarrierV1Schema = lazyDefinition(() => z.strictO
 export const ManagedBootstrapCarrierV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [ManagedBootstrapNativeCarrierV1Schema, ManagedBootstrapSshCarrierV1Schema]));
 export type ManagedBootstrapCarrierV1 = z.infer<typeof ManagedBootstrapCarrierV1Schema>;
 export const ManagedRefusalCodeV1Schema = lazyDefinition(() => z.enum([
-  'invalid_request', 'permission_denied', 'managed_power_required', 'admission_unavailable', 'acquisition_disabled',
+  'invalid_request', 'permission_denied', 'account_mode_mismatch', 'managed_power_required', 'admission_unavailable', 'acquisition_disabled',
   'controller_unavailable', 'controller_retired', 'credential_unavailable', 'provider_unavailable',
   'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired', 'resource_mismatch',
   'preset_not_found', 'preset_archived', 'preset_limit_reached', 'pool_no_available_machine',
@@ -239,7 +259,21 @@ export const AcquireResultV1Schema = lazyDefinition(() => z.discriminatedUnion('
 ]));
 export type BillingCapabilitiesV1 = z.infer<typeof BillingCapabilitiesV1Schema>;
 export type RetentionCapabilitiesV1 = z.infer<typeof RetentionCapabilitiesV1Schema>;
+export type ManagedOpaquePresetObservationV1 = z.infer<typeof ManagedOpaquePresetObservationV1Schema>;
 export type ProviderObservationV1 = z.infer<typeof ProviderObservationV1Schema>;
+
+/** Drops provider-private diagnostics before an opaque preset report reaches Home. */
+export function projectManagedOpaquePresetObservationV1(
+  observation: ProviderObservationV1 | undefined,
+): ManagedOpaquePresetObservationV1 | undefined {
+  if (!observation) return undefined;
+  return {
+    observedAt: observation.observedAt,
+    availability: observation.availability,
+    ...(observation.power === undefined ? {} : { power: observation.power }),
+    ...(observation.storage === undefined ? {} : { storage: observation.storage }),
+  };
+}
 export type ManagedResourceV1 = z.infer<typeof ManagedResourceV1Schema>;
 export type ManagedNativeOperationReferenceV1 = z.infer<typeof ManagedNativeOperationReferenceV1Schema>;
 export type AcquireResultV1 = z.infer<typeof AcquireResultV1Schema>;

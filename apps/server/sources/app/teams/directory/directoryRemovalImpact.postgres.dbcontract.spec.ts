@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -39,7 +40,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("D
             teamIdentityConnectionId: connection.id,
             externalSourceKey: randomUUID(), bindingConfig: { v: 1, kind: "workos_directory", workosDirectoryId: randomUUID() },
         } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Engineering", nameKey: "engineering" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering")} });
         const bindingData = [source.id, source.id, otherSource.id].map((directorySourceId) => ({
             id: randomUUID(), teamId: team.id, teamGroupId: group.id, directorySourceId,
             externalGroupId: randomUUID(), bindingMode: "native_target" as const,

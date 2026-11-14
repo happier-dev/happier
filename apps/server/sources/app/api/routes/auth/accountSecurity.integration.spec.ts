@@ -21,6 +21,7 @@ import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolic
 import { setTeamPolicyInTx } from "@/app/teams/policy";
 import { registerAuthEntryRoute } from "./registerAuthEntryRoute";
 import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1 } from "@happier-dev/protocol";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("Account Security native password lifecycle", () => {
     let harness: LightSqliteHarness;
@@ -521,7 +522,7 @@ describe("Account Security native password lifecycle", () => {
             await expect(auth.createApiToken({
                 accountId: account.id,
                 tokenId: crypto.randomUUID(),
-                label: "Must not inherit removed password",
+                label: await preparePlainAccountApiTokenLabel(account.id, "Must not inherit removed password"),
                 authenticationEvidence: staleEvidence,
             })).rejects.toMatchObject({ code: "credential_authentication_evidence_unavailable" });
             expect(await db.accountApiToken.count({ where: { accountId: account.id } })).toBe(apiTokenCountBefore);
@@ -740,14 +741,14 @@ describe("Account Security native password lifecycle", () => {
             profile: {},
         } });
 
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Account Security read" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Account Security read") });
         const expiredPat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Expired Account Security read",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Expired Account Security read"),
             expiresAt: new Date("2000-01-02T00:00:00.000Z"),
         }, new Date("2000-01-01T00:00:00.000Z"));
-        const otherPat = await auth.createApiToken({ accountId: otherAccount.id, tokenId: crypto.randomUUID(), label: "Other Account Security read" });
+        const otherPat = await auth.createApiToken({ accountId: otherAccount.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(otherAccount.id, "Other Account Security read") });
 
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);

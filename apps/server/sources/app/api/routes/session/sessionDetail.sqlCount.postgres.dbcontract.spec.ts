@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
@@ -266,7 +267,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Detail batch access' } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers', nameKey: 'readers' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Readers') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
             metadataLayoutVersion: 1, metadata: '{"v":1}', ownerMetadata: '{"t":"plain","v":{"v":1}}' } });

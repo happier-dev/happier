@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 
+import { t } from '@/text';
+
 import { identityTestDiagnosticsRows } from './identityTestDiagnosticsPresentation';
 
 function diagnostics(
@@ -23,18 +25,30 @@ const detailOf = (rows: readonly { key: string; detail?: string }[], key: string
     rows.find((row) => row.key === key)?.detail;
 
 describe('identityTestDiagnosticsRows', () => {
-    it('reports a complete observation with its mapped Group names', () => {
+    it('reports only locally opened mapped Group labels while retaining an unavailable mapping', () => {
         const rows = identityTestDiagnosticsRows(diagnostics({
-            mappedGroups: [{ id: 'group-1', name: 'Engineering' }, { id: 'group-2', name: 'Design' }],
-        }), { groupMappings: true });
+            mappedGroups: [{
+                id: 'group-1',
+                name: { kind: 'available', label: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null } },
+            }, {
+                id: 'group-2',
+                name: { kind: 'available', label: { content: { t: 'plain', v: 'Design' }, recipientEnvelope: null } },
+            }],
+        }), {
+            groupMappings: true,
+            openedGroupDisplayNames: new Map([['group-1', 'Engineering'], ['group-2', null]]),
+        });
         expect(detailOf(rows, 'groups')).toContain('2');
-        expect(detailOf(rows, 'mappedGroups')).toBe('Engineering, Design');
+        expect(detailOf(rows, 'mappedGroups')).toBe(`Engineering, ${t('common.unavailable')}`);
         expect(rows.some((row) => row.key === 'rule:none')).toBe(true);
     });
 
     it('omits the mapping row entirely when no connection owns Group mappings', () => {
         const rows = identityTestDiagnosticsRows(diagnostics({
-            mappedGroups: [{ id: 'group-1', name: 'Engineering' }],
+            mappedGroups: [{
+                id: 'group-1',
+                name: { kind: 'available', label: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null } },
+            }],
         }));
         expect(rows.some((row) => row.key === 'mappedGroups')).toBe(false);
         expect(detailOf(rows, 'groups')).toBeDefined();

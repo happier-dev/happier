@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { getDemoMachinePresets } from '@/demoMode/runtime/demoMachineReadProjection';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetUpdateInputV1, type ManagedMachinePresetV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { MachinePresetUpdateDraftInput } from '@/sync/domains/machines/presets/machinePresetEditDraft';
+type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -24,7 +26,7 @@ import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePr
 import { readManagedConfiguration } from './readManagedConfiguration';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 
-type MachinePresetQueryValue = Pick<ManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;
+type MachinePresetQueryValue = Pick<OpenedManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;
 /** Readiness and data are facts; starting another read does not replace a ready receipt. */
 function retainQueryReceipt<T, S extends MachinePresetQueryState<T>>(previous: S, next: S): S {
     const value = sameStrictJsonValue(previous.value, next.value) ? previous.value : next.value;
@@ -124,7 +126,7 @@ export function useMachinePresetConfiguration(input: Readonly<{
     resolution: ServerCredentialAccountScopeResolution;
     client: ReturnType<typeof createManagedProvisionerClient> | null;
     homeId: string | null;
-    preset?: ManagedMachinePresetV1;
+    preset?: OpenedManagedMachinePresetV1;
     provisioner?: MachineProvisionersListResultV1['provisioners'][number];
     optionsInput: ManagedProvisionerOptionsInput;
     refreshPreset?: () => void;
@@ -143,7 +145,7 @@ export function useMachinePresetConfiguration(input: Readonly<{
     const readConfiguration = React.useCallback(() => {
         readCleanup.current?.();
         readCleanup.current = null;
-        if (!hasManagedMachinePresetCreationV1(preset) || preset.delegatedAcquire || !binding?.isCurrent() || !client || !homeId || !provisioner) return;
+        if (!hasOpenedManagedMachinePresetCreationV1(preset) || preset.teamAcquireDelegated || !binding?.isCurrent() || !client || !homeId || !provisioner) return;
         if (preset.launch.schemaVersion !== provisioner.descriptor.schemaVersion) {
             setState({ queryKey, draft: null, error: 'option_unavailable' });
             return;
@@ -200,14 +202,16 @@ export function useMachinePresetConfiguration(input: Readonly<{
             ...(preset?.controller ? { controller: preset.controller } : {}), contribution: provisioner.contribution });
         readConfiguration();
     };
-    const visibleDraft = binding?.isCurrent() && hasManagedMachinePresetCreationV1(preset) && provisioner && state.queryKey === queryKey ? state.draft : null;
+    const visibleDraft = binding?.isCurrent() && hasOpenedManagedMachinePresetCreationV1(preset) && provisioner && state.queryKey === queryKey ? state.draft : null;
     const facts = React.useMemo(() => visibleDraft && settings.settings
         ? managedConfiguratorFacts({ ...visibleDraft, categoryPreferences: settings.settings.machineRetentionDefaultsV1 }) : null,
         [visibleDraft, settings.settings]);
-    const delegated = binding?.isCurrent() && hasManagedMachinePresetCreationV1(preset) ? preset.delegatedAcquire : undefined;
-    return { facts: delegated?.kind === 'ready' ? delegated.reviewedFacts : delegated ? null : facts,
+    const delegated = binding?.isCurrent() && hasOpenedManagedMachinePresetCreationV1(preset) && preset.teamAcquireDelegated === true;
+    const error = delegated ? null : state.queryKey === queryKey ? state.error ?? settings.error : settings.error;
+    return { facts: delegated ? null : facts,
+        unavailable: Boolean(error) || !delegated && facts?.optionStatus === 'unavailable',
         loading: delegated ? false : visibleDraft?.optionStatus === 'loading',
-        error: delegated?.kind === 'unavailable' ? delegated.code : state.queryKey === queryKey ? state.error ?? settings.error : settings.error,
+        error,
         creationEnabled: settings.settings?.managedMachineCreationEnabled === true,
         creationDisabled: settings.settings?.managedMachineCreationEnabled === false, refresh: delegated ? input.refreshPreset ?? refresh : refresh };
 }
@@ -220,15 +224,15 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
     const requestedIds = React.useMemo(() => JSON.parse(requestedIdsKey) as string[], [requestedIdsKey]);
     const approvalRef = React.useRef(onApprovalPending);
     approvalRef.current = onApprovalPending;
-    const snapshots = React.useRef<Readonly<Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>>>>({});
+    const snapshots = React.useRef<Readonly<Record<string, MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>>>>({});
     const readSnapshot = React.useCallback(() => {
-        const next: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>> = {};
+        const next: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>> = {};
         for (const serverId of requestedIds) {
             const demo = getDemoMachinePresets(serverId);
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
             const scope = accountScopes.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
             const resolution = scope?.resolution;
-            let entry: MachinePresetQueryState<readonly ManagedMachinePresetV1[]>;
+            let entry: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
             if (demo) entry = { value: demo, loading: false, error: null };
             else if (!homeId) entry = { value: null, loading: false, error: 'server_identity_unavailable' };
             else if (resolution && resolution.kind !== 'bound' && resolution.kind !== 'resolving') {
@@ -257,9 +261,9 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
     const refresh = React.useCallback(() => {
         for (const serverId of requestedIds) invalidateMachinePresets(serverId);
     }, [requestedIds]);
-    const projection = React.useRef<Readonly<Record<string, readonly ManagedMachinePresetV1[]>>>({});
+    const projection = React.useRef<Readonly<Record<string, readonly ManagedMachinePresetListEntryV1[]>>>({});
     return React.useMemo(() => {
-        const next: Record<string, readonly ManagedMachinePresetV1[]> = {};
+        const next: Record<string, readonly ManagedMachinePresetListEntryV1[]> = {};
         for (const [serverId, state] of Object.entries(statesByServerId)) if (state.value) next[serverId] = state.value;
         projection.current = retainShallow(projection.current, next);
         return { presetsByServerId: projection.current, statesByServerId, refresh };
@@ -268,7 +272,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
 
 type PresetDetailMutation =
     | Readonly<{ actionId: 'machines.presets.archive' | 'machines.presets.restore'; input: MachinePresetActionInputV1<'machines.presets.archive'> }>
-    | Readonly<{ actionId: 'machines.presets.update'; input: MachinePresetActionInputV1<'machines.presets.update'> }>;
+    | Readonly<{ actionId: 'machines.presets.update'; input: MachinePresetUpdateDraftInput }>;
 
 /** A selected preset's label needs that record, without its managed-Machine history or the inventory. */
 export function useMachinePreset(serverId: string, presetId: string,
@@ -278,7 +282,7 @@ export function useMachinePreset(serverId: string, presetId: string,
     const client = React.useMemo(() => binding && homeId ? createMachinePresetCollectionClient(binding.scope, homeId) : null,
         [binding, homeId]);
     const read = React.useMemo(() => client && homeId
-        ? async (options: MachinePresetCollectionOptions<ManagedMachinePresetV1>): Promise<MachinePresetCollectionSettledResult<ManagedMachinePresetV1>> => {
+        ? async (options: MachinePresetCollectionOptions<OpenedManagedMachinePresetV1>): Promise<MachinePresetCollectionSettledResult<OpenedManagedMachinePresetV1>> => {
             const result = await client.read('machines.presets.get', { homeId, id: presetId }, {
                 signal: options.signal, onApprovalPending: options.onApprovalPending, onApprovalSettled: options.onApprovalSettled,
             });
@@ -309,7 +313,7 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
         : state;
 
     // Archive, restore and the page's in-place edits are one reviewed write of the visible revision.
-    const mutate = React.useCallback(async (request: (preset: ManagedMachinePresetV1, homeId: string) => PresetDetailMutation): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {
+    const mutate = React.useCallback(async (request: (preset: OpenedManagedMachinePresetV1, homeId: string) => PresetDetailMutation): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {
         const preset = visibleState.value?.preset;
         if (!binding?.isCurrent() || !client || !homeId || !preset) return { kind: 'failed', code: 'action_account_scope_changed' };
         const { actionId, input } = request(preset, homeId);
@@ -348,7 +352,7 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
         actionId: preset.archivedAt === undefined ? 'machines.presets.archive' : 'machines.presets.restore',
         input: { homeId: home, id: preset.id, expectedRevision: preset.revision } })), [mutate]);
     /** Writes only the changed fields through the same Action the configurator's Save uses. */
-    const update = React.useCallback((patch: ManagedMachinePresetUpdateInputV1['patch']) => mutate((preset, home): PresetDetailMutation => ({
+    const update = React.useCallback((patch: MachinePresetUpdateDraftInput['patch']) => mutate((preset, home): PresetDetailMutation => ({
         actionId: 'machines.presets.update', input: { homeId: home, id: preset.id, expectedRevision: preset.revision, patch } })), [mutate]);
     const history = React.useMemo(() => visibleState.value && homeId ? buildManagedPresetHistory({ serverId, homeId, presetId,
         machines: visibleState.value.machines }) : [], [visibleState.value?.machines, homeId, presetId, serverId]);

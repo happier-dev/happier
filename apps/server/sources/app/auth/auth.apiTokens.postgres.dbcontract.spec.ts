@@ -11,6 +11,7 @@ import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 
 import { auth } from "./auth";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const PUBLIC_KEY_PREFIX = "api-token-mint-contention-";
 
@@ -54,11 +55,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             const keyChallengeEnabled = process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED;
             vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", "1");
             try {
-                const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "CI root" });
-                await auth.createApiToken({ accountId: foreign.id, tokenId: randomUUID(), label: "Foreign CI" });
+                const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "CI root") });
+                await auth.createApiToken({ accountId: foreign.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(foreign.id, "Foreign CI") });
                 const principal = await auth.verifyPat(root.token);
                 if (!principal.ok) throw new Error("Expected verified parent API token");
-                const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: "CI child",
+                const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(principal.accountId, "CI child"),
                     expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
 
                 expect((await auth.listApiTokens(account.id)).map(token => token.tokenId)).toEqual([root.tokenId]);
@@ -138,7 +139,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             const minting = auth.createApiToken({
                 accountId: account.id,
                 tokenId,
-                label: "Concurrent root mint",
+                label: await preparePlainAccountApiTokenLabel(account.id, "Concurrent root mint"),
             });
             const mintAssertion = expect(minting).resolves.toMatchObject({ tokenId });
             try {
@@ -164,7 +165,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             const parent = await auth.createApiToken({
                 accountId: account.id,
                 tokenId: randomUUID(),
-                label: "Embed parent",
+                label: await preparePlainAccountApiTokenLabel(account.id, "Embed parent"),
             });
             const principal = await auth.verifyPat(parent.token);
             if (!principal.ok) throw new Error("Expected the parent API token to verify");
@@ -206,7 +207,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
                 await expect(auth.createChildApiToken({
                     principal,
                     tokenId: childTokenId,
-                    label: "Embed child",
+                    label: await preparePlainAccountApiTokenLabel(principal.accountId, "Embed child"),
                     expiresAt: new Date(Date.now() + 60_000),
                     grant: API_TOKEN_FULL_GRANT_V1,
                 })).resolves.toMatchObject({ tokenId: childTokenId });
@@ -246,7 +247,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             const minting = auth.createApiToken({
                 accountId: account.id,
                 tokenId: randomUUID(),
-                label: "Waiting root mint",
+                label: await preparePlainAccountApiTokenLabel(account.id, "Waiting root mint"),
             });
             releaseFence();
             await disabling;

@@ -1,7 +1,93 @@
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { ManagedMachineV1Schema, type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema, ManagedOpaqueMachineSetupStateV1Schema, ManagedOpaquePresetMachineV1Schema, isManagedOpaquePresetMachineV1,
+    type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedOpaquePresetObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import { ManagedMachinePresetEnvelopeV1Schema, type ManagedMachinePresetEnvelopeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { StoredManagedAdmission, StoredManagedMachine } from './managedRows';
+
+/**
+ * The outer mode is the author-admitted persistence binding.  The inner tag is
+ * transport shape only: accepting it as the mode would let a reader infer a
+ * different authority after an Account-mode change.
+ */
+export type StoredOpaquePresetLaunch = ManagedMachinePresetEnvelopeV1 & Readonly<{
+    contentEncryptionMode: 'plain' | 'e2ee';
+}>;
+
+function requireStoredPresetMode(contentEncryptionMode: 'plain' | 'e2ee', content: ManagedMachinePresetEnvelopeV1['content']): void {
+    if ((contentEncryptionMode === 'plain') !== (content.t === 'plain')) {
+        throw new Error('Stored opaque preset content mode does not match its persisted binding');
+    }
+}
+
+/** Presence selects the current carrier even when malformed; never downgrade it to legacy raw. */
+export function hasStoredOpaquePresetEnvelope(value: unknown): boolean {
+    return value !== null && typeof value === 'object'
+        && ('contentEncryptionMode' in value || 'content' in value || 'recipients' in value);
+}
+
+export function isStoredOpaquePresetMachine<Row extends Pick<StoredManagedMachine, 'presetId' | 'launch'>>(row: Row): row is Row & { presetId: string } {
+    return row.presetId !== null && hasStoredOpaquePresetEnvelope(row.launch);
+}
+
+export function readStoredOpaquePresetLaunch(value: unknown): StoredOpaquePresetLaunch {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('Expected stored opaque preset launch');
+    }
+    const { contentEncryptionMode, ...envelope } = value as Readonly<Record<string, unknown>>;
+    if (contentEncryptionMode !== 'plain' && contentEncryptionMode !== 'e2ee') {
+        throw new Error('Expected persisted opaque preset content mode');
+    }
+    const parsed = ManagedMachinePresetEnvelopeV1Schema.parse(envelope);
+    requireStoredPresetMode(contentEncryptionMode, parsed.content);
+    return { contentEncryptionMode, ...parsed };
+}
+
+export function storeOpaquePresetLaunch(input: Readonly<{
+    contentEncryptionMode: 'plain' | 'e2ee';
+    content: ManagedMachinePresetEnvelopeV1['content'];
+    recipients: ManagedMachinePresetEnvelopeV1['recipients'];
+    controllerPoolId?: ManagedMachinePresetEnvelopeV1['controllerPoolId'];
+}>): StoredOpaquePresetLaunch {
+    const envelope = ManagedMachinePresetEnvelopeV1Schema.parse({
+        content: input.content,
+        recipients: input.recipients,
+        ...(input.controllerPoolId === undefined ? {} : { controllerPoolId: input.controllerPoolId }),
+    });
+    requireStoredPresetMode(input.contentEncryptionMode, envelope.content);
+    return { contentEncryptionMode: input.contentEncryptionMode, ...envelope };
+}
+
+/** Retained raw snapshots stay intact on reads; migration exposes their existing private fields. */
+export function readStoredPresetSnapshotContent(row: StoredManagedMachine): StoredOpaquePresetLaunch {
+    if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
+    const machine = projectManagedMachine(row);
+    if (isManagedOpaquePresetMachineV1(machine)) throw new Error('Expected retained raw managed snapshot');
+    const admission = readManagedAdmissionState(row.admittedInput);
+    const controlIntent = admission.submittedEffect?.intent;
+    const nativeControlResult = row.resource !== null && row.nativeOperationRef !== null && controlIntent === 'delete'
+        ? { kind: 'delete', result: { kind: 'accepted', nativeOperationRef: row.nativeOperationRef } } : undefined;
+    if (row.recovery !== null && (row.resource !== null || row.nativeOperationRef !== null)
+        || row.resource !== null && row.nativeOperationRef !== null && nativeControlResult === undefined) {
+        // A normal controller report must first settle/reseal this historical
+        // combination. Refuse migration rather than omit private custody data.
+        throw new Error('Retained native state cannot be represented by the preset content carrier');
+    }
+    const nativeResult = row.resource !== null ? { kind: 'bound', resource: row.resource }
+        : row.nativeOperationRef !== null ? { kind: 'pending', nativeOperationRef: row.nativeOperationRef }
+            : row.recovery !== null ? { kind: 'unknown', recovery: row.recovery } : undefined;
+    return storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: {
+        v: 1, name: machine.launch.name, launch: row.launch,
+        ...(machine.machineSetup ? { setup: machine.machineSetup.setup } : {}),
+        ...(admission.computeInput?.enrollmentIdentity ? { enrollmentIdentity: admission.computeInput.enrollmentIdentity } : {}),
+        ...(row.reviewedFacts === null && !admission.computeInput?.reviewedFacts ? {}
+            : { reviewedFacts: row.reviewedFacts ?? admission.computeInput?.reviewedFacts }),
+        ...(nativeResult === undefined ? {} : { nativeResult }),
+        ...(nativeControlResult === undefined ? {} : { nativeControlResult }),
+        ...(row.observation === null ? {} : { observation: row.observation }),
+    } } });
+}
 
 /** The persisted pair is absent for Account-controlled cloud resources. */
 export function readManagedController(row: Readonly<{ controllerMachineId: string | null; controllerInstallationId: string | null }>): ManagedControllerV1 | undefined {
@@ -22,23 +108,27 @@ export function projectManagedMachine(row: StoredManagedMachine): ManagedMachine
     const admission = readManagedAdmissionState(row.admittedInput);
     const submitted = admission.submittedEffect;
     const enrollmentIdentity = admission.computeInput?.enrollmentIdentity;
-    const resource = row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
+    const opaquePreset = isStoredOpaquePresetMachine(row);
+    const storedOpaquePreset = opaquePreset ? readStoredOpaquePresetLaunch(row.launch) : undefined;
+    const resource = opaquePreset || row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
     const controller = readManagedController(row);
-    const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
+    const devcontainerChild = !opaquePreset && controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
         controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
-    const value = {
+    const structural = {
         id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         ...(admission.enrollmentAccountId ? { enrollmentAccountId: admission.enrollmentAccountId } : {}),
-        ...(row.presetId && row.presetRevision !== null ? { preset: { id: row.presetId, revision: row.presetRevision } } : {}),
-        launch: row.launch, ...(controller ? { controller } : {}),
-        ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
-        ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
-        ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
+        ...(row.presetId && row.presetRevision !== null ? { preset: {
+            id: row.presetId,
+            revision: row.presetRevision,
+            contentEncryptionMode: storedOpaquePreset?.contentEncryptionMode ?? 'plain',
+        } } : {}),
+        ...(controller ? { controller } : {}),
+        ...(!opaquePreset && enrollmentIdentity ? { enrollmentIdentity } : {}),
         allocation: row.allocation, creationState: row.creationState,
-        ...(resource ? { resource } : {}),
-        ...(devcontainerChild ? { devcontainerChild } : {}),
-        ...(row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
-        ...(row.recovery !== null ? { recovery: row.recovery } : {}),
+        ...(!opaquePreset && resource ? { resource } : {}),
+        ...(!opaquePreset && devcontainerChild ? { devcontainerChild } : {}),
+        ...(!opaquePreset && row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
+        ...(!opaquePreset && row.recovery !== null ? { recovery: row.recovery } : {}),
         ...(row.bootstrapCredentialRef !== null ? { bootstrapCredentialRef: row.bootstrapCredentialRef } : {}),
         ...(admission.bootstrapInstalled ? { bootstrapInstalled: admission.bootstrapInstalled } : {}),
         ...(row.enrolledMachineId !== null ? { enrolledMachineId: row.enrolledMachineId } : {}),
@@ -57,8 +147,23 @@ export function projectManagedMachine(row: StoredManagedMachine): ManagedMachine
         wakeOnAcceptedMessage: admission.creationScopeRetention?.endedAt !== undefined && admission.creationScopeRetention.effect === 'delete'
             ? false : row.wakeOnAcceptedMessage,
         ...(admission.creationScopeRetention ? { creationScopeRetention: admission.creationScopeRetention } : {}),
-        ...(row.observation !== null ? { observation: row.observation } : {}),
+        ...(row.observation !== null ? { observation: opaquePreset
+            ? ManagedOpaquePresetObservationV1Schema.parse(row.observation)
+            : row.observation } : {}),
         ...(row.cleanup !== null ? { cleanup: row.cleanup } : {}),
     };
-    return createStoredReadSchema(ManagedMachineV1Schema).parse(value);
+    if (opaquePreset) {
+        // Parsing the outer envelope proves the row is an opaque preset carrier;
+        // neither branch opens or interprets its private content.
+        return createStoredReadSchema(ManagedOpaquePresetMachineV1Schema).parse({
+            ...structural,
+            ...(row.machineSetup === null ? {} : { machineSetup: ManagedOpaqueMachineSetupStateV1Schema.parse(row.machineSetup) }),
+        });
+    }
+    return createStoredReadSchema(ManagedMachineFullV1Schema).parse({
+        ...structural,
+        launch: row.launch,
+        ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
+        ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
+    });
 }

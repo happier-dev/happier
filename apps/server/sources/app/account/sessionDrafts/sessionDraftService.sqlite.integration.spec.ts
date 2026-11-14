@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -701,7 +702,7 @@ describe('sessionDraftService (SQLite integration)', () => {
         if (grantKind === 'team') {
             await db.sessionGrant.create({ data: { principalKind: 'team', teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
         } else {
-            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Authors', nameKey: 'authors' } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Authors') } });
             await db.teamGroupMembership.create({ data: {
                 teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
             } });

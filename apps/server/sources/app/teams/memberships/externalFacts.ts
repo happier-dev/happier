@@ -1,4 +1,4 @@
-import { teamGroupNameKeyV1, validateTeamGroupNameV1 } from "@happier-dev/protocol/teams";
+import { validateTeamGroupNameV1 } from "@happier-dev/protocol/teams";
 
 import type { Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -17,6 +17,7 @@ import { publishTeamChangedInTx } from "../teamChanges";
 import { admitTeamMemberInTx, setTeamMembershipStatusInTx } from "./membershipService";
 import { revokeTeamCredentialExternalApiKeysForMembershipInTx } from "../credentials/externalApiKey";
 import { revokeTeamCredentialAudienceForMembershipInTx } from "../credentials/resourceAudience";
+import { prepareTeamGroupNameForAutomatedWriteInTx } from "../groups/privateLabels";
 
 /**
  * The external-fact transaction seam.
@@ -515,9 +516,9 @@ export type ExternalManagedGroupResult =
  * restoring it re-enables exactly the grants that are still valid. Nothing here
  * deletes a roster.
  *
- * A rename that would collide with another Group in the Team keeps the current
- * name. An external display name is presentation, and refusing the whole
- * reconciliation over it would be worse than a stale label.
+ * A directory rename uses the label's stored privacy arm rather than a current
+ * or synthetic author. It reseals the transient source name to today's Team
+ * audience and never retains a plaintext comparison or name-derived key.
  */
 export async function applyExternalManagedGroupInTx(
     tx: Tx,
@@ -544,7 +545,7 @@ export async function applyExternalManagedGroupInTx(
 
     const group = await tx.teamGroup.findUnique({
         where: { id: binding.teamGroupId },
-        select: { id: true, name: true, nameKey: true, archivedAt: true },
+        select: { id: true, name: true, archivedAt: true },
     });
     if (!group) return { status: "binding_not_found" };
 
@@ -554,18 +555,18 @@ export async function applyExternalManagedGroupInTx(
 
     let renamed = false;
     let name = group.name;
-    let nameKey = group.nameKey;
-    if (input.sourceDisplayName !== undefined && input.sourceDisplayName !== group.name) {
+    if (input.sourceDisplayName !== undefined) {
         const candidate = validateTeamGroupNameV1(input.sourceDisplayName);
         if (candidate.status === "ok") {
-            const candidateKey = teamGroupNameKeyV1(candidate.name);
-            const collision = await tx.teamGroup.findFirst({
-                where: { teamId: input.teamId, nameKey: candidateKey, id: { not: group.id } },
-                select: { id: true },
-            }) !== null;
-            if (!collision) {
-                name = candidate.name;
-                nameKey = candidateKey;
+            const sealed = await prepareTeamGroupNameForAutomatedWriteInTx({
+                tx,
+                teamId: input.teamId,
+                groupId: group.id,
+                currentSerialized: group.name,
+                nextValue: candidate.name,
+            });
+            if (sealed.kind === "ready") {
+                name = sealed.serialized;
                 renamed = true;
             }
         }
@@ -578,7 +579,7 @@ export async function applyExternalManagedGroupInTx(
     }, async () => {
         await tx.teamGroup.update({
             where: { id: group.id },
-            data: { archivedAt, name, nameKey },
+            data: { archivedAt, name },
         });
         if (input.publishChange !== false) {
             await publishTeamChangedInTx(tx, { teamId: input.teamId });

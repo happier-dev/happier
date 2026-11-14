@@ -1,3 +1,4 @@
+import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -151,6 +152,9 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         return (async () => {
                 try {
                     type ReadResult = Readonly<{ kind: 'succeeded'; machines: ManagedMachineV1[] }> | Readonly<{ kind: 'failed'; code: string }>;
+                    type ReadOutput = ManagedMachineActionOutputV1<'machines.managed.get'> | ManagedMachineActionOutputV1<'machines.managed.list'>;
+                    const openRead = (value: ReadOutput) => openManagedMachineReadSnapshots({ serverId, accountId },
+                        'machines' in value ? value.machines : [value], cancellation.signal);
                     const read = (input: { homeId: string; managedId?: string; archived?: boolean; enrolledMachineId?: string }) => awaitActionApprovalResult<ManagedMachineV1[], ReadResult>({
                         signal: cancellation.signal,
                         execute: async callbacks => {
@@ -161,19 +165,17 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                             if (outcome.kind === 'failed') return { kind: 'failed', code: homeDomainFailureCode(outcome.failure) };
                             if (outcome.kind === 'approval_pending') {
                                 awaitingApproval = true;
-                                const approval = createActionApprovalContinuation<ManagedMachineV1 | { machines: ManagedMachineV1[] }, typeof actionId>({
+                                const approval = createActionApprovalContinuation<ReadOutput, typeof actionId>({
                                     artifactId: outcome.artifactId, actionId, scope: { serverId, accountId }, expectedInput: input,
                                     signal: cancellation.signal,
-                                    onSucceeded: value => callbacks.onApprovalSucceeded('machines' in value ? value.machines : [value]),
+                                    onSucceeded: async value => callbacks.onApprovalSucceeded(await openRead(value)),
                                     onFailed: callbacks.onApprovalFailed,
                                 });
                                 if (isCurrent() && !cancellation.signal.aborted) publish({ ...entry, status: 'loading', errorCode: undefined, approval });
                                 return { approvalPending: true };
                             }
                             // The Action terminal owner already admitted this output; inventory consumes its typed receipt.
-                            const machines = input.managedId
-                                ? [outcome.result as ManagedMachineActionOutputV1<'machines.managed.get'>]
-                                : (outcome.result as ManagedMachineActionOutputV1<'machines.managed.list'>).machines;
+                            const machines = await openRead(outcome.result as ReadOutput);
                             return { kind: 'succeeded', machines };
                         },
                         succeeded: machines => ({ kind: 'succeeded', machines }), failed: code => ({ kind: 'failed', code }),

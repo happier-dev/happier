@@ -415,8 +415,8 @@ export type WorkflowDiagnosticsActionResultById = {
                     kind: 'nextMatches';
                     count: number;
                 };
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 enabled: boolean;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             };
         }[];
     };
@@ -783,8 +783,8 @@ export type WorkflowDiagnosticsActionResultById = {
                     kind: 'nextMatches';
                     count: number;
                 };
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 enabled: boolean;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             };
             trigger?: undefined | {
                 kind: 'ciFailed' | 'prComment';
@@ -859,6 +859,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 maximumObservationAgeMs: null | number;
                 enabled: boolean;
+                automationDisplay?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {

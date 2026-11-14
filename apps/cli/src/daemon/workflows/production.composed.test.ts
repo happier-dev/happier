@@ -4339,7 +4339,8 @@ describe('production workflow coordinator', () => {
     { automationName: 'Library memory upkeep', stepName: undefined, title: 'Library memory upkeep' },
     { automationName: 'Workflow triggers', stepName: undefined, title: 'Send a prompt' },
     { automationName: 'Workflow triggers', stepName: 'Review the garden', title: 'Review the garden' },
-  ])('names an inline trigger Run by its Library display name: $title', async ({ automationName, stepName, title }) => {
+    { automationName: 'Automation', display: { name: 'Private release review', description: null }, stepName: undefined, title: 'Private release review' },
+  ])('names an inline trigger Run by its Library display name: $title', async ({ automationName, display, stepName, title }) => {
     const captured = new Error('accepted_snapshot_captured');
     const accepted: unknown[] = [];
     const coordinate = createProductionWorkflowRunCoordinator({
@@ -4371,12 +4372,15 @@ describe('production workflow coordinator', () => {
           agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
         }, blocks: [{ ...onlyStep, ...(stepName ? { name: stepName } : {}) }] },
         workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+        ...(display ? { display } : {}),
       } }),
     };
     await expect(coordinate({ ...claim, automationName })).rejects.toBe(captured);
     expect(accepted[0]).toMatchObject({ source: { kind: 'automation' }, metadata: { title } });
     await expect(coordinate(claim)).rejects.toBe(captured);
-    expect((accepted[1] as { metadata?: unknown }).metadata ?? null).toBeNull();
+    expect((accepted[1] as { metadata?: unknown }).metadata ?? null).toEqual(
+      display ? { title } : null,
+    );
   });
 
   it('freezes an Automation definition and evidence before durable row admission, Session execution, and parent settlement', async () => {

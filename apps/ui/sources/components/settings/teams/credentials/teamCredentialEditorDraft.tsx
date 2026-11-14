@@ -98,10 +98,12 @@ export const EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT: TeamCredentialResourceDraft =
  */
 export function teamCredentialResourceDraftFromSummary(
     resource: TeamCredentialResourceSummaryV1,
+    /** The recipient projection opened under this resource's display-name binding. */
+    displayName: string,
     limits: readonly TeamCredentialUsageLimitV1[] = [],
 ): TeamCredentialResourceDraft {
     return {
-        name: resource.displayName,
+        name: displayName,
         source: resource.source,
         deliveryPolicy: resource.deliveryPolicy,
         brokerPlacement: resource.brokerPlacement,
@@ -404,6 +406,7 @@ export async function confirmTeamCredentialDisclosureWidening(): Promise<boolean
 type TeamCredentialBrokerPresentation = TeamCredentialResourceSummaryV1['brokerPresentation'];
 
 const NO_MACHINES: readonly never[] = Object.freeze([]);
+const NO_POOL_DISPLAY_NAMES: Readonly<Record<string, string | null>> = Object.freeze({});
 
 /** The draft broker location, named for a review or summary line. */
 export function teamCredentialBrokerPlacementDraftLabel(input: Readonly<{
@@ -411,13 +414,18 @@ export function teamCredentialBrokerPlacementDraftLabel(input: Readonly<{
     placement: TeamCredentialBrokerPlacementV1 | null;
     brokerPresentation: TeamCredentialBrokerPresentation;
     pickerRows: Parameters<typeof presentTeamCredentialBrokerMachineCandidate>[0]['pickerRows'];
+    poolDisplayNames?: Readonly<Record<string, string | null>>;
 }>): string {
     const { placement } = input;
     if (placement === null) return t('teams.credentials.detail.brokerNone');
     if (placement.kind === 'machine_pool') {
         const pool = input.brokerPresentation.eligiblePools.find((candidate) => candidate.poolId === placement.poolId)
             ?? input.brokerPresentation.selectedPool;
-        return brokerPoolChoiceLabel(pool?.poolId === placement.poolId ? pool : { displayName: null });
+        return brokerPoolChoiceLabel({
+            displayName: pool?.poolId === placement.poolId
+                ? input.poolDisplayNames?.[placement.poolId] ?? null
+                : null,
+        });
     }
     return teamCredentialBrokerMachineLabel({
         serverId: input.serverId, machineId: placement.machineId, pickerRows: input.pickerRows,
@@ -450,8 +458,19 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
     onChange: (placement: TeamCredentialBrokerPlacementV1 | null) => void;
     /** Names the credential the choice is for when the editor sits among several (a pool's Shared with Teams). */
     title?: string;
+    /** Recipient-safe Pool labels are opened by the mounted owner, never by this draft module. */
+    poolDisplayNames?: Readonly<Record<string, string | null>>;
 }>) {
-    const { brokerPresentation, disabled, onChange, placement, savedPlacement, scope, testIDPrefix } = props;
+    const {
+        brokerPresentation,
+        disabled,
+        onChange,
+        placement,
+        poolDisplayNames = NO_POOL_DISPLAY_NAMES,
+        savedPlacement,
+        scope,
+        testIDPrefix,
+    } = props;
     const activeScope = useActiveServerAccountScope();
     const machineLists = useMachineListByServerId();
     const pickerRows = useMachineAdministrationTargetPickerRows();
@@ -580,7 +599,7 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                 ) : null}
                 {unavailablePoolIds.map((poolId) => {
                     const sourcePresentation = homePoolPresentation(poolId);
-                    const title = sourcePresentation?.displayName?.trim()
+                    const title = poolDisplayNames[poolId]?.trim()
                         || t('teams.credentials.detail.brokerChosen');
                     const availability = poolFeatureUnavailable
                         ? t('machinePools.featureUnavailable')
@@ -605,6 +624,8 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                 })}
                 {poolRows.map((row) => {
                     const sourcePresentation = eligiblePoolById.get(row.view.pool.id)!;
+                    const title = poolDisplayNames[row.view.pool.id]?.trim()
+                        || t('teams.credentials.detail.brokerChosen');
                     const availability = teamCredentialBrokerPoolAvailabilityLabel(
                         sourcePresentation.availability,
                         sourcePresentation.availableMachineCount,
@@ -614,10 +635,10 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                         <Item
                             key={row.view.pool.id}
                             testID={`${testIDPrefix}:machine_pool:${row.view.pool.id}`}
-                            title={sourcePresentation.displayName?.trim() || row.view.pool.name}
+                            title={title}
                             subtitle={identity || undefined}
                             detail={availability}
-                            accessibilityLabel={`${row.accessibilityName}. ${availability}`}
+                            accessibilityLabel={`${title}. ${availability}`}
                             accessibilityRole="radio"
                             webRole="radio"
                             selected={draftPoolPlacement?.poolId === row.view.pool.id}

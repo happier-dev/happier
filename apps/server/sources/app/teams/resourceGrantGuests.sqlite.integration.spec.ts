@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
@@ -47,7 +48,7 @@ describe('Team guests at real resource routes (SQLite, real bearer authenticatio
             { teamId: team.id, accountId: directGuest.id, role: 'guest' },
             { teamId: team.id, accountId: member.id, role: 'member' },
         ] });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit guest audience', nameKey: 'explicit-guest-audience' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Explicit guest audience') } });
         const groupMembership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: team.id, accountId: groupGuest.id } } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: groupMembership.id,
             nativeContribution: true } });

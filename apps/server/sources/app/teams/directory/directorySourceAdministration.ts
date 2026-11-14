@@ -49,6 +49,7 @@ import {
 import { deriveWorkosDirectoryExternalSourceKey } from "./directorySourceBinding";
 import { requestEnterpriseIdentitySyncNudge } from "./runtime/directorySyncWake";
 import { isDirectorySourceKindAllowedInTx, isDirectorySourceProjectionComplete } from "./directorySourcePolicy";
+import { projectTeamGroupNameForRecipient } from "../groups/privateLabels";
 
 type WorkosSetupDirectory = Readonly<{
     id: string;
@@ -757,7 +758,9 @@ export async function listDirectoryGroupsForActor(
                                 bindingId: binding.id,
                                 mode: binding.bindingMode,
                                 teamGroupId: binding.teamGroupId,
-                                teamGroupName: binding.group.teamId === input.teamId ? binding.group.name : null,
+                                teamGroupName: binding.group.teamId === input.teamId
+                                    ? projectTeamGroupNameForRecipient({ serialized: binding.group.name, recipientAccountId: input.actorAccountId })
+                                    : null,
                             }
                             : { state: "unbound" as const },
                         lastCompleteObservationAt: source.lastFullReconcileAt?.toISOString() ?? null,

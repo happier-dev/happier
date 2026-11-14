@@ -18,8 +18,9 @@ export function isMachineSetupCombinedActionIdV1(actionId: string): actionId is 
 export const MACHINE_SETUP_REMOVE_ACTION_ID_V1 = 'machines.setup.remove';
 export const MANAGED_RESIZE_ACTION_ID_V1 = 'machines.managed.resize';
 export const MANAGED_DELETE_ACTION_ID_V1 = 'machines.managed.delete';
+export const MANAGED_RETIRE_ACTION_ID_V1 = 'machines.managed.retire';
 export const MANAGED_CONTROL_ACTION_IDS_V1 = ['machines.managed.power.set', 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
-  'machines.managed.retention.update', MANAGED_DELETE_ACTION_ID_V1, 'machines.managed.controller.update', 'machines.managed.retire'] as const;
+  'machines.managed.retention.update', MANAGED_DELETE_ACTION_ID_V1, 'machines.managed.controller.update', MANAGED_RETIRE_ACTION_ID_V1] as const;
 export type ManagedControlActionIdV1 = typeof MANAGED_CONTROL_ACTION_IDS_V1[number];
 export function isManagedResizeActionIdV1(actionId: string): actionId is typeof MANAGED_RESIZE_ACTION_ID_V1 {
   return actionId === MANAGED_RESIZE_ACTION_ID_V1;
@@ -108,9 +109,16 @@ export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.managed.credentials.install',
   'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
   'machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.resize', 'machines.managed.retention.update', 'machines.managed.delete',
-  'machines.managed.controller.update', 'machines.managed.retire',
+  'machines.managed.controller.update', MANAGED_RETIRE_ACTION_ID_V1,
 ] as const;
 export type ManagedMachineActionIdV1 = typeof MANAGED_MACHINE_ACTION_IDS_V1[number];
+
+/** Only these managed roots can issue a locally opened opaque-preset provider child. */
+export function isManagedOpaquePresetReviewedChildRootActionV1(actionId: string): boolean {
+  return actionId === 'machines.managed.acquire'
+    || actionId === 'machines.managed.bootstrap.retry'
+    || actionId === 'machines.managed.inspect';
+}
 
 /** Creator mutations retain the exact admitted resource and its controller. */
 export const MANAGED_CREATION_MUTATION_ACTION_IDS_V1 = ['machines.managed.cancel', 'machines.managed.setup.skip'] as const;
@@ -148,7 +156,7 @@ export function isManagedPowerOrDeleteActionIdV1(actionId: string): actionId is
 /** Finite foreground native controls need execution authority before their first effect. */
 export function isManagedAccountNativeControlInvocationV1(actionId: string, input: unknown): boolean {
   return isManagedResizeActionIdV1(actionId)
-    || actionId === 'machines.managed.power.set' && readRecord(input).when === 'now';
+    || isManagedPowerOrDeleteActionIdV1(actionId) && readRecord(input).when === 'now';
 }
 
 /** A native control's retained-row read spends that same admitted control root. */
@@ -160,10 +168,10 @@ export function managedAccountNativeReadEffectActionIdV1(rootActionId: string, r
 /** Deferred controls keep the same executor: its reconciler owns the idle wait. Home owns admission. */
 export function isManagedRetainedControlInvocation(actionId: string, _input: unknown): actionId is
   'machines.managed.inspect' | typeof MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
-  | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
+  | 'machines.managed.rebuild' | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
   return actionId === 'machines.managed.inspect' || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
     || isManagedCreationMutationActionIdV1(actionId)
-    || actionId === 'machines.managed.resize'
+    || actionId === 'machines.managed.resize' || actionId === 'machines.managed.rebuild'
     || isManagedPowerOrDeleteActionIdV1(actionId);
 }
 

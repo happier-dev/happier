@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import {
@@ -183,13 +184,12 @@ describe('share eligibility across resource writers (real SQLite)', () => {
         ],
       });
       const ownGroup = await db.teamGroup.create({
-        data: { teamId: ownTeam.id, name: 'Own Group', nameKey: 'own-group' },
+        data: { teamId: ownTeam.id, name: storedPlainPrivateLabel('Own Group') },
       });
       const foreignGroup = await db.teamGroup.create({
         data: {
           teamId: foreignTeam.id,
-          name: 'Foreign Group',
-          nameKey: 'foreign-group',
+          name: storedPlainPrivateLabel('Foreign Group'),
         },
       });
       const share = await resource(kind, owner.id);

@@ -45,6 +45,7 @@ import { registerAutomationV3Routes } from "../automations/registerAutomationV3R
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
 import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function dispatchedResponse(response: unknown) {
     return {
@@ -97,15 +98,15 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id,
             tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
-        const parent = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Embed parent' });
+        const parent = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Embed parent') });
         const principal = await auth.verifyPat(parent.token);
         if (!principal.ok) throw new Error('Expected verified test parent');
-        const sendOnly = await auth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Send only',
+        const sendOnly = await auth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(principal.accountId, 'Send only'),
             expiresAt: new Date(Date.now() + 60_000),
             grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
                 actions: { families: ['messaging', 'session_transcripts'], ids: ['session.user_action.answer'] },
                 targets: { sessions: [session.id], machines: [] } }) });
-        const canOpen = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Open',
+        const canOpen = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Open'),
             grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
                 actions: { families: [], ids: ['session.open'] }, targets: { sessions: [session.id], machines: [] } }) });
         const io = new Server();
@@ -183,9 +184,9 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         });
         const deployment = { serverId, environmentId, deployApproval: 'automatic' as const };
         const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
-            label: "Staging CI", grant, deployment });
+            label: await preparePlainAccountApiTokenLabel(account.id, "Staging CI"), grant, deployment });
         const askToken = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
-            label: 'Independent Ask token', grant, deployment: { ...deployment, deployApproval: 'ask' } });
+            label: await preparePlainAccountApiTokenLabel(account.id, 'Independent Ask token'), grant, deployment: { ...deployment, deployApproval: 'ask' } });
         const forwarded: string[] = [];
         const admittedShas: string[] = [];
         const holds: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'][] = [];
@@ -361,7 +362,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             actions: { families: [], ids: ["workflow.trigger.run_now"] },
             targets: { sessions: [], machines: [machineId] }, automationIds: ["brief"],
         });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Brief only", grant });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Brief only"), grant });
         const admitted: string[] = [];
         let signed: ReturnType<typeof ExternalActionDaemonDispatchRequestSchema.parse> | null = null;
         // The network hop is the only substitute: authentication, persisted
@@ -450,7 +451,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "External Action request-local provenance",
+            label: await preparePlainAccountApiTokenLabel(account.id, "External Action request-local provenance"),
             expiresAt: new Date("2030-08-22T12:01:00.000Z"),
         });
         const received = {
@@ -518,7 +519,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "External Action global rate limiter",
+            label: await preparePlainAccountApiTokenLabel(account.id, "External Action global rate limiter"),
         });
         const dispatch = vi.fn<ExternalActionDaemonDispatcher>(async (request) => dispatchedResponse({
             v: 1 as const,

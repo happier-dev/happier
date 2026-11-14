@@ -6,6 +6,7 @@ import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime
 import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { openManagedMachineRead } from './readManagedMachine';
 
 /** The ordinary Account selector admits one exact plugin; no native activation or fleet census. */
 export async function prepareCliManagedProvisionerAdmission(
@@ -23,9 +24,20 @@ export async function prepareCliManagedProvisionerAdmission(
         const failure = ActionExecuteFailureSchema.safeParse(result);
         if (failure.success) return prepareManagedPowerProvisionerAdmissionV1(failure.data, readSelected, request.actionId, options);
         const parsed = ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result);
-        if (!parsed.success || parsed.data.id !== input.managedId || parsed.data.homeId !== input.homeId)
+        if (!parsed.success)
             return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
-        return prepareManagedPowerProvisionerAdmissionV1(parsed.data, readSelected, request.actionId, options);
+        if (!account.credentials) return { ok: false as const, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
+        try {
+            const machine = await openManagedMachineRead({ credentials: account.credentials, serverHttpBaseUrl: account.serverUrl,
+                read: parsed.data, ...(request.context.signal ? { signal: request.context.signal } : {}) });
+            if (machine.id !== input.managedId || machine.homeId !== input.homeId) {
+                return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
+            }
+            return prepareManagedPowerProvisionerAdmissionV1(machine, readSelected, request.actionId, options);
+        } catch {
+            request.context.signal?.throwIfAborted();
+            return { ok: false as const, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
+        }
     }
     return prepareManagedAcquireProvisionerAdmissionV1(request, readSelected);
 }

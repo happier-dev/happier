@@ -1,3 +1,5 @@
+import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
@@ -306,7 +308,7 @@ import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperat
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
-import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createUiEphemeralRunnerAction } from './ephemeralRunnerAction';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -456,6 +458,7 @@ import { executeInternalTaskHostAction } from './internalTaskAction';
 import { createHomeDomainActionExecutorForScope } from '@/sync/api/home/homeDomainActions';
 import { createUiPersonalSavedSecretActionExecute } from '@/sync/ops/settings/personalSavedSecretActionHost';
 import { createSessionOrganizationResourceAction, isSessionOrganizationResourceAction } from '@/sync/ops/sessionOrganization/sessionOrganizationAction';
+import { createUiTeamCredentialUsageExportAction } from '@/sync/ops/teams/teamCredentialUsageExportAction';
 import { resolveSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { createApprovalArtifact, writeApprovalRequestArtifact } from './approvalArtifactWriter';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
@@ -1371,6 +1374,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.usageQueryRead ? { query: opts.usageQueryRead } : {}) } : undefined;
   const scmActionExecute = opts?.scmActionExecute ?? createUiScmAction(accountContext, { onDispatched: opts?.onScmDispatched });
   const publicProfileHome = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction;
+  const homeDomainAction = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction
+    ? ((args: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) => {
+      // Section intents need the opened Account organization owner even when a mounted
+      // surface supplies the ordinary Home HTTP transport for the other families.
+      const owner = isSessionOrganizationResourceAction(args.actionId)
+        ? capturedFamilyPorts?.homeDomainAction : undefined;
+      return (owner ?? opts?.homeDomainAction ?? capturedFamilyPorts!.homeDomainAction)(args);
+    })
+    : undefined;
   let deps: ActionExecutorDeps = {
     browserProfileLoginsImport: ({ input, context }) => importBrowserProfileLoginsInContext(accountContext ?? null, input,
       call => actionMachineRpc({ serverId: accountContext?.serverId, accountId: accountContext?.accountId,
@@ -3686,15 +3698,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.discussionAction ?? capturedFamilyPorts?.discussionAction
       ? { discussionAction: opts?.discussionAction ?? capturedFamilyPorts!.discussionAction }
       : {}),
-    ...(opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction
-      ? { homeDomainAction: (args: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) => {
-        // Section intents need the opened Account organization owner even when a mounted
-        // surface supplies the ordinary Home HTTP transport for the other families.
-        const owner = isSessionOrganizationResourceAction(args.actionId)
-          ? capturedFamilyPorts?.homeDomainAction : undefined;
-        return (owner ?? opts?.homeDomainAction ?? capturedFamilyPorts!.homeDomainAction)(args);
-      } }
-      : {}),
+    ...(homeDomainAction ? { homeDomainAction } : {}),
+    ...(accountContext && homeDomainAction ? {
+      teamCredentialUsageExport: createUiTeamCredentialUsageExportAction(accountContext, homeDomainAction),
+    } : {}),
     ...(accountContext && (opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction)
       ? { personalSavedSecretActionExecute: createUiPersonalSavedSecretActionExecute(accountContext,
         (opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction)!) } : {}),
@@ -3749,7 +3756,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (args.actionId !== 'machines.managed.list' && args.actionId !== 'machines.managed.get'
         && args.actionId !== 'machines.managed.setup.skip' && args.actionId !== 'machines.managed.birth.get') {
         try {
-          const execution = await executeManagedMachineNativeAction({ account: accountContext, ...args });
+          const execution = await executeManagedMachineNativeAction({ account: accountContext, ...args,
+            resolvePresetPool: input => executor.execute('machines.pools.resolve', input, args.context) });
           return execution.ok ? execution.result : execution;
         } catch (error) {
           if (error instanceof ManagedMachineActionError) return { ok: false, errorCode: error.code, error: error.code };
@@ -3803,9 +3811,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false, errorCode: 'machine_pools_unavailable', error: 'machine_pools_unavailable' };
       }
       try {
-        return await createMachinePoolActionClient({ request: accountContext.request }).execute(args.actionId, args.input, {
+        const wire = await createMachinePoolActionClient({ request: accountContext.request }).execute(args.actionId, args.input, {
           serverId: accountContext.serverId, ...(args.signal ? { signal: args.signal } : {}),
         });
+        const labels = createMachinePoolPrivateLabelClientForAccount(accountContext);
+        const opened = await openMachinePoolActionOutputV1(wire, view => openMachinePoolPrivateViewV1({
+          view, labels, ...(args.signal ? { signal: args.signal } : {}),
+        }));
+        accountContext.assertCurrent();
+        return opened;
       } catch (error) {
         if (error instanceof MachinePoolActionError) {
           return { ok: false, errorCode: error.detail?.code ?? 'machine_pool_request_failed', error: error.message, details: error.detail };
@@ -5210,7 +5224,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const account = accountContext;
       const native = (nativeInput: unknown, nativeContext: ActionExecutorContext, confirmed: boolean, reviewDigest?: string) =>
         executeManagedMachineNativeAction({ account, actionId, input: nativeInput, context: nativeContext, confirmInFlow: confirmed,
-          ...(reviewDigest ? { reviewDigest } : {}), retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
+          ...(reviewDigest ? { reviewDigest } : {}), retainedMachine,
+          resolvePresetPool: poolInput => executor.execute('machines.pools.resolve', poolInput, nativeContext),
+          ...(context?.signal ? { signal: context.signal } : {}) });
       return await confirmOwnUiRefusal(actionId, input, resolvedContext, await native(input, resolvedContext, confirmInFlow),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
           native(confirmedInput, freshRequest(resolvedContext), true, reviewDigest));
@@ -5691,10 +5707,12 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
     try {
       const retainedMachine = (actionId === 'machines.managed.delete' ? reviewedManagedMachine : undefined)
         ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
-        homeId: parsed.data.homeId, managedId: parsed.data.managedId,
+        homeId: parsed.data.homeId,
+        managedId: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId,
       }, { signal: account.invocationSignal });
       account.assertCurrent();
-      return retainedMachine.controller ? { actionId, retainedMachine } : null;
+      const structural = unwrapManagedMachineReadV1(retainedMachine);
+      return structural.controller ? { actionId, retainedMachine } : null;
     } catch (error) {
       if (!(error instanceof ManagedMachineActionError)) throw error;
       // The Account control owner admits power without requiring the public Manage read.
@@ -5702,7 +5720,7 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
       return { ok: false, errorCode: error.code, error: error.code };
     }
   }
-  if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), input) === 'account') return null;
+  if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), input, context?.actionCaller, context?.surface ?? 'ui') === 'account') return null;
   const parsed = ManagedMachineActionIdV1Schema.safeParse(actionId);
   return parsed.success && parsed.data !== 'machines.managed.list'
     && parsed.data !== 'machines.managed.birth.get'

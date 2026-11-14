@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionOperationFailureV1Schema, ManagedServiceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
@@ -9,7 +9,7 @@ import { runManagedMachineEnrollment } from './managedMachineEnrollment.js';
 const resource = { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained' } };
 const correlation = { homeId: 'srv_managed_home', managedId: 'managed', requestId: 'retry', expectedIntentRevision: 1,
   controller: { machineId: 'controller', installationId: 'installation' }, resource };
-const machine = ManagedMachineV1Schema.parse({ id: correlation.managedId, homeId: correlation.homeId, custodianAccountId: 'account',
+const machine = ManagedMachineFullV1Schema.parse({ id: correlation.managedId, homeId: correlation.homeId, custodianAccountId: 'account',
   launch: { provider: resource.contributionRef, schemaVersion: 1, name: 'Guest', choices: {} }, controller: correlation.controller,
   allocation: 'bound', creationState: 'active', resource, desired: 'start', desiredWhen: 'now', intentRevision: 1,
   retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'same-machine' });
@@ -17,11 +17,11 @@ const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerI
   canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] },
   authority: 'trusted_enrollment' });
 
-function retryGuest(operation: AbortController | undefined, readyAtMs: number) {
+function retryGuest(operation: AbortController | undefined, readyAtMs: number, standaloneSignal?: AbortSignal) {
   let statusReads = 0;
   let installations = 0;
   const result = runManagedMachineEnrollment({ correlation, target, channel: 'stable',
-    ...(operation ? { operationId: 'admitted-retry', signal: operation.signal } : {}),
+    ...(operation ? { operationId: 'admitted-retry', signal: operation.signal } : { signal: standaloneSignal }),
     carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
   }, {
     readCurrentManagedRow: async () => machine,
@@ -169,15 +169,24 @@ describe('retained native bootstrap readiness lifetime', () => {
     expect(retry.reads()).toBe(reads);
   });
 
-  it('keeps the existing standalone cutoff without a containing operation', async () => {
+  it('keeps standalone readiness active until its caller cancels', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    const retry = retryGuest(undefined, 56_000);
-    const failed = expect(retry.result).rejects.toMatchObject({ code: 'daemon_service_not_ready' });
+    const cancellation = new AbortController();
+    const retry = retryGuest(undefined, Infinity, cancellation.signal);
+    let outcome = 'pending';
+    const cancelled = retry.result.then(value => { outcome = 'ready'; return value; }, (error: unknown) => {
+      outcome = 'cancelled';
+      return error;
+    });
     await vi.advanceTimersByTimeAsync(15_000);
-    await failed;
-    const reads = retry.reads();
+    expect(outcome).toBe('pending');
     await vi.advanceTimersByTimeAsync(41_000);
+    expect(outcome).toBe('pending');
+    cancellation.abort();
+    await expect(cancelled).resolves.toMatchObject({ name: 'AbortError' });
+    const reads = retry.reads();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(retry.reads()).toBe(reads);
   });
 });

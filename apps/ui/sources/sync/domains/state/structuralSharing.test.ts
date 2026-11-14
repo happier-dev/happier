@@ -66,6 +66,41 @@ describe('retainKeyedRows', () => {
         expect(rows[1]).not.toBe(previous[0]);
     });
 
+    it('keeps an incoming exact sidecar when reconciling a changed row', () => {
+        const exactProjection = Symbol('exactProjection');
+        const stableDetails = { status: 'ready' };
+        const previous = [{ id: 'a', title: 'Old title', details: stableDetails }];
+        const incoming = { id: 'a', title: 'New title', details: { status: 'ready' } };
+        const incomingBasis = { revision: 2 };
+        Object.defineProperty(incoming, exactProjection, {
+            value: incomingBasis,
+            enumerable: false,
+        });
+
+        const rows = retainKeyedRows(previous, [incoming], key);
+
+        expect(rows[0]).not.toBe(incoming);
+        expect(rows[0]?.details).toBe(stableDetails);
+        expect(Object.getOwnPropertyDescriptor(rows[0]!, exactProjection)).toMatchObject({
+            enumerable: false,
+            value: incomingBasis,
+        });
+    });
+
+    it('does not retain a stale exact sidecar when the JSON row is otherwise equal', () => {
+        const exactProjection = Symbol('exactProjection');
+        const previous = { id: 'a', title: 'Stable' };
+        const incoming = { id: 'a', title: 'Stable' };
+        Object.defineProperty(previous, exactProjection, { value: { revision: 1 }, enumerable: false });
+        const incomingBasis = { revision: 2 };
+        Object.defineProperty(incoming, exactProjection, { value: incomingBasis, enumerable: false });
+
+        const rows = retainKeyedRows([previous], [incoming], key);
+
+        expect(rows[0]).toBe(incoming);
+        expect(Object.getOwnPropertyDescriptor(rows[0]!, exactProjection)?.value).toBe(incomingBasis);
+    });
+
     it('publishes a frozen array unless the caller keeps a mutable contract', () => {
         const incoming = [{ id: 'a' }];
         expect(Object.isFrozen(retainKeyedRows(null, incoming, key))).toBe(true);

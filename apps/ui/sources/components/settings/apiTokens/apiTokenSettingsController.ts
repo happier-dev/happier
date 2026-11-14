@@ -18,6 +18,11 @@ import { prepareApiTokenEncryptionAccess } from '@/sync/ops/account/prepareApiTo
 import { HappyError } from '@/utils/errors/errors';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import {
+    createPrivateLabelClient as createCanonicalPrivateLabelClient,
+    createPrivateLabelClientForActionAccountContext,
+} from '@/sync/ops/privateLabels/privateLabelClient';
+import type { PrivateLabelReadPolicyV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 export type ApiTokenExpiryPreset = '30d' | '90d' | '1y' | 'none';
 
@@ -62,9 +67,15 @@ export type ApiTokenSettingsDestructiveTarget = ActiveServerAccountScopeLifetime
  */
 export type ApiTokenEncryptionAvailability = 'unchecked' | 'checking' | 'plain' | 'ready' | 'unavailable' | 'stale' | 'unreadable';
 
+/** A token becomes presentational only after the Account-owned label client opens its reader projection. */
+export type ApiTokenSettingsToken = Omit<AccountApiTokenSummaryV1, 'label'> & Readonly<{ label: string }>;
+
+/** Callers provide cleartext only at the UI boundary; this controller seals it before the Action boundary. */
+export type ApiTokenSettingsUpdateInput = Omit<AccountApiTokensUpdateActionInputV1, 'label'> & Readonly<{ label?: string }>;
+
 export type ApiTokenSettingsState = Readonly<{
     phase: 'idle' | 'loading' | 'ready' | 'error';
-    tokens: readonly AccountApiTokenSummaryV1[];
+    tokens: readonly ApiTokenSettingsToken[];
     encryptionAvailability: ApiTokenEncryptionAvailability;
     recoveryTokenId: string | null;
     isRefreshing: boolean;
@@ -85,7 +96,7 @@ export type ApiTokenSettingsState = Readonly<{
     createError: ApiTokenSettingsErrorCode | null;
     reveal: Readonly<{
         token: string;
-        apiToken: AccountApiTokenSummaryV1;
+        apiToken: ApiTokenSettingsToken;
         acknowledged: boolean;
     }> | null;
     operation: 'revoke' | 'revokeAll' | 'signOutEverywhere' | null;
@@ -122,7 +133,7 @@ export type ApiTokenSettingsController = Readonly<{
         result: unknown;
         tokenId: string;
         target: ActiveServerAccountScopeLifetime;
-    }>): boolean;
+    }>): Promise<boolean>;
     acknowledgeReveal(): void;
     clearReveal(): void;
     requestRevealDismiss(
@@ -147,7 +158,7 @@ export type ApiTokenSettingsController = Readonly<{
      * Stores exactly this change (label, grant and/or embed configuration) and adopts the returned
      * row; `null` on success, else the error. A grant change revokes the token's children (01).
      */
-    updateToken(input: AccountApiTokensUpdateActionInputV1): Promise<ApiTokenSettingsErrorCode | null>;
+    updateToken(input: ApiTokenSettingsUpdateInput): Promise<ApiTokenSettingsErrorCode | null>;
     cancelAccessEdit(): void;
     clearOperationFeedback(): void;
     retire(): void;
@@ -233,7 +244,7 @@ export function resolveApiTokenExpiryInstant(preset: ApiTokenExpiryPreset, now: 
  * (surface states: retained content). Keyed by the scope lifetime, so it is dropped with the Account
  * and never read by another one.
  */
-const lastKnownTokensByScope = new WeakMap<ActiveServerAccountScopeLifetime, readonly AccountApiTokenSummaryV1[]>();
+const lastKnownTokensByScope = new WeakMap<ActiveServerAccountScopeLifetime, readonly ApiTokenSettingsToken[]>();
 
 export function createApiTokenSettingsController(
     dependencies: ApiTokenSettingsControllerDependencies = defaultDependencies,
@@ -335,19 +346,95 @@ export function createApiTokenSettingsController(
         }
     };
 
+    const privateLabelsFor = (lifetime: ActiveServerAccountScopeLifetime) =>
+        createCanonicalPrivateLabelClient(lifetime.scope);
 
-    /** The one `account.apiTokens.update` path: every edit stores exactly its change and adopts the row. */
-    const executeUpdate = async (input: AccountApiTokensUpdateActionInputV1): Promise<ApiTokenSettingsErrorCode | 'scope_retired' | null> => {
+    const labelBindingForToken = (tokenId: string) => ({
+        entity: 'account_api_token', field: 'label', id: tokenId,
+    } as const);
+
+    /** Opens all reader projections before labels enter settings state or presentation. */
+    const openApiToken = async (
+        lifetime: ActiveServerAccountScopeLifetime,
+        labels: ReturnType<typeof createPrivateLabelClientForActionAccountContext>,
+        apiToken: AccountApiTokenSummaryV1,
+        readPolicy: PrivateLabelReadPolicyV1,
+        signal?: AbortSignal,
+    ): Promise<ApiTokenSettingsToken | null> => {
+        const label = await labels.open({
+            binding: labelBindingForToken(apiToken.tokenId), label: apiToken.label, readPolicy, signal,
+        });
+        return !lifetime.isCurrent() || signal?.aborted || label === null ? null : { ...apiToken, label };
+    };
+
+    const openApiTokens = async (
+        lifetime: ActiveServerAccountScopeLifetime,
+        tokens: readonly AccountApiTokenSummaryV1[],
+    ): Promise<readonly ApiTokenSettingsToken[] | null> => {
+        if (retired || !lifetime.isCurrent()) return null;
+        if (tokens.length === 0) return [];
+        const controller = new AbortController();
+        activeRequest = controller;
+        let account: Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>> | null = null;
+        try {
+            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+            account = await captureLazyActionAccountContext(lifetime.scope.serverId, controller.signal);
+            if (account.accountId !== lifetime.scope.accountId) return null;
+            const contentEncryptionMode = await account.resolveAccountMode(controller.signal);
+            account.assertCurrent();
+            const readPolicy: PrivateLabelReadPolicyV1 = { kind: 'account-owned', contentEncryptionMode };
+            const labels = createPrivateLabelClientForActionAccountContext(account);
+            const opened = await Promise.all(tokens.map((token) => openApiToken(lifetime, labels, token, readPolicy, controller.signal)));
+            return retired || activeRequest !== controller || !lifetime.isCurrent() || opened.some((token) => token === null)
+                ? null
+                : opened as readonly ApiTokenSettingsToken[];
+        } catch {
+            return null;
+        } finally {
+            account?.dispose();
+            if (activeRequest === controller) activeRequest = null;
+        }
+    };
+
+    const sealApiTokenLabel = async (
+        lifetime: ActiveServerAccountScopeLifetime,
+        tokenId: string,
+        value: string,
+    ) => {
+        if (retired || !lifetime.isCurrent()) return null;
+        const controller = new AbortController();
+        activeRequest = controller;
+        try {
+            const label = await privateLabelsFor(lifetime).seal({
+                owner: { kind: 'account', accountId: lifetime.scope.accountId },
+                binding: labelBindingForToken(tokenId), value, signal: controller.signal,
+            });
+            return retired || activeRequest !== controller || !lifetime.isCurrent() || controller.signal.aborted ? null : label;
+        } finally {
+            if (activeRequest === controller) activeRequest = null;
+        }
+    };
+
+    /** The one `account.apiTokens.update` path: every edit seals cleartext locally and adopts an opened row. */
+    const executeUpdate = async (input: ApiTokenSettingsUpdateInput): Promise<ApiTokenSettingsErrorCode | 'scope_retired' | null> => {
         if (retired) return 'scope_retired';
+        const lifetime = captureLifetime();
+        if (!lifetime) return 'account_unavailable';
+        const { label: cleartextLabel, ...rest } = input;
+        const label = cleartextLabel === undefined ? undefined : await sealApiTokenLabel(lifetime, input.tokenId, cleartextLabel);
+        if (cleartextLabel !== undefined && label === null) {
+            return lifetime.isCurrent() && !retired ? 'unavailable' : 'scope_retired';
+        }
         const result = await run({
             actionId: 'account.apiTokens.update',
-            input,
+            input: label === undefined ? rest : { ...rest, label },
             parse: parseWith(AccountApiTokensUpdateActionOutputV1Schema),
         });
         if (result.error === 'scope_retired' || retired) return 'scope_retired';
         if (!result.value) return result.error ?? 'invalid_response';
-        const updated = result.value.apiToken;
-        publish({ ...state, tokens: state.tokens.map((row) => (row.tokenId === updated.tokenId ? updated : row)) });
+        const updated = await openApiTokens(lifetime, [result.value.apiToken]);
+        if (updated === null) return lifetime.isCurrent() && !retired ? 'unavailable' : 'scope_retired';
+        publish({ ...state, tokens: state.tokens.map((row) => (row.tokenId === updated[0]!.tokenId ? updated[0]! : row)) });
         return null;
     };
     const parseWith = <T>(schema: Readonly<{ safeParse(value: unknown): { success: boolean; data?: T } }>) => (
@@ -364,7 +451,7 @@ export function createApiTokenSettingsController(
             && parseAccountApiTokenBearerV1(parsed.data.token)?.tokenId === tokenId
             ? parsed.data : null;
     };
-    const revealCreatedToken = (value: NonNullable<ReturnType<typeof readCreatedToken>>, token = value.token): void => {
+    const revealCreatedToken = (value: Readonly<{ token: string; apiToken: ApiTokenSettingsToken }>, token = value.token): void => {
         publish({ ...state, phase: 'ready',
             tokens: [value.apiToken, ...state.tokens.filter(row => row.tokenId !== value.apiToken.tokenId)],
             createPending: false, createError: null,
@@ -418,9 +505,10 @@ export function createApiTokenSettingsController(
         },
         async refresh() {
             if (retired || activeRequest || creation) return;
+            const lifetime = captureLifetime();
+            if (!lifetime) return;
             if (state.phase !== 'ready') {
-                const lifetime = captureLifetime();
-                const retained = lifetime ? lastKnownTokensByScope.get(lifetime) : undefined;
+                const retained = lastKnownTokensByScope.get(lifetime);
                 if (retained) publish({ ...state, phase: 'ready', tokens: retained });
             }
             const hadContent = state.phase === 'ready';
@@ -445,14 +533,28 @@ export function createApiTokenSettingsController(
                 });
                 return;
             }
+            // Reconcile the request selector from the authoritative structural
+            // list even when another row's private label cannot be opened.
+            const recoveryTokenId = state.recoveryTokenId
+                && result.value.tokens.some((token) => token.tokenId === state.recoveryTokenId)
+                ? state.recoveryTokenId : null;
+            const tokens = await openApiTokens(lifetime, result.value.tokens);
+            if (tokens === null) {
+                if (retired || !lifetime.isCurrent()) return;
+                publish({
+                    ...state,
+                    phase: hadContent ? 'ready' : 'error',
+                    isRefreshing: false,
+                    listError: 'unavailable',
+                    recoveryTokenId,
+                });
+                return;
+            }
             publish({
                 ...state,
                 phase: 'ready',
-                tokens: result.value.tokens,
-                recoveryTokenId: state.recoveryTokenId
-                    && result.value.tokens.some((token) => token.tokenId === state.recoveryTokenId)
-                    ? state.recoveryTokenId
-                    : null,
+                tokens,
+                recoveryTokenId,
                 isRefreshing: false,
                 listError: null,
             });
@@ -527,6 +629,12 @@ export function createApiTokenSettingsController(
             let prepared: Awaited<ReturnType<typeof prepareApiTokenEncryptionAccess>> | null = null;
             let binding: { serverIdentityId: string; accountId: string } | null = null;
             try {
+                const sealedLabel = await sealApiTokenLabel(lifetime, attempt.tokenId, label);
+                if (attempt.cancelled || attempt.dismissed || retired || !lifetime.isCurrent()) return;
+                if (sealedLabel === null) {
+                    publish({ ...state, createPending: false, createError: 'unavailable', recoveryTokenId: null });
+                    return;
+                }
                 if (attempt.encrypted) {
                     const pending = new AbortController();
                     activeRequest = pending;
@@ -538,7 +646,7 @@ export function createApiTokenSettingsController(
                 if (attempt.cancelled || attempt.dismissed || retired || !lifetime.isCurrent()) return;
                 const result = await run({
                     actionId: 'account.apiTokens.create',
-                    input: { tokenId: attempt.tokenId, label,
+                    input: { tokenId: attempt.tokenId, label: sealedLabel,
                         expiresAt: resolveApiTokenExpiryInstant(draft.expiryPreset, dependencies.now()),
                         ...(draft.authorizeUnattendedTeamAccess === true
                             ? { authorizeUnattendedTeamAccess: true }
@@ -573,11 +681,16 @@ export function createApiTokenSettingsController(
                     publish({ ...state, createPending: false, createError: 'invalid_response', recoveryTokenId: attempt.tokenId });
                     return;
                 }
+                const opened = await openApiTokens(lifetime, [created.apiToken]);
+                if (opened === null) {
+                    publish({ ...state, createPending: false, createError: 'outcome_unknown', recoveryTokenId: attempt.tokenId });
+                    return;
+                }
                 const token = prepared && binding ? formatAccountApiTokenCredentialV1({
                     bearer: created.token, wrappingSecret: encodeBase64(prepared.wrappingSecret, 'base64url'),
                     ...binding, contentPublicKey: prepared.encryptionAccess.contentPublicKey,
                 }) : created.token;
-                revealCreatedToken(created, token);
+                revealCreatedToken({ token: created.token, apiToken: opened[0]! }, token);
             } catch (error) {
                 if (attempt.cancelled || retired || !lifetime.isCurrent()) return;
                 if (attempt.dismissed) {
@@ -599,7 +712,7 @@ export function createApiTokenSettingsController(
                 if (!retired && lifetime.isCurrent() && state.recoveryTokenId) await controller.refresh();
             }
         },
-        adoptCreatedToken({ result, tokenId, target }) {
+        async adoptCreatedToken({ result, tokenId, target }) {
             if (retired || activeRequest || creation || state.reveal || !target.isCurrent()) return false;
             // The caller captured this exact lifetime before deciding. Never
             // adopt into a different active Account after that decision settles.
@@ -608,7 +721,9 @@ export function createApiTokenSettingsController(
             if (!created) return false;
             // Approval results contain the raw bearer only. A requester-owned
             // encryption wrapping secret is not reconstructed on the deciding device.
-            revealCreatedToken(created);
+            const opened = await openApiTokens(target, [created.apiToken]);
+            if (opened === null || retired || !target.isCurrent()) return false;
+            revealCreatedToken({ token: created.token, apiToken: opened[0]! });
             return true;
         },
         acknowledgeReveal() {

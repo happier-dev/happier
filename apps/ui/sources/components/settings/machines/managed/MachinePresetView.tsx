@@ -29,8 +29,8 @@ import { findPresetLastSavedFacts } from './managedPresetHistory';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useMachinePresetDetail, useMachinePresetConfiguration } from './useMachinePresets';
 import { useManagedProvisioners } from './useManagedProvisioners';
-import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, useManagedProvisionerPresentation, projectManagedPresetProvisioner } from './useManagedProvisionerPresentation';
-import { hasManagedMachinePresetCreationV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
+import { hasOpenedManagedMachinePresetCreationV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { useManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -71,9 +71,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         serverId: props.serverId, onExecuted: detail.refresh });
     approvalHandler.current = approval.requestApproval;
     const preset = detail.state.value?.preset;
-    const delegated = preset?.delegatedAcquire;
+    const delegated = preset?.teamAcquireDelegated === true;
     // Creation (launch + controller) is optional: a setup-only preset makes no Machines and reads no provider catalog.
-    const creation = hasManagedMachinePresetCreationV1(preset) ? preset : undefined;
+    const creation = hasOpenedManagedMachinePresetCreationV1(preset) ? preset : undefined;
     const controllerRow = useServerScopedMachine(props.serverId, creation?.controller?.machineId ?? '');
     const controller = creation?.controller && controllerRow?.id === creation.controller.machineId
         && controllerRow.installationId === creation.controller.installationId ? controllerRow : undefined;
@@ -81,8 +81,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, privateController,
         { enabled: !!creation && !delegated && (!creation.controller || !!controller) });
     const providerKey = creation ? buildQualifiedPluginContributionKey(creation.launch.provider) : null;
-    const publicProvisioner = React.useMemo(() => projectManagedPresetProvisioner(preset), [preset]);
-    const provisioner = publicProvisioner ?? catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === providerKey);
+    const provisioner = catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === providerKey);
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: privateController, accountScope: catalog.binding?.scope, provisioner,
         provider: creation?.launch.provider, schemaVersion: creation?.launch.schemaVersion });
     const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: privateController, provisioner: delegated ? undefined : provisioner });
@@ -169,7 +168,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const restore = canManage && archived ? () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.restore' }) : undefined;
     const archiveActions = canManage && !archived ? { onArchive: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.archive' }) } : {};
     // Why this preset can't create here is said once, by the line above the page; Create one then waits for it.
-    const configurationUnavailable = Boolean(configuration.error) || configuration.facts?.optionStatus === 'unavailable';
+    const configurationUnavailable = configuration.unavailable;
     const cannotCreateHere = Boolean(catalog.error) || configurationUnavailable;
     const notice = <>{approvalNotice}
         {configuration.creationDisabled ? <ManagedCreationDisabledBanner testID="machine-preset.creation-disabled" /> : null}

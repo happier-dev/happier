@@ -23,6 +23,7 @@ import {
 } from '@/app/teams/invitations/postAuthContinuation';
 
 import { resolveAuthEntry } from './resolveAuthEntry';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const INVITATION_TOKEN = 'a'.repeat(43);
 const MANAGED_OIDC_CONFIG = {
@@ -161,7 +162,7 @@ describe('resolveAuthEntry', () => {
         const restricted = [
             await auth.createToken(account.id, undefined, { kind: 'account_directory', authority: 'present_user' }),
             await auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' }),
-            (await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Restricted entry' })).token,
+            (await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Restricted entry') })).token,
             'invalid-bearer',
         ];
         const app = routeApp();

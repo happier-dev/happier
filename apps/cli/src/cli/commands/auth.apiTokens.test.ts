@@ -3,6 +3,7 @@ import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1, computeAccountEncryptionMigrateKeyFingerprintV1, deriveAccountMachineKeyFromRecoverySecret, formatAccountApiTokenCredentialV1, openApiTokenEncryptionAccessV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -12,9 +13,20 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { writeCredentialsTokenOnly, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { handleAuthCommand } from './auth';
+// The public auth dispatcher loads this leaf dynamically. Preload it here so
+// the first command test exercises behavior rather than compiler startup.
+import './auth/apiTokens';
 import { addServerProfile } from '@/server/serverProfiles';
 import { resolveServerSelectionFromArgs } from '@/server/serverSelection';
 import * as persistence from '@/persistence';
+
+function storedPlainLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipients: [] };
+}
+
+function readPlainLabel(value: string) {
+  return { content: { t: 'plain' as const, v: value }, recipientEnvelope: null };
+}
 
 const TOKEN_SCOPE_FIELDS = {
   grant: API_TOKEN_FULL_GRANT_V1,
@@ -52,6 +64,7 @@ describe('trusted auth api-tokens commands', () => {
   });
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     env.restore();
     reloadConfiguration();
     process.exitCode = 0;
@@ -73,7 +86,7 @@ describe('trusted auth api-tokens commands', () => {
       const apiToken = {
         ...TOKEN_SCOPE_FIELDS,
         tokenId,
-        label: 'build',
+        label: readPlainLabel('build'),
         displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`,
         createdAt: '2026-09-05T00:00:00Z',
         expiresAt: null,
@@ -82,6 +95,25 @@ describe('trusted auth api-tokens commands', () => {
         hasUnattendedTeamAccess: authorizeUnattendedTeamAccess,
       };
       return { token, apiToken };
+    });
+    app.get('/v1/account/profile', async () => ({ id: 'account-one' }));
+    app.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'plain',
+      version: 1,
+      updatedAt: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+    }));
+    vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+      const href = url instanceof Request ? url.url : String(url);
+      if (href.endsWith('/v1/account/private-labels/recipient-census')) {
+        return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
+      }
+      if (href.endsWith('/v1/features')) {
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_cli_token_home' } } });
+      }
+      throw new Error(`Unexpected fetch ${href}`);
     });
     const restore = installAxiosFastifyAdapter({ app, origin: 'http://runtime.account.test' });
     const output = captureConsoleText();
@@ -95,6 +127,7 @@ describe('trusted auth api-tokens commands', () => {
       ]);
       expect(capturedRequest).not.toBeNull();
       const result = JSON.parse(output.text());
+      if (json) expect(result).toMatchObject({ ok: true });
       const data = json ? result.data : result;
       expect(data).toMatchObject({ apiToken: { hasUnattendedTeamAccess: authorizeUnattendedTeamAccess } });
       expect(data.token).toEqual(expect.stringMatching(/^hap_v1_[0-9a-f-]{36}_/));
@@ -103,7 +136,7 @@ describe('trusted auth api-tokens commands', () => {
         authorization: 'Bearer interactive',
         body: {
           tokenId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-          label: 'build',
+          label: storedPlainLabel('build'),
           ...(authorizeUnattendedTeamAccess ? { authorizeUnattendedTeamAccess: true } : {}),
         },
       });
@@ -118,16 +151,42 @@ describe('trusted auth api-tokens commands', () => {
   it('does not invent token recovery when settings admission fails before the create request', async () => {
     env.patch({ HAPPIER_ACCOUNT_SETTINGS_MODE: 'blocking' });
     const app = fastify();
+    const key = tweetnacl.box.keyPair();
     const requests: string[] = [];
     app.addHook('onRequest', async (request) => { requests.push(request.url); });
+    app.get('/v1/account/profile', async () => ({ id: 'account-one' }));
+    app.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'e2ee',
+      version: 1,
+      updatedAt: 1,
+      signingKeyFingerprint: 'signing',
+      contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(key.publicKey),
+      recipientEnvelopeReadiness: { status: 'available' },
+    }));
     app.get('/v2/account/settings', async () => ({
       content: { t: 'encrypted', c: 'corrupt-e2ee-settings' }, version: 15,
     }));
     app.post('/v1/auth/api-tokens/create', async () => ({}));
     const restore = installAxiosFastifyAdapter({ app, origin: 'http://account.test' });
+    vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+      if (String(url).endsWith('/v1/account/private-labels/recipient-census')) {
+        return Response.json({
+          contentEncryptionMode: 'e2ee',
+          recipients: [{
+            account: { kind: 'account', accountId: 'account-one', firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: {
+              status: 'available',
+              contentPublicKey: encodeBase64(key.publicKey),
+              contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(key.publicKey),
+            },
+            envelopeStatus: 'missing',
+          }],
+        });
+      }
+      throw new Error(`Unexpected fetch ${String(url)}`);
+    });
     const output = captureConsoleText();
     try {
-      const key = tweetnacl.box.keyPair();
       await writeCredentialsDataKey({ token: 'interactive', machineKey: key.secretKey, publicKey: key.publicKey });
       await handleAuthCommand(['api-tokens', 'create', '--label', 'build', '--yes', '--json']);
 
@@ -150,6 +209,14 @@ describe('trusted auth api-tokens commands', () => {
       authorization = request.headers.authorization;
       return { tokens: [] };
     });
+    app.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'plain',
+      version: 1,
+      updatedAt: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+    }));
     const restore = installAxiosFastifyAdapter({ app, origin: 'https://company.test' });
     const output = captureConsoleText();
     try {
@@ -184,10 +251,11 @@ describe('trusted auth api-tokens commands', () => {
   it('manages the single strict list and both revocation intents without accepting a supplied PAT', async () => {
     const app = fastify();
     const requests: string[] = [];
+    let currentnessReads = 0;
     const tokenId = '12345678-1234-4234-8234-123456789abc';
     const baseSummary = {
       ...TOKEN_SCOPE_FIELDS,
-      label: 'build',
+      label: readPlainLabel('build'),
       displayPrefix: 'hap_v1_12345678',
       createdAt: '2026-09-05T00:00:00Z',
       expiresAt: null,
@@ -215,6 +283,17 @@ describe('trusted auth api-tokens commands', () => {
       requests.push('revoke'); expect(request.body).toEqual({ tokenId }); return { revoked: true };
     });
     app.post('/v1/auth/api-tokens/revoke-all', async () => { requests.push('revoke-all'); return { revokedCount: 1 }; });
+    app.get('/v1/account/encryption/currentness', async () => {
+      currentnessReads += 1;
+      return {
+        mode: 'plain',
+        version: 1,
+        updatedAt: 1,
+        signingKeyFingerprint: null,
+        contentKeyFingerprint: null,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      };
+    });
     const restore = installAxiosFastifyAdapter({ app, origin: 'http://account.test' });
     const output = captureConsoleText();
     try {
@@ -251,10 +330,11 @@ describe('trusted auth api-tokens commands', () => {
       await handleAuthCommand(['api-tokens', 'list', '--json']);
       expect(JSON.parse(output.text())).toMatchObject({ ok: false, error: { code: 'present_user_required' } });
       expect(requests).toEqual(['list', 'revoke', 'revoke-all', 'list']);
+      expect(currentnessReads).toBe(2);
     } finally { output.restore(); restore(); await app.close(); }
   });
 
-  it.each(['legacy', 'dataKey', 'plain', 'stale', 'wrongPair', 'conflict', 'evidenceLimit', 'evidenceUnavailable', 'mismatch', 'malformed', 'noEffect503', 'lostAfterCommit', 'cancelled'] as const)('enforces content-key issuance and recovery with %s credentials', async (kind) => {
+  it.each(['legacy', 'dataKey', 'plain', 'censusModeMismatch', 'stale', 'wrongPair', 'conflict', 'evidenceLimit', 'evidenceUnavailable', 'mismatch', 'malformed', 'noEffect503', 'lostAfterCommit', 'cancelled'] as const)('enforces content-key issuance and recovery with %s credentials', async (kind) => {
     const app = fastify();
     const secret = new Uint8Array(32).fill(7);
     const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
@@ -281,7 +361,14 @@ describe('trusted auth api-tokens commands', () => {
     }));
     app.post('/v1/auth/api-tokens/create', async (request, reply) => {
       createCount++;
-      const body = request.body as { tokenId: string; encryption?: { access: unknown } };
+      const body = request.body as {
+        tokenId: string;
+        label: ReturnType<typeof storedPlainLabel> | {
+          content: { t: 'encrypted'; c: string };
+          recipients: Array<{ accountId: string; envelope: { encryptedDataKey: string; recipientContentPublicKeyFingerprint: string } }>;
+        };
+        encryption?: { access: unknown };
+      };
       captured = body.encryption ? { tokenId: body.tokenId, encryptionAccess: body.encryption.access } : undefined;
       if (kind === 'conflict') return reply.code(409).send({ error: 'api_token_id_conflict' });
       if (kind === 'evidenceLimit') {
@@ -300,7 +387,23 @@ describe('trusted auth api-tokens commands', () => {
       }
       if (kind === 'malformed') return { accepted: true };
       const tokenId = kind === 'mismatch' ? '12345678-1234-4234-8234-123456789abc' : captured!.tokenId;
-      return { token: `hap_v1_${tokenId}_${'A'.repeat(43)}`, apiToken: { ...TOKEN_SCOPE_FIELDS, tokenId, label: 'build', displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`, createdAt: '2026-09-05T00:00:00Z', expiresAt: null, lastUsedAt: null, hasEncryptionAccess: true, hasUnattendedTeamAccess: false } };
+      return {
+        token: `hap_v1_${tokenId}_${'A'.repeat(43)}`,
+        apiToken: {
+          ...TOKEN_SCOPE_FIELDS,
+          tokenId,
+          label: {
+            content: body.label.content,
+            recipientEnvelope: body.label.content.t === 'plain' ? null : body.label.recipients[0]!.envelope,
+          },
+          displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`,
+          createdAt: '2026-09-05T00:00:00Z',
+          expiresAt: null,
+          lastUsedAt: null,
+          hasEncryptionAccess: true,
+          hasUnattendedTeamAccess: false,
+        },
+      };
     });
     // Features fetch is a network boundary; retain its actual response parser
     // without intercepting unrelated runtime fetches such as Yoga's WASM load.
@@ -310,6 +413,20 @@ describe('trusted auth api-tokens commands', () => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.endsWith('/v1/features')) {
         return new Response(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_cli_token_home' } } }), { status: 200 });
+      }
+      if (url.endsWith('/v1/account/private-labels/recipient-census')) {
+        return Response.json({
+          contentEncryptionMode: kind === 'plain' || kind === 'censusModeMismatch' ? 'plain' : 'e2ee',
+          recipients: kind === 'plain' || kind === 'censusModeMismatch' ? [] : [{
+            account: { kind: 'account', accountId: 'account-one', firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: {
+              status: 'available',
+              contentPublicKey: encodeBase64(publicKey),
+              contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey),
+            },
+            envelopeStatus: 'missing',
+          }],
+        });
       }
       return await nativeFetch(...args);
     });
@@ -335,6 +452,12 @@ describe('trusted auth api-tokens commands', () => {
       if (kind === 'cancelled') controller.abort();
       await handleAuthCommand(['api-tokens', 'create', '--label', 'build', '--encryption', '--yes', '--json'], controller.signal);
       const result = JSON.parse(output.text());
+      if (kind === 'censusModeMismatch') {
+        expect(result).toMatchObject({ ok: false, error: { code: 'private_label_unavailable' } });
+        expect(createCount).toBe(0);
+        expect(output.text()).not.toContain('build');
+        return;
+      }
       if (kind === 'plain' || kind === 'stale' || kind === 'wrongPair') {
         expect(result).toMatchObject({ ok: false, error: { code: kind === 'plain' ? 'api_token_encryption_not_ready' : 'api_token_encryption_stale' } });
         expect(createCount).toBe(0); return;

@@ -6,11 +6,18 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
-import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema, createValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
-import { MachineSetupV1Schema } from './machineSetupV1.js';
-import { ManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
-import { MachineProvisionerContributionV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema } from './managedMachineV1.js';
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
+import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
+import {
+  SavedSecretResourceEnvelopeCensusRecipientV1Schema,
+  SavedSecretResourceRecipientEnvelopeV1Schema,
+} from '../../account/settings/savedSecretCatalogV1.js';
+import {
+  ManagedMachinePresetStoredContentCarrierV1Schema,
+  createManagedMachinePresetStoredContentV1Schema,
+  ManagedMachinePresetRecipientsV1Schema,
+} from './managedMachinePresetContentV1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1 } from './machineSetupV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -23,86 +30,247 @@ export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
   AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
 ]));
 export const ManagedMachinePresetLimitV1Schema = lazyZodSchema(() => z.strictObject({ maximum: z.number().check(z.int(), z.positive()) }));
-export const ManagedMachinePresetDelegatedAcquireV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('ready'), controller: z.optional(ManagedControllerAccessV1Schema),
-    provisioner: MachineProvisionerContributionV1Schema, reviewedFacts: ManagedConfigurationFactsV1Schema
-      .check(z.refine(facts => facts.launch.credentials === undefined, { message: 'Delegated review never exposes credential selections.' })) }),
-  z.strictObject({ kind: z.literal('unavailable'), code: ManagedRefusalCodeV1Schema }),
+/** Server computes the current Team audience/readiness; an existing preset binds mode to its stored author. */
+export const ManagedMachinePresetRecipientCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), presetId: z.optional(id()),
+  owner: ManagedMachinePresetOwnerV1Schema,
+  controller: z.optional(ManagedControllerV1Schema),
+  controllerPoolId: z.optional(MachinePoolIdV1Schema),
+}));
+export type ManagedMachinePresetRecipientCensusInputV1 = z.infer<
+  typeof ManagedMachinePresetRecipientCensusInputV1Schema
+>;
+export const ManagedMachinePresetRecipientCensusResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('ready'),
+    contentEncryptionMode: AccountEncryptionModeSchema,
+    recipients: z.array(SavedSecretResourceEnvelopeCensusRecipientV1Schema),
+  }),
+  z.strictObject({ kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema }),
 ]));
-export type ManagedMachinePresetDelegatedAcquireV1 = z.infer<typeof ManagedMachinePresetDelegatedAcquireV1Schema>;
+export type ManagedMachinePresetRecipientCensusResultV1 = z.infer<
+  typeof ManagedMachinePresetRecipientCensusResultV1Schema
+>;
 
-/** Launch snapshots carry future choices. The contributed validator owns the native choice shape. */
-function createManagedMachinePresetShapeV1<Choices extends z.core.$ZodType>(choices: Choices) {
-  return z.strictObject({
-    id: id(), homeId: id(), revision: revision(), name: id(),
+/** One caller-relative envelope is enough to open a personally owned preset. */
+function managedMachinePresetMigrationRecipientProjectionShape() {
+  return {
+    contentEncryptionMode: AccountEncryptionModeSchema,
+    content: ManagedMachinePresetStoredContentCarrierV1Schema,
+    recipientEnvelope: z.nullable(SavedSecretResourceRecipientEnvelopeV1Schema),
+  };
+}
+function refineManagedMachinePresetMigrationRecipientProjection(
+  value: Readonly<{ contentEncryptionMode: 'plain' | 'e2ee'; content: Readonly<{ t: 'plain' | 'encrypted' }>; recipientEnvelope: unknown | null }>,
+  context: z.core.$RefinementCtx,
+): void {
+  if ((value.contentEncryptionMode === 'plain') !== (value.content.t === 'plain')) {
+    context.addIssue({ code: 'custom', path: ['content'],
+      message: 'Preset migration projection content must match its persisted mode' });
+  }
+  if ((value.contentEncryptionMode === 'plain') !== (value.recipientEnvelope === null)) {
+    context.addIssue({ code: 'custom', path: ['recipientEnvelope'],
+      message: 'Only E2EE preset migration content carries the owner envelope' });
+  }
+}
+const ManagedMachinePresetMigrationReplacementV1Schema = lazyZodSchema(() => z.strictObject({
+  content: ManagedMachinePresetStoredContentCarrierV1Schema,
+  recipients: ManagedMachinePresetRecipientsV1Schema,
+}));
+
+const ManagedMachinePresetMigrationInventoryPresetV1Schema = lazyZodSchema(() => z.strictObject({
+  presetId: id(),
+  expectedRevision: revision(),
+  ...managedMachinePresetMigrationRecipientProjectionShape(),
+}).check(z.superRefine(refineManagedMachinePresetMigrationRecipientProjection)));
+
+const ManagedMachinePresetMigrationInventorySnapshotV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: id(),
+  presetId: id(),
+  ...managedMachinePresetMigrationRecipientProjectionShape(),
+}).check(z.superRefine(refineManagedMachinePresetMigrationRecipientProjection)));
+
+/**
+ * Captured server inventory for one Account's personally owned preset bodies
+ * and the independently persisted admitted snapshots which reference them.
+ * Team-owned source presets intentionally do not enter an Account-mode flip.
+ */
+export const ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema = lazyZodSchema(() => z.strictObject({
+  presets: z.array(ManagedMachinePresetMigrationInventoryPresetV1Schema),
+  snapshots: z.array(ManagedMachinePresetMigrationInventorySnapshotV1Schema),
+}).check(z.superRefine((value, context) => {
+  const presetIds = new Set<string>();
+  value.presets.forEach((preset, index) => {
+    if (presetIds.has(preset.presetId)) {
+      context.addIssue({ code: 'custom', path: ['presets', index, 'presetId'],
+        message: 'Account migration cannot inventory the same managed preset twice' });
+    }
+    presetIds.add(preset.presetId);
+  });
+  const managedIds = new Set<string>();
+  value.snapshots.forEach((snapshot, index) => {
+    if (managedIds.has(snapshot.managedId)) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'managedId'],
+        message: 'Account migration cannot inventory the same retained managed snapshot twice' });
+    }
+    managedIds.add(snapshot.managedId);
+    if (!presetIds.has(snapshot.presetId)) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'presetId'],
+        message: 'A retained managed snapshot must belong to an inventoried personal preset' });
+    }
+  });
+})));
+export type ManagedMachinePresetAccountEncryptionMigrationInventoryV1 = Readonly<
+  z.infer<typeof ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema>
+>;
+
+/**
+ * Exact source-revision and retained-snapshot replacements for the Account
+ * transition transaction. Snapshot content has no revision: controller reports
+ * replace it without incrementing intentRevision, so the captured opaque tuple
+ * itself is the currentness fence.
+ */
+export const AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema = lazyZodSchema(() => z.strictObject({
+  presets: z.array(z.strictObject({
+    presetId: id(),
+    expectedRevision: revision(),
+    replacement: ManagedMachinePresetMigrationReplacementV1Schema,
+  })),
+  snapshots: z.array(z.strictObject({
+    managedId: id(),
+    presetId: id(),
+    expectedContentEncryptionMode: AccountEncryptionModeSchema,
+    expectedContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+    expectedRecipientEnvelope: z.nullable(SavedSecretResourceRecipientEnvelopeV1Schema),
+    replacement: ManagedMachinePresetMigrationReplacementV1Schema,
+  })),
+}).check(z.superRefine((value, context) => {
+  const presetIds = new Set<string>();
+  value.presets.forEach((preset, index) => {
+    if (presetIds.has(preset.presetId)) {
+      context.addIssue({ code: 'custom', path: ['presets', index, 'presetId'],
+        message: 'Account migration cannot replace the same managed preset twice' });
+    }
+    presetIds.add(preset.presetId);
+  });
+  const managedIds = new Set<string>();
+  value.snapshots.forEach((snapshot, index) => {
+    if (managedIds.has(snapshot.managedId)) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'managedId'],
+        message: 'Account migration cannot replace the same retained managed snapshot twice' });
+    }
+    managedIds.add(snapshot.managedId);
+    if (!presetIds.has(snapshot.presetId)) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'presetId'],
+        message: 'A retained managed snapshot replacement requires its source preset replacement' });
+    }
+    const expectedPlain = snapshot.expectedContentEncryptionMode === 'plain';
+    if (expectedPlain !== (snapshot.expectedContent.t === 'plain')) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'expectedContent'],
+        message: 'Retained managed snapshot content must match its persisted mode' });
+    }
+    if (expectedPlain !== (snapshot.expectedRecipientEnvelope === null)) {
+      context.addIssue({ code: 'custom', path: ['snapshots', index, 'expectedRecipientEnvelope'],
+        message: 'Only an E2EE retained snapshot carries the owner envelope' });
+    }
+  });
+})));
+export type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 = Readonly<
+  z.infer<typeof AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema>
+>;
+/** Structural fields only; semantic creation/delegation checks belong to the refined schema below. */
+export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$ZodType>(_choices: Choices) {
+  return {
+    id: id(), homeId: id(), revision: revision(),
     owner: ManagedMachinePresetOwnerV1Schema,
-    launch: z.optional(createValidatedLaunchSnapshotV1Schema(choices)),
+    /** Persisted owner mode: readers must never substitute the viewer's Account mode. */
+    contentEncryptionMode: AccountEncryptionModeSchema,
+    content: ManagedMachinePresetStoredContentCarrierV1Schema,
+    recipients: ManagedMachinePresetRecipientsV1Schema,
     controller: z.optional(ManagedControllerV1Schema),
     controllerPoolId: z.optional(MachinePoolIdV1Schema),
-    /** Author-saved presentation content; never grants access to the controller's metadata. */
-    controllerDisplayName: z.optional(id()),
-    setup: z.optional(MachineSetupV1Schema),
     retention: mini.optional(ReusableRetentionV1Schema),
     wakeOnAcceptedMessage: z.optional(z.boolean()),
     /** Explicit opt-in; visibility alone never grants Team acquire authority. */
     teamAcquireDelegated: z.optional(z.boolean()),
-    delegatedAcquire: z.optional(ManagedMachinePresetDelegatedAcquireV1Schema),
     simultaneousLimit: z.optional(ManagedMachinePresetLimitV1Schema),
     archivedAt: z.optional(z.number().check(z.nonnegative())),
-  });
+  };
 }
 
-/** Account creation may be portable; explicit delegation retains its installed controller. */
-function hasValidPresetParts(preset: { launch?: unknown; controller?: unknown; controllerPoolId?: unknown; setup?: unknown;
-  teamAcquireDelegated?: boolean; delegatedAcquire?: unknown }): boolean {
+/** Unrefined structural schema for owner-local persistence/projection code. */
+export function createManagedMachinePresetV1BaseSchema<Choices extends z.core.$ZodType>(choices: Choices) {
+  return z.strictObject(createManagedMachinePresetV1BaseShape(choices));
+}
+
+/** Preset persistence is opaque: refine only its mode tag and public structural relationships. */
+function hasValidPresetParts(preset: { controller?: unknown; controllerPoolId?: unknown;
+  content?: unknown; contentEncryptionMode?: unknown; teamAcquireDelegated?: boolean }): boolean {
+  const content = preset.content;
+  if (content === undefined || typeof content !== 'object' || content === null || !('t' in content)) return false;
+  const tag = (content as { t?: unknown }).t;
+  if ((tag === 'plain' && preset.contentEncryptionMode !== 'plain')
+    || (tag === 'encrypted' && preset.contentEncryptionMode !== 'e2ee')) return false;
   return (!(preset.controller !== undefined && preset.controllerPoolId !== undefined))
-    && (preset.controller === undefined && preset.controllerPoolId === undefined || preset.launch !== undefined)
-    && (preset.launch !== undefined || preset.setup !== undefined)
-    && (!(preset.teamAcquireDelegated || preset.delegatedAcquire !== undefined)
+    && (!preset.teamAcquireDelegated
       || preset.controller !== undefined || preset.controllerPoolId !== undefined);
 }
 
 export function createManagedMachinePresetV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
-  return createManagedMachinePresetShapeV1(choices).check(z.refine(hasValidPresetParts,
+  return createManagedMachinePresetV1BaseSchema(choices).check(z.refine(hasValidPresetParts,
     { message: 'A Preset requires complete creation or setup.' }));
 }
 
-/** Transport validates the envelope; save/use additionally validate the selected contribution. */
-export const ManagedMachinePresetV1Schema = lazyZodSchema(() => createManagedMachinePresetV1Schema(PluginJsonValueV2Schema));
-export const ManagedMachinePresetV1ReadSchema = createStoredReadSchema(ManagedMachinePresetV1Schema);
-export type ManagedMachinePresetV1 = z.infer<typeof ManagedMachinePresetV1Schema>;
-
-export type ManagedMachinePresetCreationV1 = {
-  launch: NonNullable<ManagedMachinePresetV1['launch']>;
-  controller?: NonNullable<ManagedMachinePresetV1['controller']>;
-  controllerPoolId?: NonNullable<ManagedMachinePresetV1['controllerPoolId']>;
-};
-
-/** Presence guard for typed Preset values and drafts; boundary schemas own validation. */
-export function hasManagedMachinePresetCreationV1<T extends Readonly<{
-  launch?: ManagedMachinePresetCreationV1['launch'] | null;
-  controller?: ManagedMachinePresetCreationV1['controller'] | null;
-}>>(preset: T | null | undefined): preset is T & ManagedMachinePresetCreationV1 {
-  return preset?.launch != null && preset.controller !== null;
+/**
+ * Client-side persisted reader composes the private-content reader for legacy
+ * normalization. Server storage/admission uses the opaque base/refined schemas above.
+ */
+function createManagedMachinePresetV1ReadSchema<Choices extends z.core.$ZodType>(choices: Choices) {
+  return z.strictObject({
+    ...createManagedMachinePresetV1BaseShape(choices),
+    content: createStoredReadSchema(createManagedMachinePresetStoredContentV1Schema(choices)),
+  }).check(z.refine(hasValidPresetParts, { message: 'A Preset requires complete creation or setup.' }));
 }
 
+/** Transport validates the envelope; save/use additionally validate the selected contribution. */
+export const ManagedMachinePresetV1BaseSchema = lazyZodSchema(() =>
+  createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema));
+export const ManagedMachinePresetV1Schema = lazyZodSchema(() => createManagedMachinePresetV1Schema(PluginJsonValueV2Schema));
+export const ManagedMachinePresetV1ReadSchema = lazyZodSchema(() =>
+  createManagedMachinePresetV1ReadSchema(PluginJsonValueV2Schema));
+export type ManagedMachinePresetV1 = z.infer<typeof ManagedMachinePresetV1Schema>;
+/** Exact acquisition routing is ephemeral; saved Presets never expose controller custody. */
+export const MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 = '/v1/machines/presets/resolve-acquire';
+export const ManagedMachinePresetAcquireRoutingInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), id: id(), revision: revision(), controller: ManagedControllerV1Schema,
+}));
+export type ManagedMachinePresetAcquireRoutingInputV1 = z.infer<typeof ManagedMachinePresetAcquireRoutingInputV1Schema>;
+export const ManagedMachinePresetAcquireRoutingResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('resolved'), controller: ManagedControllerV1Schema, controllerAccess: ManagedControllerAccessV1Schema }),
+  z.strictObject({ kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema }),
+]));
+export type ManagedMachinePresetAcquireRoutingResultV1 = z.infer<typeof ManagedMachinePresetAcquireRoutingResultV1Schema>;
+
+/** Structural selection retained by the initiating host until controller/Pool binding. */
+export type ManagedMachinePresetAcquireOriginV1 = Pick<ManagedMachinePresetV1,
+  'id' | 'homeId' | 'revision' | 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage'>;
+
 export const ManagedMachinePresetCreateInputV1Schema = lazyZodSchema(() => z.omit(
-  createManagedMachinePresetShapeV1(PluginJsonValueV2Schema), { revision: true, archivedAt: true, delegatedAcquire: true },
+  createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema), { revision: true, archivedAt: true },
 ).check(z.refine(hasValidPresetParts, { message: 'A Preset requires complete creation or setup.' })));
 export const ManagedMachinePresetGetInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), id: id() }));
 export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema), search: z.optional(z.string()),
+  homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema),
   includeArchived: z.optional(z.boolean()), cursor: z.optional(id()),
 }));
 export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), id: id(), expectedRevision: revision(),
   patch: z.strictObject({
-    name: z.optional(id()),
-    launch: mini.optional(mini.nullable(createValidatedLaunchSnapshotV1Schema(PluginJsonValueV2Schema))),
+    contentEncryptionMode: z.optional(AccountEncryptionModeSchema),
+    content: mini.optional(mini.nullable(ManagedMachinePresetStoredContentCarrierV1Schema)),
+    recipients: mini.optional(ManagedMachinePresetRecipientsV1Schema),
     controller: mini.optional(mini.nullable(ManagedControllerV1Schema)),
     controllerPoolId: mini.optional(mini.nullable(MachinePoolIdV1Schema)),
-    controllerDisplayName: z.optional(z.nullable(id())),
-    setup: z.optional(z.nullable(MachineSetupV1Schema)),
     retention: mini.optional(mini.nullable(ReusableRetentionV1Schema)),
     wakeOnAcceptedMessage: z.optional(z.nullable(z.boolean())),
     teamAcquireDelegated: z.optional(z.boolean()),

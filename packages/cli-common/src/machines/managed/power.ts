@@ -1,4 +1,4 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerPowerResultV1Schema, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ManagedNativeInvocation, ManagedNativeInvocationIO } from './reconcile.js';
@@ -10,7 +10,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
 export async function executeManagedMachinePowerIntent(input: Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     invoke: ManagedNativeInvocation;
     io?: ManagedNativeInvocationIO;
     guestStartup?: Readonly<{ channel: 'stable' | 'preview' | 'dev'; transport: MachineProvisionerContributionV1['bootstrapTransport'] }>;

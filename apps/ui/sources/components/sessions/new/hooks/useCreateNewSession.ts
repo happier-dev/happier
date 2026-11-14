@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import * as React from 'react';
@@ -177,7 +178,7 @@ import { persistCreatedSessionAuthoringOrigin } from '@/components/sessions/new/
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { readSpawnAttemptCustodyState } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import { managedMachineCreationIntent } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { isDeferredManagedMachineAuthorPresetDraft, readManagedMachineSelectionReceipt, readManagedMachineSelectionName, managedMachineCreationIntent } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { NewSessionPreparedInstructions } from '../modules/newSessionLaunchIntent';
 import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
@@ -620,7 +621,7 @@ export function useCreateNewSession(params: Readonly<{
     const managedOperationId = params.managedMachineAcquisition?.operation?.operationId;
     const managedOperationServerId = params.targetAccountScope?.serverId ?? params.draftScope?.serverId ?? params.targetServerId ?? null;
     const managedOperationAccountId = (params.targetAccountScope ?? params.draftScope)?.accountId;
-    const managedOperationControllerId = params.managedMachineSelection?.receipt.controller?.machineId;
+    const managedOperationControllerId = readManagedMachineSelectionReceipt(params.managedMachineSelection)?.controller?.machineId;
     const managedAcquisitionMatchesSelection = Boolean(params.managedMachineSelection && params.managedMachineAcquisition
         && sameStrictJsonValue(params.managedMachineSelection.selection, params.managedMachineAcquisition.selection));
     const readManagedOperation = React.useCallback(() => {
@@ -826,7 +827,7 @@ export function useCreateNewSession(params: Readonly<{
             const progress = (value: ManagedMachineCreationProgress) => {
                 if (isCurrent()) setManagedProgress({ signature, value });
             };
-            if (managedDraft.archiveEffect !== 'keep' && !managedDraft.receipt.retentionCapabilities.supportedIntents.includes(managedDraft.archiveEffect)) {
+            if (!isDeferredManagedMachineAuthorPresetDraft(managedDraft) && managedDraft.archiveEffect !== 'keep' && !managedDraft.receipt.retentionCapabilities.supportedIntents.includes(managedDraft.archiveEffect)) {
                 progress({ kind: 'failed', code: 'native_intent_unsupported' });
                 reportAfterCreatedSettlement({ status: 'rejected' });
                 return;
@@ -870,7 +871,7 @@ export function useCreateNewSession(params: Readonly<{
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
-                if (!createsMachineOnly && !acquisition.managedId && (!await collectAgentInstallConsent(managedDraft.receipt.launch.name) || !isCurrent())) {
+                if (!createsMachineOnly && !acquisition.managedId && (!await collectAgentInstallConsent(readManagedMachineSelectionName(managedDraft) ?? t('managedMachines.picker.newMachine')) || !isCurrent())) {
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
@@ -902,7 +903,7 @@ export function useCreateNewSession(params: Readonly<{
                     retryInstallation: opts.managedMachineRetryInstallation,
                     setupRecovery: opts.managedMachineSetupRecovery,
                     reviewDelete: census => Modal.confirm(t('managedMachines.actions.deleteMachine'), [
-                        managedDraft.receipt.launch.name, t('managedMachines.dependencies.help'),
+                        readManagedMachineSelectionName(managedDraft) ?? t('managedMachines.picker.newMachine'), t('managedMachines.dependencies.help'),
                         census.references.length ? census.references.map(reference => reference.name || reference.id).join('\n')
                             : t('managedMachines.dependencies.empty'),
                         ...(census.coverage === 'partial' ? [t('managedMachines.dependencies.partial')] : []),
@@ -933,7 +934,7 @@ export function useCreateNewSession(params: Readonly<{
                         presentMachineAgentStartRefusal({
                             code: result.code,
                             agentTitle: resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title,
-                            machineName: machine ? getMachineSentenceName(machine) : managedDraft.receipt.launch.name,
+                            machineName: machine ? getMachineSentenceName(machine) : readManagedMachineSelectionName(managedDraft) ?? t('managedMachines.picker.newMachine'),
                             setupOwnerName: !machine ? null
                                 : machine.access?.role === 'use' ? machine.access.custodian.displayName?.trim() || null : undefined,
                             setupTarget: presentsInPlaceRef.current ? null : { machineId, serverId: scope.serverId },
@@ -2053,7 +2054,7 @@ export function useCreateNewSession(params: Readonly<{
                 presentedFirstTurn.observe(actionResult);
                 presentedFirstTurn.settle({ final: false });
                 if (!actionResult.ok) {
-                    if (actionResult.errorCode === 'approval_rejected' || actionResult.errorCode === 'approval_canceled'
+                    if (isActionApprovalDeclinedErrorCode(actionResult.errorCode)
                         || (observedCanonicalSettlement && actionResult.errorCode === 'action_cancelled')) {
                         endLaunchAttemptWithoutSession();
                         if (manualActionCustody) await completeManualSessionSpawnNewActionCustody(manualActionCustody);

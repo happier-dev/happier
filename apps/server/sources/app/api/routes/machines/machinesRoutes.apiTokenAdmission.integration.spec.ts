@@ -18,6 +18,7 @@ import { encodeBase64 } from "@happier-dev/protocol/crypto/base64";
 import { signMachineInstallationProof } from "@happier-dev/protocol/machines/identity/installationIdentity";
 
 import { machinesRoutes } from "./machinesRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -133,7 +134,7 @@ describe("machinesRoutes API-token admission (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Machine discovery",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Machine discovery"),
             grant: {
                 v: 1,
                 actions: { families: [], ids: ["session.spawn_new"] },
@@ -300,7 +301,7 @@ describe("machinesRoutes API-token admission (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Runner discovery",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Runner discovery"),
         });
         const app = createTestApp();
         await app.ready();

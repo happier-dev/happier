@@ -18,7 +18,7 @@ import { MachineGuardActionIdSchema, MACHINE_GUARD_ACTION_INPUT_SCHEMAS } from '
 import { MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
 import { MachineAccessHttpActionIdSchema } from '../../specs/machine/access.js';
-import { MachinePoolViewV1Schema } from '../../../machines/pools/v1.js';
+import { MachinePoolRoutingViewV1Schema } from '../../../machines/pools/v1.js';
 import { resolveMachinePoolWorkerCandidateV1 } from '../../../machines/pools/machinePoolWorkerPlacement.js';
 import { MachinePoolActionIdV1Schema, MachinePoolActionInputSchemasV1 } from '../../../machines/pools/actionsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS, LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, type LocalDaemonServiceActionId } from '../../specs/localDaemonService.js';
@@ -217,7 +217,7 @@ export async function dispatchMachineControls2(inv: Pick<CoreInvocation, 'deps' 
             const pool = await executeHostChild('machines.pools.get', { poolId: request.poolId }, workerContext);
             if (!pool.ok) return pool;
             const result = await resolveMachinePoolWorkerCandidateV1({ request,
-              pool: MachinePoolViewV1Schema.parse(pool.result),
+              pool: MachinePoolRoutingViewV1Schema.parse(pool.result),
               status: (input) => executeHostChild('projects.worker.status', input, workerContext),
               ...(ctx.signal ? { signal: ctx.signal } : {}),
             });

@@ -9,6 +9,7 @@
 import { enrollmentPollingBackoffMs } from '@happier-dev/cli-common/homeEnrollment';
 import type { AccountServiceDirectoryAdoptionTarget } from '@happier-dev/cli-common/accountService';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import type { CliAccountServiceRestrictedCredential as SessionCliAccountServiceRestrictedCredential } from './cliAccountServiceSession';
 
 export type CliAccountServiceRequestedMethod =
   | Readonly<{ kind: 'key'; action?: 'login' | 'provision'; mode?: 'keyed' }>
@@ -29,9 +30,7 @@ export type CliAccountServiceTarget = Readonly<{
   serverIdentityId: string;
 }>;
 
-export type CliAccountServiceRestrictedCredential = Readonly<{
-  token: string;
-}>;
+export type CliAccountServiceRestrictedCredential = SessionCliAccountServiceRestrictedCredential;
 
 export type CliAccountServiceHomeEntryOutcome =
   | Readonly<{

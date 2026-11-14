@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, OwnServerEnvironmentMigrationPolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, OwnServerEnvironmentMigrationPolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -15,9 +15,9 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '../secrets/machineSecretGrantV1.js';
 
-export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
-export type { EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
-export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, EnvironmentVariableBindingInputV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+export type { EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingGrantReferenceV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
+export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentSecretBindingV1, EnvironmentSecretBindingInputV1, EnvironmentSecretBindingIdentityV1,
     EnvironmentDataRoleAddressV1 } from '@happier-dev/protocol';
 export { DeploymentCreationDefaultsV1Schema, DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentCreationDefaultSourceV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
@@ -86,7 +86,7 @@ export function applyOwnServerEnvironmentConfigurationPatchV1(current: OwnServer
     return next;
 }
 
-export const DeploymentEnvironmentContentV1Schema = z.strictObject({
+const environmentContentShape = {
     name: text, retainPreviousDeployments: DeploymentRetainPreviousDeploymentsV1Schema,
     definition: DeploymentEnvironmentDefinitionV1Schema, bindings: z.array(EnvironmentSecretBindingV1Schema),
     ownServer: z.optional(OwnServerEnvironmentConfigurationV1Schema),
@@ -97,9 +97,19 @@ export const DeploymentEnvironmentContentV1Schema = z.strictObject({
     previewProvenance: z.optional(DeploymentPreviewProvenanceV1Schema),
     /** Existing Workflow custody locates the authenticated branch-create captures on PR close. */
     previewCreationRunId: z.optional(WorkflowRunIdV1Schema),
-}).check(z.refine(content => new Set(content.bindings.map(environmentSecretBindingIdentityV1)).size === content.bindings.length,
-{ message: 'Binding purpose identities must be unique.' }));
-export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmentContentV1Schema>;
+};
+const uniqueBindings = z.refine((content: { bindings: readonly EnvironmentSecretBindingV1[] }) =>
+    new Set(content.bindings.map(environmentSecretBindingIdentityV1)).size === content.bindings.length,
+    { message: 'Binding purpose identities must be unique.' });
+const uniqueGrantRefs = z.refine((content: { bindings: readonly EnvironmentSecretBindingV1[] }) => {
+    const refs = content.bindings.flatMap(binding => binding.purpose === 'variable' && binding.grantRef ? [binding.grantRef] : []);
+    return new Set(refs).size === refs.length;
+}, { message: 'Variable Machine-grant references must be unique.' });
+export const DeploymentEnvironmentContentV1Schema = z.strictObject(environmentContentShape).check(uniqueBindings, uniqueGrantRefs);
+/** The stored read boundary preserves legacy bindings; a new content write still requires opaque references. */
+export const DeploymentEnvironmentContentStoredReadV1Schema = z.strictObject({ ...environmentContentShape,
+    bindings: z.array(EnvironmentSecretBindingStoredReadV1Schema) }).check(uniqueBindings, uniqueGrantRefs);
+export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmentContentStoredReadV1Schema>;
 
 /** The credential writer also authors backup and data-role references. Combined definition
  * updates preserve them, alongside the other operational owners' rows. */
@@ -180,7 +190,7 @@ export function isDeploymentEnvironmentBindingsOnlyUpdateV1(
 ): boolean {
     return sameStrictJsonValue({ ...previous, bindings: [] }, { ...candidate, bindings: [] });
 }
-export const DeploymentEnvironmentStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentEnvironmentContentV1Schema);
+export const DeploymentEnvironmentStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentEnvironmentContentStoredReadV1Schema);
 export type DeploymentEnvironmentStoredContentV1 = z.infer<typeof DeploymentEnvironmentStoredContentV1Schema>;
 
 export { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentOwnerV1Schema };

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { encodeBase64 } from "privacy-kit";
 import tweetnacl from "tweetnacl";
@@ -114,7 +115,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const team = await db.team.create({ data: { name: "Initial grant cost" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "owner" } });
         const groups = Array.from({ length: 120 }, (_, index) => ({
-            id: crypto.randomUUID(), teamId: team.id, name: `Group ${index}`, nameKey: `group-${index}`,
+            id: crypto.randomUUID(), teamId: team.id, name: storedPlainPrivateLabel(`Group ${index}`),
         }));
         await db.teamGroup.createMany({ data: groups });
         await inTx(async tx => {
@@ -248,7 +249,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const membership = await db.teamMembership.findUniqueOrThrow({
             where: { teamId_accountId: { teamId: fixture.team.id, accountId: fixture.collaborator.id } },
         });
-        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: "Initial", nameKey: "initial" } });
+        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Initial") } });
         await db.teamGroupMembership.create({ data: {
             teamId: fixture.team.id, teamGroupId: group.id, teamMembershipId: membership.id,
         } });
@@ -288,7 +289,7 @@ describe("Session access grant service (SQLite integration)", () => {
         async (kind) => {
             const fixture = await createFixture();
             const group = kind === "group"
-                ? await db.teamGroup.create({ data: { teamId: fixture.team.id, name: "Initial Follow", nameKey: `initial-follow-${crypto.randomUUID()}` } })
+                ? await db.teamGroup.create({ data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Initial Follow") } })
                 : null;
             if (group) {
                 const membership = await db.teamMembership.findUniqueOrThrow({
@@ -915,7 +916,7 @@ describe("Session access grant service (SQLite integration)", () => {
     it("keeps Group default-rule intent independent of access materialization", async () => {
         const fixture = await createFixture();
         const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: fixture.team.id, accountId: fixture.collaborator.id } } });
-        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: "Group", nameKey: "group" } });
+        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Group") } });
         await db.teamGroupMembership.create({ data: { teamId: fixture.team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         await db.account.update({ where: { id: fixture.collaborator.id }, data: { sessionAutoFollowGroup: true, sessionAutoFollowTeam: false } });
         expect(await inTx((tx) => putSessionAccessGrantInTx(tx, {
@@ -1270,7 +1271,7 @@ describe("Session access grant service (SQLite integration)", () => {
         await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: teamManager.id, role: "member" } });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: fixture.session.id, teamId: otherTeam.id, accessLevel: "admin", effectiveAt: new Date() } });
         const groupMembership = await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: groupManager.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: "Managers", nameKey: "managers" } });
+        const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: storedPlainPrivateLabel("Managers") } });
         await db.teamGroupMembership.create({ data: { teamId: fixture.team.id, teamGroupId: group.id, teamMembershipId: groupMembership.id } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: fixture.session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
         await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: fixture.session.id, createdByAccountId: fixture.owner.id, accountId: reader.id, accessLevel: "view" } });
@@ -1404,8 +1405,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const group = await db.teamGroup.create({
             data: {
                 teamId: fixture.team.id,
-                name: "Grant removal group",
-                nameKey: `grant-removal-${crypto.randomUUID()}`,
+                name: storedPlainPrivateLabel("Grant removal group"),
             },
         });
         await db.sessionGrant.create({
@@ -1434,8 +1434,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const group = await db.teamGroup.create({
             data: {
                 teamId: fixture.team.id,
-                name: "Archived grant removal group",
-                nameKey: `archived-grant-removal-${crypto.randomUUID()}`,
+                name: storedPlainPrivateLabel("Archived grant removal group"),
                 archivedAt: new Date(),
             },
         });
@@ -1745,7 +1744,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const fixture = await createFixture();
         const unrelatedTeam = await db.team.create({ data: { name: `Unrelated ${crypto.randomUUID()}` } });
         const unrelatedGroup = await db.teamGroup.create({
-            data: { teamId: unrelatedTeam.id, name: "Unrelated group", nameKey: `unrelated-${crypto.randomUUID()}` },
+            data: { teamId: unrelatedTeam.id, name: storedPlainPrivateLabel("Unrelated group") },
         });
 
         expect(await inTx((tx) => putSessionAccessGrantInTx(tx, {
@@ -2008,8 +2007,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const externalGroup = await db.teamGroup.create({
             data: {
                 teamId: externalTeam.id,
-                name: "Inactive external group",
-                nameKey: `inactive-${crypto.randomUUID()}`,
+                name: storedPlainPrivateLabel("Inactive external group"),
                 archivedAt: new Date(),
             },
         });
@@ -2110,8 +2108,7 @@ describe("Session access grant service (SQLite integration)", () => {
         const archivedGroup = await db.teamGroup.create({
             data: {
                 teamId: fixture.team.id,
-                name: "Retired group",
-                nameKey: `retired-${crypto.randomUUID()}`,
+                name: storedPlainPrivateLabel("Retired group"),
                 archivedAt: new Date(),
             },
         });

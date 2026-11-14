@@ -1,6 +1,8 @@
 import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import tweetnacl from 'tweetnacl';
 
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { assertOrganizationPolicyEndpointAllowed, type OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { configuration } from '@/configuration';
@@ -31,7 +33,11 @@ export type CliAccountServiceSelectionAuthority = Pick<
   'endpoint' | 'serverIdentityId' | 'canonicalServerUrl'
 >;
 
-export type CliAccountServiceRestrictedCredential = Readonly<{ token: string }>;
+export type CliAccountServiceRestrictedCredential = Readonly<{
+  token: string;
+  /** Present only after a keyed Account authentication; Plain Accounts retain no key. */
+  accountContentPrivateKey?: Uint8Array;
+}>;
 
 export type CliAccountServiceAuthenticationOutcome =
   | Readonly<{ kind: 'authenticated'; credential: CliAccountServiceRestrictedCredential }>
@@ -80,6 +86,17 @@ type StoredCliAccountServiceSessionV1 = Readonly<{
   v: 1;
   selectedService: CliAccountServiceSelectionAuthority;
   restrictedCredential: CliAccountServiceRestrictedCredential | null;
+}>;
+
+type PersistedCliAccountServiceRestrictedCredentialV1 = Readonly<{
+  token: string;
+  accountContentPrivateKey?: string;
+}>;
+
+type PersistedCliAccountServiceSessionV1 = Readonly<{
+  v: 1;
+  selectedService: CliAccountServiceSelectionAuthority;
+  restrictedCredential: PersistedCliAccountServiceRestrictedCredentialV1 | null;
 }>;
 
 type PendingAuthentication = {
@@ -208,10 +225,61 @@ function normalizeSelectionAuthority(value: unknown): CliAccountServiceSelection
   return { endpoint, serverIdentityId, canonicalServerUrl };
 }
 
+/** Validates live key material before it can enter the protected session owner. */
 function normalizeCredential(value: unknown): CliAccountServiceRestrictedCredential | null {
-  if (!isRecord(value) || !hasExactKeys(value, ['token'])) return null;
+  if (!isRecord(value) || (!hasExactKeys(value, ['token'])
+    && !hasExactKeys(value, ['token', 'accountContentPrivateKey']))) return null;
   if (typeof value.token !== 'string' || !value.token.trim()) return null;
-  return { token: value.token };
+  if (!('accountContentPrivateKey' in value)) return { token: value.token };
+  if (!(value.accountContentPrivateKey instanceof Uint8Array)
+    || value.accountContentPrivateKey.byteLength !== tweetnacl.box.secretKeyLength) {
+    return null;
+  }
+  return {
+    token: value.token,
+    accountContentPrivateKey: new Uint8Array(value.accountContentPrivateKey),
+  };
+}
+
+/** The persisted protected-record form encodes binary Account material as canonical base64. */
+function parsePersistedCredential(value: unknown): CliAccountServiceRestrictedCredential | null {
+  if (!isRecord(value) || (!hasExactKeys(value, ['token'])
+    && !hasExactKeys(value, ['token', 'accountContentPrivateKey']))) return null;
+  if (typeof value.token !== 'string' || !value.token.trim()) return null;
+  if (!('accountContentPrivateKey' in value)) return { token: value.token };
+  if (typeof value.accountContentPrivateKey !== 'string') return null;
+  try {
+    const accountContentPrivateKey = decodeBase64(value.accountContentPrivateKey);
+    if (
+      accountContentPrivateKey.byteLength !== tweetnacl.box.secretKeyLength
+      || encodeBase64(accountContentPrivateKey) !== value.accountContentPrivateKey
+    ) {
+      return null;
+    }
+    return { token: value.token, accountContentPrivateKey };
+  } catch {
+    return null;
+  }
+}
+
+function persistCredential(
+  credential: CliAccountServiceRestrictedCredential,
+): PersistedCliAccountServiceRestrictedCredentialV1 {
+  return {
+    token: credential.token,
+    ...(credential.accountContentPrivateKey
+      ? { accountContentPrivateKey: encodeBase64(credential.accountContentPrivateKey) }
+      : {}),
+  };
+}
+
+function persistStoredRecord(record: StoredCliAccountServiceSessionV1): PersistedCliAccountServiceSessionV1 {
+  return {
+    ...record,
+    restrictedCredential: record.restrictedCredential
+      ? persistCredential(record.restrictedCredential)
+      : null,
+  };
 }
 
 function parseStoredRecord(value: unknown): StoredCliAccountServiceSessionV1 | null {
@@ -222,7 +290,7 @@ function parseStoredRecord(value: unknown): StoredCliAccountServiceSessionV1 | n
   const selectedService = normalizeSelectionAuthority(value.selectedService);
   const restrictedCredential = value.restrictedCredential === null
     ? null
-    : normalizeCredential(value.restrictedCredential);
+    : parsePersistedCredential(value.restrictedCredential);
   if (!selectedService || (value.restrictedCredential !== null && !restrictedCredential)) return null;
 
   return { v: 1, selectedService, restrictedCredential };
@@ -353,7 +421,7 @@ export function createCliAccountServiceSessionOwner(input: Readonly<{
     try {
       await writeProtectedLocalStateFileAtomic(
         recordPath,
-        JSON.stringify(record),
+        JSON.stringify(persistStoredRecord(record)),
         protectedLocalStateOptions,
       );
     } catch (error) {

@@ -1,4 +1,5 @@
-import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, type MachineSetupApplyInputV1,
+  type MachineSetupPlanInputV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,14 +17,20 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
     const current = MachineSetupPlanResultV1Schema.safeParse(planned.result);
     if (!current.success) return fail('invalid_action_output');
     const { preset, setup } = input.creation;
-    const source = { kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision, setup };
+    // The exact opened copy remains local only, where the creation snapshot
+    // comparison belongs. Actions/Home carry the persisted author mode and
+    // address, never its private setup body.
+    const localSource = { kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision,
+      contentEncryptionMode: preset.contentEncryptionMode, setup };
+    const opaqueSource = { kind: 'accountPresetOpaque' as const, presetId: preset.id, presetRevision: preset.revision,
+      contentEncryptionMode: preset.contentEncryptionMode };
     const direct = current.data.sources.find(copy => copy.kind === 'direct');
     // A creation proof cannot absorb unrelated current setup intent.
     if (!direct || current.data.sources.some(copy => copy.kind !== 'direct'
-        && !matchesMachineSetupCreationSourcesV1([copy, direct], input.creation)))
+        && !sameStrictJsonValue(copy, opaqueSource)))
         return fail('plan_changed');
-    const sources = [current.data.sources.find(copy => copy.kind === 'accountPreset') ?? source, direct];
-    if (!matchesMachineSetupCreationSourcesV1(sources, input.creation)) return fail('plan_changed');
+    if (!matchesMachineSetupCreationSourcesV1([localSource, direct], input.creation)) return fail('plan_changed');
+    const sources: MachineSetupSourceApplyV1 = [opaqueSource, direct];
 
     const effects = await input.readPlan({ ...input.target, sources, mode: 'effects' });
     if (!effects.ok) return effects;

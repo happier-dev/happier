@@ -13,6 +13,7 @@ import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/proto
 import { SESSION_FOLLOW_RULES_ROUTE_V1, ListSessionFollowRulesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountMigrationCensusHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -27,6 +28,8 @@ import {
 import { type AccountEncryptionMigrateRequest,
     type AccountEncryptionMigrateAutomationsInventoryResponse, AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { type ArtifactAccountEncryptionMigrationInventoryV1} from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import {
     decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -123,6 +126,7 @@ async function mount(params: Readonly<{
     failInventory?: boolean; conflict?: boolean; beforeInventory?: () => Promise<void>; waitForControls?: boolean;
     initialMode?: 'plain' | 'e2ee';
     modeReadResponse?: (mode: 'plain' | 'e2ee') => Response | undefined;
+    managedMachinePresetsInventory?: ManagedMachinePresetAccountEncryptionMigrationInventoryV1;
     /** This device's custody of its keys; a plain fixture defaults to retained history. */
     initialCustody?: 'active' | 'historical';
     currentnessOverride?: () => ReturnType<typeof createPlainAccountEncryptionCurrentnessFixture> | null;
@@ -195,6 +199,9 @@ async function mount(params: Readonly<{
                 return json(params.settingsHistoryPages?.[settingsHistoryReads.length - 1] ?? { items: [], nextBeforeVersion: null });
             }
             if (target.pathname === '/v1/account/encryption/migrate/review-comments/inventory') return json({ v: 1, items: [] });
+            if (target.pathname === '/v1/account/encryption/migrate/managed-machine-presets/inventory') {
+                return json(params.managedMachinePresetsInventory ?? { presets: [], snapshots: [] });
+            }
             if (target.pathname === '/v1/account/encryption/migrate/discussions/inventory')
                 return json(DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [] }));
             if (target.pathname === SESSION_FOLLOW_RULES_ROUTE_V1)
@@ -318,6 +325,8 @@ async function mount(params: Readonly<{
             if (target.pathname === '/v1/account/authoring-memory') return json({ rows: [] });
             if (target.pathname === '/v2/changes') return json({ changes: [], nextCursor: 0 });
             if (target.pathname === '/v2/account/settings') return json({ content: settingsContent, version: params.settingsVersion ?? 0 });
+            const emptyCensus = createEmptyAccountMigrationCensusHttpResponse(target.pathname, init);
+            if (emptyCensus) return emptyCensus;
             unmatchedHttpRequests.push({ path: target.pathname, method: init?.method ?? 'GET' });
             return json({ error: 'not_found' }, 404);
         } });
@@ -356,14 +365,28 @@ async function mount(params: Readonly<{
 }
 
 /** Answer the carried review through its real public approval control. */
+async function completeActionReview(screen: Awaited<ReturnType<typeof mount>>['screen'], invoke: () => unknown): Promise<void> {
+    let completion!: Promise<unknown>;
+    let settled = false;
+    await act(async () => {
+        completion = Promise.resolve(invoke());
+        void completion.then(() => { settled = true; }, () => { settled = true; });
+    });
+    await vi.waitFor(() => expect(settled || screen.findByTestId('actions.confirmation-review.decision-approve') !== null).toBe(true));
+    if (!settled) await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await act(async () => { await completion; });
+}
+
 async function convertWithReview(screen: Awaited<ReturnType<typeof mount>>['screen'], enabled: boolean): Promise<void> {
     const toggle = screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
         && typeof node.props.onValueChange === 'function')[0]!;
-    let conversion!: Promise<void>;
-    await act(async () => { conversion = toggle.props.onValueChange(enabled); });
-    await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
-    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
-    await act(async () => { await conversion; });
+    await completeActionReview(screen, () => toggle.props.onValueChange(enabled));
+}
+
+async function forgetWithReview(screen: Awaited<ReturnType<typeof mount>>['screen']): Promise<void> {
+    const button = screen.findAll(node => node.props.testID === 'settings-account-encryption-forget-key'
+        && typeof node.props.action === 'function')[0]!;
+    await completeActionReview(screen, () => button.props.action());
 }
 
 /** The converting device keeps its key bytes and only reclassifies them as history. */
@@ -379,14 +402,45 @@ afterEach(async () => {
     setCurrentAuth(previousAuth); await standardCleanup(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
 
 describe('Account encryption historical material custody', () => {
+    it('seals personal presets and retained acquisitions through the actual Account mode switch', async () => {
+        const source = { contentEncryptionMode: 'plain' as const, recipientEnvelope: null,
+            content: { t: 'plain' as const, v: { v: 1 as const, name: 'Private preset recipe',
+                setup: { scripts: [{ body: 'printf retained-private-setup' }] } } } };
+        const h = await mount({ initialMode: 'plain', managedMachinePresetsInventory: {
+            presets: [{ presetId: 'personal-preset', expectedRevision: 7, ...source }],
+            snapshots: [{ managedId: 'retained-guest', presetId: 'personal-preset', ...source }],
+        } });
+        try {
+            await convertWithReview(h.screen, true);
+            expect(h.migrations, JSON.stringify({ alerts: vi.mocked(Modal.alertAsync).mock.calls,
+                unmatched: h.unmatchedHttpRequests })).toHaveLength(1);
+            const directive = h.migrations[0]!.managedMachinePresets;
+            expect(directive?.presets[0]).toMatchObject({ presetId: 'personal-preset', expectedRevision: 7 });
+            expect(directive?.snapshots[0]).toMatchObject({ managedId: 'retained-guest', presetId: 'personal-preset',
+                expectedContentEncryptionMode: 'plain', expectedContent: source.content, expectedRecipientEnvelope: null });
+            if (!directive || !auth.credentials) throw new Error('Expected the captured preset conversion');
+            const encryption = await createEncryptionFromAuthCredentials(auth.credentials);
+            if (!encryption) throw new Error('Expected the converted Account encryption material');
+            for (const { replacement } of [...directive.presets, ...directive.snapshots]) {
+                expect(replacement.content.t).toBe('encrypted');
+                expect(JSON.stringify(replacement)).not.toContain('retained-private-setup');
+                const envelope = replacement.recipients.find(row => row.accountId === 'account-a')?.envelope;
+                const sourceDataKey = envelope ? await encryption.decryptEncryptionKey(envelope.encryptedDataKey) : null;
+                if (!sourceDataKey || !envelope) throw new Error('Expected the converted owner envelope');
+                expect(transitionManagedMachinePresetContentEncryptionModeV1({
+                    presetId: 'personal-preset', fromMode: 'e2ee', toMode: 'plain',
+                    source: { content: replacement.content, recipientEnvelope: envelope }, sourceDataKey,
+                })).toEqual({ content: source.content, recipients: [] });
+            }
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
     it.each(['e2ee', 'plain'] as const)('captures the Account version after catalog admission while converting from %s', async initialMode => {
         let accountVersion = 5;
         const h = await mount({ initialMode, readAccountVersion: () => accountVersion,
             beforeD10Read: async () => { accountVersion = 15; } });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(initialMode === 'plain'); });
+            await convertWithReview(h.screen, initialMode === 'plain');
             expect(h.migrations).toHaveLength(1);
             expect(h.migrations[0]!.expectedAccountVersion).toBe(15);
             expect(h.migrations[0]!.settingsContent).toBeNull();
@@ -405,9 +459,7 @@ describe('Account encryption historical material custody', () => {
             { items: [{ version: 7, createdAt, encryptionMode: 'e2ee', content: null }], nextBeforeVersion: null },
         ] });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.settingsHistoryReads).toEqual([null, '8']);
             expect(h.migrations.length).toBe(1);
             const items = h.migrations[0]!.settingsHistory?.items;
@@ -423,9 +475,7 @@ describe('Account encryption historical material custody', () => {
             createdAt: '2026-10-01T01:02:03.000Z', encryptionMode: 'e2ee', content: failure === 'mixed-mode'
                 ? { t: 'plain', v: {} } : { t: 'encrypted', c: 'invalid-ciphertext' } }], nextBeforeVersion: null }] });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.settingsHistoryReads).toEqual([null]);
             expect(h.migrations.length).toBe(0);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -436,9 +486,7 @@ describe('Account encryption historical material custody', () => {
         const h = await mount({ initialMode: 'e2ee', currentnessOverride: () => moved ? createPlainAccountEncryptionCurrentnessFixture() : null });
         try {
             moved = true;
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations).toEqual([]);
             await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).not.toHaveLength(0));
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
@@ -451,9 +499,7 @@ describe('Account encryption historical material custody', () => {
             storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({
                 v: 1, actions: { 'settings.invoke': { enabled: false } },
             }) });
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations).toEqual([]);
             expect(h.d10CatalogReads).toEqual([]);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -470,9 +516,7 @@ describe('Account encryption historical material custody', () => {
                         randomBytes: length => new Uint8Array(length).fill(36) }) } }]));
         const h = await mount({ initialMode, d10CatalogRows });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(initialMode === 'plain'); });
+            await convertWithReview(h.screen, initialMode === 'plain');
             expect(h.migrations, JSON.stringify({ alerts: vi.mocked(Modal.alertAsync).mock.calls,
                 unmatchedHttpRequests: h.unmatchedHttpRequests, d10CatalogReads: h.d10CatalogReads })).toHaveLength(1);
             if (!auth.credentials) throw new Error('Missing conversion credentials');
@@ -502,9 +546,7 @@ describe('Account encryption historical material custody', () => {
             }) } },
         } });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.d10CatalogReads, JSON.stringify(h.unmatchedHttpRequests)).toContain(field);
             expect(h.migrations).toHaveLength(0);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
@@ -522,9 +564,7 @@ describe('Account encryption historical material custody', () => {
         } });
         try {
             startSwitch = true;
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(switched).toBe(true);
             expect(h.migrations).toHaveLength(0);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
@@ -544,9 +584,7 @@ describe('Account encryption historical material custody', () => {
             material: initialMode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(credentials) });
         const h = await mount({ initialMode, providerConnectionsRow: { revision: 7, content } });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(initialMode === 'plain'); });
+            await convertWithReview(h.screen, initialMode === 'plain');
             expect(h.migrations, JSON.stringify(vi.mocked(Modal.alertAsync).mock.calls)).toHaveLength(1);
             const directive = h.migrations[0]!.providerConnections;
             expect(directive?.expectedRevision).toBe(7);
@@ -570,9 +608,7 @@ describe('Account encryption historical material custody', () => {
             // The displayed facade can lag the captured server baseline. Its
             // preference and revision must not be paired with a fresh CAS basis.
             storage.getState().applySettings({ ...storage.getState().settings, preferredLanguage: 'en' }, 3);
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(initialMode === 'plain'); });
+            await convertWithReview(h.screen, initialMode === 'plain');
             expect(h.migrations, JSON.stringify(vi.mocked(Modal.alertAsync).mock.calls)).toHaveLength(1);
             const item = h.migrations[0]!.promptLibrary?.items[0];
             expect(item).toMatchObject({ key: 'folders', expectedRevision: 4 });
@@ -609,9 +645,7 @@ describe('Account encryption historical material custody', () => {
             { key: 'voice', revision: 5, content },
         ] });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations).toHaveLength(0);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -640,9 +674,7 @@ describe('Account encryption historical material custody', () => {
             id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` })), protectedRow];
         const h = await mount({ initialMode: 'e2ee', artifactRows: rows });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations, JSON.stringify(vi.mocked(Modal.alertAsync).mock.calls)).toHaveLength(1);
             const converted = h.migrations[0]!.artifacts;
             if (!converted || converted.action !== 'migrate') throw new Error('Missing Artifact conversion');
@@ -658,9 +690,7 @@ describe('Account encryption historical material custody', () => {
             other = await restoreServerAccountForTest({ serverUrl: `https://other-artifacts-${crypto.randomUUID()}.test` });
         } });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations).toEqual([]);
         } finally { await h.screen.unmount(); await other?.dispose(); await h.restored.dispose(); }
     });
@@ -684,7 +714,7 @@ describe('Account encryption historical material custody', () => {
             storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'account.encryption.historicalKey.forget': { enabled: false },
             } }) });
-            await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
+            await forgetWithReview(h.screen);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
             expect(Modal.confirm).not.toHaveBeenCalled();
             expect(Modal.alertAsync).toHaveBeenCalled();
@@ -763,9 +793,7 @@ describe('Account encryption historical material custody', () => {
     it('keeps historical material after switching to plain while an archived E2EE Session remains', async () => {
         const h = await mount({ initialMode: 'e2ee', archivedSessions: [retainedSession('session-old', 'e2ee')] });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expect(h.migrations[0]?.toMode).toBe('plain');
             expectKeysKeptAsHistory();
@@ -774,9 +802,7 @@ describe('Account encryption historical material custody', () => {
     it('does not retire material when a retained E2EE Session appears after the migration census', async () => {
         const h = await mount({ initialMode: 'e2ee', afterCommitArchivedSessions: [retainedSession('session-concurrent', 'e2ee')] });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expectKeysKeptAsHistory();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -785,9 +811,7 @@ describe('Account encryption historical material custody', () => {
     it.each([false, true])('retains material after migration even with no current dependencies (inventory failure: %s)', async (afterCommitInventoryFails) => {
         const h = await mount({ initialMode: 'e2ee', afterCommitInventoryFails });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(false); });
+            await convertWithReview(h.screen, false);
             expect(h.migrations).toHaveLength(1);
             expectKeysKeptAsHistory();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -840,7 +864,7 @@ describe('Account encryption historical material custody', () => {
             expect(reopenedKey).toEqual(dataKey);
             expect(await (await reopened.openEncryption(reopenedKey)).decrypt([encryptedHistory!])).toEqual([{ text: 'Retained session history' }]);
             vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-            await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
+            await forgetWithReview(h.screen);
             expect(auth.credentials).toEqual({ token: h.restored.credentials.token });
             await expect(createEncryptionFromAuthCredentials(auth.credentials!)).rejects.toThrow('token-only');
         } finally { resumeCurrentness.resolve(); resumeAdoption.resolve(); await h.screen.unmount(); await h.restored.dispose(); }
@@ -854,7 +878,7 @@ describe('Account encryption historical material custody', () => {
                 executionInputEnvelope: null, resultEnvelope: null, replyContextEnvelope: null, failureDetailEnvelope: null }] });
         try {
             vi.mocked(Modal.confirm).mockImplementation(async title => title !== 'settingsAccount.forgetEncryptionKeyConfirm');
-            await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
+            await forgetWithReview(h.screen);
             const message = vi.mocked(Modal.confirm).mock.calls.find(([title]) => title === 'settingsAccount.forgetEncryptionKeyConfirm')?.[1];
             expect(message).toContain('session-old');
             expect(message).toContain('trigger-old');
@@ -868,7 +892,7 @@ describe('Account encryption historical material custody', () => {
         const h = await mount({ failInventory: true });
         try {
             vi.mocked(Modal.confirm).mockClear();
-            await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
+            await forgetWithReview(h.screen);
             expect(vi.mocked(Modal.confirm).mock.calls.filter(([title]) => title === 'settingsAccount.forgetEncryptionKeyConfirm')).toEqual([]);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
             expect(Modal.alertAsync).toHaveBeenCalled();
@@ -883,7 +907,7 @@ describe('Account encryption historical material custody', () => {
                 other.current = await restoreServerAccountForTest({ serverUrl: `https://forget-other-${crypto.randomUUID()}.test` });
                 return true;
             });
-            await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
+            await forgetWithReview(h.screen);
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
         } finally { await h.screen.unmount(); await other.current?.dispose(); await h.restored.dispose(); }
     });

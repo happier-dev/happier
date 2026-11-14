@@ -1,3 +1,4 @@
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
@@ -59,7 +60,11 @@ describe("Team Groups (SQLite integration)", () => {
 
     async function createGroup(teamId: string, actorAccountId: string, name: string) {
         const result = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-            teamId, actorAccountId, name, requestKey: crypto.randomUUID(),
+            teamId,
+            actorAccountId,
+            groupId: crypto.randomUUID(),
+            name: plainPrivateLabel(name),
+            requestKey: crypto.randomUUID(),
         }));
         if (!result.ok) throw new Error(`group create failed: ${result.error}`);
         return result.value;
@@ -105,7 +110,7 @@ describe("Team Groups (SQLite integration)", () => {
             },
         });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Recovery", nameKey: "recovery" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Recovery") } });
         const homeAdmin = await account("admin");
         await db.account.update({ where: { id: owner.id }, data: { status: "suspended" } });
 
@@ -175,74 +180,56 @@ describe("Team Groups (SQLite integration)", () => {
         };
     }
 
-    it("creates a Group, rejects an in-Team duplicate name, and replays one retry", async () => {
+    it("creates a Group and replays one retry", async () => {
         const { team, ownerAccountId } = await teamWithOwner("Groups create");
         const requestKey = crypto.randomUUID();
+        const groupId = crypto.randomUUID();
+        const name = plainPrivateLabel("Platform Design");
 
         const created = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-            teamId: team.id, actorAccountId: ownerAccountId, name: "  Platform   Design ", requestKey,
+            teamId: team.id, actorAccountId: ownerAccountId, groupId, name, requestKey,
         }));
         expect(created.ok).toBe(true);
         if (!created.ok) return;
-        expect(created.value.name).toBe("Platform Design");
+        expect(created.value.name).toEqual({
+            kind: "available",
+            label: { content: { t: "plain", v: "Platform Design" }, recipientEnvelope: null },
+        });
         expect(created.value.management).toEqual({ kind: "native" });
         expect(created.value.memberCount).toBe(0);
 
-        // The same intent replayed returns the same Group rather than a second
-        // one or a spurious name collision against the caller's own Group.
+        // The same intent replayed returns the same Group rather than a second one.
         const replay = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-            teamId: team.id, actorAccountId: ownerAccountId, name: "  Platform   Design ", requestKey,
+            teamId: team.id, actorAccountId: ownerAccountId, groupId, name, requestKey,
         }));
         expect(replay.ok).toBe(true);
         if (!replay.ok) return;
         expect(replay.value.id).toBe(created.value.id);
-
-        // A different caller intent with a name that folds to the same key is a
-        // real collision.
-        const collision = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-            teamId: team.id,
-            actorAccountId: ownerAccountId,
-            name: "platform design",
-            requestKey: crypto.randomUUID(),
-        }));
-        expect(collision).toEqual({ ok: false, error: "group_name_taken" });
     });
 
     it("keeps Group-create replay live when the process clock is behind the database clock", async () => {
         const { team, ownerAccountId } = await teamWithOwner("Group clock consistency");
         const requestKey = crypto.randomUUID();
+        const groupId = crypto.randomUUID();
+        const name = plainPrivateLabel("Operators");
         const processClock = vi.spyOn(Date, "now").mockReturnValue(0);
         try {
             const first = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-                teamId: team.id, actorAccountId: ownerAccountId, name: "Operators", requestKey,
+                teamId: team.id, actorAccountId: ownerAccountId, groupId, name, requestKey,
             }));
             const replay = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-                teamId: team.id, actorAccountId: ownerAccountId, name: "Operators", requestKey,
+                teamId: team.id, actorAccountId: ownerAccountId, groupId, name, requestKey,
             }));
             expect(first.ok && replay.ok).toBe(true);
             if (!first.ok || !replay.ok) return;
             expect(replay.value.id).toBe(first.value.id);
-            expect(await db.teamGroup.count({ where: { teamId: team.id, nameKey: "operators" } })).toBe(1);
+            expect(await db.teamGroup.count({ where: { teamId: team.id } })).toBe(1);
             expect(await inTx((tx) => createTeamGroupForActorInTx(tx, {
-                teamId: team.id, actorAccountId: ownerAccountId, name: "Altered", requestKey,
+                teamId: team.id, actorAccountId: ownerAccountId, groupId, name: plainPrivateLabel("Altered"), requestKey,
             }))).toEqual({ ok: false, error: "team_conflict" });
         } finally {
             processClock.mockRestore();
         }
-    });
-
-    it("keeps Group names unique only inside their own Team", async () => {
-        const first = await teamWithOwner("Team one");
-        const second = await teamWithOwner("Team two");
-
-        await createGroup(first.team.id, first.ownerAccountId, "Developers");
-        const other = await inTx((tx) => createTeamGroupForActorInTx(tx, {
-            teamId: second.team.id,
-            actorAccountId: second.ownerAccountId,
-            name: "Developers",
-            requestKey: crypto.randomUUID(),
-        }));
-        expect(other.ok).toBe(true);
     });
 
     it("refuses an ordinary member every Group mutation and hides nothing it may see", async () => {
@@ -261,7 +248,7 @@ describe("Team Groups (SQLite integration)", () => {
         });
 
         const rename = await inTx((tx) => updateTeamGroupForActorInTx(tx, {
-            teamId: team.id, actorAccountId: plain.accountId, groupId: group.id, name: "Renamed",
+            teamId: team.id, actorAccountId: plain.accountId, groupId: group.id, name: plainPrivateLabel("Renamed"),
         }));
         expect(rename).toEqual({ ok: false, error: "team_forbidden" });
     });
@@ -280,7 +267,7 @@ describe("Team Groups (SQLite integration)", () => {
         });
         await db.teamMembership.create({ data: { teamId: acme.id, accountId: owner.id, role: "owner" } });
         const group = await db.teamGroup.create({
-            data: { teamId: acme.id, name: "Private", nameKey: "private" },
+            data: { teamId: acme.id, name: storedPlainPrivateLabel("Private") },
         });
 
         await expect(inTx((tx) => listTeamGroupsForActorInTx(tx, {
@@ -691,7 +678,7 @@ describe("Team Groups (SQLite integration)", () => {
         });
 
         const rename = await inTx((tx) => updateTeamGroupForActorInTx(tx, {
-            teamId: team.id, actorAccountId: ownerAccountId, groupId: group.id, name: "Renamed",
+            teamId: team.id, actorAccountId: ownerAccountId, groupId: group.id, name: plainPrivateLabel("Renamed"),
         }));
         expect(rename).toEqual({ ok: false, error: "managed_by_directory" });
 
@@ -762,7 +749,8 @@ describe("Team Groups (SQLite integration)", () => {
         }));
         expect(first.ok).toBe(true);
         if (!first.ok) return;
-        expect(first.value.items.map((group) => group.id)).toEqual([alpha.id]);
+        const expectedById = [alpha, beta].sort((left, right) => left.id.localeCompare(right.id));
+        expect(first.value.items.map((group) => group.id)).toEqual([expectedById[0]!.id]);
 
         const second = await inTx((tx) => listTeamMemberGroupsForActorInTx(tx, {
             teamId: team.id,
@@ -773,8 +761,9 @@ describe("Team Groups (SQLite integration)", () => {
         }));
         expect(second.ok).toBe(true);
         if (!second.ok) return;
-        expect(second.value.items.map((group) => group.id)).toEqual([beta.id]);
-        expect(second.value.items[0]?.archivedAt).not.toBeNull();
+        expect(second.value.items.map((group) => group.id)).toEqual([expectedById[1]!.id]);
+        expect([...first.value.items, ...second.value.items]
+            .find((group) => group.id === beta.id)?.archivedAt).not.toBeNull();
         expect(second.value.nextCursor).toBeNull();
 
         const other = await memberOf(team.id);

@@ -1,10 +1,10 @@
-import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
-import { createMachinePresetCollectionClient } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { createMachinePresetCollectionClient, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type MachinePresetQueryState<T> = Readonly<{
@@ -13,7 +13,7 @@ export type MachinePresetQueryState<T> = Readonly<{
     error: string | null;
     approval?: ActionApprovalRegistration;
 }>;
-type Snapshot = MachinePresetQueryState<readonly ManagedMachinePresetV1[]>;
+type Snapshot = MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
 type Consumer = Readonly<{ onApprovalPending?: (approval: ActionApprovalRegistration) => void }>;
 type PendingRead = { controller: AbortController; awaitingApproval: boolean };
 type Entry = {

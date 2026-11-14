@@ -16,8 +16,10 @@ import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from '.
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
   readHostReviewedChildOriginalAuthorizationV1,
-  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
-export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
+  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
+  retainManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
+export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1,
+  ManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
 export { WorkflowApprovedOperationParentV1Schema as HostReviewedParentV1Schema } from './approvedOperationV1.js';
 export { resolveApprovalSurface } from './actionApprovalSurface.js';
 export { readTeamCredentialApprovalSources } from './specs/teamCredentialApproval.js';
@@ -441,7 +443,6 @@ import { resolveMachinePoolWorkerCandidateV1 } from '../machines/pools/machinePo
 import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
 import { EphemeralRunnerActionInputSchemasV1 } from '../ephemeralRunner/actionsV1.js';
 import { isHomeDomainActionIdV1 } from './homeDomainActionFamily.js';
-import { executeTeamCredentialUsageExport } from './executor/teamCredentialUsageExport.js';
 import { isTeamMembershipHistoryActionIdV1, TeamMembershipHistoryInputV1Schema } from '../teams/membershipHistoryPreparationV1.js';
 import { ScopeActionIdSchema } from './scopeActionFamily.js';
 import { DiagnosticsActionIdSchema } from './diagnosticsActionFamily.js';
@@ -1888,10 +1889,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : {}),
       } : {}),
       ...(replaySessionTargets ? { sessionTargetsV1: replaySessionTargets } : {}),
-      // The approval owner already chose client custody from the originating
-      // caller. A fresh human decision must not turn that into Account placement.
+      // Input-dependent placement retains its originating caller so approval
+      // cannot change custody. Fixed client Actions replay as the deciding person.
       actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay
-        && !(approvalExecutor.kind === 'app' && approvalExecutor.placement === 'client') ? { kind: 'host' } : replayCaller),
+        && !(approvalExecutor.kind === 'app' && approvalExecutor.placement === 'client'
+          && actionId !== null && getActionSpec(actionId).executionPlacementForInput) ? { kind: 'host' } : replayCaller),
       // This exact live plugin invocation already holds the receiver's admitted
       // Machine custody. Consent resumes that invocation rather than borrowing
       // the deciding person's filesystem identity.
@@ -2239,7 +2241,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
       presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
-      invocationServices: _parentServices, ...caller } = context;
+      invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction, ...caller } = context;
     return caller;
   };
 
@@ -2272,6 +2274,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     };
     const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) =>
       executeChild(childId, childInput, childContext, true);
+    // A locally issued reviewed child already carries the issuer's exact
+    // policy and proof. Re-enter through the existing host route rather than
+    // the ordinary-child ingress, which intentionally strips those facts.
+    const withHostReviewedChildAction = (caller: ActionExecutorContext): ActionExecutorContext => ({ ...caller,
+      executeHostReviewedChildAction: (childId, childInput, childContext) => executeHostChild(childId, childInput, childContext),
+    });
     const withOrdinaryChildAction = (caller: ActionExecutorContext): ActionExecutorContext => ({ ...caller,
       executeOrdinaryChildAction: (childId, childInput, childOptions) => executeChild(childId, childInput, { ...caller,
         ...(childOptions?.signal ? { signal: childOptions.signal } : {}),
@@ -2290,7 +2298,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const existingAdmission = options?.prepared;
     let workflowSessionScope = existingAdmission?.workflowSessionScope;
     // Public ingress normalized the caller; replay/continuation contexts are host-owned.
-    let ctx: ActionExecutorContext = existingAdmission?.context ?? context ?? {};
+    let ctx: ActionExecutorContext = withHostReviewedChildAction(existingAdmission?.context ?? context ?? {});
 
     const attestationFailure = existingAdmission ? null : sessionAttestedContextCallerFailure(actionId, input, ctx);
     if (attestationFailure) return attestationFailure;
@@ -2427,11 +2435,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     }
     if (spec.clientActionDomainInputSchema && typeof readRecord(parsed.data).clientId === 'string'
-      && resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller) !== 'client') {
+      && resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller, ctx.surface ?? 'ui') !== 'client') {
       return { ok: false, errorCode: 'client_routing_not_applicable', error: 'This input selects an owner other than a UI client' };
     }
     if (ctx.interactivePresentation === 'unavailable'
-        && (actionId === 'approval.request.create' || resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller) === 'client')) {
+        && (actionId === 'approval.request.create' || resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller, ctx.surface ?? 'ui') === 'client')) {
       return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
     }
     if (isScmActionId(actionId) && sessionTarget?.field === 'sessionId') {
@@ -3743,6 +3751,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
+      ctx = withHostReviewedChildAction(ctx);
       ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
         ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
@@ -3814,7 +3823,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             } finally { await prepared?.dispose?.(); }
           } } : {}) });
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller);
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller, ctx.surface ?? 'ui');
       if (actionId === 'inbox.get') {
         const accountId = readNoticeInboxAccountIdV1(ctx);
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
@@ -3828,7 +3837,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!surface) return actionDisabled(availability);
         admittedClientContext = { ...ctx, surface, authority: resolveHostStampedAuthority(ctx) };
       }
-      if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued) {
+      // A captured keyholder can execute this exact client Action locally.
+      // Preserve generic reverse delivery only when that native port is absent.
+      const hasNativeTeamCredentialUsageExport = actionId === 'teams.credentials.usage.export'
+        && deps.teamCredentialUsageExport !== undefined;
+      if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued
+        && !hasNativeTeamCredentialUsageExport) {
         const context = admittedClientContext;
         // Local client delivery continues the resolved leaf. Dropping it here
         // re-enters target resolution and then client delivery on every read.
@@ -5094,7 +5108,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Home transaction, so a second port here would give the same concept two
       // hosts to keep in step.
       if (actionId === 'teams.credentials.usage.export') {
-        return await executeTeamCredentialUsageExport(admittedInput, deps.homeDomainAction, ctx);
+        if (!deps.teamCredentialUsageExport) return clientActionUnavailable(actionId);
+        const result = await deps.teamCredentialUsageExport({
+          input: parsed.data as import('../teams/credentials/usageExportV1.js').TeamCredentialUsageExportInputV1,
+          context: ctx,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (isPublicProfilePreparationActionIdV1(actionId)) {
         if (actionId === 'account.public_profile.preview') {
@@ -7587,7 +7607,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && actionId !== 'action.invoke') {
       const spec = getActionSpec(actionId);
       const admitted = prepared.admission;
-      if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller) === 'machine') {
+      if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller, admitted.context.surface ?? 'ui') === 'machine') {
         const routed = await deps.routeHostChildAction({ actionId, input: admitted.input, context: admitted.context });
         if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
       }
@@ -7623,7 +7643,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
   const executeAdmittedClientAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult> => {
     const spec = getActionSpec(actionId);
-    if (resolveActionExecutionPlacementForInput(spec, input, context.actionCaller) !== 'client') {
+    if (resolveActionExecutionPlacementForInput(spec, input, context.actionCaller, context.surface ?? 'ui') !== 'client') {
       return Promise.resolve(clientActionUnavailable(actionId));
     }
     const children = context.admittedHostReviewedChildren;

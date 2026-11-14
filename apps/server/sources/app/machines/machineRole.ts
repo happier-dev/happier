@@ -33,7 +33,15 @@ export function buildMachineActorPermissionFactsSelect(actorAccountId: string) {
     return { ...MACHINE_PERMISSION_FACTS_SELECT, ...machineGrantRelationsSelect(actorAccountId) } as const;
 }
 
-export type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin'; displayName: string | null; accountIds: readonly string[] }>;
+export type Contribution = Readonly<{
+    principal: PrincipalRefV1;
+    level: 'view' | 'admin';
+    /** Team and Account names remain server-readable; Group names do not. */
+    displayName: string | null;
+    /** Opaque stored Group label, projected only by the recipient-facing roster. */
+    groupNameSerialized?: string;
+    accountIds: readonly string[];
+}>;
 
 export function contributions(row: MachinePermissionFacts | MachineAdmissionFacts): Contribution[] {
     return [
@@ -49,7 +57,7 @@ export function contributions(row: MachinePermissionFacts | MachineAdmissionFact
                 }),
             })) })] })),
         ...row.groupGrants.map(grant => ({ principal: { kind: 'group' as const, teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, level: grant.accessLevel,
-            displayName: 'name' in grant.teamGroup ? grant.teamGroup.name : null,
+            displayName: null, groupNameSerialized: 'name' in grant.teamGroup ? grant.teamGroup.name : undefined,
             accountIds: [...iterateResourceGrantPrincipalAccountIdsFromFacts({ kind: 'group', memberships: grant.teamGroup.memberships.map(({ teamMembership: member }) => ({
                 accountId: member.accountId, effective: isEffectiveTeamGroupMembership({
                     accountStatus: member.account.status, membershipStatus: member.status,

@@ -18,6 +18,7 @@ import { applyResourceRecipientKeyEnvelopesInTx, mayManageResourceGrants, projec
     resourceGrantRelationsSelect, projectResourceGrantRows, resolveResourceGrantAudienceFromFacts,
     type ResourceGrantAccessFacts, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import { resolveTaskAudienceInTx, taskGrantStorageAdapter } from './taskGrantStorageAdapter';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import { lockTaskMutationInTx, projectTaskContent, resolveTaskContextInTx, type TaskActorInput, type TaskContext, type TaskResult } from './taskResourceService';
 import { publishTaskChangedInTx } from './taskChanges';
 
@@ -80,7 +81,8 @@ export async function listTaskGrantsInTx(tx: Tx, input: TaskActorInput): Promise
             createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } },
             audience: audienceFor({ teamGrants: [row] }) })),
         ...groups.map(row => ({ grant: { principal: { kind: 'group' as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,
-            createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.teamGroup.name } },
+            createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: null },
+            groupName: projectTeamGroupNameForRecipient({ serialized: row.teamGroup.name, recipientAccountId: input.actorAccountId }) },
             audience: audienceFor({ groupGrants: [row] }) })),
     ];
     const audience = [...new Set(grantRows.flatMap(row => row.audience))];

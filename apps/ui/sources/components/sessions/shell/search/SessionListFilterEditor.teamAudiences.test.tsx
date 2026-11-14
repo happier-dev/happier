@@ -128,7 +128,10 @@ function group(): TeamGroupV1 {
         v: 1,
         id: 'group-1',
         teamId: 'team-1',
-        name: 'Developers',
+        name: {
+            kind: 'available',
+            label: { content: { t: 'plain', v: 'Developers' }, recipientEnvelope: null },
+        },
         description: null,
         archivedAt: null,
         memberCount: 2,
@@ -352,6 +355,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         await vi.waitFor(() => {
             expect(screen.findByTestId(`session-list-filter-editor:${teamStepId}:option:${groupOptionId}`))
                 .not.toBeNull();
+            expect(screen.getTextContent()).toContain('Developers');
         });
 
         screen.pressByTestId(`session-list-filter-editor:${teamStepId}:option:${groupOptionId}`);

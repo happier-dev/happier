@@ -61,6 +61,25 @@ export type ArtifactAccessActionResultById = {
                 name: null | string;
                 username?: null | string | undefined;
             };
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
@@ -89,6 +108,25 @@ export type ArtifactAccessActionResultById = {
             display: {
                 name: null | string;
                 username?: null | string | undefined;
+            };
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
             };
             acceptedVersions?: undefined | {
                 version: string;
@@ -123,6 +161,25 @@ export type ArtifactAccessActionResultById = {
             display: {
                 name: null | string;
                 username?: null | string | undefined;
+            };
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
             };
             acceptedVersions?: undefined | {
                 version: string;

@@ -8,7 +8,7 @@ import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } 
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { publishTeamChangedInTx } from "../teamChanges";
 import { validateTeamCredentialAudienceDraftInTx } from "./resourceAudience";
-import { recordTeamCredentialActivityInTx } from "./resourceActivity";
+import { recordTeamCredentialResourceActivityInTx } from "./resourceActivity";
 import { validateTeamCredentialUsageLimitDraftInTx } from "./resourceLimits";
 import { canonicalUsageLimitMaximum } from "./teamCredentialUsageLimits";
 import { resolveCurrentTeamCredentialUsageCapabilitiesForResource } from "./usageCapabilities";
@@ -20,6 +20,7 @@ import {
     normalizeTeamCredentialRequestPolicyForPersistence,
     type TeamCredentialRequestPolicySupportEvidence,
 } from "./resourceRequestPolicySupport";
+import { prepareTeamCredentialResourceDisplayNameForWriteInTx } from './privateLabels';
 
 export interface CreateTeamCredentialResourceInput extends TeamCredentialResourceCreateInputV1 {
     actorAccountId: string;
@@ -32,7 +33,7 @@ export type CreateTeamCredentialResourceResult =
     | Readonly<{ ok: true; resourceId: string; revision: number }>
     | Readonly<{ ok: false; error: "forbidden" | "resource_changed" | "not_found_or_not_visible" | "invalid_resource_input" | "invalid_audience" | "disclosure_not_allowed" | "broker_unavailable" | "update_required" | "invalid_limit" | "subject_not_in_team" | "token_limit_unavailable" | "cost_limit_unavailable" | "source_owner_required" | "source_replaced_or_missing" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
-async function existingMatchesDraft(tx: Tx, existing: NonNullable<Awaited<ReturnType<Tx['teamCredentialResource']['findUnique']>>>, body: TeamCredentialResourceCreateInputV1) {
+async function existingMatchesDraft(tx: Tx, existing: NonNullable<Awaited<ReturnType<Tx['teamCredentialResource']['findUnique']>>>, body: TeamCredentialResourceCreateInputV1, serializedDisplayName: string) {
     const storedSourceRead = readTeamCredentialSourceBinding(existing.sourceBindingJson);
     if (!storedSourceRead.success) return false;
     const storedSource = storedSourceRead.data;
@@ -55,7 +56,7 @@ async function existingMatchesDraft(tx: Tx, existing: NonNullable<Awaited<Return
     const requestedMemberTuples = requestedAudience.memberGrants.map(row => [row.teamMembershipId, row.deliveryMode]).sort();
     const limitTuples = limits.map(row => [row.subjectKind, row.subjectId, row.period, row.metric, row.maximum, row.enabled]).sort();
     const requestedLimitTuples = body.usageLimits.map(row => [row.subjectKind, row.subjectId, row.period, row.metric, canonicalUsageLimitMaximum(row.maximum, row.metric), row.enabled]).sort();
-    return existing.teamId === body.teamId && existing.displayName === body.displayName.trim()
+    return existing.teamId === body.teamId && existing.displayName === serializedDisplayName
         && isDeepStrictEqual(configuration.data.policy, body.deliveryPolicy) && existing.sessionUsePolicy === body.sessionUsePolicy
         && canonicalStoredAudience.allMembersDeliveryMode === requestedAudience.allMembersDeliveryMode && JSON.stringify(storedSource) === JSON.stringify(body.source)
         && isDeepStrictEqual(placement.placement, body.brokerPlacement)
@@ -92,10 +93,17 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     if (configuresTeamPolicy && !capabilities.manageCredentials) return { ok: false, error: 'forbidden' };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;
+    const displayName = await prepareTeamCredentialResourceDisplayNameForWriteInTx({
+        tx,
+        ownerAccountId: input.actorAccountId,
+        teamId: body.teamId,
+        label: body.displayName,
+    });
+    if (displayName.kind !== 'ready') return { ok: false, error: 'invalid_resource_input' };
     const existing = await tx.teamCredentialResource.findUnique({ where: { id: body.resourceId } });
     if (existing) {
         if (existing.teamId !== body.teamId || existing.custodianAccountId !== input.actorAccountId) return { ok: false, error: "not_found_or_not_visible" };
-        return await existingMatchesDraft(tx, existing, body)
+        return await existingMatchesDraft(tx, existing, body, displayName.serialized)
             ? { ok: true, resourceId: existing.id, revision: existing.revision }
             : { ok: false, error: "resource_changed" };
     }
@@ -164,7 +172,7 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     }
     const resource = await tx.teamCredentialResource.create({ data: {
         id: body.resourceId, teamId: body.teamId, custodianAccountId: input.actorAccountId,
-        displayName: body.displayName.trim(), sourceBindingJson: JSON.stringify(body.source),
+        displayName: displayName.serialized, sourceBindingJson: JSON.stringify(body.source),
         disclosureCeiling: JSON.stringify({ policy: body.deliveryPolicy }),
         sessionUsePolicy: body.sessionUsePolicy, requestPolicyJson: requestPolicy === null ? null : JSON.stringify(requestPolicy),
         brokerMachineId: body.brokerPlacement?.kind === 'machine' ? body.brokerPlacement.machineId : null,
@@ -174,7 +182,13 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     if (storedAudience.groupGrants.length > 0) await tx.teamCredentialGroupGrant.createMany({ data: storedAudience.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
     if (storedAudience.memberGrants.length > 0) await tx.teamCredentialMemberGrant.createMany({ data: storedAudience.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
     if (limitRows.length > 0) await tx.teamCredentialUsageLimit.createMany({ data: limitRows.map(limit => ({ resourceId: resource.id, ...limit })) });
-    await recordTeamCredentialActivityInTx(tx, { teamId: body.teamId, resourceId: resource.id, kind: "resource_created", actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: resource.displayName });
+    await recordTeamCredentialResourceActivityInTx(tx, {
+        teamId: body.teamId,
+        resourceId: resource.id,
+        kind: "resource_created",
+        actor: { kind: "account", accountId: input.actorAccountId },
+        subjectDisplayName: displayName.label,
+    });
     await publishTeamChangedInTx(tx, { teamId: body.teamId, additionalAccountIds: [input.actorAccountId] });
     return { ok: true, resourceId: resource.id, revision: resource.revision };
 }

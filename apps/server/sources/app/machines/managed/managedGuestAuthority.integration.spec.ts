@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Server, type Socket } from 'socket.io';
@@ -129,7 +130,7 @@ describe('managed guest grants and controller Manage', () => {
         const team = await db.team.create({ data: { name: 'Controller sharing' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'member' } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: stranger.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Managers', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Managers') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true } });
         const role = () => inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: stranger.id, machineId: guest.id }));
         const audience = () => inTx(tx => resolveCurrentMachineRecipientAccountIdsInTx(tx, guest.id));

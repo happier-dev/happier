@@ -1,19 +1,26 @@
-import { ManagedControllerRequestFailureDetailsV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { t } from '@/text';
 
-/** The control Details disclosure accepts only the Protocol's code-only transport cause. */
-export function describeManagedActionFailureDiagnostic(code: string, details?: unknown): string {
+/** Existing Details disclosures accept only typed causes and the Action's correlation identity. */
+export function describeManagedActionFailureDiagnostic(code: string, details?: unknown, requestId?: string): string {
+    let diagnostic = code;
+    const native = ManagedNativeFailureDetailsV1Schema.safeParse(details);
     const controller = ManagedControllerRequestFailureDetailsV1Schema.safeParse(details);
-    if (controller.success) return [code, controller.data.category,
+    if (native.success) diagnostic = describeManagedNativeFailureDiagnostic(code, native.data.nativeCause);
+    else if (controller.success) diagnostic = [code, controller.data.category,
         controller.data.status ? `HTTP ${controller.data.status}` : undefined,
         controller.data.code === code ? undefined : controller.data.code].filter(Boolean).join(' · ');
-    const parsed = ExternalActionHttpErrorSchema.safeParse(details);
-    if (!parsed.success || !('code' in parsed.data) || parsed.data.code !== 'action_outcome_unknown'
-        || parsed.data.code !== code || !('diagnostic' in parsed.data)) return code;
-    const cause = parsed.data.diagnostic;
-    return [code, cause.reason, 'errorCode' in cause ? cause.errorCode : undefined].filter(Boolean).join(' · ');
+    else {
+        const parsed = ExternalActionHttpErrorSchema.safeParse(details);
+        if (parsed.success && 'code' in parsed.data && parsed.data.code === 'action_outcome_unknown'
+            && parsed.data.code === code && 'diagnostic' in parsed.data) {
+            const cause = parsed.data.diagnostic;
+            diagnostic = [code, cause.reason, 'errorCode' in cause ? cause.errorCode : undefined].filter(Boolean).join(' · ');
+        }
+    }
+    return requestId ? `${diagnostic} · ${t('session.startFailure.requestId', { id: requestId })}` : diagnostic;
 }
 
 /** Technical facts and privacy-projected command stderr for the existing Details disclosure. */

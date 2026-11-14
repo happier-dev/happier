@@ -6,7 +6,7 @@ import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/mode
 import { t, type TranslationKeyNoParams } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-import type { ApiTokenSettingsErrorCode } from './apiTokenSettingsController';
+import type { ApiTokenSettingsErrorCode, ApiTokenSettingsToken } from './apiTokenSettingsController';
 
 export type ApiTokenListPresentation = 'skeleton' | 'list' | 'listWithRetry' | 'empty' | 'emptyWithRetry' | 'error';
 
@@ -61,7 +61,7 @@ export function resolveApiTokenStatusLabel(presentation: Pick<ApiTokenRowPresent
 }
 
 export type ApiTokenRowPresentation = Readonly<{
-    token: AccountApiTokenSummaryV1;
+    token: ApiTokenSettingsToken;
     displayPrefix: string;
     status: 'active' | 'expiring' | 'expired';
     /** Set while `expiring`. */

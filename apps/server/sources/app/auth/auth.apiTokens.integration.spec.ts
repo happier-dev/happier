@@ -2,6 +2,9 @@ import Fastify from "fastify";
 import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeBase64 } from "@happier-dev/protocol/crypto/base64";
+import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol/crypto/accountContentKeyBindingV1";
+import { sealPrivateLabelV1 } from "@happier-dev/protocol";
+import { prepareSavedSecretResourceRecipientEnvelopesV1 } from "@happier-dev/protocol/account/settings/savedSecretResourceContentV1";
 
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { auth } from "@/app/auth/auth";
@@ -12,7 +15,9 @@ import { canDeployDeploymentEnvironment } from "@/app/deployments/deploymentAdmi
 import { loadDeploymentEnvironmentInTx } from "@/app/deployments/deploymentEnvironmentService";
 import { db, getActivePrismaRuntime } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { readSavedSecretAudienceRecipientEnvelopeCensusInTx } from "@/app/encryption/savedSecretRecipientEnvelopeCensus";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { plainPrivateLabel, prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import {
     API_TOKEN_FULL_GRANT_V1,
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -104,6 +109,123 @@ describe("auth (API tokens)", () => {
         });
     });
 
+    it("stores Account token labels as sealed content, projects one reader envelope, and refuses a mode mismatch", async () => {
+        const plainAccount = await db.account.create({
+            data: { publicKey: "api-token-private-label-plain", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const plainLabel = { content: { t: "plain" as const, v: "CI deploy" }, recipients: [] };
+        const plainToken = await apiTokenAuth.createApiToken({
+            accountId: plainAccount.id,
+            tokenId: crypto.randomUUID(),
+            label: plainLabel,
+        });
+        const storedPlain = await db.accountApiToken.findUniqueOrThrow({
+            where: { id: plainToken.tokenId },
+            select: { label: true },
+        });
+        expect(storedPlain.label).toBe(JSON.stringify(plainLabel));
+        await expect(apiTokenAuth.listApiTokens(plainAccount.id)).resolves.toEqual([
+            expect.objectContaining({
+                tokenId: plainToken.tokenId,
+                label: { content: plainLabel.content, recipientEnvelope: null },
+            }),
+        ]);
+
+        const signing = tweetnacl.sign.keyPair();
+        const content = tweetnacl.box.keyPair();
+        const encryptedAccount = await db.account.create({
+            data: {
+                publicKey: Buffer.from(signing.publicKey).toString("hex"),
+                encryptionMode: "e2ee",
+                contentPublicKey: content.publicKey,
+                contentPublicKeySig: signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: signing.secretKey,
+                    contentPublicKey: content.publicKey,
+                }),
+            },
+            select: { id: true },
+        });
+        const census = await inTx((tx) => readSavedSecretAudienceRecipientEnvelopeCensusInTx(tx, {
+            ownerAccountId: encryptedAccount.id,
+        }), { readOnly: true });
+        const dataKey = tweetnacl.randomBytes(32);
+        const label = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: { entity: "account_api_token", field: "label", id: "placeholder" },
+            value: "private deploy",
+            dataKey,
+            recipients: prepareSavedSecretResourceRecipientEnvelopesV1({
+                recipients: census.recipients,
+                resourceDataKey: dataKey,
+                randomBytes: tweetnacl.randomBytes,
+            }).map((recipient) => ({
+                accountId: recipient.recipientAccountId,
+                envelope: {
+                    encryptedDataKey: recipient.encryptedDataKey,
+                    recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint,
+                },
+            })),
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const encryptedTokenId = crypto.randomUUID();
+        const encryptedToken = await apiTokenAuth.createApiToken({
+            accountId: encryptedAccount.id,
+            tokenId: encryptedTokenId,
+            label: sealPrivateLabelV1({
+                mode: "e2ee",
+                binding: { entity: "account_api_token", field: "label", id: encryptedTokenId },
+                value: "private deploy",
+                dataKey,
+                recipients: label.recipients,
+                randomBytes: tweetnacl.randomBytes,
+            }),
+        });
+        const storedEncrypted = await db.accountApiToken.findUniqueOrThrow({
+            where: { id: encryptedToken.tokenId },
+            select: { label: true },
+        });
+        expect(storedEncrypted.label).not.toContain("private deploy");
+        const encryptedSummary = (await apiTokenAuth.listApiTokens(encryptedAccount.id))[0];
+        expect(encryptedSummary?.label).toMatchObject({
+            content: { t: "encrypted" },
+            recipientEnvelope: expect.any(Object),
+        });
+        expect(encryptedSummary?.label).not.toHaveProperty("recipients");
+
+        await expect(apiTokenAuth.createApiToken({
+            accountId: encryptedAccount.id,
+            tokenId: crypto.randomUUID(),
+            label: plainLabel,
+        })).rejects.toMatchObject({ code: "api_token_label_mode_mismatch" });
+    });
+
+    it("stores structurally valid plain Account token labels without reading their client-owned text", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "api-token-opaque-plain-label", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        // The UI validates a person's label before sealing it. The server only
+        // owns the stored-envelope, persisted-mode, and recipient checks.
+        const label = plainPrivateLabel("   ");
+        const minted = await apiTokenAuth.createApiToken({
+            accountId: account.id,
+            tokenId: crypto.randomUUID(),
+            label,
+        });
+
+        await expect(db.accountApiToken.findUniqueOrThrow({
+            where: { id: minted.tokenId },
+            select: { label: true },
+        })).resolves.toEqual({ label: JSON.stringify(label) });
+        await expect(apiTokenAuth.listApiTokens(account.id)).resolves.toEqual([
+            expect.objectContaining({
+                tokenId: minted.tokenId,
+                label: { content: label.content, recipientEnvelope: null },
+            }),
+        ]);
+    });
+
     it("mints a one-time plaintext token, verifies its account-automation provenance, lists summaries, and revokes by deletion", async () => {
         const account = await db.account.create({
             data: { publicKey: "api-token-lifecycle" },
@@ -113,7 +235,7 @@ describe("auth (API tokens)", () => {
         const minted = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "CI deploy",
+            label: await preparePlainAccountApiTokenLabel(account.id, "CI deploy"),
         });
         const parsed = parseAccountApiTokenBearerV1(minted.token);
         expect(parsed).not.toBeNull();
@@ -170,7 +292,7 @@ describe("auth (API tokens)", () => {
         await expect(apiTokenAuth.listApiTokens(account.id)).resolves.toEqual([
             expect.objectContaining({
                 tokenId: minted.tokenId,
-                label: "CI deploy",
+                label: { content: { t: "plain", v: "CI deploy" }, recipientEnvelope: null },
                 displayPrefix: minted.displayPrefix,
                 lastUsedAt: expect.any(Date),
                 expiresAt: null,
@@ -207,16 +329,16 @@ describe("auth (API tokens)", () => {
         const serverId = await (await import("@/app/serverIdentity/serverIdentity")).getOrCreateServerIdentityId();
         const deployment = { serverId, environmentId: "staging", deployApproval: "automatic" as const };
         await expect(apiTokenAuth.createApiToken(Object.assign({ accountId: account.id, tokenId,
-            label: "Staging CI", grant },
+            label: await preparePlainAccountApiTokenLabel(account.id, "Staging CI"), grant },
             { deployment: { ...deployment, serverId: "unapproved-home" } })))
             .rejects.toMatchObject({ code: "credential_scope_denied" });
         const minted = await apiTokenAuth.createApiToken(Object.assign({ accountId: account.id, tokenId,
-            label: "Staging CI", grant }, { deployment }));
+            label: await preparePlainAccountApiTokenLabel(account.id, "Staging CI"), grant }, { deployment }));
         expect(minted.grant).toMatchObject({ deployApproval: 'automatic' });
         expect(await db.accountApiToken.findUnique({ where: { id: tokenId } })).toMatchObject({ accessGrant: { deployApproval: 'automatic' } });
         const principal = (await apiTokenAuth.verifyToken(minted.token))?.apiTokenPrincipal;
         if (!principal) throw new Error('Expected token principal');
-        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Child',
+        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(principal.accountId, 'Child'),
             expiresAt: new Date(Date.now() + 60_000), grant: minted.grant })).resolves.toMatchObject({
                 parentTokenId: minted.tokenId, grant: minted.grant,
             });
@@ -224,7 +346,7 @@ describe("auth (API tokens)", () => {
             { deployment: { ...deployment, deployApproval: "ask" as const } }));
         expect((await apiTokenAuth.listApiTokens(account.id))[0]?.grant).not.toHaveProperty('deployApproval');
         // A stale principal cannot recreate Automatic after the parent withdrew it.
-        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Stale child',
+        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(principal.accountId, 'Stale child'),
             expiresAt: new Date(Date.now() + 60_000), grant: minted.grant })).rejects.toMatchObject({ code: 'api_token_child_invalid' });
         // An Automatic update without a grant retains the current narrow grant.
         await apiTokenAuth.updateApiToken(Object.assign({ accountId: account.id, tokenId }, { deployment }));
@@ -250,7 +372,7 @@ describe("auth (API tokens)", () => {
         const minted = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Boundary expiry",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Boundary expiry"),
             expiresAt,
         }, creationTime);
 
@@ -291,7 +413,7 @@ describe("auth (API tokens)", () => {
             approve: false, create: null,
         };
         const minted = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
-            label: "Exact Environment deployment", grant });
+            label: await preparePlainAccountApiTokenLabel(account.id, "Exact Environment deployment"), grant });
         const principal = await auth.verifyPat(minted.token);
         if (!principal.ok) throw new Error("The real token issuer must produce an admitted principal");
         const request = { accountId: account.id, principalId: principal.principalId,
@@ -332,11 +454,23 @@ describe("auth (API tokens)", () => {
         harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "", AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
             HAPPIER_SERVER_IDENTITY_ID: serverId });
-        const [creator, actor] = await Promise.all(["creator", "actor"].map(label => db.account.create({
-            // Key Challenge is a keyed-Account method; a plain Account cannot supply this evidence.
-            data: { publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey),
-                encryptionMode: label === "actor" ? "e2ee" : "plain" },
-        })));
+        const creatorSigning = tweetnacl.sign.keyPair();
+        const actorSigning = tweetnacl.sign.keyPair();
+        const actorContent = tweetnacl.box.keyPair();
+        const [creator, actor] = await Promise.all([
+            db.account.create({ data: { publicKey: encodeBase64(creatorSigning.publicKey), encryptionMode: "plain" } }),
+            // Key Challenge is a keyed-Account method; give this E2EE actor a
+            // real content binding so its fixture label can be sealed without
+            // changing the Account mode under the evidence test.
+            db.account.create({ data: {
+                publicKey: Buffer.from(actorSigning.publicKey).toString("hex"), encryptionMode: "e2ee",
+                contentPublicKey: actorContent.publicKey,
+                contentPublicKeySig: signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: actorSigning.secretKey,
+                    contentPublicKey: actorContent.publicKey,
+                }),
+            } }),
+        ]);
         const team = await db.team.create({ data: { name: "Restricted deployment" } });
         try {
             await db.teamMembership.createMany({ data: [
@@ -346,7 +480,7 @@ describe("auth (API tokens)", () => {
             let selectedGroupId: string | undefined;
             if (deployerMode === "chosen") {
                 const group = await inTx(tx => createTeamGroupForActorInTx(tx, { teamId: team.id,
-                    actorAccountId: creator.id, name: "CI deployers", requestKey: crypto.randomUUID() }));
+                    actorAccountId: creator.id, groupId: crypto.randomUUID(), name: plainPrivateLabel("CI deployers"), requestKey: crypto.randomUUID() }));
                 if (!group.ok) throw new Error(group.error);
                 const added = await inTx(tx => addTeamGroupMemberForActorInTx(tx, { teamId: team.id,
                     actorAccountId: creator.id, groupId: group.value.id, accountId: actor.id,
@@ -388,8 +522,9 @@ describe("auth (API tokens)", () => {
                 v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
             } } });
             const authenticationEvidence = [{ kind: "home_method" as const, methodId: "key_challenge" }];
-            const minted = await auth.createApiToken({ accountId: actor.id, tokenId: crypto.randomUUID(),
-                label: "Restricted CI", authenticationEvidence, grant: { ...API_TOKEN_FULL_GRANT_V1,
+            const mintedTokenId = crypto.randomUUID();
+            const minted = await auth.createApiToken({ accountId: actor.id, tokenId: mintedTokenId,
+                label: await prepareE2eeAccountApiTokenLabel(actor.id, mintedTokenId, "Restricted CI"), authenticationEvidence, grant: { ...API_TOKEN_FULL_GRANT_V1,
                     actions: { families: [], ids: ["deployments.deploy"] },
                     targets: { sessions: [], machines: [], environments: [environment.id] }, approve: false, create: null,
                 } });
@@ -411,8 +546,9 @@ describe("auth (API tokens)", () => {
                 credentialId: principal.credentialId, grant: principal.grant, serverIdentityId: serverId,
                 machineId: machine.id, actionId: "deployments.deploy" as const, requestId: crypto.randomUUID(),
                 requestEnvelopeDigest: "b".repeat(43), target: { kind: "machine" as const, machineId: machine.id } };
-            const unqualified = await auth.createApiToken({ accountId: actor.id, tokenId: crypto.randomUUID(),
-                label: "CI without own evidence", grant: minted.grant });
+            const unqualifiedTokenId = crypto.randomUUID();
+            const unqualified = await auth.createApiToken({ accountId: actor.id, tokenId: unqualifiedTokenId,
+                label: await prepareE2eeAccountApiTokenLabel(actor.id, unqualifiedTokenId, "CI without own evidence"), grant: minted.grant });
             await expect(auth.mintExternalActionExecutionAuthorization({ ...request,
                 credentialId: unqualified.tokenId }, { input })).rejects.toMatchObject({ code: "credential_scope_denied" });
             await expect(auth.mintExternalActionExecutionAuthorization(request, { input })).resolves.toMatchObject({
@@ -443,7 +579,7 @@ describe("auth (API tokens)", () => {
         const minted = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Daemon cache",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Daemon cache"),
             expiresAt: new Date("2026-08-22T13:00:00.000Z"),
         });
         const signedAccountToken = await auth.createToken(account.id, undefined, {
@@ -468,7 +604,7 @@ describe("auth (API tokens)", () => {
 
     it("writes canonical full grants and refuses missing or malformed stored grants", async () => {
         const account = await db.account.create({ data: { publicKey: 'canonical-grant-reader' } });
-        const token = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Canonical' });
+        const token = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Canonical') });
         expect(await db.accountApiToken.findUniqueOrThrow({ where: { id: token.tokenId }, select: { accessGrant: true } }))
             .toEqual({ accessGrant: API_TOKEN_FULL_GRANT_V1 });
         expect(await auth.verifyPat(token.token)).toMatchObject({ ok: true, ...fullGrantProjection });
@@ -491,7 +627,7 @@ describe("auth (API tokens)", () => {
             style: { v: 1 as const, typography: { fontFamily: 'Inter' }, parts: { composer: { radius: 'md' as const } } },
         };
         const minted = await auth.createApiToken({
-            accountId: account.id, tokenId: crypto.randomUUID(), label: 'Stored projection', grant, embedConfig,
+            accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Stored projection'), grant, embedConfig,
         });
         const storedGrant = { ...grant, ignored: true, targets: { ...grant.targets, ignored: true } };
         const storedConfig = {
@@ -535,7 +671,7 @@ describe("auth (API tokens)", () => {
         const minted = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Qualified automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Qualified automation"),
             authenticationEvidence: evidence,
         });
 
@@ -572,7 +708,7 @@ describe("auth (API tokens)", () => {
         await expect(auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Over-bound automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Over-bound automation"),
             authenticationEvidence: Array.from({ length: 33 }, (_, index) => ({
                 kind: "home_method" as const,
                 methodId: `method-${index}`,
@@ -589,7 +725,7 @@ describe("auth (API tokens)", () => {
         const preEpochToken = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Pre-epoch automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Pre-epoch automation"),
         });
         const preEpochSigned = await auth.createToken(account.id, undefined, {
             kind: "account",
@@ -611,14 +747,17 @@ describe("auth (API tokens)", () => {
             authority: "account_automation",
         });
         await expect(apiTokenAuth.listApiTokens(account.id)).resolves.toEqual([
-            expect.objectContaining({ tokenId: preEpochToken.tokenId, label: "Pre-epoch automation" }),
+            expect.objectContaining({
+                tokenId: preEpochToken.tokenId,
+                label: { content: { t: "plain", v: "Pre-epoch automation" }, recipientEnvelope: null },
+            }),
         ]);
 
         // Credentials minted after the epoch change remain valid.
         const postEpochToken = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Post-epoch automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Post-epoch automation"),
         });
         await expect(auth.verifyToken(postEpochToken.token)).resolves.not.toBeNull();
         const postEpochSigned = await auth.createToken(account.id, undefined, {
@@ -642,7 +781,7 @@ describe("auth (API tokens)", () => {
         const expiringToken = await apiTokenAuth.createApiToken({
             accountId: expiringAccount.id,
             tokenId: crypto.randomUUID(),
-            label: "Short-lived tool",
+            label: await preparePlainAccountApiTokenLabel(expiringAccount.id, "Short-lived tool"),
             expiresAt: new Date("2026-08-22T12:01:00.000Z"),
         });
         vi.setSystemTime(new Date("2026-08-22T12:01:00.001Z"));
@@ -655,7 +794,7 @@ describe("auth (API tokens)", () => {
         const deletedAccountToken = await apiTokenAuth.createApiToken({
             accountId: deletedAccount.id,
             tokenId: crypto.randomUUID(),
-            label: "Deleted account tool",
+            label: await preparePlainAccountApiTokenLabel(deletedAccount.id, "Deleted account tool"),
         });
         await db.account.delete({ where: { id: deletedAccount.id } });
         await expect(auth.verifyToken(deletedAccountToken.token)).resolves.toBeNull();
@@ -681,7 +820,7 @@ describe("auth (API tokens)", () => {
         const minted = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Build agent",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Build agent"),
         });
 
         await expect(auth.verifyToken(minted.token)).resolves.not.toBeNull();
@@ -710,7 +849,7 @@ describe("auth (API tokens)", () => {
         const minted = await apiTokenAuth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Ineligible automation",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Ineligible automation"),
         });
 
         await withAuthenticatedApp(async (app) => {

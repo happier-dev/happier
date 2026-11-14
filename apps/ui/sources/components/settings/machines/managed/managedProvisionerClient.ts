@@ -1,3 +1,4 @@
+import type { ManagedMachinePresetAcquireOriginV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionInputV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -15,7 +16,7 @@ import { isPluginErrorData, type PluginErrorContractData } from '@happier-dev/pr
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import type { PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
 
-export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string;
+export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string; requestId?: string;
     nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1 }>
     & Pick<PluginErrorContractData, 'message'> & Pick<PluginActionFailureAuthorPayloadV1, 'remediation'>;
 export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'failed' }>
@@ -24,16 +25,17 @@ export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionR
 export type ManagedProvisionerReadResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'approval_pending' } | { kind: 'failed' }>
     | ManagedProvisionerFailure;
 export type ManagedProvisionerClientOptions<T> = Omit<MachinePresetCollectionOptions<T>, 'onApprovalFailed'> & Readonly<{
+    managedPresetOrigin?: ManagedMachinePresetAcquireOriginV1;
     onApprovalAdmitted?: (receipt: ExternalActionManagedAdmissionReceiptV1) => void;
     onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>;
-function managedFailure(code: string, details?: unknown): ManagedProvisionerFailure {
+function managedFailure(code: string, details?: unknown, requestId?: string): ManagedProvisionerFailure {
     // Only the canonical PluginError payload carries an authored reason; arbitrary transport text stays private.
     const authored = isPluginErrorData(details) && details.code === code ? details : undefined;
     const message = authored?.message?.trim();
     const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
     const native = ManagedNativeFailureDetailsV1Schema.safeParse(authored && 'details' in authored ? authored.details : details);
-    return { kind: 'failed', code, ...(message ? { message } : {}),
+    return { kind: 'failed', code, ...(requestId ? { requestId } : {}), ...(message ? { message } : {}),
         ...(remediation.success ? { remediation: remediation.data } : {}),
         ...(native.success ? { details: native.data, nativeCause: native.data.nativeCause } : {}) };
 }
@@ -66,6 +68,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
             const dispatch = actionId === 'machines.managed.acquire' ? executeAction.confirmed : executeAction;
             const result = await dispatch(actionId, parsed.data, {
                     surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
+                    ...(options?.managedPresetOrigin ? { managedPresetOrigin: options.managedPresetOrigin } : {}),
                     ...(options?.signal ? { signal: options.signal } : {}),
                 });
             const outcome = observeHomeActionOutcome<ManagedMachineActionOutputV1<T>, T>({
@@ -82,7 +85,8 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
             if (outcome.kind === 'failed') {
                 const code = homeDomainFailureCode(outcome.failure);
                 const receipt = admittedReceipt(actionId, code, outcome.failure.details);
-                return receipt ? { kind: 'admitted', receipt } : managedFailure(code, result.ok ? undefined : result.details);
+                return receipt ? { kind: 'admitted', receipt } : managedFailure(code, result.ok ? undefined : result.details,
+                    actionId === 'machines.managed.acquire' && !result.ok ? result.requestId : undefined);
             }
             if (outcome.kind === 'approval_pending') {
                 options?.onApprovalPending?.(outcome.approval);

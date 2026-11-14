@@ -3,7 +3,7 @@
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
 import type { MachinePresetItemV1 } from '../../machineSetup.js';
-import type { InputPredicate, JSONType, MachineSetupSourceFactsMapV1, MachineSetupSourceV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate, JSONType, MachineSetupNonAccountPresetSourceEntryV1, MachineSetupSourceFactsMapV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ManagedMachinesActionInputById = {
     readonly "machines.provisioners.list": {
@@ -228,9 +228,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            profileId?: string | undefined;
-            title?: string | undefined;
-            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -261,6 +258,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
+            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -352,11 +352,11 @@ export type ManagedMachinesActionInputById = {
                 }> | undefined;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             roleId?: string | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
-            approvalProfileId?: null | string | undefined;
             configuration?: unknown;
             primaryTeamId?: null | string | undefined;
             capabilitySelection?: undefined | {
@@ -505,7 +505,7 @@ export type ManagedMachinesActionInputById = {
             machineSetupPlanInput?: undefined | {
                 homeId: string;
                 machineId: string;
-                sources?: unknown;
+                sources?: undefined | unknown[];
                 exclusions?: undefined | {
                     ref: {
                         pluginId: string;
@@ -1540,6 +1540,10 @@ export type ManagedMachinesActionInputById = {
                     };
                     maximumObservationAgeMs: null | number;
                     enabled: boolean;
+                    automationDisplay?: undefined | {
+                        name: string;
+                        description: null | string;
+                    };
                 } | {
                     kind: 'pluginEvent';
                     eventRef: {
@@ -1607,8 +1611,8 @@ export type ManagedMachinesActionInputById = {
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -1976,8 +1980,12 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
-                inputs?: Record<string, unknown> | undefined;
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
@@ -2440,25 +2448,15 @@ export type ManagedMachinesActionInputById = {
             homeId: string;
             id: string;
             revision: number;
-            name?: string | undefined;
         };
-        enrollmentIdentity: {
-            kind: 'dedicatedDaemonUser';
-            username: 'happier';
-            serviceMode: 'user';
-            role: 'deployTarget' | 'server';
-            adminAccessAtCreation: 'ask' | 'none' | 'preauthorized';
-            administrator?: undefined | {
-                username: string;
-            };
-        } | {
-            kind: 'existingUser';
-            role: 'adopted' | 'personal';
-        } | {
-            kind: 'guestProcess';
-            role: 'sandbox';
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
         };
-        retention: {
+        controller?: undefined | {
+            machineId: string;
+            installationId: string;
+        };
+        retention?: undefined | {
             kind: 'deadline';
             at: number;
             effect: 'delete' | 'stop';
@@ -2469,13 +2467,15 @@ export type ManagedMachinesActionInputById = {
             afterMs: number;
             effect: 'delete' | 'stop';
         };
-        wakeOnAcceptedMessage: boolean;
-        creationScopeRetention?: undefined | {
-            effect: 'delete' | 'stop';
-        };
-        controller?: undefined | {
-            machineId: string;
-            installationId: string;
+        wakeOnAcceptedMessage?: boolean | undefined;
+        presetContentOverride?: undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
         };
         agentStart?: undefined | {
             directory: {
@@ -2492,9 +2492,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            profileId?: string | undefined;
-            title?: string | undefined;
-            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -2525,6 +2522,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
+            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -2616,11 +2616,11 @@ export type ManagedMachinesActionInputById = {
                 }> | undefined;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             roleId?: string | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
-            approvalProfileId?: null | string | undefined;
             configuration?: unknown;
             primaryTeamId?: null | string | undefined;
             capabilitySelection?: undefined | {
@@ -2769,7 +2769,7 @@ export type ManagedMachinesActionInputById = {
             machineSetupPlanInput?: undefined | {
                 homeId: string;
                 machineId: string;
-                sources?: unknown;
+                sources?: undefined | unknown[];
                 exclusions?: undefined | {
                     ref: {
                         pluginId: string;
@@ -3804,6 +3804,10 @@ export type ManagedMachinesActionInputById = {
                     };
                     maximumObservationAgeMs: null | number;
                     enabled: boolean;
+                    automationDisplay?: undefined | {
+                        name: string;
+                        description: null | string;
+                    };
                 } | {
                     kind: 'pluginEvent';
                     eventRef: {
@@ -3871,8 +3875,8 @@ export type ManagedMachinesActionInputById = {
                     enabled: boolean;
                 } | {
                     kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                     policy: {
                         kind: 'everyMatch';
                     } | {
@@ -4240,8 +4244,12 @@ export type ManagedMachinesActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
-                inputs?: Record<string, unknown> | undefined;
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
@@ -4307,397 +4315,6 @@ export type ManagedMachinesActionInputById = {
                 revision: number;
             }> | undefined;
         };
-        reviewedFacts?: undefined | {
-            launch: {
-                provider: {
-                    pluginId: string;
-                    localId: string;
-                };
-                schemaVersion: number;
-                name: string;
-                choices: unknown;
-                credentials?: ({
-                    purpose: {
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        purpose: string;
-                    };
-                    account: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    purpose: {
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        purpose: string;
-                    };
-                    teamId: string;
-                    selection: {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'direct';
-                        disclosedMember: {
-                            service: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            accountId: string;
-                        };
-                    };
-                })[] | undefined;
-            };
-            optionStatus: 'current' | 'loading' | 'unavailable';
-            billing: {
-                location: 'cloud' | 'local' | 'unknown';
-                stoppedBilling: 'billed' | 'not-billed' | 'unknown';
-                storageCharges?: undefined | {
-                    amount: string;
-                    currency: string;
-                    unit: string;
-                    source: string;
-                    observedAt: number;
-                    label?: string | undefined | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                }[];
-            };
-            prerequisites: {
-                requirement: {
-                    kind: 'managedDependency';
-                    id: string | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'systemTool';
-                    id: string | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                };
-                status: 'available' | 'unavailable' | 'unknown';
-                reason?: string | undefined;
-                repairAction?: undefined | {
-                    action: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    input: unknown;
-                };
-            }[];
-            retentionCapabilities: {
-                supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
-                guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
-                finiteOnly?: boolean | undefined;
-                deletionNotices?: undefined | {
-                    kind: 'stopped-storage';
-                    rule: {
-                        kind: 'after-stop';
-                        afterMs: number;
-                    };
-                    consequence: 'disk-deleted';
-                    at?: number | undefined;
-                }[];
-                nativeExpiry?: undefined | {
-                    kind: 'deadline';
-                    at: number;
-                } | {
-                    kind: 'unused';
-                    afterMs: number;
-                };
-            };
-            retention: {
-                kind: 'deadline';
-                at: number;
-                effect: 'delete' | 'stop';
-            } | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
-                afterMs: number;
-                effect: 'delete' | 'stop';
-            };
-            wakeOnAcceptedMessage: boolean;
-            controller?: undefined | {
-                machineId: string;
-                installationId: string;
-            };
-            provisioner?: undefined | {
-                id: string;
-                title: string | {
-                    key: string;
-                    fallback: string;
-                    params?: Record<string, number | string> | undefined;
-                };
-                icon: string;
-                resourceKind: string;
-                launchSchema: unknown;
-                resourceSchema: unknown;
-                schemaVersion: number;
-                platforms: ('darwin' | 'linux' | 'win32')[];
-                prerequisites: ({
-                    kind: 'managedDependency';
-                    id: string | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'systemTool';
-                    id: string | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                })[];
-                billing: {
-                    location: 'cloud' | 'local' | 'unknown';
-                    stoppedBilling: 'billed' | 'not-billed' | 'unknown';
-                    storageCharges?: undefined | {
-                        amount: string;
-                        currency: string;
-                        unit: string;
-                        source: string;
-                        observedAt: number;
-                        label?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    }[];
-                };
-                retention: {
-                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
-                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
-                    finiteOnly?: boolean | undefined;
-                    deletionNotices?: undefined | {
-                        kind: 'stopped-storage';
-                        rule: {
-                            kind: 'after-stop';
-                            afterMs: number;
-                        };
-                        consequence: 'disk-deleted';
-                        at?: number | undefined;
-                    }[];
-                    nativeExpiry?: undefined | {
-                        kind: 'deadline';
-                        at: number;
-                    } | {
-                        kind: 'unused';
-                        afterMs: number;
-                    };
-                };
-                actions: {
-                    check: string;
-                    acquire: string;
-                    bootstrap: string;
-                    inspect: string;
-                    destroy: string;
-                    options?: string | undefined;
-                    power?: string | undefined;
-                    rebuild?: string | undefined;
-                    resize?: string | undefined;
-                    snapshot?: string | undefined;
-                    renew?: string | undefined;
-                };
-                enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
-                kindTitle?: string | undefined | {
-                    key: string;
-                    fallback: string;
-                    params?: Record<string, number | string> | undefined;
-                };
-                description?: string | undefined | {
-                    key: string;
-                    fallback: string;
-                    params?: Record<string, number | string> | undefined;
-                };
-                browserReachable?: boolean | undefined;
-                resize?: undefined | {
-                    cpuCores: {
-                        kind: 'supported';
-                        requiresRestart: boolean;
-                        changes: 'any' | 'grow-only';
-                    } | {
-                        kind: 'unsupported';
-                        code: string;
-                    };
-                    memoryBytes: {
-                        kind: 'supported';
-                        requiresRestart: boolean;
-                        changes: 'any' | 'grow-only';
-                    } | {
-                        kind: 'unsupported';
-                        code: string;
-                    };
-                    diskBytes: {
-                        kind: 'supported';
-                        requiresRestart: boolean;
-                        changes: 'any' | 'grow-only';
-                    } | {
-                        kind: 'unsupported';
-                        code: string;
-                    };
-                };
-                snapshot?: undefined | {
-                    coverage: {
-                        rootDisk: boolean;
-                        attachedVolumes: boolean;
-                    };
-                    cost: {
-                        kind: 'billed';
-                        source: string;
-                        price?: undefined | {
-                            amount: string;
-                            currency: string;
-                            unit: string;
-                            source: string;
-                            observedAt: number;
-                            label?: string | undefined | {
-                                key: string;
-                                fallback: string;
-                                params?: Record<string, number | string> | undefined;
-                            };
-                        };
-                    };
-                };
-                nativeDurationInput?: undefined | {
-                    path: string;
-                    unit: 'milliseconds' | 'seconds';
-                };
-                resourceIdPath?: string | undefined;
-                bootstrapTransport?: undefined | {
-                    kind: 'native';
-                    exec: string;
-                    putFile: string;
-                    stream?: string | undefined;
-                };
-                bootstrapCredential?: undefined | {
-                    kind: 'native-token' | 'ssh';
-                };
-                nativeCredentialDelivery?: undefined | {
-                    apply: string;
-                    transports: [
-                        'https_headers'
-                    ];
-                    preservesEndpoint: true;
-                    perBindingMatching: true;
-                };
-                credentialPurposeRequirements?: undefined | {
-                    purpose: string;
-                    optionalWhen: unknown;
-                }[];
-                reconciliation?: undefined | {
-                    nativeOperationSchema: unknown;
-                    action: string;
-                    cleanup?: string | undefined;
-                    continueAcquire?: true | undefined;
-                };
-            };
-            prices?: undefined | {
-                amount: string;
-                currency: string;
-                unit: string;
-                source: string;
-                observedAt: number;
-                label?: string | undefined | {
-                    key: string;
-                    fallback: string;
-                    params?: Record<string, number | string> | undefined;
-                };
-            }[];
-            localResources?: undefined | {
-                observedAt: number;
-                totalCpuCores?: number | undefined;
-                allocatedCpuCores?: number | undefined;
-                availableCpuCores?: number | undefined;
-                availableMemoryBytes?: number | undefined;
-                availableDiskBytes?: number | undefined;
-            };
-            nativeFacts?: undefined | {
-                size?: undefined | {
-                    id: string;
-                    title: string | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                    cpuCores?: number | undefined;
-                    memoryBytes?: number | undefined;
-                    diskBytes?: number | undefined;
-                };
-                image?: undefined | {
-                    id: string;
-                    title: string | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                    description?: string | undefined | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                    preview?: undefined | {
-                        resource: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accessibilityLabel?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                };
-                location?: undefined | {
-                    id: string;
-                    title: string | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                    countryCode?: string | undefined;
-                };
-                network?: undefined | {
-                    id: string;
-                    title: string | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                };
-                duration?: undefined | {
-                    id: string;
-                    title: string | {
-                        key: string;
-                        fallback: string;
-                        params?: Record<string, number | string> | undefined;
-                    };
-                    afterMs: number;
-                    idleAfterMs?: number | undefined;
-                };
-                monthlyCapStatus?: 'none' | 'unknown' | undefined;
-            };
-            reviewedEffectDigest?: string | undefined;
-            setup?: unknown;
-            preset?: undefined | {
-                id: string;
-                revision: number;
-                name?: string | undefined;
-            };
-        };
     };
     readonly "machines.managed.list": {
         homeId: string;
@@ -4751,7 +4368,7 @@ export type ManagedMachinesActionInputById = {
     readonly "machines.setup.plan": {
         homeId: string;
         machineId: string;
-        sources?: unknown;
+        sources?: undefined | unknown[];
         exclusions?: undefined | {
             ref: {
                 pluginId: string;
@@ -5153,6 +4770,7 @@ export type ManagedMachinesActionInputById = {
                             resourceRevision: number;
                             kind: 'secret';
                         };
+                        grantRef: string;
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
@@ -5321,6 +4939,7 @@ export type ManagedMachinesActionInputById = {
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 }[];
                 projectSourceId?: string | undefined;
                 newProject?: undefined | {
@@ -5341,9 +4960,9 @@ export type ManagedMachinesActionInputById = {
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
-                    groupGrants?: string[] | undefined;
                     accountGrants?: string[] | undefined;
                     teamGrants?: string[] | undefined;
+                    groupGrants?: string[] | undefined;
                 };
                 connectTo?: undefined | {
                     service: string;
@@ -5372,7 +4991,7 @@ export type ManagedMachinesActionInputById = {
         targets: {
             homeId: string;
             machineId: string;
-            sources?: unknown;
+            sources?: undefined | unknown[];
             exclusions?: undefined | {
                 ref: {
                     pluginId: string;
@@ -5774,6 +5393,7 @@ export type ManagedMachinesActionInputById = {
                                 resourceRevision: number;
                                 kind: 'secret';
                             };
+                            grantRef: string;
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
@@ -5942,6 +5562,7 @@ export type ManagedMachinesActionInputById = {
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
+                        grantRef?: string | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -5962,9 +5583,9 @@ export type ManagedMachinesActionInputById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
-                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -5996,7 +5617,7 @@ export type ManagedMachinesActionInputById = {
         targets: {
             homeId: string;
             machineId: string;
-            sources: unknown;
+            sources: unknown[];
             desiredRevision: number;
             recipePlans: {
                 sourceIndex: number;
@@ -8291,6 +7912,7 @@ export type ManagedMachinesActionInputById = {
                                 resourceRevision: number;
                                 kind: 'secret';
                             };
+                            grantRef: string;
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
@@ -8459,6 +8081,7 @@ export type ManagedMachinesActionInputById = {
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
+                        grantRef?: string | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -8479,9 +8102,9 @@ export type ManagedMachinesActionInputById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
-                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -8506,7 +8129,7 @@ export type ManagedMachinesActionInputById = {
     readonly "machines.setup.remove": {
         homeId: string;
         machineId: string;
-        sources: unknown;
+        sources: unknown[];
         desiredRevision: number;
         removeItemKeys: string[];
         removalPlans: {
@@ -11389,6 +11012,18 @@ export type ManagedMachinesActionInputById = {
         homeId: string;
     };
     readonly "machines.managed.resize": {
+        presetContentOverride: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+        };
+        homeId: string;
+        managedId: string;
+    } | {
         size: {
             cpuCores?: number | undefined;
             memoryBytes?: number | undefined;
@@ -12694,7 +12329,7 @@ export type ManagedMachinesActionResultById = {
         };
     };
     readonly "machines.managed.list": {
-        machines: {
+        machines: ({
             id: string;
             homeId: string;
             custodianAccountId: string;
@@ -12770,6 +12405,7 @@ export type ManagedMachinesActionResultById = {
             preset?: undefined | {
                 id: string;
                 revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
             };
             controller?: undefined | {
                 machineId: string;
@@ -13393,8 +13029,6 @@ export type ManagedMachinesActionResultById = {
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
-                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 billing?: undefined | {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -13476,12 +13110,124 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                 };
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             cleanup?: undefined | {
                 disposition: 'pending' | 'unavailable';
                 reason: string;
             };
-        }[];
+        } | {
+            machine: {
+                preset: {
+                    id: string;
+                    revision: number;
+                    contentEncryptionMode: 'e2ee' | 'plain';
+                };
+                id: string;
+                homeId: string;
+                custodianAccountId: string;
+                allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+                creationState: 'active' | 'canceled';
+                desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                desiredWhen: 'after-idle' | 'now';
+                intentRevision: number;
+                retention: {
+                    kind: 'deadline';
+                    at: number;
+                    effect: 'delete' | 'stop';
+                } | {
+                    kind: 'until-delete';
+                } | {
+                    kind: 'unused';
+                    afterMs: number;
+                    effect: 'delete' | 'stop';
+                };
+                wakeOnAcceptedMessage: boolean;
+                launch?: undefined;
+                enrollmentIdentity?: undefined;
+                reviewedFacts?: undefined;
+                resource?: undefined;
+                nativeOperationRef?: undefined;
+                recovery?: undefined;
+                devcontainerChild?: undefined;
+                machineSetup?: undefined | {
+                    state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                    operation?: undefined | {
+                        operationId: string;
+                    };
+                    settledAtMs?: number | undefined;
+                    errorCode?: string | undefined;
+                };
+                observation?: undefined | {
+                    observedAt: number;
+                    availability: 'absent' | 'present' | 'unavailable';
+                    power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                    storage?: 'lost' | 'retained' | 'unknown' | undefined;
+                };
+                enrollmentAccountId?: string | undefined;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                controllerAccess?: undefined | {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                bootstrapCredentialRef?: undefined | {
+                    kind: 'shared_resource';
+                    resourceId: string;
+                };
+                bootstrapInstalled?: true | undefined;
+                enrolledMachineId?: string | undefined;
+                desiredAfterMs?: number | undefined;
+                archivedAt?: number | undefined;
+                submittedNativeEffect?: undefined | {
+                    intentRevision: number;
+                    requestId: string;
+                    intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    reviewedEffectDigest?: string | undefined;
+                };
+                creationScopeRetention?: undefined | {
+                    effect: 'delete' | 'stop';
+                    afterMs?: number | undefined;
+                    source?: undefined | {
+                        kind: 'run';
+                        source: {
+                            kind: 'workflow_run';
+                            runId: string;
+                        };
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                    endedAt?: number | undefined;
+                };
+                cleanup?: undefined | {
+                    disposition: 'pending' | 'unavailable';
+                    reason: string;
+                };
+            };
+            presetContent: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            };
+        })[];
     };
     readonly "machines.managed.get": {
         id: string;
@@ -13559,6 +13305,7 @@ export type ManagedMachinesActionResultById = {
         preset?: undefined | {
             id: string;
             revision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
         };
         controller?: undefined | {
             machineId: string;
@@ -14182,8 +13929,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -14265,10 +14010,122 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
         cleanup?: undefined | {
             disposition: 'pending' | 'unavailable';
             reason: string;
+        };
+    } | {
+        machine: {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        };
+        presetContent: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
         };
     };
     readonly "machines.managed.birth.get": {
@@ -14379,6 +14236,7 @@ export type ManagedMachinesActionResultById = {
             preset?: undefined | {
                 id: string;
                 revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
             };
             controller?: undefined | {
                 machineId: string;
@@ -15002,8 +14860,6 @@ export type ManagedMachinesActionResultById = {
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
-                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 billing?: undefined | {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -15085,6 +14941,103 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                 };
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        } | {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
             };
             cleanup?: undefined | {
                 disposition: 'pending' | 'unavailable';
@@ -15221,6 +15174,7 @@ export type ManagedMachinesActionResultById = {
             preset?: undefined | {
                 id: string;
                 revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
             };
             controller?: undefined | {
                 machineId: string;
@@ -15844,8 +15798,6 @@ export type ManagedMachinesActionResultById = {
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
-                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 billing?: undefined | {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -15927,6 +15879,103 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                 };
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        } | {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
             };
             cleanup?: undefined | {
                 disposition: 'pending' | 'unavailable';
@@ -15952,10 +16001,10 @@ export type ManagedMachinesActionResultById = {
         };
     } | {
         kind: 'refused';
-        code: 'acquisition_disabled' | 'action_outcome_unknown' | 'admission_unavailable' | 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'controller_retired' | 'controller_unavailable' | 'cost_limit_unavailable' | 'credential_unavailable' | 'duplicate_request' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'intent_changed' | 'invalid_request' | 'machine_offline' | 'managed_not_found' | 'managed_power_required' | 'model_not_granted' | 'operation_not_current' | 'permission_denied' | 'permission_mode_not_granted' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | 'provider_unavailable' | 'request_conflict' | 'resource_changed' | 'resource_forbidden' | 'resource_mismatch' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+        code: 'account_mode_mismatch' | 'acquisition_disabled' | 'action_outcome_unknown' | 'admission_unavailable' | 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'controller_retired' | 'controller_unavailable' | 'cost_limit_unavailable' | 'credential_unavailable' | 'duplicate_request' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'intent_changed' | 'invalid_request' | 'machine_offline' | 'managed_not_found' | 'managed_power_required' | 'model_not_granted' | 'operation_not_current' | 'permission_denied' | 'permission_mode_not_granted' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | 'provider_unavailable' | 'request_conflict' | 'resource_changed' | 'resource_forbidden' | 'resource_mismatch' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
     } | {
         kind: 'unknown';
-        code: 'acquisition_disabled' | 'action_outcome_unknown' | 'admission_unavailable' | 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'controller_retired' | 'controller_unavailable' | 'cost_limit_unavailable' | 'credential_unavailable' | 'duplicate_request' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'intent_changed' | 'invalid_request' | 'machine_offline' | 'managed_not_found' | 'managed_power_required' | 'model_not_granted' | 'operation_not_current' | 'permission_denied' | 'permission_mode_not_granted' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | 'provider_unavailable' | 'request_conflict' | 'resource_changed' | 'resource_forbidden' | 'resource_mismatch' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+        code: 'account_mode_mismatch' | 'acquisition_disabled' | 'action_outcome_unknown' | 'admission_unavailable' | 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'controller_retired' | 'controller_unavailable' | 'cost_limit_unavailable' | 'credential_unavailable' | 'duplicate_request' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'intent_changed' | 'invalid_request' | 'machine_offline' | 'managed_not_found' | 'managed_power_required' | 'model_not_granted' | 'operation_not_current' | 'permission_denied' | 'permission_mode_not_granted' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | 'provider_unavailable' | 'request_conflict' | 'resource_changed' | 'resource_forbidden' | 'resource_mismatch' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
     };
     readonly "machines.managed.setup.skip": {
         id: string;
@@ -16033,6 +16082,7 @@ export type ManagedMachinesActionResultById = {
         preset?: undefined | {
             id: string;
             revision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
         };
         controller?: undefined | {
             machineId: string;
@@ -16656,8 +16706,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -16739,15 +16787,141 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
         cleanup?: undefined | {
             disposition: 'pending' | 'unavailable';
             reason: string;
         };
+    } | {
+        machine: {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        };
+        presetContent: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
+        };
     };
     readonly "machines.setup.plan": {
         desiredRevision: number;
-        sources: MachineSetupSourceV1;
+        sources: (MachineSetupNonAccountPresetSourceEntryV1 | {
+            kind: 'accountPresetOpaque';
+            presetId: string;
+            presetRevision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
+            presetContentOverride?: undefined | {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+            };
+        })[];
         exclusions: {
             ref: {
                 pluginId: string;
@@ -16763,6 +16937,34 @@ export type ManagedMachinesActionResultById = {
             reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
             requiredFact?: string | undefined;
         }[];
+        resolvedSources?: (MachineSetupNonAccountPresetSourceEntryV1 | {
+            kind: 'accountPresetOpaque';
+            presetId: string;
+            presetRevision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
+            presetContent: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            };
+            presetContentOverride?: undefined | {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+            };
+        })[] | undefined;
         sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
         appOrigins?: undefined | {
             sourceIndex: number;
@@ -19144,6 +19346,7 @@ export type ManagedMachinesActionResultById = {
                             resourceRevision: number;
                             kind: 'secret';
                         };
+                        grantRef: string;
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
@@ -19312,6 +19515,7 @@ export type ManagedMachinesActionResultById = {
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 }[];
                 projectSourceId?: string | undefined;
                 newProject?: undefined | {
@@ -19332,9 +19536,9 @@ export type ManagedMachinesActionResultById = {
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
-                    groupGrants?: string[] | undefined;
                     accountGrants?: string[] | undefined;
                     teamGrants?: string[] | undefined;
+                    groupGrants?: string[] | undefined;
                 };
                 connectTo?: undefined | {
                     service: string;
@@ -19381,6 +19585,7 @@ export type ManagedMachinesActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
+                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
@@ -20572,7 +20777,21 @@ export type ManagedMachinesActionResultById = {
             machineId: string;
             plan: {
                 desiredRevision: number;
-                sources: MachineSetupSourceV1;
+                sources: (MachineSetupNonAccountPresetSourceEntryV1 | {
+                    kind: 'accountPresetOpaque';
+                    presetId: string;
+                    presetRevision: number;
+                    contentEncryptionMode: 'e2ee' | 'plain';
+                    presetContentOverride?: undefined | {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: unknown;
+                        };
+                    };
+                })[];
                 exclusions: {
                     ref: {
                         pluginId: string;
@@ -20588,6 +20807,34 @@ export type ManagedMachinesActionResultById = {
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
                     requiredFact?: string | undefined;
                 }[];
+                resolvedSources?: (MachineSetupNonAccountPresetSourceEntryV1 | {
+                    kind: 'accountPresetOpaque';
+                    presetId: string;
+                    presetRevision: number;
+                    contentEncryptionMode: 'e2ee' | 'plain';
+                    presetContent: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: unknown;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                    };
+                    presetContentOverride?: undefined | {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: unknown;
+                        };
+                    };
+                })[] | undefined;
                 sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
                 appOrigins?: undefined | {
                     sourceIndex: number;
@@ -22969,6 +23216,7 @@ export type ManagedMachinesActionResultById = {
                                     resourceRevision: number;
                                     kind: 'secret';
                                 };
+                                grantRef: string;
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
@@ -23137,6 +23385,7 @@ export type ManagedMachinesActionResultById = {
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
+                            grantRef?: string | undefined;
                         }[];
                         projectSourceId?: string | undefined;
                         newProject?: undefined | {
@@ -23157,9 +23406,9 @@ export type ManagedMachinesActionResultById = {
                         intent?: 'add' | undefined;
                         managedRetention?: 'keep' | 'until-delete' | undefined;
                         generatedSecretAudience?: undefined | {
-                            groupGrants?: string[] | undefined;
                             accountGrants?: string[] | undefined;
                             teamGrants?: string[] | undefined;
+                            groupGrants?: string[] | undefined;
                         };
                         connectTo?: undefined | {
                             service: string;
@@ -23206,6 +23455,7 @@ export type ManagedMachinesActionResultById = {
                                 resourceRevision: number;
                                 kind: 'secret';
                             };
+                            grantRef: string;
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
@@ -24783,6 +25033,7 @@ export type ManagedMachinesActionResultById = {
                                 resourceRevision: number;
                                 kind: 'secret';
                             };
+                            grantRef: string;
                             purpose: 'variable';
                             name: string;
                             phase: 'build' | 'runtime';
@@ -24951,6 +25202,7 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
+                        grantRef?: string | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -24971,9 +25223,9 @@ export type ManagedMachinesActionResultById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
-                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -25146,7 +25398,7 @@ export type ManagedMachinesActionResultById = {
         currentRevision: number;
     } | {
         kind: 'refused';
-        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+        code: 'account_mode_mismatch' | 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     };
     readonly "machines.managed.rebuild": {
         kind: 'accepted';
@@ -25162,7 +25414,7 @@ export type ManagedMachinesActionResultById = {
         currentRevision: number;
     } | {
         kind: 'refused';
-        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+        code: 'account_mode_mismatch' | 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     };
     readonly "machines.managed.resize": {
         result: {
@@ -25255,8 +25507,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -25338,6 +25588,31 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
+        };
+    } | {
+        result: {
+            kind: 'confirmed';
+        } | {
+            kind: 'refused';
+        } | {
+            kind: 'unknown';
+        } | {
+            kind: 'unsupported';
+        };
+        presetContent: {
+            t: 'encrypted';
+            c: string;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
+        observation?: undefined | {
+            observedAt: number;
+            availability: 'absent' | 'present' | 'unavailable';
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
     };
     readonly "machines.managed.retention.update": {
@@ -25416,6 +25691,7 @@ export type ManagedMachinesActionResultById = {
         preset?: undefined | {
             id: string;
             revision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
         };
         controller?: undefined | {
             machineId: string;
@@ -26039,8 +26315,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -26122,10 +26396,122 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
         cleanup?: undefined | {
             disposition: 'pending' | 'unavailable';
             reason: string;
+        };
+    } | {
+        machine: {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        };
+        presetContent: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
         };
     };
     readonly "machines.managed.delete": {
@@ -26199,7 +26585,7 @@ export type ManagedMachinesActionResultById = {
             unavailable: readonly ('artifacts' | 'assignments' | 'deployments' | 'pools' | 'profiles' | 'requester_authority' | 'target')[];
         }>;
         kind: 'refused';
-        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+        code: 'account_mode_mismatch' | 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     };
     readonly "machines.managed.controller.update": {
         id: string;
@@ -26277,6 +26663,7 @@ export type ManagedMachinesActionResultById = {
         preset?: undefined | {
             id: string;
             revision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
         };
         controller?: undefined | {
             machineId: string;
@@ -26900,8 +27287,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -26983,10 +27368,122 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
         cleanup?: undefined | {
             disposition: 'pending' | 'unavailable';
             reason: string;
+        };
+    } | {
+        machine: {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        };
+        presetContent: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
         };
     };
     readonly "machines.managed.retire": {
@@ -27065,6 +27562,7 @@ export type ManagedMachinesActionResultById = {
         preset?: undefined | {
             id: string;
             revision: number;
+            contentEncryptionMode: 'e2ee' | 'plain';
         };
         controller?: undefined | {
             machineId: string;
@@ -27688,8 +28186,6 @@ export type ManagedMachinesActionResultById = {
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
-            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-            storage?: 'lost' | 'retained' | 'unknown' | undefined;
             billing?: undefined | {
                 location: 'cloud' | 'local' | 'unknown';
                 stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -27771,10 +28267,122 @@ export type ManagedMachinesActionResultById = {
             } | {
                 sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
             };
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
         };
         cleanup?: undefined | {
             disposition: 'pending' | 'unavailable';
             reason: string;
+        };
+    } | {
+        machine: {
+            preset: {
+                id: string;
+                revision: number;
+                contentEncryptionMode: 'e2ee' | 'plain';
+            };
+            id: string;
+            homeId: string;
+            custodianAccountId: string;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            creationState: 'active' | 'canceled';
+            desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+            desiredWhen: 'after-idle' | 'now';
+            intentRevision: number;
+            retention: {
+                kind: 'deadline';
+                at: number;
+                effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'delete' | 'stop';
+            };
+            wakeOnAcceptedMessage: boolean;
+            launch?: undefined;
+            enrollmentIdentity?: undefined;
+            reviewedFacts?: undefined;
+            resource?: undefined;
+            nativeOperationRef?: undefined;
+            recovery?: undefined;
+            devcontainerChild?: undefined;
+            machineSetup?: undefined | {
+                state: 'failed' | 'pending' | 'running' | 'skipped' | 'succeeded';
+                operation?: undefined | {
+                    operationId: string;
+                };
+                settledAtMs?: number | undefined;
+                errorCode?: string | undefined;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            enrollmentAccountId?: string | undefined;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            controllerAccess?: undefined | {
+                installationPublicKey: string;
+                custodian: {
+                    accountId: string;
+                };
+            };
+            bootstrapCredentialRef?: undefined | {
+                kind: 'shared_resource';
+                resourceId: string;
+            };
+            bootstrapInstalled?: true | undefined;
+            enrolledMachineId?: string | undefined;
+            desiredAfterMs?: number | undefined;
+            archivedAt?: number | undefined;
+            submittedNativeEffect?: undefined | {
+                intentRevision: number;
+                requestId: string;
+                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        };
+        presetContent: {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            recipientEnvelope: null | {
+                encryptedDataKey: string;
+                recipientContentPublicKeyFingerprint: string;
+            };
         };
     };
 };

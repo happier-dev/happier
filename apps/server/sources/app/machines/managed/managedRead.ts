@@ -1,7 +1,9 @@
-import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import { isStoredOpaquePresetMachine } from './managedMachineProjection';
+import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedOpaquePresetResourceDependencyV1, isManagedOpaquePresetResourceDispositionV1, ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { Prisma } from '@prisma/client';
@@ -18,7 +20,7 @@ import {
     inManagedMachinePublicationTx,
     projectManagedMachinesInTx, projectManagedControllerAccess,
     readManagedAdmissionState,
-    hasPossibleManagedNativeResource,
+    hasPossibleManagedNativeResource, readStoredOpaquePresetLaunch,
     resolveManagedMachineRoleInTx, resolveManagedMachineRole,
 } from "./managedRows";
 
@@ -67,9 +69,29 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
     }
     const dependencies: ManagedResourceDependencyV1[] = [];
     for (const row of rows) {
+        // Preset declaration and setup content is opaque. In particular, resource
+        // dependency review must not turn a retained ciphertext row into a server
+        // plaintext parser. Account retirement still needs structural custody for
+        // its own retained allocations and controller-owned allocations.
+        if (isStoredOpaquePresetMachine(row)) {
+            const matchesAccountCustody = target.kind === 'account'
+                && (row.custodianAccountId === target.accountId
+                    || row.controllerMachineId !== null && machineIds.has(row.controllerMachineId));
+            if (matchesAccountCustody) {
+                const machine = projectManagedMachine(row);
+                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                dependencies.push(ManagedResourceDependencyV1Schema.parse({
+                    managedId: machine.id, homeId: machine.homeId, custodianAccountId: machine.custodianAccountId,
+                    intentRevision: machine.intentRevision, controller: machine.controller,
+                    allocation: machine.allocation, observation: machine.observation, cleanup: machine.cleanup,
+                    opaquePreset: true,
+                }));
+            }
+            continue;
+        }
         const bootstrap = SharedSavedSecretRefV1Schema.safeParse(row.bootstrapCredentialRef);
         const launch = target.kind === "plugin" || target.kind === "connected-account" ? readManagedLaunchSnapshot(row.launch) : undefined;
-        const credentials = launch?.credentials?.map(credential => credential.account) ?? [];
+        const credentials = launch?.credentials?.flatMap(credential => 'account' in credential ? [credential.account] : []) ?? [];
         const setupReferencesSecret = (resourceId: string) => listSavedSecretReferenceCarrierPathsV1(row.machineSetup,
             { secretId: `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}` }).length > 0;
         const matches = target.kind === "account"
@@ -98,6 +120,12 @@ export function acceptsManagedResourceDispositions(resources: readonly ManagedRe
     const reviewed = new Map(dispositions.map(disposition => [disposition.managedId, disposition]));
     return reviewed.size === resources.length && resources.every(resource => {
         const disposition = reviewed.get(resource.managedId);
+        if (isManagedOpaquePresetResourceDependencyV1(resource)) {
+            return disposition !== undefined && isManagedOpaquePresetResourceDispositionV1(disposition)
+                && disposition.responsibility === 'manual'
+                && disposition.expectedIntentRevision === resource.intentRevision
+                && disposition.expectedAllocation === resource.allocation;
+        }
         return disposition?.responsibility === "manual" && disposition.expectedIntentRevision === resource.intentRevision
             && disposition.expectedAllocation === resource.allocation
             && sameManagedInput(disposition.expectedResource, resource.resource)
@@ -133,7 +161,7 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
         await requireHome(tx, input.homeId);
         const row = await readManagedMachineInTx(tx, input);
         await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
-        return projectManagedMachineForActorInTx(tx, row, params.actorAccountId);
+        return projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId);
     });
 }
 /** Private native custody and public creator results share one actor-aware projection. */
@@ -148,6 +176,27 @@ export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManag
     } });
     const controllerAccess = projectManagedControllerAccess(controller, { installationId: row.controllerInstallationId });
     return { ...redactManagedMachineCredentialReferences(machine), ...(controllerAccess ? { controllerAccess } : {}) };
+}
+/**
+ * Account reads of an opaque preset never disclose the audience.  The stored
+ * carrier is exact for this allocation revision, while the recipient envelope
+ * is projected by the protocol owner for just the authenticated reader.
+ */
+export function projectManagedMachineReadForActor(
+    row: Pick<StoredManagedMachine, 'presetId' | 'launch'>,
+    machine: ManagedMachineV1,
+    actorAccountId: string,
+): ManagedMachineReadV1 {
+    if (!isStoredOpaquePresetMachine(row)) return machine;
+    if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+    const { content, recipients } = readStoredOpaquePresetLaunch(row.launch);
+    return {
+        machine,
+        presetContent: projectManagedMachinePresetForRecipientV1({ content, recipients, recipientAccountId: actorAccountId }),
+    };
+}
+export async function projectManagedMachineReadForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<ManagedMachineReadV1> {
+    return projectManagedMachineReadForActor(row, await projectManagedMachineForActorInTx(tx, row, actorAccountId), actorAccountId);
 }
 export async function listManagedMachines(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.list"> }>) {
     const input = ManagedListInputV1Schema.parse(params.input);
@@ -187,9 +236,10 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
         const machines = await projectManagedMachinesInTx(tx, accessible);
         return { machines: machines.map((machine, index) => {
             const row = accessible[index];
-            return row.custodianAccountId !== params.actorAccountId
+            const projected = row.custodianAccountId !== params.actorAccountId
                 && (isManagedMachineCreator(row, params.actorAccountId) || role(row) !== 'manage')
                 ? redactManagedMachineCredentialReferences(machine) : machine;
+            return projectManagedMachineReadForActor(row, projected, params.actorAccountId);
         }) };
     });
 }

@@ -8,6 +8,7 @@ import {
   TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_PATHS_V1,
 } from '../teams/credentials/actionsV1.js';
+import { TEAM_CREDENTIAL_HOST_ACTION_IDS_V1 } from '../teams/credentials/actionIdsV1.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec, listActionSpecs } from './actionSpecs.js';
@@ -118,8 +119,23 @@ describe('Team credential Action contracts', () => {
     for (const id of TEAM_CREDENTIAL_ACTION_IDS_V1) {
       expect(TEAM_ACTION_IDS_V1.filter((candidate) => candidate === id)).toHaveLength(1);
       expect(listActionSpecs().filter((spec) => spec.id === id)).toHaveLength(1);
-      expect(getActionSpec(id).executionPlacement).toBe('account');
+      expect(getActionSpec(id).executionPlacement).toBe(
+        TEAM_CREDENTIAL_HOST_ACTION_IDS_V1.includes(id as typeof TEAM_CREDENTIAL_HOST_ACTION_IDS_V1[number])
+          ? 'client' : 'account',
+      );
     }
+  });
+
+  it('keeps sealed credential labels out of the usage-export Action contract', () => {
+    const spec = getActionSpec('teams.credentials.usage.export');
+    expect(spec.executionPlacement).toBe('client');
+    const paths = spec.inputHints?.fields.map(field => field.path) ?? [];
+    expect(paths).toEqual(expect.arrayContaining(['query', 'breakdownRowCount']));
+    expect(paths).not.toContain('resourceName');
+    expect(spec.inputSchema.safeParse({
+      query: { resourceId: 'resource-1', startMs: 0, endMs: 1, granularity: 'day', costMode: 'auto' },
+      resourceName: 'never disclose this',
+    }).success).toBe(false);
   });
 
   it('binds the existing route body without introducing a second transport table', () => {
@@ -248,7 +264,7 @@ describe('Team credential Action contracts', () => {
       keyId: '123e4567-e89b-42d3-a456-426614174000',
       resourceId: 'resource-1',
       teamMembershipId: 'membership-1',
-      label: 'CI runner',
+      label: { content: { t: 'plain', v: 'CI runner' }, recipientEnvelope: null },
       displayPrefix: 'hapek_v1_123e4567',
       createdAt: '2026-09-14T10:00:00.000Z',
       lastUsedAt: null,

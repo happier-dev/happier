@@ -80,13 +80,20 @@ function createManagedMachineActionSpecs() {
     || actionId === 'machines.managed.list' || actionId === 'machines.managed.get' || actionId === 'machines.managed.birth.get'
     || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.power.set' || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
-    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete';
+    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.retire';
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
     ...(isMachineSetupPlanOrApplyActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId) ? { deploymentPreparationScope: declareDeploymentPreparationScopeV1('setup') } : {}),
     ...(isMachineSetupCombinedActionIdV1(actionId) ? { requesterAccountContentDemandForInput: () => true } : {}),
     ...(actionId === 'machines.managed.acquire' ? { hostReviewedChildren: (normalizedInput: unknown) => {
       const input = normalizedInput as ManagedAcquireInputV1;
+      if (!('enrollmentIdentity' in input)) {
+        // The preset declaration is private. Its custodian opens the exact
+        // admitted carrier before issuing provider children through the
+        // opaque-preset reviewed-child owner; this public Action can declare
+        // only its structural Session request.
+        return input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : [];
+      }
       // The guest operands arrive after enrollment. Declare only work already
       // demanded by this normalized creation, without inventing guest inputs.
       return [
@@ -101,9 +108,6 @@ function createManagedMachineActionSpecs() {
         ...(resolveManagedMachineEnrollmentAgentIsolationV1(input.enrollmentIdentity)
           ? [{ action: 'machines.agentIsolation.preview' as const, role: 'machines.agentIsolation.preview' },
             { action: 'machines.agentIsolation.set' as const, role: 'machines.agentIsolation.set' }] : []),
-        ...(input.selection.kind === 'preset' && input.reviewedFacts?.setup !== undefined
-          ? [{ action: 'machines.setup.plan' as const, role: 'machines.setup.plan' },
-            { action: 'machines.setup.apply' as const, role: 'machines.setup.apply' }] : []),
         ...(input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : []),
       ];
     } } : {}),

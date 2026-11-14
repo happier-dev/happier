@@ -635,8 +635,7 @@ model TeamGroup {
     credentialGrants TeamCredentialGroupGrant[]
     id               String   @id @default(cuid())
     teamId           String
-    name             String
-    nameKey          String
+    name             String @db.LongText
     description      String? @db.LongText
     archivedAt       DateTime?
     createdAt        DateTime @default(now())
@@ -649,7 +648,6 @@ model TeamGroup {
     savedSecretGroupGrants SavedSecretGroupGrant[]
 
     @@unique([id, teamId])
-    @@unique([teamId, nameKey])
 }
 
 // Team-owned credential references and consent; source material remains at its existing owner.
@@ -1008,7 +1006,7 @@ model AccountHomeDirectoryEntry {
     accountId              String
     homeServerIdentityId   String
     canonicalServerUrl     String @db.VarChar(512)
-    label                  String
+    label                  String @db.LongText
     connectionDescriptor   Json
     createdAt              DateTime @default(now())
     updatedAt              DateTime @updatedAt
@@ -1067,7 +1065,7 @@ model AccountApiToken {
     parent        AccountApiToken? @relation("ApiTokenChildren", fields: [parentTokenId], references: [id], onDelete: Cascade)
     children      AccountApiToken[] @relation("ApiTokenChildren")
     createdSessions Session[] @relation("ApiTokenCreatedSessions")
-    label         String @db.VarChar(256)
+    label         String @db.LongText
     createdAt     DateTime @default(now())
     lastUsedAt    DateTime?
     expiresAt     DateTime?

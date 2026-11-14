@@ -39,6 +39,7 @@ import { resolveTeamCredentialEntitlementInTx, type TeamCredentialEntitlementDec
 import { resolveTeamCredentialResourceSourceInTx, type TeamCredentialResourceSourceResolution } from "./resourceSourceResolver";
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { publishNativeCredentialPolicyChangesInTx } from './nativePolicyChanges';
+import { projectTeamCredentialResourceDisplayNameForRecipient } from './privateLabels';
 
 export type SessionTeamCredentialBindingRejection =
     SessionTeamCredentialBindingRejectionV1;
@@ -1075,16 +1076,16 @@ const CONDITIONAL_SESSION_USE_POLICIES = ["team_visibility_required", "team_cont
  * invalidate them: removing a Team's grant ends `team_visibility_required`, and
  * moving the Session's context off a Team ends that Team's
  * `team_context_required`. The row carries which policy it depends on so the
- * confirmation names only what the edit in hand actually breaks. It names
- * resources through their display names alone and guards nothing; the later
- * admission repeats every decision and still fails closed.
+ * confirmation reports only what the edit in hand actually breaks. It carries
+ * a recipient-scoped opaque label projection; the later admission repeats
+ * every decision and still fails closed.
  *
  * The editor asks about every Team in one call, so the preview costs one query
  * rather than one per grant row.
  */
 export async function listSessionTeamCredentialBindingConsequencesInTx(
     tx: Tx,
-    input: Readonly<{ sessionId: string; teamIds: readonly string[] }>,
+    input: Readonly<{ sessionId: string; teamIds: readonly string[]; actorAccountId: string }>,
 ): Promise<readonly SessionTeamCredentialBindingConsequence[]> {
     if (input.teamIds.length === 0) return [];
     const rows = (await Promise.all(portableQueryChunks({
@@ -1098,7 +1099,7 @@ export async function listSessionTeamCredentialBindingConsequencesInTx(
                 sessionUsePolicy: { in: [...CONDITIONAL_SESSION_USE_POLICIES] },
             },
         },
-        select: { resource: { select: { id: true, displayName: true, teamId: true, sessionUsePolicy: true } } },
+        select: { resource: { select: { id: true, teamId: true, sessionUsePolicy: true, displayName: true } } },
         orderBy: [{ resourceId: "asc" }],
     })))).flat().sort((left, right) => left.resource.id < right.resource.id ? -1 : left.resource.id > right.resource.id ? 1 : 0);
     const seen = new Set<string>();
@@ -1108,7 +1109,11 @@ export async function listSessionTeamCredentialBindingConsequencesInTx(
         const policy = CONDITIONAL_SESSION_USE_POLICIES
             .find((candidate) => candidate === resource.sessionUsePolicy);
         if (!policy) return [];
-        return [{ resourceId: resource.id, displayName: resource.displayName, teamId: resource.teamId, policy }];
+        const displayName = projectTeamCredentialResourceDisplayNameForRecipient({
+            serialized: resource.displayName,
+            recipientAccountId: input.actorAccountId,
+        });
+        return displayName === null ? [] : [{ resourceId: resource.id, teamId: resource.teamId, policy, displayName }];
     });
 }
 

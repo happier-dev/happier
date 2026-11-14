@@ -10,7 +10,8 @@ installHomeGovernanceBoundaries(homes);
 const owner = await import('./useEnvironmentSecretBindingsEditor');
 
 const secret = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('password'), resourceRevision: 2 };
-const runtime: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'PASSWORD', phase: 'runtime', source: secret };
+const grantRef = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+const runtime: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'PASSWORD', phase: 'runtime', grantRef: grantRef(1), source: secret };
 const registry: EnvironmentSecretBindingV1 = { purpose: 'registry', targetLinkId: 'runtime-link',
     registryOrigin: 'https://registry.example.test', access: 'pull', source: secret };
 
@@ -41,8 +42,12 @@ describe('Environment secret binding editor data', () => {
             .toEqual({ ok: true }); });
         expect(hook.getCurrent().bulk).toMatchObject([{ name: 'COPIED_VALUE', change: 'added', source: secret, classification: 'secret' }]);
         await act(async () => { expect(hook.getCurrent().applyBulk({})).toEqual({ ok: true }); });
-        expect(changed.mock.calls[0]?.[0]).toEqual(change === 'add' ? [runtime, { ...runtime, name: 'COPIED_VALUE' }]
-            : [{ ...runtime, name: 'COPIED_VALUE' }]);
+        const next = changed.mock.calls[0]?.[0] as readonly EnvironmentSecretBindingV1[];
+        expect(next).toHaveLength(change === 'add' ? 2 : 1);
+        if (change === 'add') expect(next[0]).toBe(runtime);
+        const copied = next.find(binding => binding.purpose === 'variable' && binding.name === 'COPIED_VALUE');
+        expect(copied).toMatchObject({ purpose: 'variable', phase: 'runtime', name: 'COPIED_VALUE', source: secret });
+        expect(copied?.purpose === 'variable' ? copied.grantRef : undefined).not.toBe(runtime.grantRef);
     });
 
     it('converts one existing variable to Both as one validated local pair without changing sibling bindings', async () => {
@@ -58,8 +63,12 @@ describe('Environment secret binding editor data', () => {
         expect(next.find(binding => binding.purpose === 'registry')).toBe(registry);
         expect(next.filter(binding => binding.purpose === 'variable').map(binding => environmentSecretBindingIdentityV1(binding)).sort())
             .toEqual(pair.map(environmentSecretBindingIdentityV1).sort());
+        const convertedRuntime = next.find(binding => binding.purpose === 'variable' && binding.phase === 'runtime');
+        const convertedBuild = next.find(binding => binding.purpose === 'variable' && binding.phase === 'build');
+        expect(convertedRuntime?.purpose === 'variable' ? convertedRuntime.grantRef : undefined).toBe(runtime.grantRef);
+        expect(convertedBuild?.purpose === 'variable' ? convertedBuild.grantRef : undefined).not.toBe(runtime.grantRef);
         changed.mockClear();
-        const opposing = { ...runtime, phase: 'build' as const };
+        const opposing = { ...runtime, phase: 'build' as const, grantRef: grantRef(2) };
         const collision = await renderHook(() => owner.useEnvironmentSecretBindingsEditor({ bindings: [opposing, runtime], onChangeBindings: changed }));
         expect(collision.getCurrent().setVariable(conversion))
             .toEqual({ ok: false, error: 'duplicate_identity' });
@@ -105,8 +114,9 @@ describe('Environment secret binding editor data', () => {
         await act(async () => {
             expect(hook.getCurrent().put({ ...runtime, name: 'RENAMED' }, environmentSecretBindingIdentityV1(runtime))).toEqual({ ok: true });
         });
-        const next = changed.mock.calls[0][0];
-        expect(next[0].source).toBe(secret);
+        const next = changed.mock.calls[0][0] as readonly EnvironmentSecretBindingV1[];
+        expect(next[0]?.source).toEqual(secret);
+        expect(next[0]?.purpose === 'variable' ? next[0].grantRef : undefined).not.toBe(runtime.grantRef);
         expect(next[1]).toBe(registry);
         expect(next[2]).toBe(backup);
         changed.mockClear();
@@ -120,9 +130,15 @@ describe('Environment secret binding editor data', () => {
             managedIdentities: new Set([environmentSecretBindingIdentityV1(registry)]), onChangeBindings: changed }));
         expect(hook.getCurrent().remove(environmentSecretBindingIdentityV1(registry))).toEqual({ ok: false, error: 'managed' });
         expect(hook.getCurrent().setVariable({ name: 'PORT', phase: 'both', source: { kind: 'value', value: '3000' } })).toEqual({ ok: true });
-        expect(changed).toHaveBeenCalledWith([registry,
+        const next = changed.mock.calls[0]?.[0] as readonly EnvironmentSecretBindingV1[];
+        expect(next[0]).toBe(registry);
+        const ports = next.filter((binding): binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> =>
+            binding.purpose === 'variable' && binding.name === 'PORT');
+        expect(ports).toMatchObject([
             { purpose: 'variable', phase: 'build', name: 'PORT', source: { kind: 'value', value: '3000' } },
-            { purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }]);
+            { purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } },
+        ]);
+        expect(new Set(ports.map(binding => binding.grantRef)).size).toBe(2);
         expect(hook.getCurrent().put({ ...registry, access: 'pushPull' })).toEqual({ ok: false, error: 'managed' });
         expect(changed).toHaveBeenCalledTimes(1);
     });
@@ -138,10 +154,15 @@ describe('Environment secret binding editor data', () => {
         expect(hook.getCurrent().applyBulk({})).toEqual({ ok: false, error: 'selection_required' });
         expect(changed).not.toHaveBeenCalled();
         await act(async () => { expect(hook.getCurrent().applyBulk({ TOKEN: secret })).toEqual({ ok: true }); });
-        expect(changed).toHaveBeenCalledWith([runtime, registry,
+        const next = changed.mock.calls[0]?.[0] as readonly EnvironmentSecretBindingV1[];
+        expect(next[0]).toBe(runtime);
+        expect(next[1]).toBe(registry);
+        expect(next).toMatchObject([runtime, registry,
             { purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: secret },
             { purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }]);
-        expect(JSON.stringify(changed.mock.calls)).not.toContain('private-draft-sentinel');
+        const variables = next.filter((binding): binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> => binding.purpose === 'variable');
+        expect(new Set(variables.map(binding => binding.grantRef)).size).toBe(3);
+        expect(JSON.stringify(next)).not.toContain('private-draft-sentinel');
         expect(hook.getCurrent().bulk).toBeNull();
     });
 
@@ -166,16 +187,19 @@ describe('Environment secret binding editor data', () => {
             const value = change === 'replacement' ? 'replacement-local-draft'
                 : change === 'cancel' ? 'new-local-draft' : 'first-local-draft';
             expect(changed).toHaveBeenCalledTimes(1);
-            expect(changed).toHaveBeenCalledWith([runtime,
-                { purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'value', value } }]);
+            const next = changed.mock.calls[0]?.[0] as readonly EnvironmentSecretBindingV1[];
+            expect(next[0]).toBe(runtime);
+            expect(next[1]).toMatchObject({ purpose: 'variable', name: 'TOKEN', phase: 'runtime',
+                source: { kind: 'value', value } });
+            expect(next[1]?.purpose === 'variable' ? next[1].grantRef : undefined).not.toBe(runtime.grantRef);
         });
 
     it('stages the whole file from current bindings, keeps references unchanged, and diffs edits, additions and removals into one write', async () => {
         const changed = vi.fn();
-        const logLevel: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'LOG_LEVEL', phase: 'runtime', source: { kind: 'value', value: 'info' } };
-        const originBuild: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'ORIGIN', phase: 'build', source: { kind: 'value', value: 'https://api.example.test' } };
-        const originRuntime: EnvironmentSecretBindingV1 = { ...originBuild, phase: 'runtime' };
-        const old: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'OLD_FLAG', phase: 'runtime', source: { kind: 'value', value: 'x' } };
+        const logLevel: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'LOG_LEVEL', phase: 'runtime', grantRef: grantRef(3), source: { kind: 'value', value: 'info' } };
+        const originBuild: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'ORIGIN', phase: 'build', grantRef: grantRef(4), source: { kind: 'value', value: 'https://api.example.test' } };
+        const originRuntime: EnvironmentSecretBindingV1 = { ...originBuild, phase: 'runtime', grantRef: grantRef(5) };
+        const old: EnvironmentSecretBindingV1 = { purpose: 'variable', name: 'OLD_FLAG', phase: 'runtime', grantRef: grantRef(6), source: { kind: 'value', value: 'x' } };
         const bindings = [runtime, logLevel, originBuild, originRuntime, old, registry];
         const hook = await renderHook(() => owner.useEnvironmentSecretBindingsEditor({ bindings, onChangeBindings: changed }));
         const file = hook.getCurrent().bulkText();
@@ -200,9 +224,13 @@ describe('Environment secret binding editor data', () => {
         expect(next[2]).toBe(originBuild);
         expect(next[3]).toBe(originRuntime);
         expect(next[4]).toBe(registry);
-        expect(next).toEqual([runtime, { ...logLevel, source: { kind: 'value', value: 'debug' } }, originBuild, originRuntime, registry,
+        expect(next.slice(0, 5)).toEqual([runtime, { ...logLevel, source: { kind: 'value', value: 'debug' } }, originBuild, originRuntime, registry]);
+        expect(next.slice(5)).toMatchObject([
             { purpose: 'variable', name: 'SENTRY_DSN', phase: 'runtime', source: dsn },
-            { purpose: 'variable', name: 'FEATURE_CART_V2', phase: 'runtime', source: { kind: 'value', value: 'true' } }]);
+            { purpose: 'variable', name: 'FEATURE_CART_V2', phase: 'runtime', source: { kind: 'value', value: 'true' } },
+        ]);
+        const variables = next.filter((binding): binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> => binding.purpose === 'variable');
+        expect(new Set(variables.map(binding => binding.grantRef)).size).toBe(6);
         expect(JSON.stringify(next)).not.toContain('dsn-local-sentinel');
         expect(hook.getCurrent().bulk).toBeNull();
         // A reference the file did not come from is refused rather than guessed.

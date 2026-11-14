@@ -74,7 +74,7 @@ function directVerifierCalls(source: string): ("auth.verifyToken" | "auth.verify
 }
 
 describe("Account Directory central route admission", () => {
-    it("keeps the Directory opt-in inventory closed to exactly the six identity routes", () => {
+    it("keeps the Directory opt-in inventory closed to the Account Directory routes", () => {
         const registrations: RecordedRoute[] = [];
         const record = (method: string) => (
             path: string,
@@ -110,6 +110,7 @@ describe("Account Directory central route admission", () => {
             "GET /v1/account-directory/homes",
             "GET /v1/account-directory/me",
             "PATCH /v1/account-directory/homes/preferred",
+            "POST /v1/account-directory/private-labels/recipient-census",
             "POST /v1/account-directory/homes/:homeServerIdentityId/login-assertion",
             "PUT /v1/account-directory/homes/:homeServerIdentityId",
         ].sort());

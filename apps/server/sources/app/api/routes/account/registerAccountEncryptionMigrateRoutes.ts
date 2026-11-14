@@ -151,10 +151,17 @@ import { matchConfiguredAgentCatalogAccountMigrationPostStateInTx, migrateConfig
 import { matchMcpServerCatalogAccountMigrationPostStateInTx, migrateMcpServerCatalogForAccountModeInTx } from '@/app/account/mcp/serverCatalogEncryptionMigration';
 import { matchProviderConnectionsAccountMigrationPostStateInTx, migrateProviderConnectionsForAccountModeInTx } from '@/app/account/providers/providerConnectionsEncryptionMigration';
 import { migrateSavedSecretResourcesForAccountModeInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { migrateAccountPrivateLabelsForModeInTx } from '@/app/encryption/accountPrivateLabelContent';
+import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import {
+    migrateAccountManagedMachinePresetsForModeInTx,
+    readAccountManagedMachinePresetEncryptionMigrationInventoryInTx,
+} from '@/app/machines/managed/machinePresetService';
 import { matchRemoteHostCatalogAccountMigrationPostStateInTx, migrateRemoteHostCatalogForAccountModeInTx } from '@/app/account/remoteHosts/remoteHostRowsEncryptionMigration';
 import { matchNotificationChannelCatalogAccountMigrationPostStateInTx, migrateNotificationChannelCatalogForAccountModeInTx } from '@/app/account/notifications/channelRowsEncryptionMigration';
 import { matchConnectedPresentationAccountMigrationPostStateInTx, migrateConnectedPresentationForAccountModeInTx,
     matchConnectedAcknowledgementsAccountMigrationPostStateInTx, migrateConnectedAcknowledgementsForAccountModeInTx } from '@/app/account/connectedAccounts/presentationRowsEncryptionMigration';
+import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
 
 const AccountEncryptionMigrationReplayHintSchema = z.strictObject({
         settingsVersion: z.number().check(z.int(), z.nonnegative()),
@@ -581,6 +588,15 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             return reply.code(500).send({ error: "internal" });
         }
     });
+    app.get('/v1/account/encryption/migrate/managed-machine-presets/inventory', {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: { response: {
+            200: ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema,
+            403: PresentUserRequiredResponseSchema,
+        } },
+    }, async (request, reply) => reply.send(await inReadSnapshot(tx =>
+        readAccountManagedMachinePresetEncryptionMigrationInventoryInTx(tx, { accountId: request.userId }),
+    )));
     app.get(
         "/v1/account/encryption/migrate/review-comments/inventory",
         {
@@ -954,6 +970,8 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             projectRows,
             projectTrust,
             savedSecretResources,
+            managedMachinePresets,
+            privateLabels,
         } = migrationRequest;
         const workspace = migrationRequest.workspace ?? { action: "assert_empty" as const };
 
@@ -1890,6 +1908,31 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     throw new AccountEncryptionMigrationDomainRejectedError("saved_secret_resources", savedSecretResourcesMigration.status);
                 }
 
+                const managedMachinePresetsMigration = await migrateAccountManagedMachinePresetsForModeInTx(tx, {
+                    accountId: userId,
+                    fromMode: currentMode,
+                    toMode,
+                    ownerContentPublicKeyFingerprint: contentKeyBinding?.contentPublicKeyFingerprint ?? null,
+                    directive: managedMachinePresets,
+                });
+                if (managedMachinePresetsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError(
+                        'managed_machine_presets',
+                        managedMachinePresetsMigration.status,
+                    );
+                }
+
+                const privateLabelsMigration = await migrateAccountPrivateLabelsForModeInTx(tx, {
+                    accountId: userId,
+                    fromMode: currentMode,
+                    toMode,
+                    ownerContentPublicKeyFingerprint: contentKeyBinding?.contentPublicKeyFingerprint ?? null,
+                    directive: privateLabels,
+                });
+                if (privateLabelsMigration.status !== "applied") {
+                    throw new AccountEncryptionMigrationDomainRejectedError("private_labels", privateLabelsMigration.status);
+                }
+
                 const automationMigration =
                     await migrateAutomationAccountEncryptionInTx({
                         tx,
@@ -2087,7 +2130,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             // Activation has committed. A failed physical delete retains exact retry custody, not a failed mode change.
             await cleanupRejectedArtifactBlobUploads(userId).catch(error => request.log.error({ err: error }, 'Artifact conversion cleanup retained for retry'));
             await cleanupRejectedDiscussionAttachmentUploads(userId).catch(error => request.log.error({ err: error }, 'Discussion conversion cleanup retained for retry'));
-            return reply.send(AccountEncryptionMigrateSuccessResponseSchema.parse({
+            return reply.send(admitResponse(AccountEncryptionMigrateSuccessResponseSchema, {
                 success: true,
                 mode: result.mode,
                 accountVersion: result.accountVersion,

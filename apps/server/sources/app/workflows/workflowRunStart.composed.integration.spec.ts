@@ -44,6 +44,7 @@ import type { AvailableAutomationAccountEncryptionV1 } from '@happier-dev/protoc
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { decryptWithDataKey, encryptWithDataKey } from '../../../../cli/src/api/encryption';
 import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("composed saved Workflow start admission", () => {
     let harness: LightSqliteHarness;
@@ -289,7 +290,7 @@ describe("composed saved Workflow start admission", () => {
 
                 // New Run admission consumes the current bearer grant at Home;
                 // it is distinct from worker execution of an admitted Run.
-                const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "Workflow admission",
+                const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Workflow admission"),
                     grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
                         actions: { families: [], ids: ["workflow.run.start"] },
                         targets: { sessions: [], machines: [machineId] } }) });

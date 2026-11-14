@@ -94,7 +94,6 @@ export type InternalTasksActionInputById = {
                 title?: string | undefined;
             }[];
             notes?: string | undefined;
-            dueAt?: number | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{
                     pluginId: string;
@@ -105,6 +104,7 @@ export type InternalTasksActionInputById = {
                 entryId: string;
             }> | string)[] | undefined;
             createdBy?: string | undefined;
+            dueAt?: number | undefined;
             parentId?: Readonly<{
                 source: Readonly<{
                     pluginId: string;
@@ -353,6 +353,25 @@ export type InternalTasksActionResultById = {
                 name: null | string;
                 username?: null | string | undefined;
             };
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             readiness?: undefined | {
                 readyCount: number;
                 pendingCount: number;
@@ -399,6 +418,25 @@ export type InternalTasksActionResultById = {
             display: {
                 name: null | string;
                 username?: null | string | undefined;
+            };
+            groupName?: undefined | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
             };
             readiness?: undefined | {
                 readyCount: number;

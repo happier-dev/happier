@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachineResize } from './resize.js';
 import type { ManagedNativeInvocation } from './reconcile.js';
 
-const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
     resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } },
     allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
@@ -36,7 +36,8 @@ describe('admitted managed resize', () => {
                 throw new Error(role);
             } });
         expect(value.result).toEqual({ kind: 'confirmed' });
-        expect(value.observation?.size).toEqual(size);
+        const observedSize = value.observation && 'size' in value.observation ? value.observation.size : undefined;
+        expect(observedSize).toEqual(size);
         expect(calls.filter(call => (call as { role: string }).role !== 'inspect')).toEqual([
             { role: 'power', body: { resource: { id: 'native' }, intent: 'stop' } },
             { role: 'resize', body: { resource: { id: 'native' }, size } },

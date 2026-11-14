@@ -308,6 +308,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 ...(body.connectedAccountCredentialMutation ? { connectedAccountCredentialMutation: body.connectedAccountCredentialMutation } : {}),
                 additionalSavedSecretResources: additionalResources.filter((resource): resource is NonNullable<typeof resource> => resource !== null),
                 personalSecretPromotions: body.personalSecretPromotions,
+                opaquePresetRewrites: body.opaquePresetRewrites,
             }), { /* Secret recipient keys, effective grants and cross-owner reference censuses must stay coherent. */ isolationLevel: "Serializable" });
         } catch (error) {
             if (await readUserKvMutationConflict(error)) {

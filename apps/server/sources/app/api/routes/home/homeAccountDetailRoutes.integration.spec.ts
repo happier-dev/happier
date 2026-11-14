@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { auth } from "@/app/auth/auth";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { db } from "@/storage/db";
 
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -110,7 +111,7 @@ describe("Home account detail (home.accounts.get)", () => {
         const lastUsedAt = new Date("2026-09-20T10:00:00.000Z");
         await db.accountApiToken.create({ data: {
             id: `tok-${sequence}`, accountId: person.accountId, displayPrefix: "hpat_secretprefix", secretDigest: "digest",
-            label: "private label", lastUsedAt,
+            label: storedPlainPrivateLabel("private label"), lastUsedAt,
         } });
         await db.accountIdentity.create({ data: {
             accountId: person.accountId, provider: "github", providerUserId: "gh-private-user-id-42", providerLogin: "chloe", profile: {},
@@ -191,7 +192,7 @@ describe("Admin sign out everywhere (home.accounts.signOutEverywhere)", () => {
         const admin = await createAccount("admin");
         const person = await createAccount("member");
         await db.accountApiToken.create({ data: {
-            id: `tok-signout-${sequence}`, accountId: person.accountId, displayPrefix: "hpat_x", secretDigest: "digest", label: "ci",
+            id: `tok-signout-${sequence}`, accountId: person.accountId, displayPrefix: "hpat_x", secretDigest: "digest", label: storedPlainPrivateLabel("ci"),
         } });
         const before = await db.account.findUniqueOrThrow({ where: { id: person.accountId }, select: { tokenEpoch: true } });
         expect((await post(app, "/v1/home/accounts/get", person.token, { accountId: person.accountId })).statusCode).toBe(403);

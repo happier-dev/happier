@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { resolveEffectiveSessionAccess } from "@/app/session/access/sessionAccess";
@@ -46,7 +47,7 @@ describe("Team mutations compose Session access transitions", () => {
         const team = await db.team.create({ data: { name: "Access transitions" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Group", nameKey: "group" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Group") } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
         } });
@@ -249,7 +250,7 @@ describe("Team mutations compose Session access transitions", () => {
         const f = await directoryFixture();
         await db.team.update({ where: { id: f.team.id }, data: { defaultSessionHistoryAccess: "all_existing" } });
         await db.teamMembership.update({ where: { id: f.membership.id }, data: { role: "guest" } });
-        const replacement = await db.teamGroup.create({ data: { teamId: f.team.id, name: "Replacement", nameKey: "replacement" } });
+        const replacement = await db.teamGroup.create({ data: { teamId: f.team.id, name: storedPlainPrivateLabel("Replacement") } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: f.session.id, teamGroupId: replacement.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.teamDirectoryGroup.create({ data: { directorySourceId: f.source.id, externalGroupId: "group", externalDisplayName: "Directory Group", state: "active" } });
         await db.teamDirectoryGroupMember.create({ data: { directorySourceId: f.source.id, externalGroupId: "group", externalUserId: "person" } });

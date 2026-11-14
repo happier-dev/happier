@@ -1430,12 +1430,12 @@ export type WorkflowsActionInputById = {
         };
     } | {
         deploymentBackup: {
-            machineId: string;
             serverId: string;
+            machineId: string;
             environmentId: string;
             deploymentId: string;
-            targetLinkId: string;
             installationId: string;
+            targetLinkId: string;
             configRevision: number;
         };
     } | {
@@ -1540,6 +1540,10 @@ export type WorkflowsActionInputById = {
             };
             maximumObservationAgeMs: null | number;
             enabled: boolean;
+            automationDisplay?: undefined | {
+                name: string;
+                description: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -1726,6 +1730,10 @@ export type WorkflowsActionInputById = {
             };
             maximumObservationAgeMs: null | number;
             enabled: boolean;
+            automationDisplay?: undefined | {
+                name: string;
+                description: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -1843,13 +1851,17 @@ export type WorkflowsActionInputById = {
             paths?: string[] | undefined;
         };
         actionApproval?: 'ask' | 'automatic' | undefined;
+        display?: undefined | {
+            name: string;
+            description: null | string;
+        };
+        approvalProfileId?: null | string | undefined;
+        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        inputs?: Record<string, unknown> | undefined;
-        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -1966,6 +1978,10 @@ export type WorkflowsActionInputById = {
                     })[];
                 };
                 maximumObservationAgeMs: null | number;
+                automationDisplay?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -2074,13 +2090,17 @@ export type WorkflowsActionInputById = {
                 paths?: string[] | undefined;
             };
             actionApproval?: 'ask' | 'automatic' | undefined;
+            display?: undefined | {
+                name: string;
+                description: null | string;
+            };
+            approvalProfileId?: null | string | undefined;
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            inputs?: Record<string, unknown> | undefined;
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -2206,6 +2226,10 @@ export type WorkflowsActionInputById = {
             };
             maximumObservationAgeMs: null | number;
             enabled: boolean;
+            automationDisplay?: undefined | {
+                name: string;
+                description: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -2321,13 +2345,17 @@ export type WorkflowsActionInputById = {
             kind: 'workflow';
             ref: string;
         };
+        display?: undefined | {
+            name: string;
+            description: null | string;
+        };
+        approvalProfileId?: null | string | undefined;
+        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        inputs?: Record<string, unknown> | undefined;
-        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2455,6 +2483,10 @@ export type WorkflowsActionInputById = {
                     })[];
                 };
                 maximumObservationAgeMs: null | number;
+                automationDisplay?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -2558,13 +2590,17 @@ export type WorkflowsActionInputById = {
                 };
                 kind: 'sessionLifecycle';
             };
+            display?: undefined | {
+                name: string;
+                description: null | string;
+            };
+            approvalProfileId?: null | string | undefined;
+            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            inputs?: Record<string, unknown> | undefined;
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -3773,7 +3809,7 @@ export type WorkflowsActionResultById = {
             };
         } | {
             kind: 'unavailable';
-            reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+            reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
         }>;
         projection?: 'membership' | undefined;
         supportsAnotherRoundByRunId?: Record<string, boolean> | undefined;
@@ -9492,6 +9528,7 @@ export type WorkflowsActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -10142,6 +10179,7 @@ export type WorkflowsActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -11047,6 +11085,7 @@ export type WorkflowsActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -11549,7 +11588,7 @@ export type WorkflowsActionResultById = {
                 accountId: string;
             };
             updatedAt?: number | undefined;
-            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
+            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
             destinations?: undefined | {
                 targetSessionIds: string[];
                 usesOriginSession: boolean;
@@ -11678,7 +11717,7 @@ export type WorkflowsActionResultById = {
                 accountId: string;
             };
             updatedAt?: number | undefined;
-            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
+            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
         })[];
         pluginWorkflows?: undefined | {
             workflow: string;
@@ -13245,6 +13284,10 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'session';
                 };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
                 visibleTeamId?: null | string | undefined;
@@ -14097,6 +14140,10 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'session';
                 };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
                 visibleTeamId?: null | string | undefined;
@@ -14805,6 +14852,10 @@ export type WorkflowsActionResultById = {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
+                };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
@@ -15518,6 +15569,10 @@ export type WorkflowsActionResultById = {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
+                };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
@@ -16390,6 +16445,10 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'session';
                 };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
                 visibleTeamId?: null | string | undefined;
@@ -16818,6 +16877,9 @@ export type WorkflowsActionResultById = {
         }[] | {
             status: 'unavailable';
             code: 'target_unavailable';
+            diagnostic?: undefined | {
+                reason: 'authority_path_absent' | 'caller_fallback_unsupported' | 'capability_identity_unresolved' | 'channels_operation_mismatch' | 'channels_result_invalid' | 'channels_session_mismatch' | 'execution_run_not_current' | 'execution_run_turn_mismatch' | 'explicit_machine_target_absent' | 'native_realtime_caller_invalid' | 'own_reachable_machine_absent' | 'plugin_action_declaration_absent' | 'plugin_options_declaration_absent' | 'runner_authority_refused' | 'scm_workspace_invalid' | 'session_absent' | 'session_machine_absent' | 'session_transport_absent' | 'turn_witness_absent' | 'turn_witness_projection_invalid';
+            };
         };
         triggerDefinition?: undefined | {
             triggerId: string;
@@ -17253,6 +17315,10 @@ export type WorkflowsActionResultById = {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
+                };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
@@ -17963,6 +18029,10 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'session';
                 };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
+                };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
                 visibleTeamId?: null | string | undefined;
@@ -18671,6 +18741,10 @@ export type WorkflowsActionResultById = {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
+                };
+                display?: undefined | {
+                    name: string;
+                    description: null | string;
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, JsonValue> | undefined;
@@ -19808,5 +19882,9 @@ type WorkflowsActionDefinition3 = {
         })[];
     };
     maximumObservationAgeMs: null | number;
+    automationDisplay?: undefined | {
+        name: string;
+        description: null | string;
+    };
     webhookRoutingSourceInstanceId?: string | undefined;
 };

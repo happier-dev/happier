@@ -3,6 +3,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
 import { readCliManagedProvisioners } from '@/machines/managed/provisionerAdmission';
+import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { executeCliManagedMachineRuntimeDemand, readCliManagedMachineTarget, type CliManagedMachineRuntimeAccount } from './managedMachineRuntime';
 
 /** Existing captured Session and Account transports supply facts; the shared owner alone selects wake work. */
@@ -25,7 +26,19 @@ export function prepareCliManagedMachineWake(
             const result = await params.managedMachineAction({ actionId: 'machines.managed.get', input, context, signal: context.signal });
             const failure = ActionExecuteFailureSchema.safeParse(result);
             if (failure.success) return failure.data;
-            return ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(result);
+            const parsed = ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result);
+            if (!parsed.success) return { ok: false, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
+            if (!params.provisionerAccount.credentials) {
+                return { ok: false, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
+            }
+            try {
+                return await openManagedMachineRead({ credentials: params.provisionerAccount.credentials,
+                    serverHttpBaseUrl: params.provisionerAccount.serverUrl, read: parsed.data,
+                    ...(context.signal ? { signal: context.signal } : {}) });
+            } catch {
+                context.signal?.throwIfAborted();
+                return { ok: false, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
+            }
         },
     };
     return prepareManagedMachineWakeChildren(request, reads,

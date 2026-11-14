@@ -385,6 +385,48 @@ describe("Automation API projections", () => {
         });
     });
 
+    it("carries an incumbent private Automation display envelope on a current Account list", () => {
+        const workflow = {
+            workspace: { directory: '/workspace/project' }, executionTarget: { kind: 'session' as const },
+            display: { name: 'Nightly release review', description: 'Review the release branch every night' },
+        };
+        const currentWorkflow = {
+            ...scheduleAutomation(), id: 'automation-current-workflow', name: 'Automation', description: null,
+            targetType: null, assignments: [], templateVersion: 2,
+            templateCiphertext: JSON.stringify({ v: 2, templateVersion: 2,
+                workflow: { t: 'plain', v: workflow }, triggerEvidence: null }),
+        };
+        const workflowList = toAutomationDefinitionListItemApiDto(currentWorkflow, null,
+            new Map(), new Map(), ACCOUNT_CURRENTNESS);
+        expect(workflowList).toMatchObject({ name: 'Automation', description: null,
+            executionRecipe: { v: 2, workflow: { t: 'plain', v: workflow } } });
+
+        const actionDisplay = { name: 'Refresh incident index', description: 'Run the incident action' };
+        const actionRecipe = serializeAutomationStoredDefinitionExecutionRecipeV1({
+            v: 1, templateVersion: 2,
+            template: { t: 'plain', v: { v: 1, prompt: '',
+                actionInput: { kind: 'literal', value: { incident: 'INC-42' } }, display: actionDisplay } },
+            triggerEvidence: null,
+            target: { kind: 'contributedAction', action: { pluginId: 'com.example.incidents', localId: 'refresh' } },
+        });
+        if (actionRecipe.kind !== 'available') throw new Error('Action display fixture must serialize');
+        const actionList = toAutomationDefinitionListItemApiDto({
+            ...scheduleAutomation(), id: 'automation-current-action', name: 'Automation', description: null,
+            targetType: null, assignments: [], templateVersion: 2, templateCiphertext: actionRecipe.serialized,
+        }, null, new Map(), new Map(), ACCOUNT_CURRENTNESS);
+        expect(actionList).toMatchObject({ name: 'Automation', description: null,
+            executionRecipe: { v: 1, template: { t: 'plain', v: { display: actionDisplay } } } });
+
+        const observation = { ...eventAutomation(), name: 'Automation', description: null,
+            targetType: null, assignments: [], templateVersion: 2,
+            templateCiphertext: JSON.stringify({ kind: 'observationOnly', templateVersion: 2 }) };
+        const observationList = toAutomationDefinitionListItemApiDto(observation, null,
+            new Map(), new Map(), ACCOUNT_CURRENTNESS);
+        expect(observationList.triggers[0]).toMatchObject({
+            kind: 'pluginEvent', triggerDefinitionEnvelope: observation.triggers[0].definitionEnvelope,
+        });
+    });
+
     it("opens unknown stored result fields through exact Run detail without widening structural lists", () => {
         const run = { ...eventRun(), executionInputEnvelope: strictEventExecutionRecipe() };
         const envelope = JSON.parse(run.resultEnvelope);

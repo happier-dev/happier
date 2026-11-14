@@ -62,6 +62,12 @@ import {
     sealReviewCommentEventSensitiveEnvelopeV1,
     sealReviewCommentSensitiveEnvelopeV1,
     sealAccountScopedBlobCiphertext,
+    openEncryptedDataKeyEnvelopeV1,
+    sealEncryptedDataKeyEnvelopeV1,
+    sealPrivateLabelV1,
+    projectPrivateLabelForRecipientV1,
+    serializePrivateLabelStoredV1,
+    computeContentPublicKeyFingerprint,
     AutomationRunExecutionInputV1Schema,
     AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
@@ -73,6 +79,7 @@ import {
     type ReviewCommentEventV1,
     type ReviewCommentV1,
 } from "@happier-dev/protocol";
+import { transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { enableErrorHandlers } from "@/app/api/utils/enableErrorHandlers";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import {
@@ -86,6 +93,8 @@ import { createSignedAccountContentBinding, exerciseSettingsHistoryEncryptionMig
     exerciseSettingsHistoryMigrationPagingContract, exerciseNullOnlySettingsHistoryLegacyTransitionContract } from "@/testkit/accountEncryption";
 import { createNativePasswordFirstKeyStepUp } from "@/app/auth/password/nativePasswordFirstKeyStepUp";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
+import { readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from '@/app/machines/managed/managedRows';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -166,6 +175,7 @@ function createSignedContentKeyBinding(
     contentPublicKeySig: string;
     contentPublicKeyBytes: Uint8Array<ArrayBuffer>;
     contentPublicKeySigBytes: Uint8Array<ArrayBuffer>;
+    contentSecretKey: Uint8Array<ArrayBuffer>;
 }> {
     const contentKey = tweetnacl.box.keyPair();
 
@@ -182,6 +192,7 @@ function createSignedContentKeyBinding(
         ),
         contentPublicKeyBytes: new Uint8Array(contentKey.publicKey),
         contentPublicKeySigBytes: new Uint8Array(signature),
+        contentSecretKey: new Uint8Array(contentKey.secretKey),
     };
 }
 
@@ -1075,6 +1086,507 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         }
     });
 
+    it('returns personal preset sources and retained opaque snapshots for an Account-mode transition', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = storeOpaquePresetLaunch({
+            contentEncryptionMode: 'plain',
+            content: { t: 'plain', v: { v: 1, name: 'Personal migration source' } },
+            recipients: [],
+        });
+        const preset = await db.managedMachinePreset.create({ data: {
+            id: 'account-migration-personal-preset', homeId: 'account-migration-home',
+            custodianAccountId: account.id, name: '', launch: source, archivedAt: new Date(),
+        } });
+        const snapshot = await db.managedMachine.create({ data: {
+            id: 'account-migration-retained-snapshot', homeId: preset.homeId,
+            custodianAccountId: account.id, admittedActionRequestId: 'account-migration-request',
+            admittedInput: {}, presetId: preset.id, presetRevision: preset.revision,
+            launch: source, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: 'GET', url: '/v1/account/encryption/migrate/managed-machine-presets/inventory',
+                headers: { 'x-test-user-id': account.id },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({
+                presets: [{
+                    presetId: preset.id, expectedRevision: 0, contentEncryptionMode: 'plain',
+                    content: source.content, recipientEnvelope: null,
+                }],
+                snapshots: [{
+                    managedId: snapshot.id, presetId: preset.id, contentEncryptionMode: 'plain',
+                    content: source.content, recipientEnvelope: null,
+                }],
+            });
+        } finally {
+            await app.close();
+            await db.managedMachine.deleteMany({ where: { id: snapshot.id } });
+            await db.managedMachinePreset.deleteMany({ where: { id: preset.id } });
+        }
+    });
+
+    it('reads every retained personal preset snapshot across the portable bind boundary', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const homeId = 'account-migration-bind-boundary-home';
+        const source = storeOpaquePresetLaunch({
+            contentEncryptionMode: 'plain',
+            content: { t: 'plain', v: { v: 1, name: 'Portable retained snapshot' } },
+            recipients: [],
+        });
+        const rows = Array.from({ length: 1_000 }, (_, index) => ({
+            presetId: `account-migration-preset-${String(index).padStart(4, '0')}`,
+            managedId: `account-migration-snapshot-${String(index).padStart(4, '0')}`,
+            requestId: `account-migration-request-${String(index).padStart(4, '0')}`,
+        }));
+        await db.managedMachinePreset.createMany({ data: rows.map((row) => ({
+            id: row.presetId,
+            homeId,
+            custodianAccountId: account.id,
+            name: '',
+            launch: source,
+        })) });
+        await db.managedMachine.createMany({ data: rows.map((row) => ({
+            id: row.managedId,
+            homeId,
+            custodianAccountId: account.id,
+            admittedActionRequestId: row.requestId,
+            admittedInput: {},
+            presetId: row.presetId,
+            presetRevision: 0,
+            launch: source,
+            retention: { kind: 'until-delete' },
+            wakeOnAcceptedMessage: false,
+        })) });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        const snapshotBatchSizes: number[] = [];
+        const stopObserving = observeSqliteRequests({ before: (request) => {
+            const args = request.args as { where?: { presetId?: { in?: unknown[] } } };
+            const ids = args.where?.presetId?.in;
+            if (request.model === 'ManagedMachine' && request.action === 'findMany' && Array.isArray(ids)) {
+                snapshotBatchSizes.push(ids.length);
+            }
+        } });
+        try {
+            const response = await app.inject({
+                method: 'GET',
+                url: '/v1/account/encryption/migrate/managed-machine-presets/inventory',
+                headers: { 'x-test-user-id': account.id },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            const inventory = response.json();
+            expect(inventory.presets).toHaveLength(rows.length);
+            expect(inventory.snapshots).toHaveLength(rows.length);
+            expect(inventory.presets[0]).toMatchObject({ presetId: rows[0]!.presetId });
+            expect(inventory.presets.at(-1)).toMatchObject({ presetId: rows.at(-1)!.presetId });
+            expect(inventory.snapshots[0]).toMatchObject({ managedId: rows[0]!.managedId });
+            expect(inventory.snapshots.at(-1)).toMatchObject({ managedId: rows.at(-1)!.managedId });
+            expect(snapshotBatchSizes).toEqual([999, 1]);
+        } finally {
+            stopObserving();
+            await app.close();
+            await db.managedMachine.deleteMany({ where: { homeId } });
+            await db.managedMachinePreset.deleteMany({ where: { homeId } });
+        }
+    });
+
+    it('reseals personal preset sources and retained snapshots before each Account-mode flip', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+        });
+        const signingKey = tweetnacl.sign.keyPair();
+        const signingPublicKey = new Uint8Array(signingKey.publicKey);
+        const signingSecretKey = new Uint8Array(signingKey.secretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(signingPublicKey),
+            encryptionMode: 'plain', settings: null, settingsVersion: 0,
+        }, select: { id: true, seq: true } });
+        const presetId = 'account-mode-preset-roundtrip';
+        const managedId = 'account-mode-preset-snapshot-roundtrip';
+        const body = {
+            v: 1 as const,
+            name: 'Account mode transition preset',
+            setup: { scripts: [{ body: 'echo setup', affects: 'none' as const }] },
+        };
+        const source = storeOpaquePresetLaunch({
+            contentEncryptionMode: 'plain',
+            content: { t: 'plain', v: body },
+            recipients: [],
+        });
+        const preset = await db.managedMachinePreset.create({ data: {
+            id: presetId, homeId: 'account-mode-transition-home', custodianAccountId: account.id,
+            name: '', launch: source,
+        } });
+        const snapshot = await db.managedMachine.create({ data: {
+            id: managedId, homeId: preset.homeId, custodianAccountId: account.id,
+            admittedActionRequestId: 'account-mode-transition-request', admittedInput: {},
+            presetId: preset.id, presetRevision: preset.revision, launch: source,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const contentBinding = createSignedContentKeyBinding(signingSecretKey);
+        const encryptedPreset = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'plain', toMode: 'e2ee',
+            source: { content: source.content, recipientEnvelope: null },
+            accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const encryptedSnapshot = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'plain', toMode: 'e2ee',
+            source: { content: source.content, recipientEnvelope: null },
+            accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+            randomBytes: tweetnacl.randomBytes,
+        });
+        if (!encryptedPreset || !encryptedSnapshot) throw new Error('Expected preset conversion targets');
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const signedRequest = signPlainToE2eeMigrationRequest({
+                accountId: account.id,
+                signingSecretKey,
+                request: {
+                    toMode: 'e2ee', expectedAccountVersion: account.seq,
+                    expectedSigningKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(signingPublicKey),
+                    expectedContentKeyFingerprint: null, expectedSettingsVersion: 0, settingsContent: null,
+                    connectedServices: { action: 'assert_empty' }, automations: { action: 'assert_empty' },
+                    machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
+                    artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' },
+                    reviewComments: { action: 'assert_empty' }, sessionOrganization: { action: 'assert_empty' },
+                    pets: { action: 'assert_empty' },
+                    managedMachinePresets: {
+                        presets: [{ presetId, expectedRevision: preset.revision, replacement: encryptedPreset }],
+                        snapshots: [{
+                            managedId: snapshot.id, presetId,
+                            expectedContentEncryptionMode: 'plain', expectedContent: source.content,
+                            expectedRecipientEnvelope: null, replacement: encryptedSnapshot,
+                        }],
+                    },
+                    keyProof: {
+                        v: 1, publicKey: privacyKit.encodeBase64(signingPublicKey),
+                        contentPublicKey: contentBinding.contentPublicKey,
+                        contentPublicKeySig: contentBinding.contentPublicKeySig,
+                    },
+                },
+            });
+            const encryptedResponse = await app.inject({
+                method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id },
+                payload: signedRequest,
+            });
+            expect(encryptedResponse.statusCode, encryptedResponse.body).toBe(200);
+            const encryptedAccount = await db.account.findUniqueOrThrow({ where: { id: account.id },
+                select: { encryptionMode: true, seq: true, settingsVersion: true, publicKey: true, contentPublicKey: true } });
+            expect(encryptedAccount.encryptionMode).toBe('e2ee');
+            const encryptedSourceRow = await db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId } });
+            const encryptedSnapshotRow = await db.managedMachine.findUniqueOrThrow({ where: { id: managedId } });
+            const encryptedSource = readStoredOpaquePresetLaunch(encryptedSourceRow.launch);
+            const encryptedSnapshotStored = readStoredOpaquePresetLaunch(encryptedSnapshotRow.launch);
+            expect(encryptedSource).toEqual(storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...encryptedPreset }));
+            expect(encryptedSnapshotStored).toEqual(storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...encryptedSnapshot }));
+
+            const presetEnvelope = encryptedSource.recipients[0]?.envelope;
+            const snapshotEnvelope = encryptedSnapshotStored.recipients[0]?.envelope;
+            if (!presetEnvelope || !snapshotEnvelope) throw new Error('Expected Account recipient envelopes');
+            const presetDataKey = openEncryptedDataKeyEnvelopeV1({
+                envelope: privacyKit.decodeBase64(presetEnvelope.encryptedDataKey),
+                recipientSecretKeyOrSeed: contentBinding.contentSecretKey,
+            });
+            const snapshotDataKey = openEncryptedDataKeyEnvelopeV1({
+                envelope: privacyKit.decodeBase64(snapshotEnvelope.encryptedDataKey),
+                recipientSecretKeyOrSeed: contentBinding.contentSecretKey,
+            });
+            if (!presetDataKey || !snapshotDataKey) throw new Error('Expected openable Account preset data keys');
+            const plainPreset = transitionManagedMachinePresetContentEncryptionModeV1({
+                presetId, fromMode: 'e2ee', toMode: 'plain',
+                source: { content: encryptedSource.content, recipientEnvelope: presetEnvelope },
+                sourceDataKey: presetDataKey,
+            });
+            const plainSnapshot = transitionManagedMachinePresetContentEncryptionModeV1({
+                presetId, fromMode: 'e2ee', toMode: 'plain',
+                source: { content: encryptedSnapshotStored.content, recipientEnvelope: snapshotEnvelope },
+                sourceDataKey: snapshotDataKey,
+            });
+            if (!plainPreset || !plainSnapshot) throw new Error('Expected plaintext preset conversion targets');
+            const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(encryptedAccount);
+            const plainRequest: AccountEncryptionMigrateUnsignedRequest = {
+                toMode: 'plain', expectedAccountVersion: encryptedAccount.seq,
+                expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+                expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint,
+                expectedSettingsVersion: encryptedAccount.settingsVersion, settingsContent: null,
+                connectedServices: { action: 'assert_empty' }, automations: { action: 'assert_empty' },
+                machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
+                artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' },
+                reviewComments: { action: 'assert_empty' }, sessionOrganization: { action: 'assert_empty' },
+                pets: { action: 'assert_empty' },
+                managedMachinePresets: {
+                    presets: [{ presetId, expectedRevision: encryptedSourceRow.revision, replacement: plainPreset }],
+                    snapshots: [{
+                        managedId, presetId, expectedContentEncryptionMode: 'e2ee',
+                        expectedContent: encryptedSnapshotStored.content,
+                        expectedRecipientEnvelope: snapshotEnvelope, replacement: plainSnapshot,
+                    }],
+                },
+            };
+            const staleEncryptedSnapshot = transitionManagedMachinePresetContentEncryptionModeV1({
+                presetId, fromMode: 'plain', toMode: 'e2ee',
+                source: { content: source.content, recipientEnvelope: null },
+                accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+                randomBytes: tweetnacl.randomBytes,
+            });
+            if (!staleEncryptedSnapshot) throw new Error('Expected a changed retained snapshot');
+            await db.managedMachine.update({ where: { id: managedId }, data: {
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...staleEncryptedSnapshot }),
+            } });
+            const stalePlainResponse = await app.inject({
+                method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id },
+                payload: plainRequest,
+            });
+            expect(stalePlainResponse.statusCode, stalePlainResponse.body).toBe(400);
+            expect(stalePlainResponse.json()).toEqual({
+                error: 'invalid-params', reason: 'migration_inventory_changed',
+            });
+            await expect(db.account.findUniqueOrThrow({ where: { id: account.id },
+                select: { encryptionMode: true } })).resolves.toEqual({ encryptionMode: 'e2ee' });
+            await expect(db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId },
+                select: { launch: true, revision: true } })).resolves.toEqual({
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...encryptedPreset }), revision: 1,
+            });
+            await db.managedMachine.update({ where: { id: managedId }, data: {
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...encryptedSnapshot }),
+            } });
+            const plainResponse = await app.inject({
+                method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id },
+                payload: plainRequest,
+            });
+            expect(plainResponse.statusCode, plainResponse.body).toBe(200);
+            await expect(db.account.findUniqueOrThrow({ where: { id: account.id },
+                select: { encryptionMode: true } })).resolves.toEqual({ encryptionMode: 'plain' });
+            await expect(db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId },
+                select: { launch: true, revision: true } })).resolves.toEqual({ launch: source, revision: 2 });
+            await expect(db.managedMachine.findUniqueOrThrow({ where: { id: managedId },
+                select: { launch: true } })).resolves.toEqual({ launch: source });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it('allows E2EE-to-Plain preset recovery when its retained controller pool is unavailable', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+        });
+        const signingKey = tweetnacl.sign.keyPair();
+        const signingPublicKey = new Uint8Array(signingKey.publicKey);
+        const signingSecretKey = new Uint8Array(signingKey.secretKey);
+        const contentBinding = createSignedContentKeyBinding(signingSecretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(signingPublicKey),
+            contentPublicKey: contentBinding.contentPublicKeyBytes,
+            contentPublicKeySig: contentBinding.contentPublicKeySigBytes,
+            encryptionMode: 'e2ee', settings: null, settingsVersion: 0,
+        }, select: {
+            id: true, seq: true, settingsVersion: true, publicKey: true, contentPublicKey: true,
+        } });
+        const foreignSnapshotCustodian = await db.account.create({
+            data: { encryptionMode: 'plain' },
+            select: { id: true },
+        });
+        const presetId = 'missing-controller-preset-recovery';
+        const snapshotId = 'missing-controller-preset-recovery-snapshot';
+        const body = {
+            v: 1 as const,
+            name: 'Recovery remains available without the controller pool',
+            setup: { scripts: [{ body: 'echo recover', affects: 'none' as const }] },
+        };
+        const encrypted = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'plain', toMode: 'e2ee',
+            source: { content: { t: 'plain', v: body }, recipientEnvelope: null },
+            accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+            randomBytes: tweetnacl.randomBytes,
+        });
+        if (!encrypted) throw new Error('Expected encrypted recovery source');
+        const controllerPoolId = '11111111-1111-4111-8111-111111111111';
+        const encryptedLaunch = storeOpaquePresetLaunch({
+            contentEncryptionMode: 'e2ee', ...encrypted, controllerPoolId,
+        });
+        const preset = await db.managedMachinePreset.create({ data: {
+            id: presetId, homeId: 'missing-controller-recovery-home', custodianAccountId: account.id,
+            name: '', launch: encryptedLaunch,
+        } });
+        await db.managedMachine.create({ data: {
+            id: snapshotId, homeId: preset.homeId, custodianAccountId: foreignSnapshotCustodian.id,
+            admittedActionRequestId: 'missing-controller-recovery-request', admittedInput: {},
+            presetId: preset.id, presetRevision: preset.revision, launch: encryptedLaunch,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const recipientEnvelope = encrypted.recipients[0]?.envelope;
+        if (!recipientEnvelope) throw new Error('Expected Account recipient envelope');
+        const dataKey = openEncryptedDataKeyEnvelopeV1({
+            envelope: privacyKit.decodeBase64(recipientEnvelope.encryptedDataKey),
+            recipientSecretKeyOrSeed: contentBinding.contentSecretKey,
+        });
+        if (!dataKey) throw new Error('Expected an openable recovery data key');
+        const plain = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'e2ee', toMode: 'plain',
+            source: { content: encrypted.content, recipientEnvelope }, sourceDataKey: dataKey,
+        });
+        if (!plain) throw new Error('Expected plaintext recovery target');
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id },
+                payload: {
+                    toMode: 'plain', expectedAccountVersion: account.seq,
+                    expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+                    expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint,
+                    expectedSettingsVersion: account.settingsVersion, settingsContent: null,
+                    connectedServices: { action: 'assert_empty' }, automations: { action: 'assert_empty' },
+                    machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
+                    artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' },
+                    reviewComments: { action: 'assert_empty' }, sessionOrganization: { action: 'assert_empty' },
+                    pets: { action: 'assert_empty' },
+                    managedMachinePresets: {
+                        presets: [{ presetId, expectedRevision: 0, replacement: plain }],
+                        snapshots: [{
+                            managedId: snapshotId, presetId,
+                            expectedContentEncryptionMode: 'e2ee',
+                            expectedContent: encrypted.content,
+                            expectedRecipientEnvelope: recipientEnvelope,
+                            replacement: plain,
+                        }],
+                    },
+                } satisfies AccountEncryptionMigrateUnsignedRequest,
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            await expect(db.account.findUniqueOrThrow({ where: { id: account.id },
+                select: { encryptionMode: true } })).resolves.toEqual({ encryptionMode: 'plain' });
+            await expect(db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId },
+                select: { launch: true, revision: true } })).resolves.toEqual({
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', ...plain, controllerPoolId }),
+                revision: 1,
+            });
+            await expect(db.managedMachine.findUniqueOrThrow({ where: { id: snapshotId },
+                select: { launch: true } })).resolves.toEqual({
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', ...plain, controllerPoolId }),
+            });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it('refuses a personal preset conversion with a foreign retained snapshot custodian before flipping Account mode', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+        });
+        const signingKey = tweetnacl.sign.keyPair();
+        const signingPublicKey = new Uint8Array(signingKey.publicKey);
+        const signingSecretKey = new Uint8Array(signingKey.secretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(signingPublicKey),
+            encryptionMode: 'plain', settings: null, settingsVersion: 0,
+        }, select: { id: true, seq: true } });
+        const foreignCustodian = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const presetId = 'foreign-custodian-preset';
+        const snapshotId = 'foreign-custodian-snapshot';
+        const source = storeOpaquePresetLaunch({
+            contentEncryptionMode: 'plain',
+            content: {
+                t: 'plain',
+                v: {
+                    v: 1,
+                    name: 'Personal source cannot gain a foreign E2EE recipient',
+                    setup: { scripts: [{ body: 'echo setup', affects: 'none' as const }] },
+                },
+            },
+            recipients: [],
+        });
+        const preset = await db.managedMachinePreset.create({ data: {
+            id: presetId, homeId: 'foreign-custodian-home', custodianAccountId: account.id,
+            name: '', launch: source,
+        } });
+        const snapshot = await db.managedMachine.create({ data: {
+            id: snapshotId, homeId: preset.homeId, custodianAccountId: foreignCustodian.id,
+            admittedActionRequestId: 'foreign-custodian-request', admittedInput: {},
+            presetId: preset.id, presetRevision: preset.revision, launch: source,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const contentBinding = createSignedContentKeyBinding(signingSecretKey);
+        const replacement = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'plain', toMode: 'e2ee',
+            source: { content: source.content, recipientEnvelope: null },
+            accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const snapshotReplacement = transitionManagedMachinePresetContentEncryptionModeV1({
+            presetId, fromMode: 'plain', toMode: 'e2ee',
+            source: { content: source.content, recipientEnvelope: null },
+            accountId: account.id, targetContentPublicKey: contentBinding.contentPublicKeyBytes,
+            randomBytes: tweetnacl.randomBytes,
+        });
+        if (!replacement || !snapshotReplacement) throw new Error('Expected owner-only preset conversion targets');
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const request = signPlainToE2eeMigrationRequest({
+                accountId: account.id,
+                signingSecretKey,
+                request: {
+                    toMode: 'e2ee', expectedAccountVersion: account.seq,
+                    expectedSigningKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(signingPublicKey),
+                    expectedContentKeyFingerprint: null, expectedSettingsVersion: 0, settingsContent: null,
+                    connectedServices: { action: 'assert_empty' }, automations: { action: 'assert_empty' },
+                    machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
+                    artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' },
+                    reviewComments: { action: 'assert_empty' }, sessionOrganization: { action: 'assert_empty' },
+                    pets: { action: 'assert_empty' },
+                    managedMachinePresets: {
+                        presets: [{ presetId, expectedRevision: preset.revision, replacement }],
+                        snapshots: [{
+                            managedId: snapshot.id, presetId, expectedContentEncryptionMode: 'plain',
+                            expectedContent: source.content, expectedRecipientEnvelope: null,
+                            replacement: snapshotReplacement,
+                        }],
+                    },
+                    keyProof: {
+                        v: 1, publicKey: privacyKit.encodeBase64(signingPublicKey),
+                        contentPublicKey: contentBinding.contentPublicKey,
+                        contentPublicKeySig: contentBinding.contentPublicKeySig,
+                    },
+                },
+            });
+            const response = await app.inject({
+                method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id }, payload: request,
+            });
+            expect(response.statusCode, response.body).toBe(400);
+            expect(response.json()).toEqual({ error: 'invalid-params' });
+            await expect(db.account.findUniqueOrThrow({ where: { id: account.id },
+                select: { encryptionMode: true } })).resolves.toEqual({ encryptionMode: 'plain' });
+            await expect(db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId },
+                select: { launch: true, revision: true } })).resolves.toEqual({ launch: source, revision: 0 });
+            await expect(db.managedMachine.findUniqueOrThrow({ where: { id: snapshotId },
+                select: { launch: true, custodianAccountId: true } })).resolves.toEqual({
+                launch: source, custodianAccountId: foreignCustodian.id,
+            });
+        } finally {
+            await app.close();
+        }
+    });
+
     it("migrates e2ee -> plain atomically and stores v2 settings in plaintext", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -1279,6 +1791,326 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         expect(getV2.json()).toMatchObject({ version: 1, content: { t: "plain" } });
 
         await app.close();
+    });
+
+    it("refuses e2ee -> plain when Account-owned private-label conversion inventory is omitted", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "none",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
+        });
+
+        const contentBinding = createSignedAccountContentBinding();
+        const account = await db.account.create({
+            data: {
+                ...contentBinding,
+                encryptionMode: "e2ee",
+                settings: "ciphertext",
+                settingsVersion: 0,
+            },
+            select: { id: true },
+        });
+        const recipient = {
+            accountId: account.id,
+            envelope: {
+                encryptedDataKey: privacyKit.encodeBase64(
+                    sealEncryptedDataKeyEnvelopeV1({
+                        dataKey: tweetnacl.randomBytes(32),
+                        recipientPublicKey: contentBinding.contentPublicKey,
+                        randomBytes: tweetnacl.randomBytes,
+                    }),
+                ),
+                recipientContentPublicKeyFingerprint:
+                    computeContentPublicKeyFingerprint(
+                        contentBinding.contentPublicKey,
+                    ),
+            },
+        };
+        const tokenId = "private-label-migration-token";
+        const homeServerIdentityId = "private-label-migration-home";
+        const poolId = "11111111-1111-4111-8111-111111111111";
+        const tokenStoredLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "account_api_token",
+                field: "label",
+                id: tokenId,
+            },
+            value: "E2EE API token label",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const tokenLabel = serializePrivateLabelStoredV1(tokenStoredLabel);
+        const homeStoredLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "account_directory_home",
+                field: "label",
+                id: homeServerIdentityId,
+            },
+            value: "E2EE Home label",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const homeLabel = serializePrivateLabelStoredV1(homeStoredLabel);
+        const poolNameStoredLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "machine_pool",
+                field: "name",
+                id: poolId,
+            },
+            value: "E2EE personal Pool name",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const poolNameLabel = serializePrivateLabelStoredV1(poolNameStoredLabel);
+        const poolDescriptionStoredLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "machine_pool",
+                field: "description",
+                id: poolId,
+            },
+            value: "E2EE personal Pool description",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const poolDescriptionLabel = serializePrivateLabelStoredV1(poolDescriptionStoredLabel);
+        await db.accountApiToken.create({
+            data: {
+                id: tokenId,
+                accountId: account.id,
+                displayPrefix: "hap_private_label",
+                secretDigest: "private-label-migration-digest",
+                label: tokenLabel,
+            },
+        });
+        await db.accountHomeDirectoryEntry.create({
+            data: {
+                accountId: account.id,
+                homeServerIdentityId,
+                canonicalServerUrl: "https://home.example.test",
+                label: homeLabel,
+                connectionDescriptor: {
+                    canonicalServerUrl: "https://home.example.test",
+                    revision: 1,
+                },
+            },
+        });
+        await db.machinePool.create({
+            data: {
+                id: poolId,
+                accountId: account.id,
+                name: poolNameLabel,
+                description: poolDescriptionLabel,
+            },
+        });
+
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/account/encryption/migrate",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                },
+                payload: {
+                    toMode: "plain",
+                    expectedSettingsVersion: 0,
+                    settingsContent: { t: "plain", v: { schemaVersion: 2 } },
+                    connectedServices: { action: "assert_empty" },
+                    automations: { action: "assert_empty" },
+                    machines: { action: "assert_empty" },
+                    todos: { action: "assert_empty" },
+                    artifacts: { action: "assert_empty" },
+                },
+            });
+
+            expect(response.statusCode, response.body).toBe(400);
+            expect(response.json()).toEqual({
+                error: "invalid-params",
+                reason: "migration_inventory_changed",
+            });
+            await expect(
+                db.account.findUnique({
+                    where: { id: account.id },
+                    select: { encryptionMode: true },
+                }),
+            ).resolves.toEqual({ encryptionMode: "e2ee" });
+            await expect(
+                db.accountApiToken.findUnique({
+                    where: { id: tokenId },
+                    select: { label: true },
+                }),
+            ).resolves.toEqual({ label: tokenLabel });
+            await expect(
+                db.accountHomeDirectoryEntry.findUnique({
+                    where: {
+                        accountId_homeServerIdentityId: {
+                            accountId: account.id,
+                            homeServerIdentityId,
+                        },
+                    },
+                    select: { label: true },
+                }),
+            ).resolves.toEqual({ label: homeLabel });
+            await expect(
+                db.machinePool.findUnique({
+                    where: { id: poolId },
+                    select: { name: true, description: true },
+                }),
+            ).resolves.toEqual({
+                name: poolNameLabel,
+                description: poolDescriptionLabel,
+            });
+
+            const plainTokenLabel = sealPrivateLabelV1({
+                mode: "plain",
+                binding: {
+                    entity: "account_api_token",
+                    field: "label",
+                    id: tokenId,
+                },
+                value: "Plain API token label",
+            });
+            const plainHomeLabel = sealPrivateLabelV1({
+                mode: "plain",
+                binding: {
+                    entity: "account_directory_home",
+                    field: "label",
+                    id: homeServerIdentityId,
+                },
+                value: "Plain Home label",
+            });
+            const plainPoolNameLabel = sealPrivateLabelV1({
+                mode: "plain",
+                binding: {
+                    entity: "machine_pool",
+                    field: "name",
+                    id: poolId,
+                },
+                value: "Plain personal Pool name",
+            });
+            const plainPoolDescriptionLabel = sealPrivateLabelV1({
+                mode: "plain",
+                binding: {
+                    entity: "machine_pool",
+                    field: "description",
+                    id: poolId,
+                },
+                value: "Plain personal Pool description",
+            });
+            const accepted = await app.inject({
+                method: "POST",
+                url: "/v1/account/encryption/migrate",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                },
+                payload: {
+                    toMode: "plain",
+                    expectedSettingsVersion: 0,
+                    settingsContent: { t: "plain", v: { schemaVersion: 2 } },
+                    connectedServices: { action: "assert_empty" },
+                    automations: { action: "assert_empty" },
+                    machines: { action: "assert_empty" },
+                    todos: { action: "assert_empty" },
+                    artifacts: { action: "assert_empty" },
+                    privateLabels: {
+                        items: [
+                            {
+                                entity: "account_api_token",
+                                field: "label",
+                                id: tokenId,
+                                expectedLabel: projectPrivateLabelForRecipientV1({
+                                    stored: tokenStoredLabel,
+                                    recipientAccountId: account.id,
+                                }),
+                                label: plainTokenLabel,
+                            },
+                            {
+                                entity: "account_directory_home",
+                                field: "label",
+                                id: homeServerIdentityId,
+                                expectedLabel: projectPrivateLabelForRecipientV1({
+                                    stored: homeStoredLabel,
+                                    recipientAccountId: account.id,
+                                }),
+                                label: plainHomeLabel,
+                            },
+                            {
+                                entity: "machine_pool",
+                                field: "name",
+                                id: poolId,
+                                expectedLabel: projectPrivateLabelForRecipientV1({
+                                    stored: poolNameStoredLabel,
+                                    recipientAccountId: account.id,
+                                }),
+                                label: plainPoolNameLabel,
+                            },
+                            {
+                                entity: "machine_pool",
+                                field: "description",
+                                id: poolId,
+                                expectedLabel: projectPrivateLabelForRecipientV1({
+                                    stored: poolDescriptionStoredLabel,
+                                    recipientAccountId: account.id,
+                                }),
+                                label: plainPoolDescriptionLabel,
+                            },
+                        ],
+                    },
+                },
+            });
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            await expect(
+                db.account.findUnique({
+                    where: { id: account.id },
+                    select: { encryptionMode: true },
+                }),
+            ).resolves.toEqual({ encryptionMode: "plain" });
+            await expect(
+                db.accountApiToken.findUnique({
+                    where: { id: tokenId },
+                    select: { label: true },
+                }),
+            ).resolves.toEqual({
+                label: serializePrivateLabelStoredV1(plainTokenLabel),
+            });
+            await expect(
+                db.accountHomeDirectoryEntry.findUnique({
+                    where: {
+                        accountId_homeServerIdentityId: {
+                            accountId: account.id,
+                            homeServerIdentityId,
+                        },
+                    },
+                    select: { label: true },
+                }),
+            ).resolves.toEqual({
+                label: serializePrivateLabelStoredV1(plainHomeLabel),
+            });
+            await expect(
+                db.machinePool.findUnique({
+                    where: { id: poolId },
+                    select: { name: true, description: true },
+                }),
+            ).resolves.toEqual({
+                name: serializePrivateLabelStoredV1(plainPoolNameLabel),
+                description: serializePrivateLabelStoredV1(plainPoolDescriptionLabel),
+            });
+        } finally {
+            await app.close();
+        }
     });
 
     it("fails closed for an indistinguishable same-mode request without rewriting Settings", async () => {
@@ -2937,6 +3769,300 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             seq: account.seq + 1,
         });
         await app.close();
+    });
+
+    it("atomically moves Account private labels and preserves a keyless bootstrap Home on keyed plain -> e2ee", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const signingKey = tweetnacl.sign.keyPair();
+        const signingPublicKey = Uint8Array.from(signingKey.publicKey);
+        const signingSecretKey = Uint8Array.from(signingKey.secretKey);
+        const account = await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(signingPublicKey),
+                encryptionMode: "plain",
+                settings: null,
+                settingsVersion: 0,
+            },
+            select: { id: true, seq: true },
+        });
+        const tokenId = "plain-private-label-migration-token";
+        const labelledHomeServerIdentityId = "plain-private-label-migration-home";
+        const bootstrapHomeServerIdentityId = "plain-private-label-bootstrap-home";
+        const poolId = "22222222-2222-4222-8222-222222222222";
+        const plainTokenLabel = sealPrivateLabelV1({
+            mode: "plain",
+            binding: {
+                entity: "account_api_token",
+                field: "label",
+                id: tokenId,
+            },
+            value: "Plain API token label",
+        });
+        const plainHomeLabel = sealPrivateLabelV1({
+            mode: "plain",
+            binding: {
+                entity: "account_directory_home",
+                field: "label",
+                id: labelledHomeServerIdentityId,
+            },
+            value: "Plain Home label",
+        });
+        const plainPoolNameLabel = sealPrivateLabelV1({
+            mode: "plain",
+            binding: {
+                entity: "machine_pool",
+                field: "name",
+                id: poolId,
+            },
+            value: "Plain personal Pool name",
+        });
+        const plainPoolDescriptionLabel = sealPrivateLabelV1({
+            mode: "plain",
+            binding: {
+                entity: "machine_pool",
+                field: "description",
+                id: poolId,
+            },
+            value: "Plain personal Pool description",
+        });
+        await db.accountApiToken.create({
+            data: {
+                id: tokenId,
+                accountId: account.id,
+                displayPrefix: "hap_plain_private_label",
+                secretDigest: "plain-private-label-migration-digest",
+                label: serializePrivateLabelStoredV1(plainTokenLabel),
+            },
+        });
+        await db.accountHomeDirectoryEntry.createMany({
+            data: [
+                {
+                    accountId: account.id,
+                    homeServerIdentityId: labelledHomeServerIdentityId,
+                    canonicalServerUrl: "https://labelled-home.example.test",
+                    label: serializePrivateLabelStoredV1(plainHomeLabel),
+                    connectionDescriptor: {
+                        canonicalServerUrl: "https://labelled-home.example.test",
+                        revision: 1,
+                    },
+                },
+                {
+                    accountId: account.id,
+                    homeServerIdentityId: bootstrapHomeServerIdentityId,
+                    canonicalServerUrl: "https://bootstrap-home.example.test",
+                    label: "",
+                    connectionDescriptor: {
+                        canonicalServerUrl: "https://bootstrap-home.example.test",
+                        revision: 1,
+                    },
+                },
+            ],
+        });
+        await db.machinePool.create({
+            data: {
+                id: poolId,
+                accountId: account.id,
+                name: serializePrivateLabelStoredV1(plainPoolNameLabel),
+                description: serializePrivateLabelStoredV1(plainPoolDescriptionLabel),
+            },
+        });
+
+        const contentBinding = createSignedContentKeyBinding(signingSecretKey);
+        const recipient = {
+            accountId: account.id,
+            envelope: {
+                encryptedDataKey: privacyKit.encodeBase64(
+                    sealEncryptedDataKeyEnvelopeV1({
+                        dataKey: tweetnacl.randomBytes(32),
+                        recipientPublicKey: contentBinding.contentPublicKeyBytes,
+                        randomBytes: tweetnacl.randomBytes,
+                    }),
+                ),
+                recipientContentPublicKeyFingerprint:
+                    computeContentPublicKeyFingerprint(
+                        contentBinding.contentPublicKeyBytes,
+                    ),
+            },
+        };
+        const encryptedTokenLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "account_api_token",
+                field: "label",
+                id: tokenId,
+            },
+            value: "Encrypted API token label",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const encryptedHomeLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "account_directory_home",
+                field: "label",
+                id: labelledHomeServerIdentityId,
+            },
+            value: "Encrypted Home label",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const encryptedPoolNameLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "machine_pool",
+                field: "name",
+                id: poolId,
+            },
+            value: "Encrypted personal Pool name",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const encryptedPoolDescriptionLabel = sealPrivateLabelV1({
+            mode: "e2ee",
+            binding: {
+                entity: "machine_pool",
+                field: "description",
+                id: poolId,
+            },
+            value: "Encrypted personal Pool description",
+            dataKey: tweetnacl.randomBytes(32),
+            recipients: [recipient],
+            randomBytes: tweetnacl.randomBytes,
+        });
+        const unsignedRequest: AccountEncryptionMigrateUnsignedRequest = {
+            toMode: "e2ee",
+            expectedAccountVersion: account.seq,
+            expectedSigningKeyFingerprint:
+                computeAccountEncryptionMigrateKeyFingerprintV1(signingPublicKey),
+            expectedContentKeyFingerprint: null,
+            expectedSettingsVersion: 0,
+            settingsContent: null,
+            connectedServices: { action: "assert_empty" },
+            automations: { action: "assert_empty" },
+            machines: { action: "assert_empty" },
+            todos: { action: "assert_empty" },
+            artifacts: { action: "assert_empty" },
+            sessions: { action: "assert_empty" },
+            reviewComments: { action: "assert_empty" },
+            sessionOrganization: { action: "assert_empty" },
+            pets: { action: "assert_empty" },
+            privateLabels: {
+                items: [
+                    {
+                        entity: "account_api_token",
+                        field: "label",
+                        id: tokenId,
+                        expectedLabel: projectPrivateLabelForRecipientV1({
+                            stored: plainTokenLabel,
+                            recipientAccountId: account.id,
+                        }),
+                        label: encryptedTokenLabel,
+                    },
+                    {
+                        entity: "account_directory_home",
+                        field: "label",
+                        id: labelledHomeServerIdentityId,
+                        expectedLabel: projectPrivateLabelForRecipientV1({
+                            stored: plainHomeLabel,
+                            recipientAccountId: account.id,
+                        }),
+                        label: encryptedHomeLabel,
+                    },
+                    {
+                        entity: "machine_pool",
+                        field: "name",
+                        id: poolId,
+                        expectedLabel: projectPrivateLabelForRecipientV1({
+                            stored: plainPoolNameLabel,
+                            recipientAccountId: account.id,
+                        }),
+                        label: encryptedPoolNameLabel,
+                    },
+                    {
+                        entity: "machine_pool",
+                        field: "description",
+                        id: poolId,
+                        expectedLabel: projectPrivateLabelForRecipientV1({
+                            stored: plainPoolDescriptionLabel,
+                            recipientAccountId: account.id,
+                        }),
+                        label: encryptedPoolDescriptionLabel,
+                    },
+                ],
+            },
+            keyProof: {
+                v: 1,
+                publicKey: privacyKit.encodeBase64(signingPublicKey),
+                contentPublicKey: contentBinding.contentPublicKey,
+                contentPublicKeySig: contentBinding.contentPublicKeySig,
+            },
+        };
+        const signedRequest = signPlainToE2eeMigrationRequest({
+            accountId: account.id,
+            signingSecretKey,
+            request: unsignedRequest,
+        });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/account/encryption/migrate",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                },
+                payload: signedRequest,
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            await expect(db.account.findUniqueOrThrow({
+                where: { id: account.id },
+                select: { encryptionMode: true },
+            })).resolves.toEqual({ encryptionMode: "e2ee" });
+            await expect(db.accountApiToken.findUniqueOrThrow({
+                where: { id: tokenId },
+                select: { label: true },
+            })).resolves.toEqual({
+                label: serializePrivateLabelStoredV1(encryptedTokenLabel),
+            });
+            await expect(db.accountHomeDirectoryEntry.findUniqueOrThrow({
+                where: {
+                    accountId_homeServerIdentityId: {
+                        accountId: account.id,
+                        homeServerIdentityId: labelledHomeServerIdentityId,
+                    },
+                },
+                select: { label: true },
+            })).resolves.toEqual({
+                label: serializePrivateLabelStoredV1(encryptedHomeLabel),
+            });
+            await expect(db.machinePool.findUniqueOrThrow({
+                where: { id: poolId },
+                select: { name: true, description: true },
+            })).resolves.toEqual({
+                name: serializePrivateLabelStoredV1(encryptedPoolNameLabel),
+                description: serializePrivateLabelStoredV1(encryptedPoolDescriptionLabel),
+            });
+            await expect(db.accountHomeDirectoryEntry.findUniqueOrThrow({
+                where: {
+                    accountId_homeServerIdentityId: {
+                        accountId: account.id,
+                        homeServerIdentityId: bootstrapHomeServerIdentityId,
+                    },
+                },
+                select: { label: true },
+            })).resolves.toEqual({ label: "" });
+        } finally {
+            await app.close();
+        }
     });
 
     it("requires the current password for a password-bearing retained-key plain -> e2ee conversion", async () => {

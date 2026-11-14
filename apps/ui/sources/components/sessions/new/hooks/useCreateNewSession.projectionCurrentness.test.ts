@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook } from '@/dev/testkit';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -444,7 +444,7 @@ describe('shared guest Send through the screen action caller', () => {
             const connected = useNewSessionConnectedServicesAgentOptions({
                 staticAgentId: 'codex', runtimeCarrierAgentId: 'codex', selectedMachineId: params.selectedMachineId,
                 targetServerId: runtime.serverId, selectedBackendTargetKey: targetKey,
-                connectedAccounts: declaration.connectedAccounts, agentIdentity: declaration.identity,
+                connectedAccounts: declaration.connectedAccounts ?? undefined, agentIdentity: declaration.identity,
                 modelSelection: selection, providerProjection: inputs?.pluginProjectionV2,
                 teamCredentialResources: [resource], teamCredentialResourceStatusByKey: statuses,
                 agentOptionState: null, settings: { connectedServicesDefaultProfileByServiceId: {} },
@@ -484,7 +484,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const teamAddress = { serverId: runtime.serverId, teamId: 'team-launch' };
         const selection = { source: 'team_resource', resourceId: 'resource-launch', deliveryMode: 'brokered' } as const;
         const bindings = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: { 'acme.review/auth': selection } });
-        const resource: TeamCredentialResourceCatalogEntryV1 = { id: selection.resourceId, teamId: teamAddress.teamId, displayName: 'Shared sign-in', resourceRevision: 3,
+        const resource: TeamCredentialResourceCatalogEntryV1 = { id: selection.resourceId, teamId: teamAddress.teamId, displayName: 'Shared sign-in', sourceOwnerDisplayName: null, resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             connectedServiceSelections: [selection], sourcePresentation: { kind: 'connected_service', service: connectedAccountDeclaration.service },
@@ -1039,7 +1039,10 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             await hook.unmount();
         }
     });
-    it.each(['approve', 'decline', 'cancel', 'establish'] as const)('continues the Composer requester enrollment question through the real managed Action (%s)', async decision => {
+    it('continues the Composer requester enrollment question through the real managed Action (approve)', async () => {
+        // The Composer journey proves its admitted-pairing continuation. Administrator
+        // password/decline belongs to the canonical creation-owner coverage in
+        // newSessionManagedCreation.
         const { Modal } = await import('@/modal');
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
@@ -1052,7 +1055,9 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
         const nacl = (await import('tweetnacl')).default;
         const ordinary = await createManagedDraft();
-        const installationPublicKey = encodeBase64(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url');
+        const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6));
+        const installationPublicKey = encodeBase64(installationKeys.publicKey, 'base64url');
+        const machineInstallationPublicKey = encodeBase64(installationKeys.publicKey, 'base64');
         const preset = createDelegatedManagedPresetFixture({ preset: { id: 'team-preset', homeId: runtime.serverIdentityId,
             revision: 1, name: 'Team sandbox', owner: { kind: 'team', teamId: 'team' }, launch: ordinary.receipt.launch,
             controller: ordinary.receipt.controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
@@ -1062,30 +1067,68 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 billing: ordinary.receipt.billing, retention: ordinary.receipt.retentionCapabilities,
                 actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
             } });
-        if (preset.delegatedAcquire?.kind !== 'ready') throw new Error('Expected delegated preset projection');
-        const selection = { ...ordinary, selection: { kind: 'preset' as const, homeId: runtime.serverIdentityId,
-            id: preset.id, revision: preset.revision }, receipt: preset.delegatedAcquire.reviewedFacts,
-            enrollmentIdentity: decision === 'establish'
-                ? { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
-                    adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } }
-                : { kind: 'guestProcess' as const, role: 'sandbox' as const } };
-        managedMachine = { id: 'requester-paid', homeId: runtime.serverIdentityId,
-            custodianAccountId: 'company', enrollmentAccountId: 'account-a', launch: ordinary.receipt.launch,
+        const enrollmentIdentity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
+        const { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1 } = await import(
+            '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1',
+        );
+        const { ManagedOpaquePresetMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { prepareManagedOpaquePresetReportV1 } = await import('@happier-dev/cli-common/machines/managed');
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({
+            presetId: preset.id,
+            mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({
+                content: preset.content,
+                recipients: preset.recipients,
+                recipientAccountId: 'account-a',
+            }),
+            enrollmentIdentity,
+        });
+        if (!presetContentOverride) throw new Error('Expected exact opaque preset acquire override');
+        const { createManagedMachineSelectionDraft } = await import('@/sync/domains/state/newSessionManagedMachineDraft');
+        const selection = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset' as const, homeId: runtime.serverIdentityId, id: preset.id, revision: preset.revision },
+            receipt: preset.opened.reviewedFacts,
+            enrollmentIdentity,
+            presetContentOverride,
+            presetOrigin: {
+                id: preset.id,
+                homeId: preset.homeId,
+                revision: preset.revision,
+                ...(preset.controller ? { controller: preset.controller } : {}),
+                ...(preset.controllerPoolId ? { controllerPoolId: preset.controllerPoolId } : {}),
+                ...(preset.retention ? { retention: preset.retention } : {}),
+                ...(preset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } : {}),
+            },
+        });
+        const managedResource = { contributionRef: ordinary.receipt.launch.provider, schemaVersion: 1,
+            value: { nativeId: 'requester-native' } };
+        const row = ManagedOpaquePresetMachineV1Schema.parse({ id: 'requester-paid', homeId: runtime.serverIdentityId,
+            custodianAccountId: 'company', enrollmentAccountId: 'account-a', preset: {
+                id: preset.id, revision: preset.revision, contentEncryptionMode: preset.contentEncryptionMode,
+            },
             controller: ordinary.receipt.controller,
             controllerAccess: { custodian: { accountId: 'company' }, installationPublicKey },
-            allocation: 'bound', resource: { contributionRef: ordinary.receipt.launch.provider, schemaVersion: 1,
-                value: { nativeId: 'requester-native' } }, creationState: 'active', desired: 'start', desiredWhen: 'now',
-            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-        const row = managedMachine;
-        const secret = 'correct-horse-battery-staple';
-        const question = decision === 'establish'
-            ? { kind: 'administrator.establish' as const, promptId: 'administrator-prompt', administratorUsername: 'operator',
-                message: 'Your new administrator password passes through setup.' }
-            : { kind: 'auth.approveRemoteProvisioning' as const, message: 'Sign this guest into your Account?' };
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now',
+            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const admittedSnapshot = prepareManagedOpaquePresetReportV1({
+            machine: row,
+            content: preset.content,
+            recipients: preset.recipients,
+            opened: { ...preset.opened.content, reviewedFacts: { ...preset.opened.reviewedFacts,
+                provisioner: preset.opened.provisioner } },
+            accountId: row.custodianAccountId,
+            randomBytes: length => new Uint8Array(length).fill(7),
+            nativeResult: { kind: 'bound', resource: managedResource },
+        });
+        if (!admittedSnapshot) throw new Error('Expected daemon-sealed admitted preset snapshot');
+        managedMachine = row;
+        const controller = row.controller;
+        if (!controller) throw new Error('Expected a controller-bound managed Machine');
+        const question = { kind: 'auth.approveRemoteProvisioning' as const, message: 'Sign this guest into your Account?' };
         const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'requester-install', revision: 1,
             actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'account-a', machineId: 'controller' },
             title: 'Create Team sandbox', createdAt: 1, startedAt: 1, cancellation: 'supported',
-            domainRef: { kind: 'managedMachine', id: row.id, controller: row.controller, resource: row.resource,
+            domainRef: { kind: 'managedMachine', id: row.id, controller: row.controller, resource: managedResource,
                 bootstrapTask: { id: 'requester-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: question } } });
         let answer: boolean | undefined;
         const operationReads: unknown[] = [];
@@ -1096,14 +1139,26 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const guest = nacl.box.keyPair();
         managedConsentHttp = async (path, init) => {
             consentRequests.push(path);
+            if (path === managedMachineActionEndpointPathV1('machines.managed.get')) return Response.json({
+                machine: managedMachine,
+                presetContent: projectManagedMachinePresetForRecipientV1({
+                    content: admittedSnapshot.content,
+                    recipients: preset.recipients,
+                    recipientAccountId: 'account-a',
+                }),
+            });
             if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => {
-                if (id === row.controller.machineId) {
+                if (id === controller.machineId) {
                     controllerReads.push(path);
-                    return null;
+                    return {
+                        ...createPlainSharedMachineRowFixture({ id, custodianAccountId: 'company',
+                            machine: createMachineFixture({ id, activeAt: Date.now() }) }),
+                        installationId: row.controller.installationId,
+                        installationPublicKey: machineInstallationPublicKey,
+                    };
                 }
                 return createPlainMachineRowFixture({ id, accountId: 'account-a' });
             });
-            if (path === '/v1/machines/presets/get') return Response.json({ kind: 'found', preset });
             if (path === '/v1/actions/action.operations.get/execution-authorization'
                 || path === '/v1/actions/machines.managed.acquire/execution-authorization') {
                 const actionId = path.includes('machines.managed.acquire') ? 'machines.managed.acquire' : 'action.operations.get';
@@ -1112,7 +1167,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                     ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'exact-resource-root', binding: {
                     serverIdentityId: row.homeId, accountId: 'account-a', authentication: { kind: 'account', tokenEpoch: 0 },
-                    machineId: row.controller.machineId, installationId: row.controller.installationId, custodianAccountId: 'company',
+                    machineId: controller.machineId, installationId: controller.installationId, custodianAccountId: 'company',
                     accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
                     target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     ...(actionId === 'action.operations.get' ? { managedAdmission } : {}),
@@ -1157,6 +1212,9 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 enrollmentAccountId: 'account-a', supportsTokenOnly: true, pairingRequirement: 'v3',
                 pairing: { secretB64Url: encodeBase64(new Uint8Array(32).fill(9), 'base64url'),
                     createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 },
+                // The admitted acquire is the sole approval root. The ordinary requester
+                // fallback is covered by newSessionManagedCreation's presenter contract.
+                reviewedParent: { actionId: 'machines.managed.acquire' },
             } } };
             if (response.answer && typeof response.answer === 'object' && 'password' in response.answer
                 && typeof response.answer.password === 'string') answer = true;
@@ -1165,10 +1223,6 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             else answer = response.answer.approved;
             return { ok: true, result: { ok: true, result: { ok: true } } };
         };
-        const confirmation = createDeferred<boolean>();
-        const secretPrompt = createDeferred<string | null>();
-        if (decision === 'establish') vi.mocked(Modal.prompt).mockReturnValueOnce(secretPrompt.promise);
-        else vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
         const enrolled = vi.fn();
         let hook: Awaited<ReturnType<typeof mount>>;
         hook = await mount(await readCurrentProjection(), false, {
@@ -1184,57 +1238,37 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         try {
             expect(storage.getState().machines.controller).toBeUndefined();
             await act(async () => { send = startCreation(hook, { initialMessage: 'skip' }); });
-            if (decision === 'establish') await vi.waitFor(() => expect(vi.mocked(Modal.prompt), JSON.stringify({
-                progress: hook.getCurrent().managedMachineCreationProgress, consentRequests,
-            })).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('operator'), expect.objectContaining({ inputType: 'secure-text' })));
-            else await vi.waitFor(() => expect(vi.mocked(Modal.confirm), JSON.stringify({
-                progress: hook.getCurrent().managedMachineCreationProgress, consentRequests,
-            })).toHaveBeenCalledWith(question.message, undefined, expect.any(Object)));
-            expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'acquiring' });
-            // Private delivery selects whether an admitted Create already supplies consent.
-            expect(taskResponses).toEqual(decision === 'establish' ? [] : [expect.objectContaining({ delivery: { kind: 'terminalPairing' } })]);
-            if (decision === 'cancel') await act(async () => { hook.getCurrent().cancelManagedMachineCreation(); });
-            if (decision === 'establish') secretPrompt.resolve(secret);
-            else confirmation.resolve(decision !== 'decline');
-            if (decision === 'approve' || decision === 'establish') {
-                await vi.waitFor(() => expect(spawnRequests, JSON.stringify({
-                    progress: hook.getCurrent().managedMachineCreationProgress, taskResponseCount: taskResponses.length,
-                    pairingApprovalCount: pairingApprovals.length, operationReadCount: operationReads.length,
-                })).toHaveLength(1));
-                expect(enrolled).toHaveBeenCalledWith('m1');
-                expect(spawnRequests[0]?.executionTarget).toEqual({ serverId: runtime.serverId, machineId: 'm1' });
-                expect(pairingApprovals).toEqual(decision === 'approve' ? [expect.objectContaining({ responseKind: 'tokenOnly' })] : []);
-            } else {
-                await act(async () => { await send; });
-                expect(enrolled).not.toHaveBeenCalled();
-                expect(spawnRequests).toEqual([]);
-                expect(pairingApprovals).toEqual([]);
-            }
-            expect(operationReads).toEqual(Array.from({ length: decision === 'cancel' ? 1 : 2 }, () => expect.objectContaining({
+            await vi.waitFor(() => expect(taskResponses).toContainEqual(
+                expect.objectContaining({ delivery: { kind: 'terminalPairing' } }),
+            ));
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            await vi.waitFor(() => expect(spawnRequests, JSON.stringify({
+                progress: hook.getCurrent().managedMachineCreationProgress, taskResponseCount: taskResponses.length,
+                pairingApprovalCount: pairingApprovals.length, operationReadCount: operationReads.length,
+            })).toHaveLength(1));
+            expect(enrolled).toHaveBeenCalledWith('m1');
+            expect(spawnRequests[0]?.executionTarget).toEqual({ serverId: runtime.serverId, machineId: 'm1' });
+            expect(pairingApprovals).toEqual([expect.objectContaining({ responseKind: 'tokenOnly' })]);
+            expect(operationReads).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({
                 managed: { homeId: row.homeId, managedId: row.id }, operationId: operation.operationId,
                 waitForTerminal: true, includeManagedPrompt: true,
             })));
             expect(taskResponses).toEqual([
-                ...(decision !== 'establish' ? [expect.objectContaining({ delivery: { kind: 'terminalPairing' } })] : []),
-                ...(decision === 'cancel' ? [] : [
+                expect.objectContaining({ delivery: { kind: 'terminalPairing' } }),
                 expect.objectContaining({ homeId: row.homeId, managedId: row.id, operationId: operation.operationId,
-                    taskId: 'requester-task', controller: row.controller, resource: row.resource, expectedIntentRevision: 1,
-                    expectedPromptKind: question.kind, ...(decision === 'establish'
-                        ? { expectedPromptId: 'administrator-prompt', answer: { password: secret } } : { answer: { approved: decision === 'approve' } }) }),
-                ]),
+                    taskId: 'requester-task', controller: row.controller, resource: managedResource, expectedIntentRevision: 1,
+                    expectedPromptKind: question.kind, answer: { approved: true } }),
             ]);
-            // The secret travels only in the one answer: never in progress, requests, approvals or logs, and no controller grant exists.
-            expect(JSON.stringify([hook.getCurrent().managedMachineCreationProgress, consentRequests, pairingApprovals])).not.toContain(secret);
-            if (decision === 'decline') expect(hook.getCurrent().managedMachineCreationProgress)
-                .toMatchObject({ kind: 'failed', code: 'creation_canceled' });
-            expect(controllerReads).toEqual([]);
+            // A direct structural origin proves its current foreign controller through the one
+            // canonical Machine-row read; it never re-fetches the selected preset.
+            expect(controllerReads).toEqual(['/v1/machines/read-batch']);
+            expect(consentRequests).not.toContain('/v1/machines/presets/get');
             expect(managedAcquireRequests).toHaveLength(1);
             expect(managedAcquireRequests[0]).toMatchObject({ target: { kind: 'machine', machineId: row.controller.machineId },
-                input: { selection: selection.selection, enrollmentIdentity: selection.enrollmentIdentity } });
+                input: { selection: selection.selection, presetContentOverride } });
+            expect(managedAcquireRequests[0]).not.toMatchObject({ input: { enrollmentIdentity: expect.anything() } });
         } finally {
             hook.getCurrent().cancelManagedMachineCreation();
-            confirmation.resolve(false);
-            secretPrompt.resolve(null);
             spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
             await act(async () => { await send; });
             await hook.unmount();
@@ -1246,7 +1280,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             launch: selection.receipt.launch, controller: selection.receipt.controller, enrolledMachineId: 'm1', allocation: 'bound',
             resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: { nativeId: 'retained-native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 4,
-            preset: { id: 'preset', revision: 1 }, machineSetup: { setup: { scripts: [{ body: 'echo setup' }] },
+            preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, machineSetup: { setup: { scripts: [{ body: 'echo setup' }] },
                 state: 'failed', errorCode: 'setup_failed' },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         managedDeleteSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.delete': ['ui'] } });

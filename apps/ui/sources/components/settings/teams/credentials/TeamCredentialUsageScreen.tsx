@@ -20,10 +20,13 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamCredentialUsage, useTeamCredentialUsageWriteRefresh } from '@/hooks/teams/useTeamCredentialResources';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
+import { teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
 import { HomeAdministrationSection } from '@/components/settings/home/governance/HomeAdministrationSection';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
@@ -194,16 +197,17 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         filter: 'all',
         enabled: administersLimits,
     });
+    const groupDisplayNames = useTeamGroupDisplayNames({ scope, groups: groupsRoster.rows });
     const resolveLimitSubjectName = React.useCallback((limit: TeamCredentialUsageLimitV1): string | null => {
         if (limit.subjectKind === 'team_group') {
-            return groupsRoster.rows.find((row) => row.id === limit.subjectId)?.name ?? null;
+            return groupDisplayNames.get(limit.subjectId) ?? null;
         }
         if (limit.subjectKind === 'team_member') {
             const membership = membersRoster.rows.find((row) => row.accountId === limit.subjectId);
             return membership ? formatAccountDisplayName(membership.account) ?? null : null;
         }
         return null;
-    }, [groupsRoster.rows, membersRoster.rows]);
+    }, [groupDisplayNames, membersRoster.rows]);
 
     // Usage is read only once this route is open and the resource exists;
     // the list projection never opens it per row.
@@ -213,6 +217,21 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         input,
         resourceRevision: resource?.revision ?? catalogResource?.resourceRevision ?? null,
         enabled: usageEnabled,
+    });
+    const externalApiKeyLabelRequests = React.useMemo(() => (
+        breakdown === 'external_api_key'
+            ? (usage.result?.breakdown ?? []).flatMap((entry) => entry.privateLabel ? [{
+                key: entry.key,
+                binding: teamCredentialExternalApiKeyLabelBinding(entry.key),
+                label: entry.privateLabel,
+                readPolicy: { kind: 'team-resource' as const },
+            }] : [])
+            : []
+    ), [breakdown, usage.result?.breakdown]);
+    const openedExternalApiKeyLabels = useOpenedPrivateLabels({
+        scope,
+        requests: externalApiKeyLabelRequests,
+        enabled: usageEnabled && breakdown === 'external_api_key',
     });
     const seriesMotion = useUsageSeriesMotion(usage.result?.series.length ?? 0);
     // Refresh moves the end to the current instant; a reread on the same
@@ -344,7 +363,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         requests: bucket.totals.requestCount,
         reportCount: bucket.totals.eventCount,
     })) ?? [];
-    const resourceName = resource?.displayName ?? catalogResource?.displayName ?? props.displayName;
+    const resourceName = view?.displayName ?? props.displayName;
 
     return (
         <>
@@ -415,11 +434,14 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                     <ItemGroup title={usageBreakdownLabel(breakdown)}>
                         {(result.breakdown ?? []).map((entry) => {
                             const presentation = usageBreakdownPresentation(breakdown, entry, scope.accountId);
+                            const title = breakdown === 'external_api_key'
+                                ? openedExternalApiKeyLabels[entry.key] ?? t('common.unavailable')
+                                : presentation.name;
                             return (
                                 <Item
                                     key={entry.key}
                                     testID={`team-credential-usage-slice:${entry.key}`}
-                                    title={presentation.name}
+                                    title={title}
                                     subtitle={[presentation.hint, t('teams.credentials.usage.sliceSummary', {
                                         requestCount: entry.totals.requestCount,
                                         tokenCount: entry.totals.tokens.total,
@@ -532,7 +554,6 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                                 try {
                                     const exported = await exportTeamCredentialUsageCsv({
                                         scope,
-                                        resourceName,
                                         query: input,
                                         // Retain the displayed ranked-row scope; the export
                                         // never silently opens every remaining page.
@@ -707,7 +728,8 @@ const ResourceUsage = React.memo(function ResourceUsage(props: Readonly<{
 }>) {
     const view = useTeamCredentialResourceView(props);
     return <CredentialUsage scope={props.context.scope} address={props.context.address}
-        target={{ resourceId: props.resourceId }} view={view} featureEnabled={view.featureEnabled} displayName="" />;
+        target={{ resourceId: props.resourceId }} view={view} featureEnabled={view.featureEnabled}
+        displayName={view.displayName ?? t('teams.credentials.title')} />;
 });
 
 export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsageScreen(props: Readonly<{

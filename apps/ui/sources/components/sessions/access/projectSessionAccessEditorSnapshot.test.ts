@@ -5,11 +5,24 @@ import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresen
 
 const capabilities = {readTranscript:true,submitAgentInput:true,editSessionRecords:true,approveRuntimePermissions:true,manageAccess:true,managePermissionDelegation:true,managePublicLink:true,archiveSession:true,renameSession:true,assignResponsibility:true,stopSession:true,deleteSession:true};
 type CompleteSessionAccessSnapshot = Extract<SessionAccessGrantsListResponseV1, { visibility: 'complete' }>;
+const label = (value: string) => ({ content: { t: 'plain' as const, v: value }, recipientEnvelope: null });
 
 function snapshot(): CompleteSessionAccessSnapshot {
     return {visibility:'complete',owner:{kind:'account',accountId:'owner',name:'Owner',firstName:'Owner',lastName:null,username:null,avatarUrl:null},primaryTeamId:null,effectiveAccess:{v:1,level:'owner',sources:[{kind:'owner'}],capabilities},grants:[{grant:{subject:{kind:'team',teamId:'team'},accessLevel:'view',canApprovePermissions:false,requiredByTeamPolicy:true},principal:{kind:'team',teamId:'team',name:'Acme'},allowedTransitions:{accessLevels:[],canChangePermissionDelegation:false,canRemove:false,reason:'session_access_team_policy_required'}}]};
 }
 describe('access editor server projection',()=>{
+    it('shows a Group only through its opened label and keeps unavailable ciphertext out of presentation', () => {
+        const principal = { kind: 'group' as const, teamId: 'team', groupId: 'group', teamName: 'Acme',
+            name: { kind: 'available' as const, label: label('Private Group') } };
+        expect(projectSessionAccessPrincipal(principal).displayName).toBe('Team group');
+        expect(projectSessionAccessPrincipal(principal, undefined, 'Opened Group').displayName).toBe('Opened Group');
+        const original = snapshot();
+        const listed = { ...original, grants: [{ ...original.grants[0]!,
+            grant: { subject: { kind: 'group' as const, teamId: 'team', groupId: 'group' }, accessLevel: 'view' as const, canApprovePermissions: false },
+            principal }] };
+        expect(projectSessionAccessEditorSnapshot({ snapshot: listed, openedGroupDisplayNames: new Map([['group', 'Opened Group']]) })
+            .grants[0]?.principal.displayName).toBe('Opened Group');
+    });
     it('uses an acknowledged username as identity without adding an unnamed-account id hint', () => {
         const principal = presentSharePrincipal({ ref: { kind: 'account', accountId: 'opaque-reader-id' }, username: 'reader' });
         expect(principal.displayName).toBe('@reader');
@@ -93,7 +106,7 @@ describe('access editor server projection',()=>{
             reason: { code: reason, message },
         });
     });
-    it('names the Team credential selections a removal would break, and only that Team\'s visibility-bound ones', () => {
+    it('uses locally opened Team credential labels in a removal warning', () => {
         const original = snapshot();
         const row = original.grants[0]!;
         const result = projectSessionAccessEditorSnapshot({
@@ -101,20 +114,19 @@ describe('access editor server projection',()=>{
                 ...original,
                 grants: [{ ...row, allowedTransitions: { accessLevels: ['view'], canChangePermissionDelegation: false, canRemove: true } }],
                 credentialBindingConsequences: [
-                    { resourceId: 'r1', teamId: 'team', displayName: 'Prod deploy key', policy: 'team_visibility_required' },
-                    { resourceId: 'r2', teamId: 'team', displayName: 'Prod registry', policy: 'team_context_required' },
-                    { resourceId: 'r3', teamId: 'other', displayName: 'Design key', policy: 'team_visibility_required' },
+                    { resourceId: 'r1', teamId: 'team', policy: 'team_visibility_required', displayName: label('Production deploy') },
+                    { resourceId: 'r2', teamId: 'team', policy: 'team_context_required', displayName: label('Registry') },
+                    { resourceId: 'r3', teamId: 'other', policy: 'team_visibility_required', displayName: label('Design') },
                 ],
             },
             confirmingRemoval: 'team:team',
+            openedCredentialDisplayNames: { r1: 'Production deploy', r2: 'Registry', r3: 'Design' },
         });
 
         expect(result.grants[0]?.removal).toEqual({
             kind: 'confirming',
-            consequences: [expect.stringContaining('Prod deploy key')],
+            consequences: [expect.stringContaining('Production deploy')],
         });
-        expect(JSON.stringify(result.grants[0]?.removal)).not.toContain('Prod registry');
-        expect(JSON.stringify(result.grants[0]?.removal)).not.toContain('Design key');
     });
     it('confirms a removal with no consequences when the Home publishes no preview', () => {
         const original = snapshot();

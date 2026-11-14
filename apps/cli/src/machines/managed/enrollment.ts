@@ -6,7 +6,7 @@ import { runManagedMachineEnrollment as runSharedManagedMachineEnrollment, proje
   type ManagedMachineEnrollmentDependencies as PortableEnrollmentDependencies } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '@happier-dev/cli-common/systemTasks';
 import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { SavedSecretRefV1 } from '@happier-dev/protocol';
 import type { ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -20,7 +20,7 @@ import type { StoredCredentials } from '@/persistence';
 export { projectManagedMachineBootstrapPrompt };
 export type { ManagedNativeBootstrapIO };
 export type ManagedMachineEnrollmentDependencies = Readonly<{
-  readCurrentManagedRow(): Promise<ManagedMachineV1>;
+  readCurrentManagedRow(): Promise<ManagedMachineFullV1>;
   onEnrollmentLifetime?(lifetime: HomeOperationRetry): void;
   native?: ManagedNativeBootstrapIO;
   materializeBootstrapCredential?(reference: Extract<SavedSecretRefV1, { kind: 'shared_resource' }>): Promise<Readonly<{ path: string; dispose(): Promise<void> }>>;

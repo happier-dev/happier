@@ -42,6 +42,7 @@ import { withdrawDiscussionInputRepliesInTx } from "@/app/session/messages/sessi
 import { admitDiscussionSecondOpinionSourceInTx, admitDiscussionSecondOpinionGrantInTx } from './secondOpinion';
 import { loadDiscussionKnownAccountActorFactsInTx, projectDiscussionAccountActorsInTx,
     type DiscussionAccountActorSubject } from './projection';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 
 interface DiscussionActorInput {
     actorAccountId: string;
@@ -160,7 +161,8 @@ export async function listDiscussionGrantsInTx(tx: Tx, input: DiscussionActorInp
             ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
                 createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
             ...groups.map(row => ({ principal: { kind: "group" as const, groupId: row.teamGroupId, teamId: row.teamGroup.teamId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.teamGroup.name } })),
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: null },
+                groupName: projectTeamGroupNameForRecipient({ serialized: row.teamGroup.name, recipientAccountId: input.actorAccountId }) })),
         ] });
 }
 

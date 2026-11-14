@@ -1,9 +1,10 @@
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import {
   MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupObservationReasonV1Schema,
   machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1,
   projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1,
   isMachineSetupRecipeExcludedV1, mergeMachineSetupsV1,
-  type MachineSetupPlanInputV1, type MachineSetupPlanResultV1, type MachineSetupV1, type getMachineSetupDesiredV1,
+  MachineSetupSourceV1Schema, type MachineSetupV1, type getMachineSetupDesiredV1,
   type MachineSetupObservationV1,
 } from '@happier-dev/protocol';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -21,9 +22,23 @@ import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
 import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 
+// Native planning consumes locally opened copies. The Action owner projects
+// their opaque identities only after the complete local review has finished.
+function extendLocalSources<T extends z.ZodMiniObject, U extends z.core.$ZodLooseShape>(schema: T, shape: U) {
+  // Local opened sources intentionally broaden the wire identity carrier while
+  // retaining every non-source refinement from the canonical Action schema.
+  return z.core.util.safeExtend(schema, shape) as z.ZodMiniObject<z.core.util.Extend<T['shape'], U>, T['_zod']['config']>;
+}
+const MachineSetupLocalPlanInputV1Schema = extendLocalSources(MachineSetupPlanInputV1Schema,
+  { sources: z.optional(MachineSetupSourceV1Schema) });
+const MachineSetupLocalPlanResultV1Schema = extendLocalSources(MachineSetupPlanResultV1Schema,
+  { sources: MachineSetupSourceV1Schema });
+export type MachineSetupLocalPlanInputV1 = z.infer<typeof MachineSetupLocalPlanInputV1Schema>;
+export type MachineSetupLocalPlanResultV1 = z.infer<typeof MachineSetupLocalPlanResultV1Schema>;
+
 /** Saved-copy reads stay inert; newly selected declarations use the native observer. */
 export async function prepareMachineSetupPlanV1(params: Readonly<{
-  input: MachineSetupPlanInputV1;
+  input: MachineSetupLocalPlanInputV1;
   installationId?: string;
   onCredentialSelection?: Parameters<typeof prepareMachineRecipeProgramV1>[0]['onCredentialSelection'];
   current: Awaited<ReturnType<typeof getMachineSetupDesiredV1>>;
@@ -35,9 +50,9 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   signal?: AbortSignal;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
   groupRefreshNative?: DaemonGroupRefreshNative;
-}>): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> {
+}>): Promise<MachineSetupLocalPlanResultV1 | ActionExecuteFailure> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
-  const input = MachineSetupPlanInputV1Schema.parse(params.input);
+  const input = MachineSetupLocalPlanInputV1Schema.parse(params.input);
   const current = params.current;
   if (current.status !== 'ready') return { ok: false, errorCode: `machine_setup_content_${current.status}`,
     error: `machine_setup_content_${current.status}` };
@@ -83,11 +98,11 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   });
   const selected = proposed.filter(entry => !entry.retained || input.mode !== undefined && entry.execute);
   const executing = new Set(recipeItems.filter(entry => entry.execute).map(entry => `${entry.sourceIndex}:${entry.itemIndex}`));
-  const support: MachineSetupPlanResultV1['support'] = sources.flatMap((source, sourceIndex) =>
+  const support: MachineSetupLocalPlanResultV1['support'] = sources.flatMap((source, sourceIndex) =>
     (source.setup.items ?? []).flatMap((item, itemIndex) => item.kind !== 'app'
       && !executing.has(`${sourceIndex}:${itemIndex}`)
       ? [] : [{ sourceIndex, itemIndex, status: 'unverifiable', reason: 'required_fact_unavailable' }]));
-  const recipePlans: NonNullable<MachineSetupPlanResultV1['recipePlans']> = [];
+  const recipePlans: NonNullable<MachineSetupLocalPlanResultV1['recipePlans']> = [];
   let targetFacts: Promise<MachineRecipeTargetFactsV1> | undefined;
   const readTargetFacts = () => targetFacts ??= (async () => {
     // Reached bindings in setup and removal share one P10 observation.
@@ -229,7 +244,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     entry.pluginId, entry.definition.id, entry.definition.revision,
   ]))).map(entry => ({ ref: { pluginId: entry.pluginId, recipeId: entry.definition.id, revision: entry.definition.revision },
     title: entry.definition.title }));
-  return MachineSetupPlanResultV1Schema.parse({ desiredRevision: current.policy.revision,
+  return MachineSetupLocalPlanResultV1Schema.parse({ desiredRevision: current.policy.revision,
     sources, exclusions, ...(current.policy.sourceFacts ? { sourceFacts: current.policy.sourceFacts } : {}),
     ...(sources.some(source => source.setup.items?.some(item => item.kind === 'app'))
       ? { appOrigins: readMachineSetupAppOriginsV1(current.policy.sources, sources) } : {}),

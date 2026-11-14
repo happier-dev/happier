@@ -54,7 +54,7 @@ export function MachinePresenceDot(props: Readonly<{
 /** The provider's own mark for a machine Happier created, read like its page header reads it. */
 function ManagedMachineRowMark(props: Readonly<{ machine: ManagedMachineV1; serverId: string; size: number }>): React.ReactElement {
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: props.machine.controller,
-        provider: props.machine.launch.provider, schemaVersion: props.machine.launch.schemaVersion, purpose: 'mark' });
+        provider: props.machine.launch?.provider, schemaVersion: props.machine.launch?.schemaVersion, purpose: 'mark' });
     return <>{presentation.markAt(props.size)}</>;
 }
 

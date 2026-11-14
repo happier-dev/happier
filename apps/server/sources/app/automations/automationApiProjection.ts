@@ -60,6 +60,7 @@ function triggerProjection(
     statuses: ReadonlyMap<string, AutomationEventStatusProjection>,
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
     includeDefinition: boolean,
+    includeObservationDisplayCarrier = false,
 ) {
     const common = {
         id: trigger.id, revision: trigger.revision, enabled: trigger.enabled,
@@ -126,7 +127,7 @@ function triggerProjection(
         observation,
         sourceStatus: status?.sourceStatus ?? null,
         sourceCatalogStatus: status?.sourceCatalogStatus ?? null,
-        ...(includeDefinition
+        ...(includeDefinition || includeObservationDisplayCarrier
             ? { triggerDefinitionEnvelope: required(trigger.definitionEnvelope, "definitionEnvelope") }
             : {}),
     };
@@ -145,11 +146,12 @@ function definitionCommon(
     statuses: ReadonlyMap<string, AutomationEventStatusProjection>,
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
     includeDefinitions: boolean,
+    includeObservationDisplayCarrier = false,
 ) {
     const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
-    const workflow = item.deploymentEnvironmentId ? parseAutomationStoredWorkflowDefinitionRecipeV2(item.templateCiphertext) : null;
+    const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(item.templateCiphertext);
     const deploymentEnvironment = observationOnly?.deploymentEnvironment
-        ?? (workflow?.kind === 'available' ? workflow.recipe.deploymentEnvironment : undefined);
+        ?? (workflow.kind === 'available' ? workflow.recipe.deploymentEnvironment : undefined);
     if (item.deploymentEnvironmentId && (deploymentEnvironment?.environmentId !== item.deploymentEnvironmentId
         || (deploymentEnvironment?.previewRole ?? null) !== (item.deploymentPreviewRole ?? null))
         || item.deploymentPreviewRole != null && !item.deploymentEnvironmentId) {
@@ -179,32 +181,15 @@ function definitionCommon(
             statuses,
             lifecycleStatuses,
             includeDefinitions,
+            includeObservationDisplayCarrier && observationOnly !== null,
         )),
     };
 }
 
-export function toAutomationDefinitionListItemApiDto(
-    item: AutomationListItem,
-    lastRunAt: number | null,
-    statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
-    lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
-) {
-    return AutomationDefinitionListItemSchema.parse(definitionCommon(
-        item,
-        lastRunAt,
-        statuses,
-        lifecycleStatuses,
-        false,
-    ));
-}
-
-export function toAutomationDefinitionDetailApiDto(
+function assertPrivateTriggerDefinitionEnvelopes(
     item: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
-    lastRunAt: number | null,
-    statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
-    lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
-) {
+): void {
     for (const trigger of item.triggers) {
         if (trigger.kind !== "pluginEvent" && trigger.kind !== "prComment" && trigger.kind !== "ciFailed") continue;
         const binding = readAutomationTriggerDefinitionBinding({
@@ -219,6 +204,71 @@ export function toAutomationDefinitionDetailApiDto(
             mode: accountCurrentness.mode, binding,
         });
     }
+}
+
+function listPrivateDisplayCarrier(
+    item: AutomationListItem,
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1,
+): Readonly<{ includeObservationDisplayCarrier: boolean; executionRecipe?: unknown }> {
+    if (parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext)) {
+        assertPrivateTriggerDefinitionEnvelopes(item, accountCurrentness);
+        return { includeObservationDisplayCarrier: true };
+    }
+    const action = parseAutomationStoredDefinitionExecutionRecipeV1(item.templateCiphertext);
+    if (action.kind === "available" && action.recipe.target.kind === 'contributedAction') {
+        if (item.targetType !== null || action.recipe.templateVersion !== item.templateVersion) {
+            throw new AutomationStoredContentReadError("contentInvalid");
+        }
+        const outer = validateAutomationStoredDefinitionExecutionRecipeOuterV1({
+            recipe: action.recipe,
+            accountCurrentness,
+        });
+        if (outer.kind !== 'available') throw new AutomationStoredContentReadError("modeMismatch");
+        return { includeObservationDisplayCarrier: false, executionRecipe: outer.recipe };
+    }
+    const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(item.templateCiphertext);
+    if (workflow.kind !== "available") return { includeObservationDisplayCarrier: false };
+    if (item.targetType !== null || workflow.recipe.templateVersion !== item.templateVersion) {
+        throw new AutomationStoredContentReadError("contentInvalid");
+    }
+    assertAutomationStoredContentEnvelopeOuterForMode({
+        raw: createCanonicalJsonSigningInput(workflow.recipe.workflow),
+        mode: accountCurrentness.mode,
+    });
+    return { includeObservationDisplayCarrier: false, executionRecipe: workflow.recipe };
+}
+
+export function toAutomationDefinitionListItemApiDto(
+    item: AutomationListItem,
+    lastRunAt: number | null,
+    statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
+    lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
+    accountCurrentness?: AutomationAccountCurrentnessWitnessV1,
+) {
+    const carrier = accountCurrentness === undefined
+        ? { includeObservationDisplayCarrier: false }
+        : listPrivateDisplayCarrier(item, accountCurrentness);
+    return AutomationDefinitionListItemSchema.parse({
+        ...definitionCommon(
+        item,
+        lastRunAt,
+        statuses,
+        lifecycleStatuses,
+        false,
+        carrier.includeObservationDisplayCarrier,
+        ),
+        ...(carrier.executionRecipe === undefined ? {} : { executionRecipe: carrier.executionRecipe }),
+    });
+}
+
+export function toAutomationDefinitionDetailApiDto(
+    item: AutomationListItem,
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1,
+    lastRunAt: number | null,
+    statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
+    lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
+) {
+    assertPrivateTriggerDefinitionEnvelopes(item, accountCurrentness);
     const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
     if (observationOnly) {
         return AutomationDefinitionDetailSchema.parse(definitionCommon(item, lastRunAt, statuses, lifecycleStatuses, true));

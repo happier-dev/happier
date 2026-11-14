@@ -18,6 +18,7 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 const ready = (value: DeploymentEnvironmentDetailV1): DeploymentReadSnapshotV1<DeploymentEnvironmentDetailV1> => ({
     status: 'ready', value, failure: null,
 });
+const grantRef = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 const accounts: Awaited<ReturnType<typeof captureLazyActionAccountContext>>[] = [];
 async function captureAccount(serverId: string) {
     const account = await captureLazyActionAccountContext(serverId);
@@ -33,7 +34,7 @@ describe('Environment Variables consumer draft', () => {
         const lifetime = (await captureAccount(serverId)).accountLifetime;
         const base = createDeploymentEnvironmentDetailV1();
         const production = createDeploymentSecretVariableBindingV1({ name: 'PRODUCTION_TOKEN', phase: 'runtime', resourceId: 'prod', resourceRevision: 1 });
-        const blueprint = { purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const,
+        const blueprint = { purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const, grantRef: grantRef(1),
             source: { kind: 'deploymentFact' as const, fact: 'primaryUrl' as const } };
         const detail = { ...base, content: { ...base.content, bindings: [production], previewTemplate: {
             v: 1 as const, enabled: true, forkPreviews: 'off' as const,
@@ -86,8 +87,10 @@ describe('Environment Variables consumer draft', () => {
                 const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(operand);
                 expect(input.expectedRevision).toBe(revision);
                 expect(input).toMatchObject(preparedArtifact);
+                const expectedBlueprints = (revision === detail.environment.revision ? [blueprint] : [blueprint, nextBlueprint])
+                    .map(binding => ({ ...binding, grantRef: expect.any(String) }));
                 expect(input.patch).toEqual({ previewTemplate: { ...detail.content.previewTemplate,
-                    bindingBlueprints: revision === detail.environment.revision ? [blueprint] : [blueprint, nextBlueprint] } });
+                    bindingBlueprints: expectedBlueprints } });
                 // A successful private update publishes a new Artifact; its Action result owns that reference.
                 preparedArtifact = { contentArtifactId: `saved-preview-blueprints-${++revision}`,
                     contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -104,7 +107,9 @@ describe('Environment Variables consumer draft', () => {
             throw new Error(`Blueprint save failed after ${JSON.stringify(homes.requests.map(({ method, path }) => ({ method, path })))}`, { cause });
         })).toMatchObject({ ok: true }); });
         expect(hook.getCurrent().dirty).toBe(false);
-        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint]);
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toMatchObject([
+            { ...blueprint, grantRef: expect.any(String) },
+        ]);
         const count = homes.requests.length;
         expect(await hook.getCurrent().save()).toBeNull();
         expect(homes.requests.length).toBe(count);
@@ -113,7 +118,10 @@ describe('Environment Variables consumer draft', () => {
         await act(async () => { expect(await hook.getCurrent().save().catch((cause: unknown) => {
             throw boundaryFailure ?? cause;
         })).toMatchObject({ ok: true }); });
-        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint, nextBlueprint]);
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toMatchObject([
+            { ...blueprint, grantRef: expect.any(String) },
+            { ...nextBlueprint, grantRef: expect.any(String) },
+        ]);
         expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(2);
         expect(homes.requestsFor('/v1/actions/deployments.bindings.set')).toHaveLength(0);
     });
@@ -132,7 +140,9 @@ describe('Environment Variables consumer draft', () => {
         const selected = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: 'owned-token', resourceRevision: 1 });
         await act(async () => { expect(hook.getCurrent().editor.put(selected)).toEqual({ ok: true }); });
         expect(hook.getCurrent().editor.rows[0]?.secretDisclosure).toEqual({ kind: 'teamEnvironmentMachines', teamId: 'team-a' });
-        expect(hook.getCurrent().editor.rows[0]?.binding).toEqual(selected);
+        expect(hook.getCurrent().editor.rows[0]?.binding).toMatchObject({ ...selected, grantRef: expect.any(String) });
+        expect(hook.getCurrent().editor.rows[0]?.binding.purpose === 'variable'
+            ? hook.getCurrent().editor.rows[0]?.binding.grantRef : undefined).not.toBe(selected.grantRef);
         await hook.rerender(ready({ ...detail, environment: { ...detail.environment,
             owner: { kind: 'team', teamId: 'team-b' } } }));
         expect(hook.getCurrent().editor.rows[0]?.secretDisclosure).toEqual({ kind: 'teamEnvironmentMachines', teamId: 'team-b' });
@@ -146,7 +156,7 @@ describe('Environment Variables consumer draft', () => {
         const lifetime = (await captureAccount(serverId)).accountLifetime;
         const base = createDeploymentEnvironmentDetailV1();
         const runtime = { purpose: 'variable' as const, name: 'PORT', phase: 'runtime' as const,
-            source: { kind: 'value' as const, value: '3000' } };
+            grantRef: grantRef(2), source: { kind: 'value' as const, value: '3000' } };
         const detail = { ...base, environment: { ...base.environment, serverId: homeId },
             content: { ...base.content, bindings: change === 'set' ? [] : [runtime] } };
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
@@ -155,9 +165,11 @@ describe('Environment Variables consumer draft', () => {
         await answerExternalActionAccountForHome(homes, serverId, {
             machineId: 'machine-a', actionId: 'deployments.bindings.set', tokenEpoch: 0, execute: operand => {
                 const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(operand);
+                const expectedSet = change === 'set' ? [{ ...runtime, grantRef: expect.any(String) }]
+                    : change === 'both' ? [{ ...runtime, phase: 'build', grantRef: expect.any(String) }] : [];
                 expect(input).toEqual({ serverId: homeId, environmentId: detail.environment.id,
                     expectedRevision: detail.environment.revision,
-                    set: change === 'set' ? [runtime] : change === 'both' ? [{ ...runtime, phase: 'build' }] : [],
+                    set: expectedSet,
                     remove: change === 'remove' ? [{ purpose: runtime.purpose, name: runtime.name, phase: runtime.phase }] : [] });
                 return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
             },
@@ -183,7 +195,7 @@ describe('Environment Variables consumer draft', () => {
         const expected = change === 'remove' ? [] : change === 'both' ? [runtime, { ...runtime, phase: 'build' }] : [runtime];
         const saved = hook.getCurrent().editor.rows.map(row => row.binding);
         expect(saved).toHaveLength(expected.length);
-        expect(saved).toEqual(expect.arrayContaining(expected));
+        expect(saved).toMatchObject(expected.map(binding => ({ ...binding, grantRef: expect.any(String) })));
         const after = homes.requests.length;
         expect(await hook.getCurrent().save()).toBeNull();
         expect(homes.requests.length).toBe(after);

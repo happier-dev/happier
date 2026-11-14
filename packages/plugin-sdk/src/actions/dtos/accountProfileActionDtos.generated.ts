@@ -42,15 +42,15 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
+            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
-            bio?: string | undefined;
         };
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -689,15 +689,15 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
+            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
-            bio?: string | undefined;
         };
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -1336,15 +1336,15 @@ export type AccountProfileActionInputById = {
             avatar?: undefined | {
                 kind: 'account' | 'planet';
             };
+            bio?: string | undefined;
             links?: undefined | {
                 label: string;
                 url: string;
             }[];
-            bio?: string | undefined;
         };
         query?: undefined | {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -2666,7 +2666,6 @@ export type AccountProfileActionResultById = {
                 };
                 theme: 'auto' | 'dark' | 'light';
             };
-            v: 1;
             identity: {
                 name?: string | undefined;
                 sinceMs?: number | undefined;
@@ -2676,6 +2675,7 @@ export type AccountProfileActionResultById = {
                     reason: 'account_image_unavailable';
                 };
             };
+            v: 1;
             metadata: {
                 bio?: string | undefined;
                 links?: undefined | {

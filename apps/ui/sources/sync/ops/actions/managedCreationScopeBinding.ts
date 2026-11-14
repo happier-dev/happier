@@ -1,5 +1,5 @@
 import type { ManagedMachineBirthSourceV1 } from '@happier-dev/protocol/machines/managed/birthSourceV1';
-import { ManagedGetOutputV1Schema, ManagedMachineBirthResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedGetOutputV1Schema, ManagedMachineBirthResultV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
@@ -91,7 +91,7 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         const read = classifyHomeActionOutcome(await execute('machines.managed.get', { homeId: input.machine.homeId, managedId: input.machine.id }, context));
         if (!current()) return incomplete('continuation_retired');
         if (read.kind !== 'completed') return incomplete(read.kind === 'failed' ? homeDomainFailureCode(read.failure) : 'approval_required');
-        const machine = ManagedGetOutputV1Schema.parse(read.result);
+        const machine = unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(read.result));
         if (machine.homeId !== input.draft.selection.homeId || machine.id !== input.machine.id || machine.creationState !== 'active'
             || machine.allocation !== 'bound' || !machine.enrolledMachineId
             || !sameStrictJsonValue(machine.controller, input.machine.controller)) return incomplete('managed_target_scope_changed');
@@ -105,7 +105,7 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         const request = { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
             creationScopeRetention: effect === 'keep' ? null : { effect } };
         const completed = (value: unknown): ManagedCreationScopeBindingResult => {
-            const updated = ManagedGetOutputV1Schema.parse(value);
+            const updated = unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(value));
             if (effect === 'keep') return updated.creationScopeRetention ? incomplete('binding_response_invalid') : { kind: 'kept' };
             const rule = readManagedCreationScopeRule(updated, input.source);
             return rule?.effect === effect ? { kind: 'bound', binding: rule.binding } : incomplete('binding_response_invalid');

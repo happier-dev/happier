@@ -88,7 +88,7 @@ describe('machine setup apply admission', () => {
     } } as ActionExecutorDeps);
     const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'guest', targets: [{
       homeId: 'home', machineId: 'guest', desiredRevision: 0, recipePlans: [], sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'e2ee' },
       { kind: 'direct', setup: {} },
     ] }] });
     expect(await executor.execute('machines.setup.apply', input, { surface: 'cli', authority: 'present_user',
@@ -161,7 +161,7 @@ describe('managed Machine Action executor', () => {
     expect(admitted).toBe(0);
   });
 
-  it('folds demanded managed child Require choices into the one parent review with deferred guest operands', async () => {
+  it('keeps opaque preset child declarations with the custodian that opens the private declaration', async () => {
     const demanded = ['machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set',
       'machines.setup.plan', 'machines.setup.apply', 'session.spawn_new'] as const;
     let approval: ApprovalRequest | undefined;
@@ -173,14 +173,16 @@ describe('managed Machine Action executor', () => {
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'parent-review' }; },
     });
     const input = ManagedAcquireInputV1Schema.parse({
-      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
       selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
       controller: acquireInput.selection.controller, retention: acquireInput.selection.retention, wakeOnAcceptedMessage: false,
       agentStart: { directory: { kind: 'managed' }, agentTarget },
-      reviewedFacts: { launch: acquireInput.selection.launch, controller: acquireInput.selection.controller,
-        optionStatus: 'current', billing: { location: 'unknown', stoppedBilling: 'unknown' }, prerequisites: [],
-        retentionCapabilities: { supportedIntents: ['start', 'delete'] }, retention: acquireInput.selection.retention,
-        wakeOnAcceptedMessage: false, preset: { id: 'preset', revision: 1 }, setup: {} },
+      presetContentOverride: { content: { t: 'plain', v: {
+        enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'private-user', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' },
+        reviewedFacts: { launch: acquireInput.selection.launch, controller: acquireInput.selection.controller,
+          optionStatus: 'current', billing: { location: 'unknown', stoppedBilling: 'unknown' }, prerequisites: [],
+          retentionCapabilities: { supportedIntents: ['start', 'delete'] }, retention: acquireInput.selection.retention,
+          wakeOnAcceptedMessage: false, preset: { id: 'preset', revision: 1 }, setup: {} },
+      } } },
     });
     const result = await executor.execute('machines.managed.acquire', input, {
       surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner',
@@ -190,9 +192,10 @@ describe('managed Machine Action executor', () => {
     });
     expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'machines.managed.acquire', artifactId: 'parent-review' } });
     expect(entered).toBe(0);
-    expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: demanded.map(action => ({ action, role: action })) } });
+    expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: [{ action: 'session.spawn_new', role: 'session.spawn_new' }] } });
     const preview = approval?.preview as { hostReviewedChildren?: { children: readonly { input?: unknown }[] } } | undefined;
     expect(preview?.hostReviewedChildren?.children.every(child => child.input === undefined)).toBe(true);
+    expect(JSON.stringify(approval?.preview)).not.toContain('private-user');
   });
 
   it('does not ask for unused managed roles or infer Setup from a preset address alone', async () => {
@@ -205,9 +208,10 @@ describe('managed Machine Action executor', () => {
     const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner',
       serverId: 'home', serverIdentityId: 'home', defaultSessionMachineId: 'controller', bypassApprovals: true,
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(demanded.map(id => [id, { approvalRequiredSurfaces: ['cli'] }])) }) } as const;
-    for (const input of [acquireInput, { enrollmentIdentity: acquireInput.enrollmentIdentity,
+    for (const input of [acquireInput, {
       selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, controller: acquireInput.selection.controller,
-      retention: acquireInput.selection.retention, wakeOnAcceptedMessage: false }]) {
+      retention: acquireInput.selection.retention, wakeOnAcceptedMessage: false,
+      presetContentOverride: { content: { t: 'plain', v: {} } } }]) {
       expect(await executor.execute('machines.managed.acquire', input, context)).toMatchObject({ ok: true, result: { managedId: 'managed' } });
     }
     expect(entered).toBe(2);

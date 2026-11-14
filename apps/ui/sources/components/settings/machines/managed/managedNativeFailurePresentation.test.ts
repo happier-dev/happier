@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
+import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { describeManagedActionFailureDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 
 describe('managed native failure Details', () => {
+    it('retains the Action owner cause through immediate and observed managed failures', () => {
+        const failureCause = { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError' as const,
+            errorCode: 'credential_scope_denied', httpStatus: null };
+        const immediate = describeManagedActionFailureDiagnostic('action_failed', undefined, 'member-acquire', failureCause);
+        const observed = describeManagedOperationDiagnostic({ errorCode: 'action_failed', error: 'action_failed', failureCause });
+        for (const diagnostic of [immediate, observed]) {
+            expect(diagnostic).toContain('credential_scope_denied');
+            expect(diagnostic).toContain('ManagedMachineControllerError');
+        }
+        expect(immediate).toContain('member-acquire');
+    });
+
     it.each([
         'permission_denied', 'controller_unavailable', 'credential_unavailable', 'provider_unavailable',
         'controller_retired', 'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired',
@@ -12,6 +25,13 @@ describe('managed native failure Details', () => {
         expect(describeManagedPresetAvailabilityFailure(code)).toBe(expected);
     });
 
+    it('retains native refusal cause and Request ID for the existing Details presenter', () => {
+        const details = ManagedNativeFailureDetailsV1Schema.parse({ kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'not_found' } });
+        const diagnostic = describeManagedActionFailureDiagnostic('provider_unavailable', details, 'member-acquire');
+        expect(diagnostic).toContain('provider_unavailable');
+        expect(diagnostic).toContain('not_found');
+        expect(diagnostic).toContain('member-acquire');
+    });
     it('retains the typed controller request cause without exposing opaque response text', () => {
         const details = { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/submit-intent',
             category: 'status', status: 409, code: 'intent_changed' };

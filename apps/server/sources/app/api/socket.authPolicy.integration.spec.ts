@@ -24,6 +24,7 @@ import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1 } from '@happier-dev/
 import { eventRouter } from '@/app/events/eventRouter';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 type ProviderRequiredErrorPayload = {
     message: string;
@@ -547,7 +548,7 @@ describe("startSocket (auth policy enforcement)", () => {
         const apiToken = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Socket admission must reject this",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Socket admission must reject this"),
         });
 
         const app = Fastify({ logger: false }) as unknown as AppFastify;

@@ -1,12 +1,15 @@
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1, type MachinePresetActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetAcquireRoutingInputV1Schema, ManagedMachinePresetAcquireRoutingResultV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { z } from "zod/mini";
 
 import type { Fastify } from "../../../types";
 import { readTeamOperationAuthenticationFromRequest, type TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import {
     createMachinePreset, getMachinePreset, listMachinePresets, updateMachinePreset,
-    archiveMachinePreset, restoreMachinePreset,
+    archiveMachinePreset, readMachinePresetRecipientCensus, restoreMachinePreset,
 } from "@/app/machines/managed/machinePresetService";
+
+import { resolveMachinePresetAcquireRouting } from '@/app/machines/managed/machinePresetAcquireRouting';
 
 function register<Id extends MachinePresetActionIdV1>(
     app: Fastify, id: Id,
@@ -44,4 +47,34 @@ export function registerMachinePresetRoutes(app: Fastify): void {
     register(app, "machines.presets.update", updateMachinePreset);
     register(app, "machines.presets.archive", archiveMachinePreset);
     register(app, "machines.presets.restore", restoreMachinePreset);
+    app.post(MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, {
+        preHandler: app.authenticate,
+        attachValidation: true,
+        schema: { body: ManagedMachinePresetAcquireRoutingInputV1Schema,
+            response: { 200: ManagedMachinePresetAcquireRoutingResultV1Schema, 400: ManagedMachinePresetAcquireRoutingResultV1Schema } },
+    }, async (request, reply) => {
+        if (request.validationError) return await reply.code(400).send({ kind: 'refused', code: 'invalid_request' });
+        return await reply.send(await resolveMachinePresetAcquireRouting({ accountId: request.userId,
+            authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body }));
+    });
+    app.post('/v1/machines/presets/recipient-census', {
+        preHandler: app.authenticate,
+        attachValidation: true,
+        schema: {
+            body: ManagedMachinePresetRecipientCensusInputV1Schema,
+            response: {
+                200: ManagedMachinePresetRecipientCensusResultV1Schema,
+                400: ManagedMachinePresetRecipientCensusResultV1Schema,
+                403: ManagedMachinePresetRecipientCensusResultV1Schema,
+            },
+        },
+    }, async (request, reply) => {
+        if (request.validationError) return await reply.code(400).send({ kind: 'refused', code: 'invalid_request' });
+        const result = await readMachinePresetRecipientCensus({
+            accountId: request.userId,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
+            input: request.body,
+        });
+        return await reply.code(result.kind === 'refused' && result.code === 'permission_denied' ? 403 : 200).send(result);
+    });
 }

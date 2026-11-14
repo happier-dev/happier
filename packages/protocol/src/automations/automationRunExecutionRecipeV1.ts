@@ -7,6 +7,10 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import {
+  openAccountScopedBlobCiphertext,
+  sealAccountScopedBlobCiphertext,
+} from '../crypto/accountScopedCipher.js';
+import {
   AutomationConversationOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   deriveAutomationOccurrenceKeyV1,
@@ -17,6 +21,13 @@ import {
 } from './automationRunCause.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import { AutomationAccountCurrentnessWitnessV1Schema } from './automationAccountCurrentnessV1.js';
+import {
+  isAvailableE2eeAutomationAccountEncryptionV1,
+  type AvailableAutomationAccountEncryptionV1,
+} from './automationAccountCurrentnessV1.js';
+import {
+  AutomationDefinitionDisplayV1Schema,
+} from './automationDefinitionDisplayV1.js';
 import {
   AutomationEventPayloadV1Schema,
   AutomationEventSourceInstanceIdV1Schema,
@@ -74,6 +85,8 @@ function addUtf8LimitIssue(params: Readonly<{
  */
 export const AutomationRunTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
+  /** Current Action definitions carry their private Automation label here. */
+  display: z.optional(AutomationDefinitionDisplayV1Schema),
   prompt: z.string().check(z.superRefine((value, context) => {
     addUtf8LimitIssue({
       value,
@@ -98,6 +111,62 @@ export const AutomationRunTemplateV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
 export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(AutomationRunTemplateV1Schema);
+
+export type AutomationStoredActionDefinitionTemplateOpenResultV1 =
+  | Readonly<{ kind: 'available'; template: AutomationRunTemplateV1 }>
+  | Readonly<{ kind: 'contentInvalid' | 'modeMismatch' }>;
+
+/**
+ * The current Action-definition template carrier uses the same Account blob
+ * codec as Workflow definitions. This is the only reader that exposes its
+ * optional Automation display label to an Account host.
+ */
+export function openAutomationStoredActionDefinitionTemplateV1(params: Readonly<{
+  template: unknown;
+  encryption: AvailableAutomationAccountEncryptionV1;
+}>): AutomationStoredActionDefinitionTemplateOpenResultV1 {
+  const envelope = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema).safeParse(params.template);
+  if (!envelope.success) return { kind: 'contentInvalid' };
+  let raw: unknown;
+  if (isAvailableE2eeAutomationAccountEncryptionV1(params.encryption)) {
+    if (envelope.data.t !== 'encrypted') return { kind: 'modeMismatch' };
+    const opened = openAccountScopedBlobCiphertext({
+      kind: 'automation_template_payload',
+      material: params.encryption.material.material,
+      ciphertext: envelope.data.c,
+    });
+    if (!opened) return { kind: 'contentInvalid' };
+    raw = opened.value;
+  } else {
+    if (envelope.data.t !== 'plain') return { kind: 'modeMismatch' };
+    raw = envelope.data.v;
+  }
+  const template = AutomationRunTemplateV1ReadSchema.safeParse(raw);
+  return template.success
+    ? { kind: 'available', template: template.data }
+    : { kind: 'contentInvalid' };
+}
+
+/** The matching current Action-definition writer; it never creates a second envelope. */
+export function sealAutomationStoredActionDefinitionTemplateV1(params: Readonly<{
+  template: AutomationRunTemplateV1;
+  encryption: AvailableAutomationAccountEncryptionV1;
+  randomBytes: (length: number) => Uint8Array;
+}>): z.infer<typeof AutomationStoredContentEnvelopeV1Schema> {
+  const template = AutomationRunTemplateV1Schema.parse(params.template);
+  if (!isAvailableE2eeAutomationAccountEncryptionV1(params.encryption)) {
+    return AutomationStoredContentEnvelopeV1Schema.parse({ t: 'plain', v: template });
+  }
+  return AutomationStoredContentEnvelopeV1Schema.parse({
+    t: 'encrypted',
+    c: sealAccountScopedBlobCiphertext({
+      kind: 'automation_template_payload',
+      material: params.encryption.material.material,
+      payload: template,
+      randomBytes: params.randomBytes,
+    }),
+  });
+}
 
 /**
  * The immutable private Event evidence consumed by the one Run materializer.

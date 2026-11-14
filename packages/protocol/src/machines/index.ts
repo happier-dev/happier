@@ -98,13 +98,18 @@ export {
     MachinePoolSelectionOriginV1Schema,
     MachinePoolNameV1Schema,
     MachinePoolDescriptionV1Schema,
+    MachinePoolPrivateLabelStoredV1Schema,
+    MachinePoolPrivateLabelProjectionV1Schema,
     MachinePoolPriorityTierV1Schema,
     MachinePoolMemberInputV1Schema,
     MachinePoolMemberStateV1Schema,
     MachinePoolMemberV1Schema,
     MachinePoolSummaryV1Schema,
+    MachinePoolPrivateSummaryV1Schema,
     MachinePoolAvailabilityV1Schema,
     MachinePoolViewV1Schema,
+    MachinePoolPrivateViewV1Schema,
+    MachinePoolRoutingViewV1Schema,
     MachinePoolResolveResultV1Schema,
     MachinePoolErrorV1Schema,
     MachinePoolListInputV1Schema,
@@ -117,12 +122,17 @@ export {
     MachinePoolResolveInputV1Schema,
     type MachinePoolIdV1,
     type MachinePoolSelectionOriginV1,
+    type MachinePoolPrivateLabelStoredV1,
+    type MachinePoolPrivateLabelProjectionV1,
     type MachinePoolMemberInputV1,
     type MachinePoolMemberStateV1,
     type MachinePoolMemberV1,
     type MachinePoolSummaryV1,
+    type MachinePoolPrivateSummaryV1,
     type MachinePoolAvailabilityV1,
     type MachinePoolViewV1,
+    type MachinePoolPrivateViewV1,
+    type MachinePoolRoutingViewV1,
     type MachinePoolResolveResultV1,
     type MachinePoolErrorV1,
     type MachinePoolListInputV1,
@@ -168,6 +178,7 @@ export * from './managed/devcontainerV1.js';
 export * from './managed/managedMachineV1.js';
 export * from './managed/actionsV1.js';
 export * from './managed/managedMachinePresetV1.js';
+export * from './managed/managedMachinePresetContentV1.js';
 export * from './managed/machinePresetActionsV1.js';
 export * from './managed/managedConfigurationV1.js';
 export * from './machineAuthorityV1.js';

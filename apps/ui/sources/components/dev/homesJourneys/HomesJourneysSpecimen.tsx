@@ -29,7 +29,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import type { AccountPostAuthInput, AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
-import type { AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { OpenedAccountDirectoryHomeEntryV1 as AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/openedAccountDirectoryHome';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 /**

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { encodeBase64 } from '@/encryption/base64';
 import {
     installLocalStorageMock,
     installWebLockManagerMock,
@@ -249,6 +251,125 @@ describe('TokenStorage Account Directory namespaces', () => {
             return new Response(null, { status: 200 });
         })).rejects.toThrow(/superseded/i);
         expect(issued).toBe(false);
+    });
+
+    it('retains a Directory content key across restart while public reads remain token-only', async () => {
+        const target = { endpoint: 'https://directory.example.test', serverIdentityId: 'directory-a' };
+        const secret = new Uint8Array(32).fill(17);
+        const source = await createEncryptionFromAuthCredentials({
+            token: 'source-account-token', secret: encodeBase64(secret, 'base64url'),
+        });
+        const dataKey = new Uint8Array(32).fill(61);
+        const encryptedDataKey = encodeBase64(await source.encryptEncryptionKey(dataKey), 'base64');
+        const retainedContentKey = {
+            publicKey: encodeBase64(source.contentDataKey, 'base64'),
+            machineKey: encodeBase64(source.getContentPrivateKey(), 'base64'),
+        };
+
+        await expect(TokenStorage.accountDirectoryAuthCredentials.set(
+            target,
+            { token: 'directory-token' },
+            { retainedContentKey },
+        )).resolves.toBe(true);
+        await expect(TokenStorage.accountDirectoryAuthCredentials.get(target)).resolves.toEqual({ token: 'directory-token' });
+
+        const captured = captureAccountDirectoryCredentialCustody(target);
+        expect(captured.decryptEncryptionKey).toBeTypeOf('function');
+        await expect(captured.decryptEncryptionKey!(encryptedDataKey)).resolves.toEqual(dataKey);
+
+        vi.resetModules();
+        const restarted = await import('./tokenStorage');
+        const afterRestart = restarted.captureAccountDirectoryCredentialCustody(target);
+        expect(afterRestart.decryptEncryptionKey).toBeTypeOf('function');
+        await expect(afterRestart.decryptEncryptionKey!(encryptedDataKey)).resolves.toEqual(dataKey);
+    });
+
+    it('keeps token-only Directory custody unavailable for encrypted material', async () => {
+        const target = { endpoint: 'https://directory.example.test', serverIdentityId: 'directory-a' };
+        const source = await createEncryptionFromAuthCredentials({
+            token: 'source-account-token', secret: encodeBase64(new Uint8Array(32).fill(18), 'base64url'),
+        });
+        const encryptedDataKey = encodeBase64(await source.encryptEncryptionKey(new Uint8Array(32).fill(62)), 'base64');
+
+        await expect(TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' })).resolves.toBe(true);
+        const captured = captureAccountDirectoryCredentialCustody(target);
+
+        expect(captured.decryptEncryptionKey).toBeTypeOf('function');
+        await expect(captured.decryptEncryptionKey!(encryptedDataKey)).resolves.toBeNull();
+    });
+
+    it('admits a reported Directory mode through captured key custody rather than key presence', async () => {
+        const target = { endpoint: 'https://directory.example.test', serverIdentityId: 'directory-a' };
+        const source = await createEncryptionFromAuthCredentials({
+            token: 'source-account-token', secret: encodeBase64(new Uint8Array(32).fill(21), 'base64url'),
+        });
+        const retainedContentKey = {
+            publicKey: encodeBase64(source.contentDataKey, 'base64'),
+            machineKey: encodeBase64(source.getContentPrivateKey(), 'base64'),
+        };
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' }, { retainedContentKey });
+        const active = captureAccountDirectoryCredentialCustody(target);
+
+        await expect(active.resolveContentEncryptionMode(async () => 'e2ee')).resolves.toBe('e2ee');
+        await expect(active.resolveContentEncryptionMode(async () => 'plain'))
+            .rejects.toMatchObject({ code: 'account_mode_downgrade_unverified' });
+
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' }, {
+            retainedContentKey: { ...retainedContentKey, custody: 'historical' },
+        });
+        const historical = captureAccountDirectoryCredentialCustody(target);
+        await expect(historical.resolveContentEncryptionMode(async () => 'plain')).resolves.toBe('plain');
+
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' });
+        const keyless = captureAccountDirectoryCredentialCustody(target);
+        await expect(keyless.resolveContentEncryptionMode(async () => 'plain')).resolves.toBe('plain');
+        await expect(keyless.resolveContentEncryptionMode(async () => 'e2ee')).resolves.toBe('e2ee');
+    });
+
+    it('cancels and supersedes captured Directory key and mode custody when its key custody changes', async () => {
+        const target = { endpoint: 'https://directory.example.test', serverIdentityId: 'directory-a' };
+        const first = await createEncryptionFromAuthCredentials({
+            token: 'source-account-token', secret: encodeBase64(new Uint8Array(32).fill(19), 'base64url'),
+        });
+        const encryptedDataKey = encodeBase64(await first.encryptEncryptionKey(new Uint8Array(32).fill(63)), 'base64');
+        const firstContentKey = {
+            publicKey: encodeBase64(first.contentDataKey, 'base64'),
+            machineKey: encodeBase64(first.getContentPrivateKey(), 'base64'),
+        };
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' }, { retainedContentKey: firstContentKey });
+        const captured = captureAccountDirectoryCredentialCustody(target);
+
+        const controller = new AbortController();
+        controller.abort();
+        await expect(captured.decryptEncryptionKey!(encryptedDataKey, controller.signal)).rejects.toBeDefined();
+        const cancelledModeReader = vi.fn(async () => 'e2ee' as const);
+        await expect(captured.resolveContentEncryptionMode(cancelledModeReader, controller.signal)).rejects.toBeDefined();
+        expect(cancelledModeReader).not.toHaveBeenCalled();
+
+        let markModeReadStarted!: () => void;
+        const modeReadStarted = new Promise<void>((resolve) => { markModeReadStarted = resolve; });
+        let resolveReportedMode!: (mode: 'e2ee') => void;
+        const reportedMode = new Promise<'e2ee'>((resolve) => { resolveReportedMode = resolve; });
+        const modeResolution = captured.resolveContentEncryptionMode(async () => {
+            markModeReadStarted();
+            return await reportedMode;
+        });
+        await modeReadStarted;
+
+        const replacement = await createEncryptionFromAuthCredentials({
+            token: 'replacement-account-token', secret: encodeBase64(new Uint8Array(32).fill(20), 'base64url'),
+        });
+        await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: 'directory-token' }, {
+            retainedContentKey: {
+                publicKey: encodeBase64(replacement.contentDataKey, 'base64'),
+                machineKey: encodeBase64(replacement.getContentPrivateKey(), 'base64'),
+            },
+        });
+        resolveReportedMode('e2ee');
+
+        expect(captured.isCurrent()).toBe(false);
+        await expect(modeResolution).rejects.toThrow(/superseded/i);
+        await expect(captured.decryptEncryptionKey!(encryptedDataKey)).rejects.toThrow(/superseded/i);
     });
 
     it('claims OAuth return custody only for its exact committed credential across browser module instances', async () => {

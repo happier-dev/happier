@@ -108,6 +108,7 @@ import {
   AutomationEventSourceInstanceIdV1Schema,
 } from './automationEventJsonBoundsV1.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
+import { AutomationDefinitionDisplayV1Schema } from './automationDefinitionDisplayV1.js';
 import {
   addAutomationStoredEnvelopeUtf8LimitIssue,
   AutomationStoredContentEnvelopeV1Schema,
@@ -657,6 +658,8 @@ export function validateAutomationEventFilterAgainstPayloadSchemaV1(params: Read
  */
 export const AutomationEventTriggerDefinitionStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
+  /** Current observation-only labels; omitted by retained 0.2 Event payloads. */
+  automationDisplay: zMini.optional(AutomationDefinitionDisplayV1Schema),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   webhookRoutingSourceInstanceId: zMini.optional(AutomationEventSourceInstanceIdV1Schema),
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),

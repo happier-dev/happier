@@ -16,7 +16,7 @@ const installation = { machineId: 'runtime', installationId: 'installed', public
 const assertCurrent = async () => {};
 const ref = formatSharedSavedSecretRefV1('credential');
 const binding: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'runtime', name: 'PASSWORD',
-    source: { kind: 'secret', ref, resourceRevision: 3 } };
+    grantRef: '00000000-0000-4000-8000-000000000001', source: { kind: 'secret', ref, resourceRevision: 3 } };
 
 function resource(mode: 'plain' | 'e2ee'): SavedSecretCatalogResourceInputV1 {
     const key = new Uint8Array(32).fill(9);
@@ -82,7 +82,8 @@ describe('exact installation grant materialization through Saved Secrets', () =>
 
     it.each(['plain', 'e2ee'] as const)('opens one %s revision for two exact names, without Account keys on the target', async mode => {
         const row = resource(mode);
-        const second: EnvironmentSecretBindingV1 = { ...binding, name: 'PASSWORD_ALIAS' };
+        const second: EnvironmentSecretBindingV1 = { ...binding, name: 'PASSWORD_ALIAS',
+            grantRef: '00000000-0000-4000-8000-000000000002' };
         const bindings = [binding, second];
         const prepared = await prepare(row, bindings);
         expect(prepared.grants).toHaveLength(1);
@@ -102,6 +103,26 @@ describe('exact installation grant materialization through Saved Secrets', () =>
         launch.dispose();
         expect(Object.keys(launch.env)).toEqual([]);
         await expect(launch.recheck()).rejects.toMatchObject({ data: { code: 'secret_missing' } });
+    });
+
+    it('keeps non-secret variable names inside the installation envelope while the daemon still injects them', async () => {
+        const bindings: EnvironmentSecretBindingV1[] = [
+            { purpose: 'variable', phase: 'runtime', name: 'PUBLIC_ENDPOINT', grantRef: '00000000-0000-4000-8000-000000000003',
+                source: { kind: 'value', value: 'https://api.example.test' } },
+            { purpose: 'variable', phase: 'runtime', name: 'PUBLIC_REGION', grantRef: '00000000-0000-4000-8000-000000000004',
+                source: { kind: 'value', value: 'eu-west-1' } },
+        ];
+        const prepared = await prepareEnvironmentSecretBindings({ environmentId: 'environment', bindings, previousBindings: [],
+            runtimeInstallations: [installation], existingGrants: [], assertCurrent });
+
+        expect(JSON.stringify(prepared.grants)).not.toContain('PUBLIC_ENDPOINT');
+        expect(JSON.stringify(prepared.grants)).not.toContain('PUBLIC_REGION');
+
+        const launch = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: 'environment', machineId: installation.machineId,
+            installationId: installation.installationId, installationPrivateSeed: seed, phase: 'runtime',
+            bindings, grants: prepared.grants, assertCurrent });
+        expect(launch.env).toEqual({ PUBLIC_ENDPOINT: 'https://api.example.test', PUBLIC_REGION: 'eu-west-1' });
+        launch.dispose();
     });
 
     it('rejects replaced installation, withdrawn grants and tampered ciphertext before returning an overlay', async () => {

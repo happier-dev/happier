@@ -39,6 +39,16 @@ const service = {
   localId: 'subscription',
 } as const;
 
+const plainStoredLabel = (value: string) => ({
+  content: { t: 'plain' as const, v: value },
+  recipients: [],
+});
+
+const plainReadLabel = (value: string) => ({
+  content: { t: 'plain' as const, v: value },
+  recipientEnvelope: null,
+});
+
 describe('TeamResourceConnectedServiceSelectionV2Schema', () => {
   it('accepts only the Session-owned resource selection facts for brokered and direct use', () => {
     expect(TeamResourceConnectedServiceSelectionV2Schema.parse({
@@ -109,7 +119,7 @@ const validSources = [
 
 describe('TeamCredentialResourceCreateInputV1Schema', () => {
   it('defaults a new normalized resource to broker-only while keeping native consent explicit and closed', () => {
-    const draft = { teamId: 'team-1', resourceId: 'native-resource', displayName: 'Shared', source: validSources[2],
+    const draft = { teamId: 'team-1', resourceId: 'native-resource', displayName: plainStoredLabel('Shared'), source: validSources[2],
       sessionUsePolicy: 'personal_allowed', brokerPlacement: null, requestPolicy: null,
       allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [] };
     expect(TeamCredentialResourceCreateInputV1Schema.parse(draft)).toMatchObject({
@@ -128,7 +138,7 @@ describe('TeamCredentialResourceCreateInputV1Schema', () => {
   });
 
   it('requires the complete one-save draft and accepts audience, placement, policy, and limits together', () => {
-    const narrow = { teamId: 'team-1', resourceId: 'resource-1', displayName: 'Shared', source: validSources[0], deliveryPolicy: { preferredAllowedModes: ['brokered'] } };
+    const narrow = { teamId: 'team-1', resourceId: 'resource-1', displayName: plainStoredLabel('Shared'), source: validSources[0], deliveryPolicy: { preferredAllowedModes: ['brokered'] } };
     expect(TeamCredentialResourceCreateInputV1Schema.safeParse(narrow).success).toBe(false);
     expect(TeamCredentialResourceCreateInputV1Schema.parse({
       ...narrow,
@@ -339,7 +349,7 @@ describe('TeamCredentialBrokerPlacementV1Schema', () => {
 describe('TeamCredentialResourceUpdateInputV1Schema', () => {
   const replacement = {
     enabled: true,
-    displayName: 'Shared provider',
+    displayName: plainStoredLabel('Shared provider'),
     sessionUsePolicy: 'team_context_required' as const,
     requestPolicy: null,
     allMembersAllowedRoutes: ['brokered'] as const,
@@ -374,8 +384,8 @@ describe('TeamCredentialResourceUpdateInputV1Schema', () => {
       replacement: { ...replacement, custodian: undefined },
     }).success).toBe(true);
     expect(TeamCredentialResourceUpdateInputV1Schema.parse({
-      resourceId: 'resource-1', expectedRevision: 2, displayName: 'Legacy patch',
-    }).displayName).toBe('Legacy patch');
+      resourceId: 'resource-1', expectedRevision: 2, displayName: plainStoredLabel('Legacy patch'),
+    }).displayName).toEqual(plainStoredLabel('Legacy patch'));
   });
 
   it('accepts a custodian-only replacement without manufacturing manager fields', () => {
@@ -427,27 +437,30 @@ describe('TeamCredentialResourcePageV1Schema', () => {
     }).success).toBe(false);
   });
 
-  it('binds an opaque stable-name cursor to the exact list query', () => {
+  it('rejects server-side text search and binds an opaque-id cursor to the exact non-content query', () => {
     const input = TeamCredentialResourceListInputV1Schema.parse({
-      teamId: 'team-1', search: 'Build', filter: 'needs_attention', limit: 2,
+      teamId: 'team-1', filter: 'needs_attention', limit: 2,
     });
     if (!('teamId' in input)) throw new Error('Expected a Team-scoped fixture');
     const queryKey = teamCredentialResourcesQueryKeyV1(input);
     const cursor = encodeTeamCredentialResourcesCursorV1({
-      queryKey, displayName: 'Equal name', id: 'resource-2',
+      queryKey, id: 'resource-2',
     });
     expect(decodeTeamCredentialResourcesCursorV1(cursor, queryKey)).toEqual({
-      status: 'ok', cursor: { displayName: 'Equal name', id: 'resource-2' },
+      status: 'ok', cursor: { id: 'resource-2' },
     });
     expect(decodeTeamCredentialResourcesCursorV1(
       cursor,
-      teamCredentialResourcesQueryKeyV1({ ...input, search: 'Other' }),
+      teamCredentialResourcesQueryKeyV1({ ...input, filter: 'all' }),
     )).toEqual({ status: 'invalid' });
+    expect(TeamCredentialResourceListInputV1Schema.safeParse({
+      teamId: 'team-1', search: 'Build', filter: 'all',
+    }).success).toBe(false);
   });
 
   it('keeps recipient catalog rows least-privilege while carrying the safe CAS and provider identity', () => {
     const entry = TeamCredentialResourceCatalogEntryV1Schema.parse({
-      id: 'resource-1', teamId: 'team-1', displayName: 'Build provider',
+      id: 'resource-1', teamId: 'team-1', displayName: plainReadLabel('Build provider'),
       resourceRevision: 7,
       readiness: { kind: 'source_unavailable' },
       recoveryAction: 'source_owner_action',
@@ -484,7 +497,7 @@ describe('TeamCredentialResourcePageV1Schema', () => {
 
   it('publishes only exact content-free Connected Service selection witnesses', () => {
     const entry = TeamCredentialResourceCatalogEntryV1Schema.parse({
-      id: 'resource-1', teamId: 'team-1', displayName: 'Shared account',
+      id: 'resource-1', teamId: 'team-1', displayName: plainReadLabel('Shared account'),
       resourceRevision: 7,
       readiness: { kind: 'available' }, recoveryAction: null,
       mayBroker: false, mayReceiveDirect: true,
@@ -516,7 +529,7 @@ describe('TeamCredentialResourcePageV1Schema', () => {
 
   it('rejects private source authority in recipient rows and binds selections to the catalog revision', () => {
     const entry = {
-      id: 'resource-1', teamId: 'team-1', displayName: 'Build provider',
+      id: 'resource-1', teamId: 'team-1', displayName: plainReadLabel('Build provider'),
       resourceRevision: 7,
       readiness: { kind: 'source_unavailable' }, recoveryAction: 'source_owner_action',
       mayBroker: false, mayReceiveDirect: false, sessionUsePolicy: 'personal_allowed',
@@ -609,7 +622,7 @@ describe('TeamCredentialResourcePageV1Schema', () => {
 
   it('keeps a corrupt recipient row visible when no source identity can be parsed safely', () => {
     const row = TeamCredentialResourceCatalogEntryV1Schema.parse({
-      id: 'resource-corrupt', teamId: 'team-1', displayName: 'Unavailable source',
+      id: 'resource-corrupt', teamId: 'team-1', displayName: plainReadLabel('Unavailable source'),
       resourceRevision: 8,
       readiness: { kind: 'resource_corrupt' },
       recoveryAction: 'source_owner_action',
@@ -671,22 +684,37 @@ describe('TeamCredentialResourceActivity schemas', () => {
     expect(input).toEqual({ resourceId: 'resource', limit: 25 });
     const event = TeamCredentialResourceActivityEventV1Schema.parse({
       kind: 'audience_changed', actorDisplayName: 'Maya',
-      subjectDisplayName: 'Developers', createdAt: new Date(0).toISOString(),
+      subjectDisplayName: plainReadLabel('Developers'), createdAt: new Date(0).toISOString(),
     });
     expect(event).not.toHaveProperty('resourceId');
     expect(TeamCredentialResourceActivityPageV1Schema.parse({
       items: [event], nextCursor: 'event-2',
     })).toMatchObject({ items: [event], nextCursor: 'event-2' });
+    // Resource events carry a sealed resource snapshot; external-key events
+    // remain a distinct label domain and must not be opened with that binding.
+    expect(TeamCredentialResourceActivityEventV1Schema.parse({
+      kind: 'external_key_created', actorDisplayName: 'Maya',
+      externalApiKeyId: '550e8400-e29b-41d4-a716-446655440000',
+      subjectDisplayName: plainReadLabel('CI runner key'), createdAt: new Date(0).toISOString(),
+    }).subjectDisplayName).toEqual(plainReadLabel('CI runner key'));
+    expect(TeamCredentialResourceActivityEventV1Schema.safeParse({
+      kind: 'external_key_created', actorDisplayName: 'Maya',
+      subjectDisplayName: 'CI runner key', createdAt: new Date(0).toISOString(),
+    }).success).toBe(false);
+    expect(TeamCredentialResourceActivityEventV1Schema.safeParse({
+      kind: 'resource_updated', actorDisplayName: 'Maya',
+      subjectDisplayName: 'Developers', createdAt: new Date(0).toISOString(),
+    }).success).toBe(false);
   });
 
   it('rejects hidden identifiers, unsupported event kinds, and oversized pages', () => {
     expect(TeamCredentialResourceActivityEventV1Schema.safeParse({
       kind: 'audience_changed', actorDisplayName: 'Maya',
-      subjectDisplayName: 'Developers', createdAt: new Date(0).toISOString(), resourceId: 'secret',
+      subjectDisplayName: plainReadLabel('Developers'), createdAt: new Date(0).toISOString(), resourceId: 'secret',
     }).success).toBe(false);
     expect(TeamCredentialResourceActivityEventV1Schema.safeParse({
       kind: 'request_log', actorDisplayName: 'Maya',
-      subjectDisplayName: 'Developers', createdAt: new Date(0).toISOString(),
+      subjectDisplayName: plainReadLabel('Developers'), createdAt: new Date(0).toISOString(),
     }).success).toBe(false);
     expect(TeamCredentialResourceActivityReadInputV1Schema.safeParse({ resourceId: 'r', limit: 101 }).success).toBe(false);
   });

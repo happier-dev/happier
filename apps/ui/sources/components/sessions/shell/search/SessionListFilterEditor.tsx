@@ -9,6 +9,7 @@ import {
     type SelectionListStep,
 } from '@/components/ui/selectionList';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { getTeamGroupsSnapshot } from '@/sync/store/teams/teamsSnapshots';
@@ -46,6 +47,7 @@ import {
 import { createSessionListViewFilterDefaults } from './sessionListViewFilters';
 import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import { useSessionListFilterLocalOptions } from './useSessionListFilterLocalOptions';
+import { t } from '@/text';
 /*
  * Audience identity belongs to the filter state owner. This component consumes its
  * qualified JSON key rather than maintaining a parallel Team-only syntax.
@@ -190,6 +192,10 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
         archived: 'active',
         enabled: teamAudienceEnabled && activeTeam !== null,
     });
+    const openedGroupDisplayNames = useTeamGroupDisplayNames({
+        scope: activeTeamScope,
+        groups: groups.rows,
+    });
     const directoryComplete = teamAudienceEnabled
         && directory.kind !== 'loading'
         && !directory.partial
@@ -258,7 +264,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
                     kind: 'group',
                     teamId: activeTeam.teamId,
                     groupId: group.id,
-                    label: group.name,
+                    label: openedGroupDisplayNames.get(group.id) ?? t('common.unavailable'),
                 });
             }
             if (!activeGroupsComplete) {
@@ -287,6 +293,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
         directory.rows,
         directoryComplete,
         groups.rows,
+        openedGroupDisplayNames,
         props.audiences,
         props.filters.audiences,
         props.homes,

@@ -14,6 +14,61 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import type { AutomationDefinitionListResponse } from '@happier-dev/protocol/automations/automationApiV3';
+import {
+    resolveValidatedAutomationAccountEncryptionV1,
+    sameAutomationAccountContentIdentityV1,
+    type AvailableAutomationAccountEncryptionV1,
+} from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import {
+    hasPrivateAutomationDefinitionDisplayCarrierV1,
+    readAutomationDefinitionDisplayV1,
+} from '@happier-dev/protocol/automations/automationDefinitionDisplayReaderV1';
+import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { deriveAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+
+async function openAutomationListDisplays(params: Readonly<{
+    credentials: AuthCredentials;
+    requestContext?: AutomationRequestContext;
+    serverId: string | null | undefined;
+    automations: AutomationDefinitionListResponse['automations'];
+    shouldContinue: () => boolean;
+}>): Promise<AutomationDefinitionListResponse['automations']> {
+    if (!params.automations.some(hasPrivateAutomationDefinitionDisplayCarrierV1)) return params.automations;
+    const resolveEncryption = async (): Promise<AvailableAutomationAccountEncryptionV1> => {
+        const resolved = await resolveValidatedAutomationAccountEncryptionV1({
+            signal: new AbortController().signal,
+            resolveAccountEncryptionCurrentness: async signal => await fetchAccountEncryptionCurrentness(params.credentials,
+                params.requestContext ? {
+                    request: (path, init) => params.requestContext!.request(path, init, { includeAuth: false }),
+                    signal,
+                } : { signal }),
+            resolveAccountEncryptionMaterial: async () => deriveAccountScopedCryptoMaterialSnapshot(
+                params.credentials,
+                params.serverId,
+            ),
+        });
+        if (resolved.kind !== 'available') {
+            throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
+        }
+        return resolved;
+    };
+    const opened = await resolveEncryption();
+    if (!params.shouldContinue()) return params.automations;
+    const automations = params.automations.map((automation) => {
+        if (!hasPrivateAutomationDefinitionDisplayCarrierV1(automation)) return automation;
+        const display = readAutomationDefinitionDisplayV1({ definition: automation, encryption: opened });
+        if (display.kind !== 'available') {
+            throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
+        }
+        return { ...automation, name: display.display.name, description: display.display.description };
+    });
+    if (!params.shouldContinue()) return automations;
+    const current = await resolveEncryption();
+    if (!sameAutomationAccountContentIdentityV1(opened.witness, current.witness)) {
+        throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
+    }
+    return automations;
+}
 
 /** Only a proven source-status change can omit the presented Run-window refresh. */
 export type AutomationRefreshOptions = Readonly<{ summariesOnly: true }>;
@@ -68,7 +123,15 @@ export async function fetchAndApplyAutomations(params: {
     }, params.requestContext);
     if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
     params.onDefinitionsRead?.(result);
-    const automations = result.automations.map(createAutomationDefinitionSummary);
+    const openedAutomations = await openAutomationListDisplays({
+        credentials: params.credentials,
+        requestContext: params.requestContext,
+        serverId,
+        automations: result.automations,
+        shouldContinue,
+    });
+    if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
+    const automations = openedAutomations.map(createAutomationDefinitionSummary);
     if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
     let traversalToken: number | null;
     if (params.cursor) {

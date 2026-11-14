@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
@@ -195,7 +196,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
         await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: teamDocument.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const groupTeam = await db.team.create({ data: { name: 'Artifact Group access contract' } });
         const groupMember = await db.teamMembership.create({ data: { teamId: groupTeam.id, accountId: reader.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: groupTeam.id, name: 'Artifact Group', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: groupTeam.id, name: storedPlainPrivateLabel('Artifact Group') } });
         await db.teamGroupMembership.create({ data: { teamId: groupTeam.id, teamGroupId: group.id, teamMembershipId: groupMember.id } });
         await db.artifactGrant.create({ data: { principalKind: 'group', artifactId: groupDocument.id, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const allIds = [owned, direct, teamDocument, groupDocument, denied, unreadable].map(row => row.id);

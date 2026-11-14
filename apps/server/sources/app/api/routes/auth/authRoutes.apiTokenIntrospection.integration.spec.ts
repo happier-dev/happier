@@ -9,6 +9,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { authRoutes } from "./authRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -71,7 +72,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Daemon Action API",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Daemon Action API"),
             expiresAt: new Date("2030-08-22T12:01:00.000Z"),
         });
         const app = createTestApp();
@@ -112,7 +113,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         ]);
         const [otherDaemonConnectionToken, pat] = await Promise.all([
             auth.createToken(other.id, undefined, { kind: "account", authority: "present_user" }),
-            auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: "Other Account" }),
+            auth.createApiToken({ accountId: owner.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(owner.id, "Other Account") }),
         ]);
         const app = createTestApp();
         await app.ready();
@@ -139,7 +140,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         });
         const [daemonConnectionToken, pat] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "No body Account" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "No body Account") }),
         ]);
         const app = createTestApp();
         await app.ready();
@@ -176,7 +177,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         });
         const [daemonConnectionToken, pat] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" }),
-            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Cross-honor guard" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Cross-honor guard") }),
         ]);
         const app = createTestApp();
         await app.ready();
@@ -263,7 +264,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
             select: { id: true },
         });
         const daemonConnectionToken = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "Revocable daemon token" });
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "Revocable daemon token") });
         await auth.revokeApiToken({ accountId: account.id, tokenId: pat.tokenId });
         const app = createTestApp();
         await app.ready();

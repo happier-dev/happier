@@ -7,10 +7,11 @@ import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/manage
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 import type { StoredCredentials } from '@/persistence';
-import { createCliManagedAccountNativeInvocation } from './accountNative';
+import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvisioner } from './accountNative';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import { createManagedPresetHydrator, openManagedPresetCarrier } from './presetHydration';
 
 /** Foreground Account execution consumes Home admission, not an invented controller identity. */
 export async function executeCliManagedAccountPower(input: Readonly<{
@@ -25,27 +26,28 @@ export async function executeCliManagedAccountPower(input: Readonly<{
     const requestId = input.context.actionRequestId;
     if (!requestId || input.body.when === 'now' && !port) throw new ManagedMachineControllerError('admission_unavailable');
     const request = ManagedControlAdmissionInputV1Schema.parse({ action: 'machines.managed.power.set', input: input.body, requestId });
-    const admitted = await input.post('admit-control', request, ManagedAdmissionOutputV1Schema);
-    let machine = admitted.machine;
+    const hydrator = createManagedPresetHydrator(input);
+    const rawAdmission = await input.post('admit-control', request, ManagedAdmissionOutputV1Schema);
     // Home retains the deferred intent; the existing controller/guest drain
     // reconciler submits its native effect when activity has settled.
     if (input.body.when === 'after-idle') return ManagedIntentResultSchema.parse({
-        kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
+        kind: 'accepted', managedId: rawAdmission.machine.id, intentRevision: rawAdmission.machine.intentRevision,
         ...(input.context.operationAcceptance ? { operation: { operationId: input.context.operationAcceptance.operationId } } : {}),
     });
+    const admitted = await openManagedPresetCarrier(rawAdmission, hydrator, input.signal);
+    let machine = admitted.machine;
     if (machine.controller) throw new ManagedMachineControllerError('controller_unavailable');
-    const provisioner = machine.reviewedFacts?.provisioner;
-    if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
     if (machine.desiredWhen !== 'now') throw new ManagedMachineControllerError('native_intent_unconfirmed');
     // Capture this finite operation's declaration once; provider dispatch still
     // owns native placement and materialization at its ordinary boundary.
     const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
         credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
     if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+    const provisioner = resolveCliManagedAccountProvisioner(machine, selected);
     const correlation = ManagedControllerCurrentnessV1Schema.parse({ homeId: machine.homeId, managedId: machine.id,
         expectedIntentRevision: machine.intentRevision, requestId });
     const submitted = await input.post('submit-intent', correlation, ManagedControllerSubmitOutputV1Schema);
-    machine = submitted.machine;
+    machine = hydrator.normalize(submitted.machine);
     if (!submitted.submitted) throw new ManagedMachineControllerError('native_intent_unconfirmed');
     const invoke = createCliManagedAccountNativeInvocation({ machine, provisioner, selected,
         context: input.context, signal: input.signal, requestId });
@@ -57,10 +59,10 @@ export async function executeCliManagedAccountPower(input: Readonly<{
             waitForObservation: createManagedNativeObservationWait(input.signal) });
     } catch (error) {
         try {
-            await input.post('report-intent', { ...correlation, result: {
+            await input.post('report-intent', await hydrator.prepareControllerReport('report-intent', { ...correlation, result: {
                 kind: error instanceof ManagedMachineNativeEffectGuardRefusal ? 'refused' : 'unknown',
                 code: error instanceof ManagedMachineControllerError ? error.code : 'native_intent_unconfirmed',
-            } }, ManagedControllerMachineOutputV1Schema, null);
+            } }, input.signal), ManagedControllerMachineOutputV1Schema, null);
         } catch (reportError) {
             logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
         }
@@ -70,7 +72,7 @@ export async function executeCliManagedAccountPower(input: Readonly<{
         ? new ManagedMachineControllerError(power.result.code, undefined,
             power.result.nativeCause ? { kind: 'managedNative', nativeCause: power.result.nativeCause } : undefined) : undefined);
     try {
-        await input.post('report-intent', { ...correlation, result: power.result, observation: power.observation }, ManagedControllerMachineOutputV1Schema, null);
+        await input.post('report-intent', await hydrator.prepareControllerReport('report-intent', { ...correlation, result: power.result, observation: power.observation }, input.signal), ManagedControllerMachineOutputV1Schema, null);
     } catch (reportError) {
         if (!nativeFailure) throw reportError;
         logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));

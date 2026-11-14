@@ -302,7 +302,7 @@ describe('mounted managed configurator', () => {
     if (!selected) throw new Error('Expected the real Devcontainer descriptor');
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-      return { body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: { provisioners: [selected] } } } };
     } });
     const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema,
@@ -394,7 +394,7 @@ describe('mounted managed configurator', () => {
       packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', hasMachineProvisioners: true,
       entriesById: {}, normalizedManifest: manifest }]));
     const serverId = await harness.addHome({ name: 'Lima preset', serverUrl: 'https://lima-replay131.example.test',
-      serverIdentityId: 'srv_lima_replay131', accountId: 'owner', currentAccount: true });
+      serverIdentityId: 'srv_lima_replay131', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'plain' });
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
       await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
@@ -413,14 +413,15 @@ describe('mounted managed configurator', () => {
     if (!selected) throw new Error('Expected real Lima provisioner');
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-      return { body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: { provisioners: [selected] } } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
-    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
+    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema,
+      ManagedMachinePresetRecipientCensusResultV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
       await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
-    let saved: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null = null;
+    const persistedHolder: { preset: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null } = { preset: null };
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
       provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly initialController={defaultController} />);
     try {
@@ -433,20 +434,31 @@ describe('mounted managed configurator', () => {
       await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
       expect(form.props.input.mounts).toEqual([]);
+      harness.answer(serverId, '/v1/machines/presets/recipient-census', { select: value => {
+        ManagedMachinePresetRecipientCensusInputV1Schema.parse(value);
+        return { body: ManagedMachinePresetRecipientCensusResultV1Schema.parse({
+          kind: 'ready', contentEncryptionMode: 'plain', recipients: [],
+        }) };
+      } });
       harness.answer(serverId, '/v1/machines/presets/create', { select: value => {
         const input = ManagedMachinePresetCreateInputV1Schema.parse(value);
         const persisted = ManagedMachinePresetV1Schema.parse({ ...input, revision: 1 });
-        saved = persisted;
+        persistedHolder.preset = persisted;
         return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: persisted }) };
       } });
       await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/recipient-census')).toHaveLength(1));
       await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
       const request = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
-      expect(request).toMatchObject({ controller: defaultController, launch: { provider: selected.contribution,
-        choices: { store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
-          arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] } } });
+      expect(request).toMatchObject({ controller: defaultController, contentEncryptionMode: 'plain', recipients: [],
+        content: { t: 'plain', v: { launch: { provider: selected.contribution,
+          choices: { store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
+            arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] } } } } });
+      expect(request).not.toHaveProperty('launch');
+      expect(request).not.toHaveProperty('setup');
       await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
     } finally { await screen.unmount(); }
+    const saved = persistedHolder.preset;
     if (!saved) throw new Error('Expected persisted Lima preset');
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
     const { createMachinePresetCollectionClient } = await import('@/sync/ops/machines/machinePresetCollectionClient');
@@ -1166,10 +1178,12 @@ describe('mounted managed configurator', () => {
         systemTools: { resolve: unexpectedHostCall },
         spawn: unexpectedHostCall,
         clients: { connectJsonRpc: unexpectedHostCall, spawn: unexpectedHostCall },
+        prepareNativeSocketDirectory: unexpectedHostCall,
+        withSpawnAdmission: unexpectedHostCall,
         run: async request => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
         stdout: new TextEncoder().encode(request.args?.[0] === 'info' ? JSON.stringify(info) : 'limactl version 2.2.1'),
         stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }) },
-      managedServices: { supervise: unexpectedHostCall, dependencies: {
+      managedServices: { supervise: unexpectedHostCall, observeWorkload: unexpectedHostCall, dependencies: {
         ensure: unexpectedHostCall, update: unexpectedHostCall, remove: unexpectedHostCall,
         status: async id => ({ state: 'ready', id, sourceId: 'system', version: '2.2.1',
         executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } } }) } },
@@ -1416,7 +1430,7 @@ describe('mounted managed configurator', () => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
-    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const { ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     const credentials = discovery === 'retired' ? [{ purpose: { consumer: provisioner.contribution, purpose: 'native-account' },
       account: { service: { pluginId: provisioner.contribution.pluginId, localId: 'native-account' }, accountId: 'retired' } }] : undefined;
     const preset = ManagedMachinePresetV1Schema.parse({ id: 'account-rename', homeId: 'srv_add_server', revision: 0,
@@ -1444,7 +1458,7 @@ describe('mounted managed configurator', () => {
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
       id: preset.id, expectedRevision: 0, patch: { name: 'Renamed preset', launch: { name: 'Renamed preset' } },
     });
-    expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input.patch.launch.credentials).toEqual(credentials);
+    expect(ManagedMachinePresetUpdateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/update')[0]?.input).patch.launch?.credentials).toEqual(credentials);
     expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
     await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
     await screen.unmount();
@@ -1484,7 +1498,7 @@ describe('mounted managed configurator', () => {
     const serverId = route.params.serverId!;
     await initial.unmount();
     const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
-      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } };
+      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) };
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
     const onReturn = vi.fn();
     const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },
@@ -1513,7 +1527,7 @@ describe('mounted managed configurator', () => {
     const serverId = route.params.serverId!;
     await initial.unmount();
     const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
-      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } };
+      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) };
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
     const onReturn = vi.fn();
     const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup } from '@/dev/testkit';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -21,11 +22,12 @@ const directoryGroupsBinding = vi.hoisted(() => ({
     accountChange: null as Readonly<{ serverId: string; entityId: string }> | null,
 }));
 const nativeGroupsBinding = vi.hoisted(() => ({
-    rows: [] as Array<Readonly<{ id: string; name: string; memberCount: number }>>,
+    rows: [] as Array<Readonly<{ id: string; name: TeamGroupNameProjectionV1; memberCount: number }>>,
     error: null as { kind: 'unreachable'; retryable: boolean; code: null } | null,
     reload: vi.fn(),
 }));
 const useTeamGroupMock = vi.hoisted(() => vi.fn());
+const openPrivateLabelMock = vi.hoisted(() => vi.fn());
 const canMutateMock = vi.hoisted(() => ({ current: true }));
 const runActionMock = vi.hoisted(() => vi.fn());
 const removeSourceMock = vi.hoisted(() => vi.fn());
@@ -114,6 +116,9 @@ vi.mock('@/hooks/teams/useTeamGroups', () => ({
     useTeamGroups: () => ({ ...nativeGroupsBinding, isCurrent: !nativeGroupsBinding.error, hasMore: false, status: nativeGroupsBinding.error ? 'error' : 'ready', loadMore: vi.fn() }),
     useTeamGroup: useTeamGroupMock,
 }));
+vi.mock('@/sync/ops/privateLabels/privateLabelClient', () => ({
+    createPrivateLabelClient: () => ({ open: openPrivateLabelMock }),
+}));
 vi.mock('@/hooks/teams/useTeamPagedList', () => ({
     useTeamPagedList: (params: Readonly<{
         enabled: boolean;
@@ -191,6 +196,13 @@ vi.mock('@/text', async () => {
 import { DirectorySourceDetailScreen } from './DirectorySourceDetailScreen';
 import { DIRECTORY_SOURCE_SETTINGS } from './directorySettings';
 
+function privateGroupName(value: string): TeamGroupNameProjectionV1 {
+    return {
+        kind: 'available',
+        label: { content: { t: 'plain', v: value }, recipientEnvelope: null },
+    };
+}
+
 beforeEach(() => {
     standardCleanup();
     modalConfirmMock.mockReset();
@@ -204,6 +216,10 @@ beforeEach(() => {
     nativeGroupsBinding.error = null;
     nativeGroupsBinding.reload.mockReset();
     useTeamGroupMock.mockReset();
+    openPrivateLabelMock.mockReset();
+    openPrivateLabelMock.mockImplementation(async (input: Readonly<{
+        label: Readonly<{ content: Readonly<{ t: string; v?: string }> }>;
+    }>) => input.label.content.t === 'plain' ? input.label.content.v ?? null : null);
     canMutateMock.current = true;
     runActionMock.mockReset();
     runActionMock.mockResolvedValue({ ok: true, value: {} });
@@ -333,18 +349,18 @@ describe('DirectorySourceDetailScreen', () => {
         };
         directoryGroupsBinding.rows = [{
             id: 'external-group-1', sourceId: 'source-1', externalGroupId: 'external-1', displayName: 'External engineering',
-            memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'bound', bindingId: 'binding-1', teamGroupId: 'team-group-opaque-id', teamGroupName: 'Platform Engineering' },
+            memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'bound', bindingId: 'binding-1', teamGroupId: 'team-group-opaque-id', teamGroupName: privateGroupName('Platform Engineering') },
         }];
         nativeGroupsBinding.rows = [];
 
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
 
-        expect(screen.findByTestId('directory-group:external-group-1')?.props.subtitle)
-            .toBe('identityAdministration.mappedTo: Platform Engineering');
+        await vi.waitFor(() => expect(screen.findByTestId('directory-group:external-group-1')?.props.subtitle)
+            .toBe('identityAdministration.mappedTo: Platform Engineering'));
         directoryGroupsBinding.rows = [{ ...directoryGroupsBinding.rows[0], mapping: {
             state: 'bound', bindingId: 'binding-1', teamGroupId: 'team-group-opaque-id', teamGroupName: null,
         } }];
-        nativeGroupsBinding.rows = [{ id: 'team-group-opaque-id', name: 'A retained name the reader withheld', memberCount: 4 }];
+        nativeGroupsBinding.rows = [{ id: 'team-group-opaque-id', name: privateGroupName('A retained name the reader withheld'), memberCount: 4 }];
         // This fixture hook has no subscription: mount the withheld projection rather than
         // pretending an equal-props update can wake the memoized real screen.
         const withheldScreen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
@@ -367,18 +383,18 @@ describe('DirectorySourceDetailScreen', () => {
             memberCount: index,
             boundAccountCount: index,
             unboundPeopleCount: 0,
-            mapping: { state: 'bound', teamGroupId: `team-group-${index}`, teamGroupName: `Team Group ${index}` },
+            mapping: { state: 'bound', teamGroupId: `team-group-${index}`, teamGroupName: privateGroupName(`Team Group ${index}`) },
         }));
         nativeGroupsBinding.rows = Array.from({ length: 50 }, (_, index) => ({
             id: `team-group-${index}`,
-            name: `Team Group ${index}`,
+            name: privateGroupName(`Team Group ${index}`),
             memberCount: index,
         }));
 
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
 
-        expect(screen.findByTestId('directory-group:external-group-49')?.props.subtitle)
-            .toBe('identityAdministration.mappedTo: Team Group 49');
+        await vi.waitFor(() => expect(screen.findByTestId('directory-group:external-group-49')?.props.subtitle)
+            .toBe('identityAdministration.mappedTo: Team Group 49'));
         expect(useTeamGroupMock).not.toHaveBeenCalled();
     });
 
@@ -781,7 +797,7 @@ describe('DirectorySourceDetailScreen', () => {
             unboundPeopleCount: 0,
             mapping: { state: 'unbound' },
         }));
-        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: 'Platform Engineering', memberCount: 4 }];
+        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: privateGroupName('Platform Engineering'), memberCount: 4 }];
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
 
         await screen.pressByTestIdAsync('directory-group:external-group-0');
@@ -811,7 +827,7 @@ describe('DirectorySourceDetailScreen', () => {
         directoryGroupsBinding.rows = [{
             id: 'external-group-1', displayName: 'Engineering', memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'unbound' },
         }];
-        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: 'Platform Engineering', memberCount: 4 }];
+        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: privateGroupName('Platform Engineering'), memberCount: 4 }];
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
 
         await screen.pressByTestIdAsync('directory-group:external-group-1');
@@ -833,7 +849,7 @@ describe('DirectorySourceDetailScreen', () => {
         };
         directoryGroupsBinding.rows = [{ id: 'external-group-1', displayName: 'Engineering', memberCount: 0, boundAccountCount: 0, unboundPeopleCount: 0, mapping: { state: 'unbound' } }];
         nativeGroupsBinding.error = { kind: 'unreachable', retryable: true, code: null };
-        nativeGroupsBinding.rows = [{ id: 'retained-group', name: 'Retained Group', memberCount: 4 }];
+        nativeGroupsBinding.rows = [{ id: 'retained-group', name: privateGroupName('Retained Group'), memberCount: 4 }];
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
         await screen.pressByTestIdAsync('directory-group:external-group-1');
         expect(screen.findByTestId('directory-native-groups-error')).not.toBeNull();

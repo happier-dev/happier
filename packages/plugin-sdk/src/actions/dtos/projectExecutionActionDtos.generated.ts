@@ -836,6 +836,7 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
+                                grantRef?: string | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -1242,6 +1243,7 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
+                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
@@ -1402,6 +1404,7 @@ export type ProjectExecutionActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
                                     repository: {
@@ -2888,6 +2891,7 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
+                                grantRef?: string | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -3294,6 +3298,7 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
+                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
@@ -3454,6 +3459,7 @@ export type ProjectExecutionActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
                                     repository: {
@@ -4940,6 +4946,7 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'variable';
                                 name: string;
                                 phase: 'build' | 'runtime';
+                                grantRef?: string | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -5346,6 +5353,7 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
+                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
@@ -5506,6 +5514,7 @@ export type ProjectExecutionActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
                                     repository: {

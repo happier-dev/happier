@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ManagedCreationSelectionV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -92,15 +92,15 @@ export function managedMachineSelectionOptionId(selection: ManagedCreationSelect
 /** Current-Home presets open the shared review; no offer admits native effects. */
 export function buildManagedMachineSelectionOffers(params: Readonly<{
     homeId: string;
-    presets: readonly ManagedMachinePresetV1[];
+    presets: readonly ManagedMachinePresetListEntryV1[];
     oneOffTitle: string;
     oneOffSubtitle?: string;
-    describeController?: (preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) => string | undefined;
-    markFor?: (preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) => ReactNode;
-    onConfigure: (preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => void;
+    describeController?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
+    markFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
+    onConfigure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
-    return [...params.presets.filter((preset): preset is ManagedMachinePresetV1 & ManagedMachinePresetCreationV1 =>
-        preset.homeId === params.homeId && preset.archivedAt === undefined && hasManagedMachinePresetCreationV1(preset)).map(preset => ({
+    return [...params.presets.filter((preset): preset is OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1 =>
+        preset.homeId === params.homeId && preset.archivedAt === undefined && hasOpenedManagedMachinePresetCreationV1(preset)).map(preset => ({
         id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
         homeId: preset.homeId,
         presetId: preset.id,

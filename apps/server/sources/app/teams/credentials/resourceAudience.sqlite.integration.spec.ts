@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -22,7 +23,7 @@ describe("Team credential audience mutation", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "member" } });
         const managerMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "admin" } });
         const recipientMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "guest" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Developers", nameKey: "developers" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Developers") } });
         const resource = await db.teamCredentialResource.create({ data: {
             teamId: team.id, custodianAccountId: custodian.id, displayName: "Shared connection",
             disclosureCeiling: "direct_allowed", sessionUsePolicy: "personal_allowed",
@@ -302,7 +303,7 @@ describe("Team credential audience mutation", () => {
     it("rejects foreign audiences and source-ceiling escalation without changing prior grants", async () => {
         const f = await fixture();
         const other = await db.team.create({ data: { name: "Other Team" } });
-        const foreign = await db.teamGroup.create({ data: { teamId: other.id, name: "Foreign", nameKey: "foreign" } });
+        const foreign = await db.teamGroup.create({ data: { teamId: other.id, name: storedPlainPrivateLabel("Foreign") } });
         await expect(f.set(f.manager.id, { ...f.input, groupGrants: [{ teamGroupId: foreign.id, allowedRoutes: ["direct"] }] }))
             .resolves.toEqual({ ok: false, error: "invalid_audience" });
         await db.teamCredentialResource.update({ where: { id: f.resource.id }, data: { disclosureCeiling: "brokered_only" } });

@@ -84,10 +84,15 @@ describe("Account Directory identity visibility (SQLite integration)", () => {
         } });
 
         // Plain Accounts have no key; an E2EE key is reachable through the password only when one exists.
-        expect((await readAccountDirectoryMe(plain.id)).recoveryKey).toBe("none");
-        expect((await readAccountDirectoryMe(keyOnly.id)).recoveryKey).toBe("key_only");
+        const plainDirectory = await readAccountDirectoryMe(plain.id);
+        expect(plainDirectory.recoveryKey).toBe("none");
+        expect(plainDirectory.encryptionMode).toBe("plain");
+        const keyOnlyDirectory = await readAccountDirectoryMe(keyOnly.id);
+        expect(keyOnlyDirectory.recoveryKey).toBe("key_only");
+        expect(keyOnlyDirectory.encryptionMode).toBe("e2ee");
         const reachable = await readAccountDirectoryMe(withPassword.id);
         expect(reachable.recoveryKey).toBe("password_unlock");
+        expect(reachable.encryptionMode).toBe("e2ee");
         expect(JSON.stringify(reachable)).not.toContain("@");
     });
 });

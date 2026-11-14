@@ -1434,22 +1434,175 @@ versions pending without rereading history until an input moves. That record hol
 snapshot content and never marks a version clean. These are development contracts, not a
 claim that the UI cutover, source/history erasure or composed live validation is complete.
 
-### Preset Machine setup references (0.3 development)
+### Private labels and server-readable exceptions (0.3 development)
 
-`controllerDisplayName` is author-asserted, server-readable content written only for delegated Team presets on Plain Accounts; E2EE and Account-owned presets omit it, and delegated members use the neutral fallback when absent.
+Account API-token and Account Home-directory labels, Team Group names, Team
+credential display names and audit subjects, and Pool names/descriptions use the
+shared private-label content owner and Saved Secret Account recipient envelopes.
+Existing String/JSON carriers contain tagged Plain content or ciphertext.
+Encrypted labels include one wrapped data key per eligible Account. Account-owned reads and writes use
+the captured persisted Account mode; Team resource reads retain the resource's
+privacy arm rather than comparing it with the viewing Account's mode. Plain
+Accounts do not fabricate Account encryption material.
+
+Raw pre-envelope label rows remain readable until an ordinary save. Their read
+projection carries explicit `legacyPlaintext: true` provenance, including when
+the Account now uses E2EE. Current Plain envelopes still fail E2EE Account-mode
+checks; malformed or truncated encrypted envelopes never become legacy text.
+The marker is read-only and is rejected by the stored/new-write schema. Reads
+do not rewrite rows. An explicit Account-mode change includes legacy personal
+Pool names and descriptions in its complete label census.
+
+Installation grants likewise retain the old authenticated name-addressed subject
+and its original sealed definition on reads. The stored Environment reader keeps
+bindings without an opaque reference intact, and the host can still inject them.
+The normal binding save assigns the opaque reference and re-seals that binding;
+new grant writes reject the historical name-addressed arm. `MachineSecretGrant`
+has no separate row id: its subject digest is the primary key, while one private
+binding reference is authored before sealing to each recipient installation.
+
+Group sorting and search run over the client's opened loaded collection. The
+server uses structural IDs for order and cursors; `nameKey` is removed. Credential
+audit subjects retain the resource binding and are opened by the client. Label
+writes prepare the current Team audience. A newly joined member without an
+envelope sees an unavailable label until a qualifying keyholder save prepares
+it; historical audit snapshots can remain unavailable. The server has no label
+opening key or automatic membership-triggered rewrap.
+
+An External API key has its own private label identity, not its parent
+credential-resource binding. Creation supplies the immutable key id before
+sealing; the same id binds its stored label, its create/revoke audit snapshot,
+and the client opener. The existing audit `subjectDisplayName` carrier stores a
+tagged opaque snapshot containing that key id and the stored label rather than
+plaintext. Activity and external-key usage rows project only the viewer's
+recipient envelope; the client opens it with the exact key binding. Deleting a
+key therefore leaves a binding-correct historical snapshot without a new
+database column or any server-readable label copy.
+
+Credential-usage export sends the Home only the structural usage query and the
+selected ranked-row scope. A keyholding UI, CLI, or Agent Action host uses its
+already-captured Account key and admitted Home read to open opaque resource and
+external-key label projections under their exact bindings, then builds the CSV
+locally. Hosts without a local keyholder retain the encrypted connected-UI
+fallback; no opened resource or key label is sent back to the Home.
+
+External-directory Group names are a source exception: the Home retains the
+provider's plaintext `TeamDirectoryGroup.externalDisplayName` projection for
+directory reconciliation and receives it during initial binding and updates.
+It seals that source before writing `TeamGroup.name` and never decrypts the prior
+Group label. Sealing the Team Group carrier does not hide this upstream directory
+projection from its Home. Initial human admission uses the author's persisted Account mode;
+an actorless update preserves the prior strict resource privacy arm and refuses
+unavailable E2EE recipients instead of falling back to Plain.
+
+Team names remain server-readable because the Home renders invitation email
+subjects/bodies and creates the named external WorkOS organization. Other Team
+name projections do not independently justify plaintext. Pairing's requested
+device label remains the owner-approved pre-key exception: its unpaired author
+has no Account key; the server stores and returns it for approval/status.
+
+Machine Secret Grant environment-variable names are opened by the daemon that
+injects the variable. Home uses opaque grant references for admission and routing,
+and does not reconstruct the environment binding from a plaintext name. Plain
+Accounts use the existing Machine-installation grant envelope and need no Account
+encryption key.
+
+Automations shipped in 0.2. New writes seal display content inside their existing
+Action-template, Workflow or Event envelopes. Old raw names/descriptions remain
+readable until an ordinary save seals them; no migration rewrites old content.
+
+### Machine preset content and setup references (0.3 development)
+
+A preset's name, launch definition (including provider, image, location and size),
+setup and optional controller display label belong to its private `content`.
+Plain Account writes use `{t:'plain',v}` without Account encryption material;
+E2EE writes use `{t:'encrypted',c}`. The persisted author's Account mode decides
+the write arm. A mismatch is refused before mutation, without a plaintext fallback.
+The existing JSON storage carries this content, its explicit author-mode binding
+and Account recipient envelopes. Readers use that stored binding, including
+opaque setup references, rather than inferring mode from a content tag or the
+viewer's Account. Legacy raw rows are exposed as a transient Plain read projection
+without rewriting storage; their next normal save uses the author’s persisted
+Account mode. No plaintext launch, setup or name is copied into the server's review.
+
+The preset author allocates a fresh data key for each private-content write and
+wraps it for the author and eligible Team Accounts through the Saved Secret
+recipient-envelope owner. The controller's custodian Account must be a recipient;
+there is no Machine recipient. Its daemon already holds the custodian's Account
+material and opens that Account's envelope. A successful keyholder read uses the
+Saved Secret recipient census and rewrap owner to add or prune current Account
+envelopes. A joining member without an envelope sees unavailable content until
+that repair runs. Recipient-only repair retains the existing ciphertext and data
+key. A newly sealed content revision uses a fresh key that
+excludes former members; removing access cannot recall prior content.
+
+The Home retains structural ownership, Team and controller/pool routing, one
+grant admission and revision/CAS. The server-readable operational policy fields
+are `simultaneousLimit.maximum`, which the preset admission owner uses to count
+active allocations, `retention`, which the managed lifecycle owner applies,
+and `wakeOnAcceptedMessage`, which the wake owner uses to authorize and enumerate
+accepted-input wakes. `controllerPoolId` selects the routing and admission owner.
+These decisions do not require the private launch or setup definition.
+Before encrypting an exact delegated Create, the initiating host resolves the
+selected preset revision and controller through the acquire routing owner. The
+response supplies only the authenticated installation custody needed to seal the
+request. Pool acquisition supplies the same scoped custody through its existing
+resolver. This read does not establish native readiness or grant Machine control;
+the acquire admission and installed custodian retain those decisions.
+
+When a preset acquire omits retention or wake policy, its native custodian opens
+the exact revision and resolves effective policy through the existing native
+policy owner before Home creates the allocation. The native admission carries that resolved policy beside
+the unchanged original request envelope. Home binds the public compute input to
+that envelope and its existing execution authorization; encrypted request content
+remains ciphertext. The envelope is ephemeral proof, while the allocation keeps
+non-null policy and the existing request digest. Admission and replay return the
+retained per-Machine private snapshot; the host opens that snapshot instead of
+reusing the source preset as runtime state.
+
+An acquire override is optional. An absent override uses the saved content; a
+supplied override still passes the strict sealed name/enrollment delta reader.
+Stored Setup source copies that predate `contentEncryptionMode` have an explicit
+legacy read branch. New copies require the captured preset mode, and reading an
+old copy neither infers its mode from the viewer nor rewrites metadata.
+The acquiring controller opens the stored
+preset and decides declaration compatibility, launch choices, credential
+availability and the Team member's fixed-shape constraint at use. Clients open
+the same content for shelves, details, pickers and chips, and search names locally.
+The former plaintext-only `controllerDisplayName` path is removed; the label is
+part of the sealed definition.
+
+Per-acquire name and enrollment-policy choices use the existing sealed content
+override. The acquiring host opens and validates that exact override; an
+administrator username is never copied into the preset admission's public input
+or Home projection. Ordinary one-off acquisition retains its separate contract.
+
+Admitted creations retain their exact sealed snapshot across retries. Native
+results, control outcomes and observations that repeat private launch facts,
+including provider resource payloads, resize choices and native diagnostic text,
+belong to that snapshot.
+Keyholders open it for execution and presentation; Home lifecycle projections
+must not copy those facts back into plaintext rows or reports.
 
 Revisioned Machine presets and admitted managed-creation setup snapshots retain
-SavedSecret references, not resolved credential values. The existing resource
-mutation owner includes archived presets and retained allocations in its
-deletion/dependency census. Promotion rewrites only the owning Account's
-references, using the resulting shared resource's actual revision; it preserves
-the admitted setup content and stage facts.
+SavedSecret references, not resolved credential values. Those references are
+inside private content. Personal-source promotion captures the readable preset
+collection and active/archived managed rows in batches. The keyholding producer
+opens them, rewrites matching references through the preset content owner, and
+submits opaque replacements with the existing SavedSecret promotion. Source
+preset writes use a fresh key and current recipients; retained admitted snapshots
+use their existing content-replacement owner. The same transaction admits each
+source write and CASes each captured revision or exact retained carrier before
+removing the personal source. Missing material or authority refuses promotion
+before cleanup. The server neither discovers private references nor parses them.
+The UI's delete reference census covers its captured readable rows; generic
+deletion cannot promise a global census of sealed content. An unavailable
+reference is refused by the daemon's secret-acquisition owner at use.
 
 Canonical clients carry the genuine persisted personal-source identity in
 `personalSecretPromotions`. Newly staged credentials are not persisted personal
-sources and do not supply that mapping. Removing an unmapped Plain source that
-would strand a known setup reference is refused before mutation. The
-server cannot derive an omitted mapping from opaque E2EE Settings; opening
+sources and do not supply that mapping. The server cannot derive an omitted
+mapping from opaque preset content or E2EE Settings; opening
 credential material remains with its existing Account-mode and grant owner.
 Resolved overlays reach only the setup process, not native tool installation.
 See [the Machine setup owner](./cli-architecture.md#preset-machine-setup-03-development)

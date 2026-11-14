@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest';
+import { readHostAdmittedReviewedParentV1, type ActionExecutorContext,
+  type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { createManagedOpaquePresetReviewedChildPortV1 } from './opaquePresetReviewedChild.js';
+
+const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'Fixture compute', icon: 'cloud',
+  resourceKind: 'compute', schemaVersion: 1, launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+  resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+  billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'delete'] },
+  actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy', power: 'power' },
+});
+
+describe('opaque preset reviewed child issuer', () => {
+  it('issues exactly the authenticated opened declaration role under the original parent', async () => {
+    let observed: Readonly<{ input: unknown; context: ActionExecutorContext }> | undefined;
+    const port = createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.acquire', input: { homeId: 'home', managedId: 'managed' } },
+      context: { surface: 'cli' }, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,
+        name: 'Private launch name', choices: {} }, provisioner, localId: 'acquire', role: 'acquire',
+      execute: async (input, context): Promise<ActionExecuteResult> => {
+        observed = { input, context };
+        return { ok: true, result: { accepted: true } };
+      },
+    });
+
+    expect(port).not.toBeNull();
+    const result = await port!.invoke({ action: { pluginId: 'fixture.compute', localId: 'acquire' }, role: 'acquire',
+      input: { privateChoice: 'opened-only' } });
+    expect(result).toEqual({ ok: true, result: { accepted: true } });
+    expect(observed?.input).toEqual({ privateChoice: 'opened-only' });
+    expect(readHostAdmittedReviewedParentV1(observed?.context.hostReviewedChild)).toEqual({
+      actionId: 'machines.managed.acquire', input: { homeId: 'home', managedId: 'managed' },
+    });
+  });
+
+  it('refuses an action absent from the authenticated opened declaration', () => {
+    expect(createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.acquire', input: {} }, context: { surface: 'cli' },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      provisioner, localId: 'foreign', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => ({ ok: true, result: {} }),
+    })).toBeNull();
+  });
+
+  it('allows an exact signed Team acquire to dispatch its opened provider child on the custodian controller', async () => {
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
+      serverIdentityId: 'home', accountId: 'team-member', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 1 }, machineId: 'controller', installationId: 'controller-installation',
+      actionId: 'machines.managed.acquire', requestId: 'team-request', requestEnvelopeDigest: 'A'.repeat(43), target,
+    } });
+    const context: ActionExecutorContext = { surface: 'cli', runtimeAccountId: 'owner', actionRequestId: 'team-request',
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+    let executions = 0;
+    const port = createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.acquire', input: { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 4 } } },
+      context, custody: { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+        controller: { machineId: 'controller', installationId: 'controller-installation' } },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      provisioner, localId: 'acquire', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => {
+        executions++;
+        return { ok: true, result: { accepted: true } };
+      },
+    });
+
+    await expect(port?.invoke({ action: { pluginId: 'fixture.compute', localId: 'acquire' }, role: 'acquire', input: {} }))
+      .resolves.toEqual({ ok: true, result: { accepted: true } });
+    expect(executions).toBe(1);
+  });
+
+  it.each([
+    ['a different controller', 'owner', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'other-controller', installationId: 'controller-installation' } }],
+    ['a different signed request', 'owner', { homeId: 'home', custodianAccountId: 'owner', requestId: 'other-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }],
+    ['the requester runtime instead of the custodian', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }],
+  ] as const)('refuses a Team custodian child when custody names %s', async (_caseName, runtimeAccountId, custody) => {
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
+      serverIdentityId: 'home', accountId: 'team-member', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 1 }, machineId: 'controller', installationId: 'controller-installation',
+      actionId: 'machines.managed.acquire', requestId: 'team-request', requestEnvelopeDigest: 'A'.repeat(43), target,
+    } });
+    let executions = 0;
+    const port = createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.acquire', input: { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 4 } } },
+      context: { surface: 'cli', runtimeAccountId, actionRequestId: 'team-request',
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target },
+      custody, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      provisioner, localId: 'acquire', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => {
+        executions++;
+        return { ok: true, result: { accepted: true } };
+      },
+    });
+
+    await expect(port?.invoke({ action: { pluginId: 'fixture.compute', localId: 'acquire' }, role: 'acquire', input: {} }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+    expect(executions).toBe(0);
+  });
+});

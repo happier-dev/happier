@@ -15,8 +15,8 @@ import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { configuration } from '@/configuration';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { readManagedMachine, readManagedMachines } from '@/machines/managed/readManagedMachine';
-import { ManagedInspectOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { openManagedMachineRead, readManagedMachineFull, readManagedMachineReads } from '@/machines/managed/readManagedMachine';
+import { ManagedInspectOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedDevcontainerChildProjectionCurrentV1, deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
@@ -230,6 +230,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   readFileAtTarget(request: WorkspaceSyncTargetFileReadRequest): Promise<ReadWorkspaceSyncFileResultV1>;
   observeEntryAtTarget: WorkspaceSyncTargetEntryObserve;
   prepareBootstrapHere(request: WorkspaceSyncTargetBootstrapPrepareV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapPrepareResultV1>;
+  /** Owner-local consumption of a completed preparation; never a wire RPC. */
+  getPreparedBootstrapOwnership(request: Readonly<{ bootstrapOperationId: string; targetWorkspaceRefId: string }>): Promise<WorkspaceRootOwnershipHandle>;
   releaseBootstrapHere(request: WorkspaceSyncTargetBootstrapReleaseV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapReleaseResultV1>;
   prepareBootstrapAtTarget(request: WorkspaceSyncTargetBootstrapPrepareRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapAtTargetResult>;
   releaseBootstrapAtTarget(request: WorkspaceSyncTargetBootstrapReleaseRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapReleaseResultV1>;
@@ -368,12 +370,13 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
     const useOwnedRow = owned !== undefined && ownerAccountId !== null && owned.admission.custodianAccountId !== ownerAccountId;
     const ownedRows = useOwnedRow ? await (async () => {
       if (!input.credentials || !await owned.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
-      const rows = await readManagedMachines({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
+      const rows = await readManagedMachineReads({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
         homeId: input.serverId, enrolledMachineId: owned.admission.machineId, ...(input.signal ? { signal: input.signal } : {}) });
-      return rows.filter(row => row.homeId === input.serverId && row.custodianAccountId === ownerAccountId
-        && row.creationState === 'active' && row.allocation === 'bound' && row.archivedAt === undefined
-        && row.controller?.machineId === owned.controllerMachineId && row.enrolledMachineId === owned.admission.machineId
-        && row.enrollmentAccountId === owned.admission.custodianAccountId);
+      return rows.map(read => ({ read, machine: unwrapManagedMachineReadV1(read) }))
+        .filter(({ machine }) => machine.homeId === input.serverId && machine.custodianAccountId === ownerAccountId
+          && machine.creationState === 'active' && machine.allocation === 'bound' && machine.archivedAt === undefined
+          && machine.controller?.machineId === owned.controllerMachineId && machine.enrolledMachineId === owned.admission.machineId
+          && machine.enrollmentAccountId === owned.admission.custodianAccountId);
     })() : [];
     if (useOwnedRow && ownedRows.length !== 1) throw authorityError('workspace_sync_child_unavailable', 'Exact controller-owned enrollment is unavailable');
     // Start the endpoint reads together, but consume settled results in input
@@ -414,9 +417,18 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       if (!retainedManaged && (!machine || machine.revokedAt != null || machine.replacedByMachineId)) {
         throw authorityError('workspace_sync_child_unavailable', 'Current Machine is unavailable');
       }
-      const projection = retainedManaged ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: retainedManaged.id,
-        controllerMachineId: retainedManaged.controller?.machineId, enrolledMachineId: retainedManaged.enrolledMachineId,
-        resource: retainedManaged.resource }) : machine?.metadata?.devcontainerChild;
+      // The controller-owned list carries Home's exact recipient projection;
+      // open that selected carrier before deriving the private child facts.
+      let managedMachine = retainedManaged ? await (async () => {
+        if (!input.credentials) {
+          throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
+        }
+        return await openManagedMachineRead({ credentials: input.credentials,
+          serverHttpBaseUrl: input.serverHttpBaseUrl, read: retainedManaged.read, signal: input.signal });
+      })() : undefined;
+      const projection = managedMachine ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: managedMachine.id,
+        controllerMachineId: managedMachine.controller?.machineId, enrolledMachineId: managedMachine.enrolledMachineId,
+        resource: managedMachine.resource }) : machine?.metadata?.devcontainerChild;
       if (!projection) continue;
       if (projection.observation.storage.kind === 'bind' && input.purpose !== 'child_namespace') {
         try {
@@ -443,10 +455,18 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       if (!installationId || !retainedManaged && machine?.metadata?.username !== projection.observation.user) {
         throw authorityError('workspace_sync_child_unavailable', 'Child installation or native user is unavailable');
       }
-      let managedMachine = retainedManaged ?? await readManagedMachine({ credentials: input.credentials,
-        serverHttpBaseUrl: input.serverHttpBaseUrl, homeId: input.serverId,
-        managedId: projection.relation.managedMachineId, signal: input.signal,
-        ...(input.authorization ? { authorization: input.authorization, effectActionId: input.effectActionId } : {}) });
+      // Devcontainer projection validation consumes the private resource
+      // snapshot. The public GET/LIST union is deliberately structural, so
+      // this path must use the already captured Account custody to open it.
+      if (!input.credentials) {
+        throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
+      }
+      if (!managedMachine) {
+        managedMachine = await readManagedMachineFull({ credentials: input.credentials,
+          serverHttpBaseUrl: input.serverHttpBaseUrl, homeId: input.serverId,
+          managedId: projection.relation.managedMachineId, signal: input.signal,
+          ...(input.authorization ? { authorization: input.authorization, effectActionId: input.effectActionId } : {}) });
+      }
       if (input.purpose !== 'child_namespace' && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.serverId, machineId,
         projection, managedMachine })) {
         throw authorityError('workspace_sync_child_unavailable', 'Child enrollment is no longer current');
@@ -2892,9 +2912,6 @@ export function createWorkspaceSyncTargetAuthority(
       if (wireRequest.serverId !== localServerId) {
         throw authorityError('target_unavailable', 'Handoff target server does not match this daemon');
       }
-      if (wireRequest.machineId === localMachineId) {
-        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
-      }
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
         context.signal.throwIfAborted();
@@ -2908,6 +2925,9 @@ export function createWorkspaceSyncTargetAuthority(
             accountServerId: localServerId, targetMachineId: wireRequest.machineId, targetRootPath: wireRequest.targetPath },
           ...(request.signal ? { signal: request.signal } : {}),
         }, context));
+      }
+      if (wireRequest.machineId === localMachineId) {
+        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
       }
       const target = await readReplacementTarget(wireRequest.machineId, wireRequest.targetPath, request.signal);
       if (target.machineId === localMachineId) {
@@ -3061,6 +3081,14 @@ export function createWorkspaceSyncTargetAuthority(
       }));
     },
 
+    getPreparedBootstrapOwnership: async request => {
+      const entry = [...retained.values()].find(candidate => (
+        candidate.bootstrapOperationId === request.bootstrapOperationId
+        && candidate.targetWorkspaceRefId === request.targetWorkspaceRefId
+      ));
+      if (!entry) throw authorityError('workspace_root_ownership_lost', 'Workspace sync target custody was not retained');
+      return entry.handle;
+    },
     prepareBootstrapHere: async (rawRequest, signal, context) => {
       signal?.throwIfAborted();
       const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(rawRequest);
@@ -3213,18 +3241,21 @@ export function createWorkspaceSyncTargetAuthority(
       // object identity stay with bootstrap, which inspects the real target.
       if (request.targetReplacementApproval) {
         const approval = request.targetReplacementApproval;
-        if (!dependencies.assertTargetReplacementAuthorized
-          || !request.targetReplacementApprovalReceiptId
-          || request.targetReplacementApprovalActionInput === undefined) {
+        if (request.targetReplacementApprovalActionInput === undefined) {
           throw authorityError('approval_stale', 'Workspace target replacement approval has no Action receipt');
         }
-        // A verified normal SOURCE invocation already checked its requester's
-        // persisted receipt. Other families retain the existing target check.
-        if (!sourceInvocation) await dependencies.assertTargetReplacementAuthorized(
-          request.targetReplacementApprovalReceiptId,
-          request.targetReplacementApprovalActionInput,
-          approval,
-        );
+        // A verified normal SOURCE invocation already consumed the requester's
+        // native confirmation or persisted receipt. Other families retain the target check.
+        if (!sourceInvocation) {
+          if (!dependencies.assertTargetReplacementAuthorized || !request.targetReplacementApprovalReceiptId) {
+            throw authorityError('approval_stale', 'Workspace target replacement approval has no Action receipt');
+          }
+          await dependencies.assertTargetReplacementAuthorized(
+            request.targetReplacementApprovalReceiptId,
+            request.targetReplacementApprovalActionInput,
+            approval,
+          );
+        }
         if (approval.serverId !== localServerId) {
           throw authorityError('approval_stale', 'Workspace target replacement approval placement is stale');
         }
@@ -3601,14 +3632,7 @@ export function createWorkspaceSyncTargetAuthority(
       const admittedMachineId = request.admittedTarget?.machineId ?? workspace.machineId.trim();
       if (admittedMachineId === localMachineId) {
         const result = await authority.prepareBootstrapHere(wireRequest, request.signal, context);
-        const retainedEntry = [...retained.values()].find((entry) => (
-          entry.bootstrapOperationId === wireRequest.bootstrapOperationId
-          && entry.targetWorkspaceRefId === wireRequest.targetWorkspaceRefId
-        ));
-        if (!retainedEntry) {
-          throw authorityError('workspace_root_ownership_lost', 'Workspace sync target custody was not retained');
-        }
-        return { ...result, ownershipHandles: [retainedEntry.handle] };
+        return { ...result, ownershipHandles: [await authority.getPreparedBootstrapOwnership(wireRequest)] };
       }
       if (context?.callerInputAuthorization) {
         throw authorityError('workspace_sync_update_required', 'The original requester target transport is unavailable');

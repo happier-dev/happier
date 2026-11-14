@@ -119,7 +119,7 @@ describe('Environment installation grants and complete resource captures', () =>
             displayName: 'Shared phase credential', kind: 'token', encryptionMode: 'plain', accountGrants: [], teamGrants: [],
             storedContent: { t: 'plain', v: { v: 1, name: 'Shared phase credential', kind: 'token', value: 'private-shared-phase-value' } } }));
         if (!resource.ok) throw new Error(resource.error);
-        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'RUNTIME_TOKEN',
+        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'RUNTIME_TOKEN', grantRef: crypto.randomUUID(),
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } };
         const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Accepted custody', retainPreviousDeployments: 1,
             definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } }, bindings: [] });
@@ -142,7 +142,8 @@ describe('Environment installation grants and complete resource captures', () =>
             environmentId: environment.environmentId, expectedRevision: environment.revision, requestKey: crypto.randomUUID(),
             targetId: 'own-server', role: 'runtime', machines: [a], ...linkContent }));
         if (!linked.ok) throw new Error(linked.error);
-        const reference = await artifact('deployment-environment.v1', { ...content, bindings: [binding, { ...binding, phase: 'build', name: 'BUILD_TOKEN' }] });
+        const reference = await artifact('deployment-environment.v1', { ...content, bindings: [binding,
+            { ...binding, phase: 'build', name: 'BUILD_TOKEN', grantRef: crypto.randomUUID() }] });
         const grant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: environment.environmentId,
             ...a, resourceId, resourceRevision: 1, sealedContent: 'same-original-A-seal' };
         const bindings = { serverId, environmentId: environment.environmentId, expectedRevision: linked.revision,
@@ -295,15 +296,20 @@ describe('Environment installation grants and complete resource captures', () =>
                     remoteHosts: { revision: 'absent', resourceRefs: [] }, notificationChannels: { revision: 'absent', resourceRefs: [] } },
             }), { isolationLevel: 'Serializable' });
         };
-        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'TOKEN',
+        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'TOKEN', grantRef: crypto.randomUUID(),
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } };
+        const buildTokenGrantRef = crypto.randomUUID();
+        const portGrantRef = crypto.randomUUID();
+        const dataHostGrantRef = crypto.randomUUID();
+        const commitGrantRef = crypto.randomUUID();
         const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Capture contract', retainPreviousDeployments: 1,
                 definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
-                bindings: [binding, { ...binding, phase: 'build', name: 'BUILD_TOKEN' },
-                    { purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } },
-                    { purpose: 'variable', phase: 'runtime', name: 'DATA_HOST',
+                bindings: [binding, { ...binding, phase: 'build', name: 'BUILD_TOKEN', grantRef: buildTokenGrantRef },
+                    { purpose: 'variable', phase: 'runtime', name: 'PORT', grantRef: portGrantRef, source: { kind: 'value', value: '3000' } },
+                    { purpose: 'variable', phase: 'runtime', name: 'DATA_HOST', grantRef: dataHostGrantRef,
                         source: { kind: 'reference', environmentId: source.source.id, export: 'host', via: 'auto' } },
-                    { purpose: 'variable', phase: 'build', name: 'COMMIT', source: { kind: 'deploymentFact', fact: 'commitSha' } }] });
+                    { purpose: 'variable', phase: 'build', name: 'COMMIT', grantRef: commitGrantRef,
+                        source: { kind: 'deploymentFact', fact: 'commitSha' } }] });
         async function artifact(kind: string, value: unknown, actorAccountId = owner.id) {
             // The real Artifact writer receives the client crypto boundary's
             // ciphertext; the server cannot interpret these E2EE body bytes.
@@ -393,7 +399,7 @@ describe('Environment installation grants and complete resource captures', () =>
             const destinations = row.phase === 'build' ? [{ machineId: buildMachineId, installationId: buildInstallationId }]
                 : [{ machineId, installationId }, { machineId: secondMachineId, installationId: secondInstallationId }];
             for (const destination of destinations) grants.push({ v: 1, kind: 'environmentValues', environmentId: environment.environmentId,
-                ...destination, binding: { purpose: 'variable', phase: row.phase, name: row.name }, sealedContent: `sealed-${row.name}` });
+                ...destination, binding: { purpose: 'variable', phase: row.phase, grantRef: row.grantRef }, sealedContent: `sealed-${row.grantRef}` });
         }
         const input = { serverId, environmentId: environment.environmentId, expectedRevision: linked.revision,
             ...preparedContent, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings), grants };
@@ -429,9 +435,9 @@ describe('Environment installation grants and complete resource captures', () =>
             await refuse({ ...input, referencedSavedSecretRevisions: [] });
             if (mode === 'plain') {
                 await refuse({ ...input, grants: grants.filter(row => !(row.kind === 'secret' && row.machineId === secondMachineId)) });
-                await refuse({ ...input, grants: grants.filter(row => !(row.kind === 'environmentValues' && row.binding.name === 'PORT')) });
+                await refuse({ ...input, grants: grants.filter(row => !(row.kind === 'environmentValues' && row.binding.grantRef === portGrantRef)) });
                 await refuse({ ...input, grants: [...grants, { v: 1, kind: 'environmentValues', environmentId: environment.environmentId,
-                    machineId, installationId, binding: { purpose: 'variable', phase: 'runtime', name: 'UNBOUND' }, sealedContent: 'unbound' }] });
+                    machineId, installationId, binding: { purpose: 'variable', phase: 'runtime', grantRef: crypto.randomUUID() }, sealedContent: 'unbound' }] });
                 await refuse({ ...input, ...await artifact('deployment-environment.v1', { ...content,
                     bindings: content.bindings.filter(row => row.purpose !== 'registry'
                         && !(row.purpose === 'variable' && row.phase === 'build' && row.source.kind === 'secret')) }) });
@@ -482,6 +488,11 @@ describe('Environment installation grants and complete resource captures', () =>
                 machineId: row.machineId, installationId: row.installationId, resourceId, resourceRevision: 1, contentEnvelope: row.sealedContent,
             }))));
             const committed = await snapshot();
+            const valueRows = committed.grants.filter(row => row.kind === 'environmentValues');
+            expect(valueRows.map(row => row.name)).toEqual(expect.arrayContaining([portGrantRef, dataHostGrantRef, commitGrantRef]));
+            expect(JSON.stringify(valueRows)).not.toContain('PORT');
+            expect(JSON.stringify(valueRows)).not.toContain('DATA_HOST');
+            expect(JSON.stringify(valueRows)).not.toContain('COMMIT');
             if (variant === 'rotation') {
                 const rotating = { accountId: donor.id, resourceId, expectedRevision: 1,
                     displayName: secret.name, kind: secret.kind,
@@ -539,16 +550,16 @@ describe('Environment installation grants and complete resource captures', () =>
             };
             const editedContent = { ...content, bindings: content.bindings.map(row => row.purpose === 'variable' && row.name === 'PORT'
                 ? { ...row, source: { kind: 'value' as const, value: '4000' } } : row) };
-            const editedGrants = grants.map(row => row.kind === 'environmentValues' && row.binding.name === 'PORT'
+            const editedGrants = grants.map(row => row.kind === 'environmentValues' && row.binding.grantRef === portGrantRef
                 ? { ...row, sealedContent: 'changed-port-definition' } : row);
             await edit(editedContent, editedGrants);
-            expect((await snapshot()).grants.filter(row => row.name !== 'PORT'), 'editing one row preserves sibling grants')
-                .toEqual(committed.grants.filter(row => row.name !== 'PORT'));
+            expect((await snapshot()).grants.filter(row => row.name !== portGrantRef), 'editing one row preserves sibling grants')
+                .toEqual(committed.grants.filter(row => row.name !== portGrantRef));
             await edit({ ...editedContent, bindings: editedContent.bindings.filter(row => row.purpose !== 'variable' || row.name !== 'PORT') },
-                editedGrants.filter(row => row.kind !== 'environmentValues' || row.binding.name !== 'PORT'));
+                editedGrants.filter(row => row.kind !== 'environmentValues' || row.binding.grantRef !== portGrantRef));
             const beforeWithdrawal = await snapshot();
-            expect(beforeWithdrawal.grants.filter(row => row.name === 'PORT')).toEqual([]);
-            expect(beforeWithdrawal.grants.filter(row => row.name !== 'PORT')).toEqual(committed.grants.filter(row => row.name !== 'PORT'));
+            expect(beforeWithdrawal.grants.filter(row => row.name === portGrantRef)).toEqual([]);
+            expect(beforeWithdrawal.grants.filter(row => row.name !== portGrantRef)).toEqual(committed.grants.filter(row => row.name !== portGrantRef));
             const withdrawn = await inTx(tx => setSavedSecretResourceGrantsInTx(tx, {
                 accountId: donor.id, resourceId, expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [],
                 keyEnvelopes: envelopes.filter(envelope => envelope.recipientAccountId === donor.id),

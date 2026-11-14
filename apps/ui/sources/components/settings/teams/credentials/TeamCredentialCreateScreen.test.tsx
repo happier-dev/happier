@@ -5,7 +5,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -236,7 +236,12 @@ describe('TeamCredentialCreateScreen', () => {
                     selectedTarget: null,
                     eligibleTargets: [{ machineId: 'machine-broker', displayName: 'Office Mac', availability: 'available' }],
                     selectedPool: null,
-                    eligiblePools: [{ poolId, displayName: 'Development', availability: 'unavailable', availableMachineCount: 0 }],
+                    eligiblePools: [{
+                        poolId,
+                        displayName: { kind: 'available', label: teamCredentialDisplayNameFixture('Development') },
+                        availability: 'unavailable',
+                        availableMachineCount: 0,
+                    }],
                 },
             },
         });

@@ -1,3 +1,4 @@
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -530,7 +531,7 @@ describe("Home governance routes", () => {
         const owner = await createAccount("owner");
         const admin = await createAccount("admin");
         const member = await createAccount("member");
-        const memberPat = await auth.createApiToken({ accountId: member.accountId, tokenId: crypto.randomUUID(), label: "Before disable" });
+        const memberPat = await auth.createApiToken({ accountId: member.accountId, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(member.accountId, "Before disable") });
 
         const disabled = await post(app, "/v1/home/accounts/disable", admin.token, {
             accountId: member.accountId,

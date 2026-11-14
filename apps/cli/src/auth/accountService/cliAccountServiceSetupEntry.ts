@@ -1,10 +1,10 @@
 import tweetnacl from 'tweetnacl';
-import { ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1, AccountDirectoryHomesResponseV1Schema, HomeLoginAssertionResponseV1Schema, HomeLoginCredentialPayloadV1Schema, HomeLoginRedemptionResultV1Schema, HOME_LOGIN_HTTP_PATH_V1, buildAccountDirectoryHomeLoginAssertionHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1, ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, AccountDirectoryHomesResponseV1Schema, AccountDirectoryMeResponseV1Schema, HomeLoginAssertionResponseV1Schema, HomeLoginCredentialPayloadV1Schema, HomeLoginRedemptionResultV1Schema, HOME_LOGIN_HTTP_PATH_V1, buildAccountDirectoryHomeLoginAssertionHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { formatRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import type { AccountDirectoryHomeEntryV1, HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
+import { OpenedAccountDirectoryHomeEntryV1Schema, type AccountDirectoryHomeEntryV1, type HomeSignInServicePolicyV1, type OpenedAccountDirectoryHomeEntryV1 } from '@happier-dev/protocol';
 import {
   observeAccountServiceHomeApproval,
   resolveEffectiveSignInService,
@@ -26,11 +26,13 @@ import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agen
 import { createStepPrinter } from '@happier-dev/cli-common/output';
 
 import { libsodiumDecryptForSecretKey } from '@/api/encryption';
+import { openCliPrivateLabel } from '@/api/privateLabels';
 import { registerMachineWithAuthenticatedHomeRuntime } from '@/ui/auth';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import { promptMultipleChoice } from '@/terminal/prompts/promptMultipleChoice';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
+import { admitCliReportedAccountMode } from '@/api/client/accountModeAdmission';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { verifyTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentClient';
 import {
@@ -109,6 +111,38 @@ export type CliAccountServiceSetupEntryOutcome =
 
 function endpointUrl(endpoint: string, path: string): string {
   return `${endpoint.replace(/\/+$/u, '')}${path}`;
+}
+
+class CliAccountDirectoryLabelUnavailableError extends Error {}
+
+/**
+ * Cross the private-label boundary exactly once, before cli-common receives
+ * Directory homes. A null wire label is the server's legacy keyless bootstrap
+ * marker, so it gets only a transient neutral display label.
+ */
+function openAccountDirectoryHomes(input: Readonly<{
+  homes: readonly AccountDirectoryHomeEntryV1[];
+  accountContentEncryptionMode: 'plain' | 'e2ee';
+  accountContentPrivateKey?: Uint8Array;
+}>): readonly OpenedAccountDirectoryHomeEntryV1[] {
+  return input.homes.map((home) => {
+    const label = home.label === null
+      ? 'Home'
+      : openCliPrivateLabel({
+          binding: {
+            entity: 'account_directory_home',
+            field: 'label',
+            id: home.homeServerIdentityId,
+          },
+          label: home.label,
+          readPolicy: { kind: 'account-owned', contentEncryptionMode: input.accountContentEncryptionMode },
+          ...(input.accountContentPrivateKey
+            ? { accountKey: input.accountContentPrivateKey }
+            : {}),
+        });
+    if (!label) throw new CliAccountDirectoryLabelUnavailableError();
+    return OpenedAccountDirectoryHomeEntryV1Schema.parse({ ...home, label });
+  });
 }
 
 function readCommittedMaterialStageError(error: unknown): Readonly<{
@@ -653,10 +687,30 @@ export async function runCliAccountServiceSetupEntry(
     authenticateExactMethod,
     runDirectoryJourney: async ({ credential, signal }) => {
       try {
-        const directory = AccountDirectoryHomesResponseV1Schema.parse(await jsonRequest(
+        const accountSubject = AccountDirectoryMeResponseV1Schema.parse(await jsonRequest(
+          endpointUrl(requestOrigin, ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1),
+          { headers: { Authorization: `Bearer ${credential.token}` }, signal },
+        ));
+        const accountContentEncryptionMode = await admitCliReportedAccountMode(accountSubject.encryptionMode, {
+          encryption: credential.accountContentPrivateKey ?? null,
+        });
+        if (accountContentEncryptionMode === 'e2ee' && !credential.accountContentPrivateKey) {
+          throw new CliAccountDirectoryLabelUnavailableError();
+        }
+        const rawDirectory = AccountDirectoryHomesResponseV1Schema.parse(await jsonRequest(
           endpointUrl(requestOrigin, ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1),
           { headers: { Authorization: `Bearer ${credential.token}` }, signal },
         ));
+        const directory = {
+          ...rawDirectory,
+          homes: openAccountDirectoryHomes({
+            homes: rawDirectory.homes,
+            accountContentEncryptionMode,
+            ...(credential.accountContentPrivateKey
+              ? { accountContentPrivateKey: credential.accountContentPrivateKey }
+              : {}),
+          }),
+        };
         const completeCommittedHomeCredential = async (inputValue: Readonly<{
           runtimeOrigin: string;
           profileId: string;
@@ -815,7 +869,13 @@ export async function runCliAccountServiceSetupEntry(
               await writeStoredCredentialsForServerId(
                 profileId,
                 existingMaterialMatchesAccount && existing?.encryption
-                  ? { token: credential.token, encryption: existing.encryption }
+                  ? {
+                    token: credential.token,
+                    encryption: existing.encryption,
+                    ...(existing.accountE2eeCustody === 'historical'
+                      ? { accountE2eeCustody: 'historical' as const }
+                      : {}),
+                  }
                   : { token: credential.token, encryption: null },
               );
               try {
@@ -991,7 +1051,7 @@ export async function runCliAccountServiceSetupEntry(
           }
           return { kind: 'home_unavailable' };
         };
-        const adoptDirectoryHome = async (home: AccountDirectoryHomeEntryV1) => {
+        const adoptDirectoryHome = async (home: OpenedAccountDirectoryHomeEntryV1) => {
           const adopted = await adoptServerProfileHomeConnectionDescriptor({
             descriptor: home.connectionDescriptor, suggestedName: home.label, observation: 'advisory',
           });

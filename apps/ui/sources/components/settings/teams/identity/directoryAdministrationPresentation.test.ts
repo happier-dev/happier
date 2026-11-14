@@ -6,9 +6,14 @@ import { t } from '@/text';
 import { directoryGroupMappingTargetLabel, directorySourcePresentationState } from './directoryAdministrationPresentation';
 
 describe('directoryGroupMappingTargetLabel', () => {
-    it('names the reader-projected target or states that it is not visible', () => {
-        const mapping = { state: 'bound', bindingId: 'binding-1', mode: 'native_target', teamGroupId: 'group-1', teamGroupName: 'Platform Engineering' } as const;
-        expect(directoryGroupMappingTargetLabel(mapping)).toBe('Platform Engineering');
+    it('names only a locally opened recipient projection or states that it is not visible', () => {
+        const mapping = {
+            state: 'bound', bindingId: 'binding-1', mode: 'native_target', teamGroupId: 'group-1',
+            teamGroupName: { kind: 'available', label: { content: { t: 'plain', v: 'opaque' }, recipientEnvelope: null } },
+        } as const;
+        expect(directoryGroupMappingTargetLabel(mapping, 'Platform Engineering')).toBe('Platform Engineering');
+        expect(directoryGroupMappingTargetLabel(mapping, null))
+            .toBe(t('identityAdministration.mappedGroupNotVisible'));
         expect(directoryGroupMappingTargetLabel({ ...mapping, teamGroupName: null }))
             .toBe(t('identityAdministration.mappedGroupNotVisible'));
     });

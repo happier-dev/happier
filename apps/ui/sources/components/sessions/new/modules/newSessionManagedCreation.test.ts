@@ -7,14 +7,15 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, createRootLayoutFeaturesResponse } from '@/dev/testkit';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { readMachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { loadProfileCatalogV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
-import { MachinePoolListOutputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { ManagedAcquireInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -65,21 +66,72 @@ const draft = createManagedMachineSelectionDraft({
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
 });
 const initial: ManagedMachineAcquisitionDraft = { requestId: 'send-1', selection: draft.selection };
+const exactPresetContentOverride = { content: { t: 'plain' as const, v: { exactPresetRevision: true } } };
 const baseMachine: ManagedMachineV1 = { id: 'paid', homeId: 'home', custodianAccountId: 'account', launch, controller,
     allocation: 'bound', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { nativeId: 'same-native-id' } },
     creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
 
+function opaqueTeamPreset(id: string, homeId: string, revision: number, name: string) {
+    return createDelegatedManagedPresetFixture({ preset: {
+        id, homeId, revision, name, owner: { kind: 'team', teamId: 'team' }, launch, controller,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    }, custodianAccountId: 'company', installationPublicKey: 'BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY', descriptor: {
+        id: 'native', title: 'Compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+        launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+        resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+        billing: draft.receipt.billing, retention: draft.receipt.retentionCapabilities,
+        actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+    } });
+}
+
 it('uses the strict acquire schema as the single identity admission in the creation builder', () => {
     const complete = buildManagedMachineAcquireInput(draft);
+    if (!complete) throw new Error('Expected reviewed one-off acquire input');
     expect(complete).toMatchObject({ enrollmentIdentity: draft.enrollmentIdentity });
     const { enrollmentIdentity: _identity, ...incomplete } = complete;
     const admitted = ManagedAcquireInputV1Schema.safeParse(incomplete);
     if (admitted.success) throw new Error('Acquire identity must remain schema-required');
-    let failure: unknown;
-    try { buildManagedMachineAcquireInput({ ...draft, enrollmentIdentity: undefined }); }
-    catch (error) { failure = error; }
-    expect(failure).toMatchObject({ issues: admitted.error.issues });
+    expect(buildManagedMachineAcquireInput({ ...draft, enrollmentIdentity: undefined })).toBeNull();
+});
+
+it('binds preset acquisition to its selected opaque override without sending its enrollment identity', () => {
+    const selection = { kind: 'preset' as const, homeId: 'home', id: 'selected-preset', revision: 4 };
+    const presetContentOverride = { content: { t: 'plain' as const, v: { selectedRevision: 4 } } };
+    const selected = createManagedMachineSelectionDraft({ ...draft, selection, presetContentOverride });
+
+    const input = buildManagedMachineAcquireInput(selected);
+
+    expect(input).toMatchObject({ selection, presetContentOverride });
+    expect(input).not.toHaveProperty('enrollmentIdentity');
+    expect(buildManagedMachineAcquireInput({ ...selected, presetContentOverride: undefined })).toBeNull();
+});
+
+it('builds a deferred author preset acquire from its exact opaque override and structural origin only', () => {
+    const selection = { kind: 'preset' as const, homeId: 'home', id: 'author-preset', revision: 6 };
+    const presetContentOverride = { content: { t: 'plain' as const, v: { authorPreset: true } } };
+    const presetOrigin = { id: selection.id, homeId: selection.homeId, revision: selection.revision,
+        controllerPoolId: '4d783830-8626-4da8-8fde-a6da516025e1', retention: { kind: 'until-delete' as const },
+        wakeOnAcceptedMessage: false };
+
+    const selected = createManagedMachineSelectionDraft({ deferredAuthorPreset: true, selection, presetContentOverride, presetOrigin });
+
+    expect(selected).not.toHaveProperty('receipt');
+    expect(buildManagedMachineAcquireInput(selected)).toEqual({ selection, retention: presetOrigin.retention,
+        wakeOnAcceptedMessage: false, presetContentOverride });
+    expect(buildManagedMachineAcquireInput(selected)).not.toHaveProperty('reviewedFacts');
+    expect(buildManagedMachineAcquireInput(selected)).not.toHaveProperty('enrollmentIdentity');
+});
+
+it('carries an omitted sealed preset policy to admission without choosing client defaults', () => {
+    const selection = { kind: 'preset' as const, homeId: 'home', id: 'inherited-policy', revision: 1 };
+    const selected = createManagedMachineSelectionDraft({ deferredAuthorPreset: true, selection,
+        presetContentOverride: exactPresetContentOverride,
+        presetOrigin: { id: selection.id, homeId: selection.homeId, revision: selection.revision, controller } });
+    const input = buildManagedMachineAcquireInput(selected);
+    expect(input).not.toBeNull();
+    expect(input).not.toHaveProperty('retention');
+    expect(input).not.toHaveProperty('wakeOnAcceptedMessage');
 });
 
 function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>; custodianAccountId?: string; homeId?: string; unrelatedRuns?: number; retainedEffect?: 'stop' | 'delete' }> = {}) {
@@ -371,7 +423,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
     let machine = { ...baseMachine, ...(input.accountExecution ? { controller: undefined } : {}), homeId: input.homeId ?? baseMachine.homeId, custodianAccountId: input.custodianAccountId ?? baseMachine.custodianAccountId,
         ...(input.requesterConsent ? { enrollmentAccountId: 'account' } : {}),
         ...(input.enrolled ? { enrolledMachineId: 'guest' } : {}),
-        ...(input.machineSetup ? { preset: { id: 'preset', revision: 4 }, machineSetup: input.machineSetup } : {}) };
+        ...(input.machineSetup ? { preset: { id: 'preset', revision: 4, contentEncryptionMode: 'plain' as const }, machineSetup: input.machineSetup } : {}) };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
         resolveAgentStartContext: async () => ({ caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
             baseline: { machineId: 'parent-machine', directory: '/work' }, roles: {}, ledSubtreeSessionIds: [],
@@ -395,12 +447,12 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
                     referenceGuardRevision: 'absent', transferControl: { status: 'absent' }, diagnostics: [] }),
                 readReferenceGuard: async () => ({ status: 'ready', revision: 'absent' }),
                 readTransfer: async () => ({ status: 'absent' }), readSource: async () => ({}), signal }),
-            readPools: async () => MachinePoolListOutputV1Schema.parse({ pools: [{
+            readPools: async () => ({ pools: [MachinePoolViewV1Schema.parse({
                 pool: { id: '00000000-0000-4000-8000-000000000001', name: 'Guest pool', description: null,
                     revision: 1, createdAt: 1, updatedAt: 1,
                     members: [{ machineId: 'guest', enabled: true, priorityTier: 0, state: 'connected' }] },
                 availability: { state: 'known', connectedCount: 1, enabledCount: 1 },
-            }] }),
+            })] }),
             readAssignments: async () => ({ automations: [], nextCursor: null }),
             readDeployments: async () => { throw new Error('deployment_reference_transport_unavailable'); },
         }),
@@ -441,7 +493,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         machineSetupPlan: async request => {
             actions.push({ actionId: 'machines.setup.plan', input: request.input });
             const sources = 'sources' in request.input && request.input.sources ? request.input.sources : [
-                { kind: 'accountPreset', presetId: 'other', presetRevision: 1, setup: { scripts: [{ body: '\r\necho keep\r\n' }] } },
+                { kind: 'accountPresetOpaque', presetId: 'other', presetRevision: 1, contentEncryptionMode: 'plain' },
                 { kind: 'direct', setup: { scripts: [{ body: '\r\necho direct\r\n' }] } },
             ];
             return MachineSetupPlanResultV1Schema.parse({ desiredRevision: 6, exclusions: [], support: [], sources,
@@ -685,7 +737,7 @@ describe('ordinary managed creation continuation', () => {
             enrollmentAccountId: 'account', readMachine: boundary.readMachine, onAnswer: boundary.answer,
             readReviewedChild: boundary.readReviewedChild });
         try {
-            const result = await (entry === 'workflow' ? boundary.runWorkflow : boundary.run)({ draft: { ...draft, selection },
+            const result = await (entry === 'workflow' ? boundary.runWorkflow : boundary.run)({ draft: { ...draft, selection, presetContentOverride: exactPresetContentOverride },
                 acquisition: { ...initial, selection } });
             expect(result, JSON.stringify(result)).toMatchObject(approved ? entry === 'workflow'
                 ? { kind: 'accepted', accepted: { machine: { id: 'paid', enrolledMachineId: 'guest' } } }
@@ -739,7 +791,7 @@ describe('ordinary managed creation continuation', () => {
         const installation = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl, homeId, token,
             enrollmentAccountId: 'account', readMachine: boundary.readMachine, onAnswer: boundary.answer });
         try {
-            const result = await (entry === 'workflow' ? boundary.runWorkflow : boundary.run)({ draft: { ...draft, selection,
+            const result = await (entry === 'workflow' ? boundary.runWorkflow : boundary.run)({ draft: { ...draft, selection, presetContentOverride: exactPresetContentOverride,
                 enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
                     role: 'server' as const, adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } } },
                 acquisition: { ...initial, selection } });
@@ -773,76 +825,88 @@ describe('ordinary managed creation continuation', () => {
             expect(boundary.actions.filter(value => /controller\.(update|grant)|grant/.test(value.actionId))).toHaveLength(0);
         } finally { installation.dispose(); confirmation.mockRestore(); prompt.mockRestore(); logs.forEach(log => log.mockRestore()); await homes.reset(); }
     });
-    it('refuses unavailable delegated creation before spend', async () => {
-        const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
-        const restoreLoader = await installRealActionExecutorModuleLoader();
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
-        const nacl = (await import('tweetnacl')).default;
-        const homeId = 'srv_managed_consent_surface';
-        await homes.reset();
-        try {
-            const serverId = await homes.addHome({ name: 'Requester Home', serverUrl: 'https://managed-consent-surface.test',
-                serverIdentityId: homeId, accountId: 'account', credentials: { token: createAccountTokenForTests('account', { currentAccount: true }) } });
-            const preset = createDelegatedManagedPresetFixture({ preset: {
-                id: 'team-preset', homeId, revision: 1, name: 'Team sandbox', owner: { kind: 'team', teamId: 'team' },
-                launch, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            }, custodianAccountId: 'company', installationPublicKey: encodeBase64(
-                nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url'), descriptor: {
-                id: 'native', title: 'Compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
-                launchSchema: { type: 'object', properties: {}, additionalProperties: false },
-                resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
-                billing: draft.receipt.billing, retention: draft.receipt.retentionCapabilities,
-                actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
-            } });
-            homes.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset:
-                { ...preset, delegatedAcquire: { kind: 'unavailable', code: 'permission_denied' } } } });
-            const selection = { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision };
-            const progress: unknown[] = [];
-            const result = await runManagedMachineCreation({ draft: { ...draft, selection }, acquisition: { ...initial, selection },
-                scope: { serverId, accountId: 'account' }, signal: new AbortController().signal, isCurrent: () => true,
-                onAcquisitionChange: () => { throw new Error('No allocation may be admitted'); }, onProgress: value => progress.push(value),
-                onApprovalPending: () => { throw new Error('No spend approval may be requested'); }, executeAction: createFrontDoorActionExecute(createDefaultActionExecutor()) });
-            const code = 'permission_denied';
-            expect(result).toEqual({ kind: 'failed', code });
-            expect(progress).toEqual([{ kind: 'failed', code }]);
-            expect(homes.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
-            expect(homes.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
-            expect(homes.requestsFor('/v1/actions/machines.managed.acquire/execution-authorization')).toHaveLength(0);
-            expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
-        } finally { restoreLoader(); await homes.reset(); }
-    });
     it('keeps fresh ordinary owner preset creation on the existing acquire continuation', async () => {
-        const preset: ManagedMachinePresetV1 = { id: 'preset', homeId: 'home', revision: 1, name: 'Owner sandbox',
-            owner: { kind: 'team', teamId: 'team' }, teamAcquireDelegated: true, launch, controller };
+        const preset = opaqueTeamPreset('preset', 'home', 1, 'Owner sandbox');
         const selection = { kind: 'preset' as const, homeId: preset.homeId, id: preset.id, revision: preset.revision };
         const boundary = transport({ preset });
-        expect(await boundary.run({ draft: { ...draft, selection }, acquisition: { ...initial, selection } }))
+        expect(await boundary.run({ draft: { ...draft, selection, presetContentOverride: exactPresetContentOverride }, acquisition: { ...initial, selection } }))
             .toMatchObject({ kind: 'enrolled', machine: { id: 'paid' } });
         expect(boundary.actions.filter(value => value.actionId === 'machines.managed.acquire')).toHaveLength(1);
     });
-    it.each(['available', 'unknown', 'unavailable'] as const)(
-        'continues fresh pool creation with honest %s prerequisites through the admitted controller and installer prompt', async status => {
+    it('resumes the selected Preset revision with its captured opaque carrier without reading a newer Preset', async () => {
+        const selection = { kind: 'preset' as const, homeId: 'home', id: 'selected-preset', revision: 4 };
+        const selectedPreset = opaqueTeamPreset(selection.id, selection.homeId, selection.revision, 'Selected revision');
+        const { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1 } =
+            await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({
+            presetId: selectedPreset.id,
+            mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({
+                content: selectedPreset.content,
+                recipients: selectedPreset.recipients,
+                recipientAccountId: 'account',
+            }),
+            enrollmentIdentity: draft.enrollmentIdentity!,
+        });
+        if (!presetContentOverride) throw new Error('Expected the selected opaque override');
+        const selected = createManagedMachineSelectionDraft({ selection, receipt: selectedPreset.opened.reviewedFacts, presetContentOverride });
+        // This is deliberately newer than the selected draft. A resume must not fetch it to rebuild the carrier.
+        const newer = opaqueTeamPreset(selection.id, selection.homeId, 5, 'Changed later');
+        const boundary = transport({ preset: newer });
+
+        expect(await boundary.run({ draft: selected, acquisition: { ...initial, selection } }))
+            .toMatchObject({ kind: 'enrolled', machine: { id: 'paid' } });
+
+        expect(boundary.actions.filter(value => value.actionId === 'machines.presets.get')).toEqual([]);
+        const acquire = boundary.actions.find(value => value.actionId === 'machines.managed.acquire');
+        expect(acquire?.input).toMatchObject({ selection, presetContentOverride });
+        expect(acquire?.input).not.toHaveProperty('enrollmentIdentity');
+    });
+    it('continues sealed pool creation through the admitted controller and installer prompt without a native review', async () => {
         const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
         const restoreLoader = await installRealActionExecutorModuleLoader();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
             ExternalActionRequestEnvelopeV1Schema, projectExternalActionManagedAdmissionV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
         const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-        const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
         const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
         const { installManagedInstallationResponseBoundary } = await import('@/dev/testkit/harness/managedInstallationResponseBoundary');
         const { Modal } = await import('@/modal');
         const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
         const nacl = (await import('tweetnacl')).default;
         const homeId = 'srv_fresh_pool_continuation';
-        const serverUrl = `https://fresh-pool-${status}.test`;
+        const serverUrl = 'https://fresh-pool.test';
+        const boundaryErrors: string[] = [];
         const token = createAccountTokenForTests('account', { currentAccount: true });
         await homes.reset();
         let installation: ReturnType<typeof installManagedInstallationResponseBoundary> | undefined;
         try {
             const serverId = await homes.addHome({ name: 'Requester Home', serverUrl, serverIdentityId: homeId,
-                accountId: 'account', currentAccount: true, credentials: { token } });
+                accountId: 'account', currentAccount: true, machinePoolsEnabled: true, credentials: { token } });
+            const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: homeId } } });
+            // Mirror the full enabled Action fixture capability chain. The Pool resolver
+            // is a server-owned child of Machines, but this journey also crosses the
+            // Session creation front door before it reaches that resolver.
+            for (const feature of ['sessions', 'sessions.drafts', 'sessions.ephemeralRunner', 'machines', 'machines.pools',
+                'encryption.plaintextStorage', 'e2ee.keylessAccounts'] as const) {
+                if (!tryWriteServerEnabledBitInPlace(features, feature, true)) {
+                    throw new Error(`The ${feature} feature could not be enabled in its canonical fixture snapshot`);
+                }
+            }
+            const { getServerFeaturesSnapshot, primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+            homes.answer(serverId, '/v1/features', { body: features });
+            homes.answer(serverId, '/v1/features/authenticated', { body: features });
+            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+            const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('@/sync/domains/features/featureDecisionRuntime');
+            const featureAccount = await captureLazyActionAccountContext(serverId);
+            try {
+                const snapshot = await getServerFeaturesSnapshot({ serverId: featureAccount.serverId });
+                expect(resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'machines.pools',
+                    settings: featureAccount.readLiveSettings() ?? featureAccount.settings, snapshot })).toMatchObject({ state: 'enabled' });
+            } finally {
+                featureAccount.dispose();
+            }
             const requirement = { kind: 'systemTool' as const, id: { pluginId: 'custom.compute', localId: 'docker' } };
             const exactPreset = createDelegatedManagedPresetFixture({ preset: { id: 'pool-preset', homeId, revision: 1,
                 name: 'Pool sandbox', owner: { kind: 'team', teamId: 'team' }, launch, controller,
@@ -853,28 +917,29 @@ describe('ordinary managed creation continuation', () => {
                     resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'],
                     prerequisites: [requirement], billing: draft.receipt.billing, retention: draft.receipt.retentionCapabilities,
                     actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } } });
-            if (exactPreset.delegatedAcquire?.kind !== 'ready') throw new Error('Expected exact public creation facts');
             const poolId = '4d783830-8626-4da8-8fde-a6da516025e1';
-            const prerequisites = [{ requirement, status }];
-            const receipt = { ...exactPreset.delegatedAcquire.reviewedFacts, controller: undefined, prerequisites };
-            const preset = ManagedMachinePresetV1Schema.parse({ ...exactPreset, controller: undefined, controllerPoolId: poolId,
-                delegatedAcquire: { ...exactPreset.delegatedAcquire, controller: undefined, reviewedFacts: receipt } });
+            const preset = { ...exactPreset, controller: undefined, controllerPoolId: poolId };
             const selection = { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision };
-            const boundMachine: ManagedMachineV1 = { ...baseMachine, homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
-                controllerAccess: exactPreset.delegatedAcquire.controller };
-            // Admission can return before native allocation; the operation's next snapshot advances it.
-            let machine: ManagedMachineV1 = status === 'unknown'
-                ? { ...boundMachine, allocation: 'unsubmitted', resource: undefined } : boundMachine;
+            let machine: ManagedMachineV1 = { ...baseMachine, homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
+                controllerAccess: exactPreset.opened.controllerAccess };
             let answered = false;
             installation = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl, homeId, token,
                 enrollmentAccountId: 'account', readMachine: () => machine, onAnswer: () => { answered = true; } });
-            homes.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+            // The installation boundary owns its own ordinary feature fixture. Reapply
+            // this case's enabled Pool capability after installing that genuine
+            // boundary so the later action reads the same feature contract that this
+            // journey is intended to exercise.
+            primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+            homes.answer(serverId, '/v1/features', { body: features });
+            homes.answer(serverId, '/v1/features/authenticated', { body: features });
             homes.answer(serverId, '/v1/machines/pools/resolve', { body: { kind: 'resolved', poolId,
-                machineId: controller.machineId, priorityTier: 0, managedPreset: { controller,
-                    controllerAccess: exactPreset.delegatedAcquire.controller, provisioner: exactPreset.delegatedAcquire.provisioner,
-                    reviewedFacts: { ...receipt, controller } } } });
+                machineId: controller.machineId, priorityTier: 0, managedPreset: {
+                    preset: { id: preset.id, revision: preset.revision, contentEncryptionMode: preset.contentEncryptionMode },
+                    controller, controllerAccess: exactPreset.opened.controllerAccess,
+                    retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } } });
             for (const actionId of ['machines.managed.acquire', 'action.operations.get'] as const) {
                 homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: value => {
+                    try {
                     const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
                     const managedAdmission = envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
                     return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'exact-pool-root', binding: {
@@ -884,16 +949,20 @@ describe('ordinary managed creation continuation', () => {
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                         ...(actionId === 'action.operations.get' ? { managedAdmission } : {}),
                     } }) };
+                    } catch (error) { boundaryErrors.push(String(error)); throw error; }
                 } });
                 homes.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+                    try {
                     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
                     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
                     expect(envelope.target).toEqual({ kind: 'machine', machineId: controller.machineId });
-                    if (actionId === 'machines.managed.acquire') expect(envelope.input).toMatchObject({ controller,
-                        reviewedFacts: { controller, prerequisites } });
+                    if (actionId === 'machines.managed.acquire') {
+                        expect(envelope.input).toMatchObject({ controller, selection,
+                            presetContentOverride: exactPresetContentOverride });
+                        expect(envelope.input).not.toHaveProperty('reviewedFacts');
+                    }
                     else expect(envelope.input).toMatchObject({ machineId: controller.machineId,
                         managed: { homeId, managedId: machine.id }, operationId: 'pool-install', includeManagedPrompt: true });
-                    if (actionId === 'action.operations.get' && machine.allocation === 'unsubmitted') machine = boundMachine;
                     if (answered) machine = { ...machine, enrolledMachineId: 'guest' };
                     return { body: { v: 1, requestId: envelope.requestId, actionId, execution: { ok: true,
                         result: actionId === 'machines.managed.acquire' ? { managedId: machine.id, operation: { operationId: 'pool-install' } }
@@ -905,20 +974,26 @@ describe('ordinary managed creation continuation', () => {
                                     ...(!answered ? { bootstrapTask: { id: 'pool-task', taskKind: 'remote.ssh.bootstrapMachine.v1',
                                         prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Pair the created guest' } } } : {}) } } },
                     } } };
+                    } catch (error) { boundaryErrors.push(String(error)); throw error; }
                 } });
             }
             const progress: unknown[] = [];
-            const result = await runManagedMachineCreation({ draft: { ...draft, selection, receipt },
+            const result = await runManagedMachineCreation({ draft: { deferredAuthorPreset: true, selection, archiveEffect: 'keep',
+                presetContentOverride: exactPresetContentOverride,
+                presetOrigin: { id: preset.id, homeId: preset.homeId, revision: preset.revision,
+                    controllerPoolId: poolId, retention: preset.retention,
+                    wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } },
                 acquisition: { ...initial, selection }, scope: { serverId, accountId: 'account' },
                 signal: new AbortController().signal, isCurrent: () => true, onAcquisitionChange: () => {},
                 onProgress: value => progress.push(value), onApprovalPending: () => { throw new Error('Create already confirmed'); },
                 executeAction: createFrontDoorActionExecute(createDefaultActionExecutor()) });
-            expect(result, JSON.stringify(result)).toMatchObject(status === 'unavailable'
-                ? { kind: 'failed', code: 'review_required' } : { kind: 'enrolled', machine: { id: machine.id, enrolledMachineId: 'guest' } });
-            expect(homes.requestsFor('/v1/machines/pools/resolve')).toHaveLength(status === 'unavailable' ? 0 : 1);
-            expect(homes.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(status === 'unavailable' ? 0 : 1);
-            expect(installation.answers).toHaveLength(status === 'unavailable' ? 0 : 1);
-            if (status !== 'unavailable') {
+            // TH 2026-11-13: saved review is informational; acquire owns delegated admission.
+            expect(result, JSON.stringify({ result, boundaryErrors, requests: homes.requests.map(request => ({path:request.path})) })).toMatchObject({ kind: 'enrolled', machine: { id: machine.id, enrolledMachineId: 'guest' } });
+            expect(homes.requestsFor('/v1/machines/pools/resolve')).toHaveLength(1);
+            expect(homes.requestsFor('/v1/machines/presets/get')).toHaveLength(0);
+            expect(homes.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+            expect(installation.answers).toHaveLength(1);
+            {
                 expect(installation.answers[0]).toMatchObject({ controller, operationId: 'pool-install', taskId: 'pool-task',
                     expectedPromptKind: 'auth.approveRemoteProvisioning', answer: { approved: true } });
                 expect(progress).toContainEqual(expect.objectContaining({ kind: 'acquiring', operation: expect.objectContaining({ state: 'succeeded' }) }));
@@ -926,7 +1001,7 @@ describe('ordinary managed creation continuation', () => {
             expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
         } finally { installation?.dispose(); confirmation.mockRestore(); restoreLoader(); await homes.reset(); }
     });
-    it.each([true, false])('observes the admitted requester creation operation without a controller grant only for its exact resource (resource matches: %s)', async resourceMatches => {
+    it('observes the admitted requester creation operation through exact resource scope without a controller grant', async () => {
         const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
         const restoreLoader = await installRealActionExecutorModuleLoader();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -947,8 +1022,7 @@ describe('ordinary managed creation continuation', () => {
                     nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url') } };
             const operation = { version: 1, operationId: 'install', revision: 1, actionId: 'machines.managed.acquire', state: 'running',
                 scope: { accountId: 'account', machineId: controller.machineId }, title: 'Create Team sandbox', createdAt: 1, startedAt: 2,
-                cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id,
-                    resource: resourceMatches ? machine.resource : { ...machine.resource!, value: { nativeId: 'other-native-id' } }, controller,
+                cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
                     bootstrapTask: { id: 'installation-task', taskKind: 'remote.ssh.bootstrapMachine.v1' } } };
             homes.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
             homes.answer(serverId, '/v1/actions/action.operations.get/execution-authorization', { select: value => {
@@ -975,10 +1049,8 @@ describe('ordinary managed creation continuation', () => {
                 scope: { serverId, accountId: 'account' }, signal: new AbortController().signal, isCurrent: () => true,
                 onAcquisitionChange: () => {}, onProgress: value => progress.push(value), onApprovalPending: () => {},
                 executeAction: createFrontDoorActionExecute(createDefaultActionExecutor()) });
-            expect(result).toEqual(resourceMatches ? { kind: 'pending', managedId: machine.id }
-                : { kind: 'failed', code: 'operation_scope_mismatch' });
-            if (resourceMatches) expect(progress).toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
-            else expect(progress).not.toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
+            expect(result).toEqual({ kind: 'pending', managedId: machine.id });
+            expect(progress).toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
             expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
         } finally { restoreLoader(); await homes.reset(); }
     });
@@ -1059,14 +1131,14 @@ describe('ordinary managed creation continuation', () => {
             .toMatchObject({ kind: 'enrolled', machine: { id: 'paid', machineSetup: { state: 'succeeded' } } });
         expect(boundary.actions.filter(value => value.actionId === 'machines.setup.apply').map(value => value.input))
             .toMatchObject([{ homeId: 'home', machineId: 'guest', targets: [{ homeId: 'home', machineId: 'guest', sources: [
-                { kind: 'accountPreset', presetId: 'other', presetRevision: 1, setup: { scripts: [{ body: '\r\necho keep\r\n' }] } },
-                { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup },
+                { kind: 'accountPresetOpaque', presetId: 'other', presetRevision: 1, contentEncryptionMode: 'plain' },
+                { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' },
                 { kind: 'direct', setup: { scripts: [{ body: '\r\necho direct\r\n' }] } },
             ] }] }]);
         expect(boundary.actions.filter(value => value.actionId === 'machines.setup.plan').map(value => value.input))
             .toEqual([{ homeId: 'home', machineId: 'guest' }, { homeId: 'home', machineId: 'guest', mode: 'effects', sources: [
-                { kind: 'accountPreset', presetId: 'other', presetRevision: 1, setup: { scripts: [{ body: '\r\necho keep\r\n' }] } },
-                { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup },
+                { kind: 'accountPresetOpaque', presetId: 'other', presetRevision: 1, contentEncryptionMode: 'plain' },
+                { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' },
                 { kind: 'direct', setup: { scripts: [{ body: '\r\necho direct\r\n' }] } },
             ] }]);
         expect(boundary.actions.find(value => value.actionId === 'action.operations.get')?.input)

@@ -1,7 +1,7 @@
 import { createManagedBootstrapSshCredential, createManagedBootstrapSshKeyPair,
     readManagedBootstrapCredential, readManagedBootstrapSshPublicKey,
     ManagedMachineControllerError, type ManagedReconciliationHome } from '@happier-dev/cli-common/machines/managed';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { randomUUID } from '@/platform/randomUUID';
@@ -16,10 +16,10 @@ export function createUiManagedAccountCredential(input: Readonly<{
     home: ManagedReconciliationHome;
     signal?: AbortSignal;
 }>) {
-    const assertAccount = (machine: ManagedMachineV1) => {
+    const assertAccount = (machine: ManagedMachineFullV1) => {
         if (machine.custodianAccountId !== input.account.accountId) throw new ManagedMachineControllerError('credential_unavailable');
     };
-    const read = async (machine: ManagedMachineV1, expectedRevision?: number) => {
+    const read = async (machine: ManagedMachineFullV1, expectedRevision?: number) => {
         assertAccount(machine);
         if (!machine.bootstrapCredentialRef) throw new ManagedMachineControllerError('credential_unavailable');
         const material = await readSavedSecretReferenceInContext(input.account,
@@ -35,7 +35,7 @@ export function createUiManagedAccountCredential(input: Readonly<{
     };
     return {
         read,
-        async prepare(machine: ManagedMachineV1, kind: 'ssh' | 'native-token') {
+        async prepare(machine: ManagedMachineFullV1, kind: 'ssh' | 'native-token') {
             assertAccount(machine);
             if (kind !== 'ssh') throw new ManagedMachineControllerError('credential_unavailable');
             if (!machine.bootstrapCredentialRef) {

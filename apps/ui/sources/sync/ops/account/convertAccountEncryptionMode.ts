@@ -24,6 +24,8 @@ import { fetchAccountEncryptionMigrationSessionInventory } from '@/sync/ops/acco
 import { fetchAccountEncryptionMigrationArtifactInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationArtifactInventory';
 import { fetchAccountEncryptionMigrationDiscussionInventory } from '@/sync/ops/account/buildAccountEncryptionDiscussionsDirective';
 import { fetchAccountEncryptionMigrationAutomationsInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationAutomationsInventory';
+import { fetchAccountEncryptionMigrationPrivateLabelInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationPrivateLabelInventory';
+import { fetchAccountEncryptionMigrationManagedMachinePresetsInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationManagedMachinePresetsInventory';
 import { fetchReviewCommentAccountEncryptionMigrationInventory } from '@/sync/domains/reviews/comments/accountEncryptionMigrationApi';
 import { fetchSessionOrganizationAccountEncryptionMigrationInventory } from '@/sync/ops/account/fetchSessionOrganizationAccountEncryptionMigrationInventory';
 import { prepareAccountEncryptionMigrateToE2eeKey } from '@/sync/ops/account/prepareAccountEncryptionMigrateToE2eeKey';
@@ -254,6 +256,8 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             sessionOrganizationInventory,
             automationsInventory,
             discussionsInventory,
+            privateLabelsInventory,
+            managedMachinePresetsInventory,
         ] = await Promise.all([
             fetchMachineRows({
                 credentials,
@@ -274,6 +278,8 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             fetchSessionOrganizationAccountEncryptionMigrationInventory({ request: homeRequest }),
             fetchAccountEncryptionMigrationAutomationsInventory({ request: homeRequest }),
             fetchAccountEncryptionMigrationDiscussionInventory({ request: homeRequest, token: credentials.token, scope: capturedRequest }),
+            fetchAccountEncryptionMigrationPrivateLabelInventory({ request: homeRequest, scope: capturedRequest }),
+            fetchAccountEncryptionMigrationManagedMachinePresetsInventory({ request: homeRequest, scope: capturedRequest }),
         ]);
         requireCurrentScope();
         // The owner's Saved Secret materials: the migration reseals the ones it
@@ -329,6 +335,8 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                 reviewCommentsInventory,
                 sessionOrganizationInventory,
                 automationsInventory,
+                privateLabels: privateLabelsInventory,
+                managedMachinePresetsInventory,
                 resolveSession: async sessionId => sessionModes.get(sessionId) ?? null,
                 sessionSourceCredentials:
                     credentials,

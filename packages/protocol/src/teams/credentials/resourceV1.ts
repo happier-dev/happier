@@ -3,7 +3,13 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { MachinePoolNameV1Schema } from '../../machines/pools/v1.js';
+import { MachinePoolPrivateLabelProjectionV1Schema } from '../../machines/pools/v1.js';
+import {
+  PrivateLabelReadV1Schema,
+  PrivateLabelStoredV1Schema,
+  type PrivateLabelBindingV1,
+} from '../../crypto/privateLabelV1.js';
+import { TeamCredentialExternalApiKeyIdV1Schema } from './externalApiKeyV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
 import {
@@ -29,7 +35,6 @@ import {
   decodeTeamKeysetCursorV1,
   encodeTeamKeysetCursorV1,
   readTeamKeysetIdV1,
-  readTeamKeysetTextV1,
 } from '../cursor.js';
 import { TeamCredentialResourceReadinessV1Schema } from './resourceReadinessV1.js';
 import { TeamCredentialUsageCapabilitiesV1Schema, TeamCredentialUsageLimitDenialV1Schema } from './usageV1.js';
@@ -142,6 +147,15 @@ export function narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(
 export type TeamCredentialRequestProtocolKindV1 = z.infer<typeof TeamCredentialRequestProtocolKindV1Schema>;
 export type TeamCredentialRequestPolicyV1 = z.infer<typeof TeamCredentialRequestPolicyV1Schema>;
 
+/** The persisted credential resource owns the AAD identity of its display label. */
+export function teamCredentialDisplayNamePrivateLabelBindingV1(resourceId: string): PrivateLabelBindingV1 {
+  return {
+    entity: 'team_credential_resource',
+    field: 'displayName',
+    id: resourceId,
+  };
+}
+
 /**
  * Source-owned, value-free facts an editor may use to build a request policy.
  * The projection deliberately carries neither broker topology nor credential
@@ -213,7 +227,7 @@ export type TeamCredentialRequestPolicySupportOutputV1 = z.infer<
 
 export const TeamCredentialResourceCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: z.string().check(z.minLength(1)), resourceId: z.string().check(z.minLength(1), z.maxLength(256)),
-  displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
+  displayName: PrivateLabelStoredV1Schema,
   source: TeamCredentialSourceBindingV1Schema,
   deliveryPolicy: z._default(TeamCredentialDeliveryPolicyV1Schema, { preferredAllowedModes: ['brokered'] }),
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
@@ -255,7 +269,7 @@ export const TeamCredentialResourceDeleteInputV1Schema = lazyZodSchema(() => z.s
 
 export const TeamCredentialResourceReplacementV1Schema = lazyZodSchema(() => z.strictObject({
   enabled: z.boolean(),
-  displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
+  displayName: PrivateLabelStoredV1Schema,
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
   requestPolicy: z.nullable(TeamCredentialRequestPolicyV1Schema),
   allMembersAllowedRoutes: z.nullable(TeamCredentialAllowedRoutesV1Schema),
@@ -283,7 +297,7 @@ export const TeamCredentialResourceReplacementV1Schema = lazyZodSchema(() => z.s
 export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   resourceId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()),
   enabled: z.optional(z.boolean()),
-  displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
+  displayName: z.optional(PrivateLabelStoredV1Schema),
   deliveryPolicy: z.optional(TeamCredentialDeliveryPolicyV1Schema),
   sessionUsePolicy: z.optional(TeamCredentialSessionUsePolicyV1Schema),
   brokerPlacement: z.optional(z.nullable(TeamCredentialBrokerPlacementV1Schema)),
@@ -344,26 +358,24 @@ export const TeamCredentialResourceListInputV1Schema = lazyZodSchema(() => z.uni
   teamId: z.string().check(z.minLength(1)),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
   limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(100)), 50),
-  search: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
   filter: z._default(TeamCredentialResourceListFilterV1Schema, 'all'),
 }), TeamCredentialResourceCustodianListInputV1Schema]));
 
 export type TeamCredentialResourceListInputV1 = z.infer<typeof TeamCredentialResourceListInputV1Schema>;
 
 export function teamCredentialResourcesQueryKeyV1(
-  input: Pick<Extract<TeamCredentialResourceListInputV1, { teamId: string }>, 'teamId' | 'search' | 'filter'>,
+  input: Pick<Extract<TeamCredentialResourceListInputV1, { teamId: string }>, 'teamId' | 'filter'>,
 ): string {
-  return `v1:credential-resources:${input.teamId}:${input.filter}:${input.search ?? ''}`;
+  return `v1:credential-resources:${input.teamId}:${input.filter}`;
 }
 
-export type TeamCredentialResourcesCursorV1 = Readonly<{ displayName: string; id: string }>;
+export type TeamCredentialResourcesCursorV1 = Readonly<{ id: string }>;
 
 export function encodeTeamCredentialResourcesCursorV1(input: Readonly<{
   queryKey: string;
-  displayName: string;
   id: string;
 }>): string {
-  return encodeTeamKeysetCursorV1({ queryKey: input.queryKey, parts: [input.displayName, input.id] });
+  return encodeTeamKeysetCursorV1({ queryKey: input.queryKey, parts: [input.id] });
 }
 
 export function decodeTeamCredentialResourcesCursorV1(
@@ -371,12 +383,9 @@ export function decodeTeamCredentialResourcesCursorV1(
   queryKey: string,
 ): Readonly<{ status: 'ok'; cursor: TeamCredentialResourcesCursorV1 }> | Readonly<{ status: 'invalid' }> {
   const decoded = decodeTeamKeysetCursorV1(value, queryKey);
-  if (decoded.status !== 'ok') return { status: 'invalid' };
-  const displayName = readTeamKeysetTextV1(decoded.parts[0]);
-  const id = readTeamKeysetIdV1(decoded.parts[1]);
-  return displayName === null || id === null
-    ? { status: 'invalid' }
-    : { status: 'ok', cursor: { displayName, id } };
+  if (decoded.status !== 'ok' || decoded.parts.length !== 1) return { status: 'invalid' };
+  const id = readTeamKeysetIdV1(decoded.parts[0]);
+  return id === null ? { status: 'invalid' } : { status: 'ok', cursor: { id } };
 }
 
 export const TeamCredentialResourceGetInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -397,12 +406,8 @@ export const TeamCredentialResourceSourcePresentationV1Schema = lazyZodSchema(()
 export const TeamCredentialBrokerPresentationV1Schema = lazyZodSchema(() => z.strictObject({
   selectedTarget: z.nullable(z.strictObject({ machineId: z.string().check(z.minLength(1)), displayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), availability: z.enum(['available', 'offline', 'update_required', 'not_verified']) })),
   eligibleTargets: z.array(z.strictObject({ machineId: z.string().check(z.minLength(1)), displayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), availability: z.enum(['available', 'offline', 'update_required', 'not_verified']) })),
-  // Pool names use the canonical MachinePoolNameV1 contract and may be longer
-  // than the bounded Machine-label presentation. Keep the full domain value
-  // here; UI surfaces may ellipsize visually without making a valid resource
-  // summary parse as resource_corrupt.
-  selectedPool: z.nullable(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolNameV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
-  eligiblePools: z.array(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolNameV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
+  selectedPool: z.nullable(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolPrivateLabelProjectionV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
+  eligiblePools: z.array(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolPrivateLabelProjectionV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
 }));
 
 /**
@@ -436,7 +441,7 @@ export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.stric
   id: z.string(), teamId: z.string(), custodianAccountId: z.string(),
   /** Human label for the source owner; the stable Account id remains above. */
   sourceOwnerDisplayName: sourceOwnerDisplayNameV1Schema,
-  displayName: z.string(), enabled: z.boolean(), revision: z.number().check(z.int(), z.nonnegative()),
+  displayName: PrivateLabelReadV1Schema, enabled: z.boolean(), revision: z.number().check(z.int(), z.nonnegative()),
   deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
   /** Exact source lifetime is visible only to its custodian. */
@@ -537,7 +542,7 @@ export const TeamCredentialResourceCatalogEntryV1Schema = lazyZodSchema(() => z.
   sourceOwnerDisplayName: sourceOwnerDisplayNameV1Schema,
   id: z.string(),
   teamId: z.string(),
-  displayName: z.string(),
+  displayName: PrivateLabelReadV1Schema,
   resourceRevision: z.number().check(z.int(), z.nonnegative()),
   readiness: TeamCredentialResourceReadinessV1Schema,
   recoveryAction: z.nullable(TeamCredentialResourceRecoveryActionV1Schema),
@@ -586,9 +591,17 @@ export const TeamCredentialResourceMutationResultV1Schema = lazyZodSchema(() => 
   resourceId: z.string(), revision: z.number().check(z.int(), z.nonnegative()),
 }));
 
-export const TeamCredentialActivityKindV1Schema = lazyZodSchema(() => z.enum([
+const TEAM_CREDENTIAL_RESOURCE_ACTIVITY_KINDS_V1 = [
   'resource_created', 'resource_updated', 'resource_deleted', 'audience_changed',
-  'direct_delivered', 'external_key_created', 'external_key_revoked', 'limits_changed',
+  'direct_delivered', 'limits_changed',
+] as const;
+const TEAM_CREDENTIAL_EXTERNAL_KEY_ACTIVITY_KINDS_V1 = [
+  'external_key_created', 'external_key_revoked',
+] as const;
+
+export const TeamCredentialActivityKindV1Schema = lazyZodSchema(() => z.enum([
+  ...TEAM_CREDENTIAL_RESOURCE_ACTIVITY_KINDS_V1,
+  ...TEAM_CREDENTIAL_EXTERNAL_KEY_ACTIVITY_KINDS_V1,
 ]));
 export type TeamCredentialActivityKindV1 = z.infer<typeof TeamCredentialActivityKindV1Schema>;
 
@@ -598,12 +611,24 @@ export const TeamCredentialResourceActivityReadInputV1Schema = lazyZodSchema(() 
   limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(100)), 50),
 }));
 
-export const TeamCredentialResourceActivityEventV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: TeamCredentialActivityKindV1Schema,
-  actorDisplayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
-  subjectDisplayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
-  createdAt: z.string().check(z.iso.datetime({ offset: true })),
-}));
+export const TeamCredentialResourceActivityEventV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    kind: z.enum(TEAM_CREDENTIAL_RESOURCE_ACTIVITY_KINDS_V1),
+    actorDisplayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
+    /** Sealed snapshot bound to the resource display-name identity. */
+    subjectDisplayName: PrivateLabelReadV1Schema,
+    createdAt: z.string().check(z.iso.datetime({ offset: true })),
+  }),
+  z.strictObject({
+    kind: z.enum(TEAM_CREDENTIAL_EXTERNAL_KEY_ACTIVITY_KINDS_V1),
+    actorDisplayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
+    /** A key-label snapshot is bound to this immutable external-key id. */
+    externalApiKeyId: TeamCredentialExternalApiKeyIdV1Schema,
+    subjectDisplayName: PrivateLabelReadV1Schema,
+    createdAt: z.string().check(z.iso.datetime({ offset: true })),
+  }),
+]));
+export type TeamCredentialResourceActivityEventV1 = z.infer<typeof TeamCredentialResourceActivityEventV1Schema>;
 
 export const TeamCredentialResourceActivityPageV1Schema = lazyZodSchema(() => z.strictObject({
   items: z.array(TeamCredentialResourceActivityEventV1Schema).check(z.maxLength(100)),
@@ -716,7 +741,6 @@ export type TeamCredentialResourcePageV1 = z.infer<typeof TeamCredentialResource
 export type TeamCredentialResourceListFilterV1 = z.infer<typeof TeamCredentialResourceListFilterV1Schema>;
 export type TeamCredentialResourceEntitledPageV1 = z.infer<typeof TeamCredentialResourceEntitledPageV1Schema>;
 export type TeamCredentialResourceMutationResultV1 = z.infer<typeof TeamCredentialResourceMutationResultV1Schema>;
-export type TeamCredentialResourceActivityEventV1 = z.infer<typeof TeamCredentialResourceActivityEventV1Schema>;
 export type TeamCredentialResourceActivityPageV1 = z.infer<typeof TeamCredentialResourceActivityPageV1Schema>;
 export type TeamCredentialResourceReplacementV1 = z.infer<typeof TeamCredentialResourceReplacementV1Schema>;
 export type TeamCredentialResourceUpdateInputV1 = z.infer<typeof TeamCredentialResourceUpdateInputV1Schema>;

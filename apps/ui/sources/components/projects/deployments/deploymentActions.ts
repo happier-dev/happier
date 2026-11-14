@@ -22,7 +22,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess, readActionApprovalRequestCreatedError,
     type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
-import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { EnvironmentSecretBindingInputV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
@@ -360,8 +360,8 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         async setPreviewBindings(environment: DeploymentEnvironmentHeaderV1,
             template: NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>,
             input: DeploymentUiBindingsInput, operation?: UiActionOperation) {
-            const set = z.array(EnvironmentSecretBindingV1Schema).parse(input.set);
-            const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, { set, remove: input.remove })
+            const set = z.array(EnvironmentSecretBindingInputV1Schema).parse(input.set);
+            const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, { set, remove: input.remove }, randomUUID)
                 .filter(binding => binding.purpose === 'variable');
             return updateEnvironment(environment, { previewTemplate: { ...template, bindingBlueprints } }, operation);
         },

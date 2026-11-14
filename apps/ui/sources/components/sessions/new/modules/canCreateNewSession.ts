@@ -2,7 +2,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { canAttemptMachineSpawn, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
-import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { isDeferredManagedMachineAuthorPresetDraft, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 
 export function isHostBoundNewSessionMachine(params: Readonly<{
@@ -29,8 +29,9 @@ export function canCreateNewSession(params: Readonly<{
     managedMachineSelection?: ManagedMachineSelectionDraft | null;
 }>): boolean {
     if (params.managedMachineSelection) {
-        return params.managedMachineSelection.receipt.optionStatus === 'current'
-            && params.managedMachineSelection.receipt.prerequisites.every(item => item.status === 'available')
+        return (isDeferredManagedMachineAuthorPresetDraft(params.managedMachineSelection)
+            || params.managedMachineSelection.receipt.optionStatus === 'current'
+            && params.managedMachineSelection.receipt.prerequisites.every(item => item.status === 'available'))
             && (params.directoryKind === 'managed' || Boolean(params.selectedPath.trim()));
     }
     if (params.executionTarget?.kind === 'temporary_computer') {

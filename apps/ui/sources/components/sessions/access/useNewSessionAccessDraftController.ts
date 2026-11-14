@@ -1,12 +1,13 @@
 import * as React from 'react';
 import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
-import type { SessionAccessCreationDecisionV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import type { SessionAccessCreationDecisionV1, SessionAccessPrincipalSummaryV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
 import { useSessionAccessTeamNames } from './useSessionAccessTeamNames';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
@@ -89,11 +90,11 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     // Candidate names serve accounts and Groups; Team names remain live in the
     // existing qualified Team owner, including after restoring a draft.
     const scopeKey = JSON.stringify([scope.serverId, scope.accountId]);
-    const [resolvedNames, setResolvedNames] = React.useState<Readonly<{
+    const [resolvedPrincipals, setResolvedPrincipals] = React.useState<Readonly<{
         scopeKey: string;
-        values: Readonly<Record<string, SessionAccessPrincipalPresentation>>;
+        values: Readonly<Record<string, SessionAccessPrincipalSummaryV1>>;
     }>>({ scopeKey, values: {} });
-    const names = resolvedNames.scopeKey === scopeKey ? resolvedNames.values : {};
+    const resolved = resolvedPrincipals.scopeKey === scopeKey ? resolvedPrincipals.values : {};
     React.useEffect(() => {
         setPendingContextDecision(null);
         setPendingContextTarget(null);
@@ -102,6 +103,21 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const grants = React.useMemo(() => access?.grants ?? [], [access]);
     const subjects = React.useMemo(() => grants.map(grant => grant.subject), [grants]);
     const teamNames = useSessionAccessTeamNames(scope, subjects);
+    const groupLabelInputs = React.useMemo(() => Object.values(resolved).flatMap((principal) =>
+        principal.kind === 'group' ? [{ id: principal.groupId, name: principal.name }] : []), [resolved]);
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope, groups: groupLabelInputs });
+    const names = React.useMemo<Readonly<Record<string, SessionAccessPrincipalPresentation>>>(() => {
+        const next: Record<string, SessionAccessPrincipalPresentation> = {};
+        for (const principal of Object.values(resolved)) {
+            const projected = projectSessionAccessPrincipal(
+                principal,
+                { accountId: scope.accountId, profile: viewerProfile },
+                principal.kind === 'group' ? openedGroupDisplayNames.get(principal.groupId) : undefined,
+            );
+            next[projected.key] = projected;
+        }
+        return next;
+    }, [openedGroupDisplayNames, resolved, scope.accountId, viewerProfile]);
     const grantsRef = React.useRef(grants);
     grantsRef.current = grants;
 
@@ -178,7 +194,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const selectedSubjectsKey = React.useMemo(() => JSON.stringify(grants.map((grant) => grant.subject)), [grants]);
     const resolveRevision = React.useRef(0);
     React.useEffect(() => {
-        setResolvedNames((current) => current.scopeKey === scopeKey ? current : { scopeKey, values: {} });
+        setResolvedPrincipals((current) => current.scopeKey === scopeKey ? current : { scopeKey, values: {} });
         if (!editable || !demanded || grants.length === 0) return;
         const requestRevision = ++resolveRevision.current;
         let active = true;
@@ -187,18 +203,17 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             isCurrent: () => active && resolveRevision.current === requestRevision,
         }).then((principals) => {
             if (!active || resolveRevision.current !== requestRevision) return;
-            setResolvedNames((current) => {
+            setResolvedPrincipals((current) => {
                 const base = current.scopeKey === scopeKey ? current.values : {};
                 const next = { ...base };
                 for (const principal of principals) {
-                    const projected = projectSessionAccessPrincipal(principal, { accountId: scope.accountId, profile: viewerProfile });
-                    next[projected.key] = projected;
+                    next[sessionAccessSubjectKey(principal)] = principal;
                 }
                 return { scopeKey, values: next };
             });
         }).catch(() => {});
         return () => { active = false; };
-    }, [availability, demanded, editable, grants, scope.accountId, scope.serverId, scopeKey, selectedSubjectsKey, viewerProfile]);
+    }, [availability, demanded, editable, grants, scope.accountId, scope.serverId, scopeKey, selectedSubjectsKey]);
     const directoryTeamsRef = React.useRef(directory.teamContexts);
     directoryTeamsRef.current = directory.teamContexts;
     const primaryTeamDecisionPolicy = creationDecision === undefined || creationDecision === null

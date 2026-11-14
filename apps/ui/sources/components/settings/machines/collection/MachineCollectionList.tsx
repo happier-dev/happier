@@ -55,7 +55,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { MachinePresetQueryState } from '../managed/useMachinePresets';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { ManagedMachineReadApprovalNotice } from '../managed/ManagedMachineReadApprovalNotice';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
@@ -702,7 +702,7 @@ function MachineRowsFold(props: Readonly<{
 /** Accessible presets remain separate from resources, with exact-Home read and approval custody. */
 export function MachinePresetCollectionSectionView(props: Readonly<{
     section: MachinePresetCollectionSection;
-    state?: MachinePresetQueryState<readonly ManagedMachinePresetV1[]>;
+    state?: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
     rail: boolean;
     selectedKey: string | null;
     replacing: boolean;

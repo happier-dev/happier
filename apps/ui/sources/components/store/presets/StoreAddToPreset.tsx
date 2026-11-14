@@ -1,9 +1,6 @@
 import * as React from 'react';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import {
-  hasManagedMachinePresetCreationV1,
-  type ManagedMachinePresetV1,
-} from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import {
@@ -40,7 +37,7 @@ const NO_SERVERS: readonly string[] = [];
 const NEW_PRESET = 'store.preset.new';
 
 /** A preset's one line: what it sets up, in the receipt's own words (the Setup tab says it the same way). */
-export function describeStorePreset(preset: ManagedMachinePresetV1): string {
+export function describeStorePreset(preset: OpenedManagedMachinePresetV1): string {
   return describeMachineSetup(preset.setup)
     .map((fact) =>
       t('machinePresets.setup.fact', { label: fact.label, value: fact.value }),
@@ -51,7 +48,7 @@ export function describeStorePreset(preset: ManagedMachinePresetV1): string {
 /** A saved preset to add the item to, or `null` for a new preset that starts with it. */
 export type StorePresetChoice = Readonly<{
   serverId: string;
-  preset: ManagedMachinePresetV1 | null;
+  preset: OpenedManagedMachinePresetV1 | null;
 }>;
 
 /**
@@ -189,7 +186,7 @@ export function StorePresetEditorHandoff(
 function StoreSavedPresetHandoff(
   props: Readonly<{
     serverId: string;
-    preset: ManagedMachinePresetV1;
+    preset: OpenedManagedMachinePresetV1;
     item: StorePresetDoorItem;
     onReturn: () => void;
   }>,
@@ -208,7 +205,7 @@ function StoreSavedPresetHandoff(
     }),
     [preset, props.item, onReturn],
   );
-  const provisioner = hasManagedMachinePresetCreationV1(preset)
+  const provisioner = hasOpenedManagedMachinePresetCreationV1(preset)
     ? buildQualifiedPluginContributionKey(preset.launch.provider)
     : '';
   return (

@@ -1,4 +1,4 @@
-import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import { isManagedOpaquePresetResourceDependencyV1, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
@@ -16,6 +16,7 @@ import { managedConfirmedAbsenceState } from './managedCreationPresentation';
 
 /** What the person knows the resource as: its provider and kind ("Hetzner VM"), from the provisioner's own declaration. */
 function managedResourceProvider(resource: ManagedResourceDependencyV1): Readonly<{ provider: string; name: string }> | null {
+    if (isManagedOpaquePresetResourceDependencyV1(resource)) return null;
     const declaration = BUNDLED_MACHINE_PROVISIONER_DECLARATIONS[buildQualifiedPluginContributionKey(resource.provider)];
     if (!declaration) return null;
     const localized = createPluginLocalizedTextResolver({ projection: null });
@@ -41,17 +42,19 @@ function managedResourceControllerName(resource: ManagedResourceDependencyV1): s
  */
 function managedResourceFacts(resource: ManagedResourceDependencyV1): string[] {
     const controller = managedResourceControllerName(resource);
+    const native = isManagedOpaquePresetResourceDependencyV1(resource) ? null : resource;
     return [
-        ...(resource.recovery ? [`${t(resource.recovery.reference === resource.managedId
-            ? 'managedMachines.detail.happierTag' : 'managedMachines.detail.recoveryReference')} ${resource.recovery.reference}`] : []),
-        ...(resource.resource ? nativeIdentityLines(resource.resource.value) : []),
+        ...(native?.recovery ? [`${t(native.recovery.reference === resource.managedId
+            ? 'managedMachines.detail.happierTag' : 'managedMachines.detail.recoveryReference')} ${native.recovery.reference}`] : []),
+        ...(native?.resource ? nativeIdentityLines(native.resource.value) : []),
         ...(controller ? [`${t('managedMachines.config.managedFrom')} ${controller}`] : []),
     ];
 }
 
 /** The review's recovery facts in the lifecycle vocabulary the machine's own page uses; null when nothing more is known. */
 function managedResourceState(resource: ManagedResourceDependencyV1, name: string): ManagedLifecycleState | null {
-    if (resource.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(resource);
+    if (resource.allocation === 'confirmed-absent') return isManagedOpaquePresetResourceDependencyV1(resource)
+        ? { kind: 'absent' } : managedConfirmedAbsenceState(resource);
     if (resource.cleanup) return resource.cleanup.disposition === 'pending' && resource.cleanup.reason === 'creation_canceled'
         ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
     if (resource.allocation === 'may-exist') return { kind: 'mayExist', name };
@@ -74,15 +77,20 @@ export async function reviewManagedResourceRemoval(
     modal: Pick<IModal, 'confirm'> = Modal,
     options?: Readonly<{ confirmationRequired: boolean }>,
 ): Promise<ManagedResourceDispositionV1[] | null> {
-    const dispositions = resources.map((resource): ManagedResourceDispositionV1 => ({
-        managedId: resource.managedId,
-        expectedIntentRevision: resource.intentRevision,
-        expectedAllocation: resource.allocation,
-        ...(resource.resource ? { expectedResource: resource.resource } : {}),
-        ...(resource.nativeOperationRef ? { expectedNativeOperationRef: resource.nativeOperationRef } : {}),
-        ...(resource.recovery ? { expectedRecovery: resource.recovery } : {}),
-        responsibility: 'manual',
-    }));
+    const dispositions = resources.map((resource): ManagedResourceDispositionV1 => {
+        const lifecycle = {
+            managedId: resource.managedId,
+            expectedIntentRevision: resource.intentRevision,
+            expectedAllocation: resource.allocation,
+            responsibility: 'manual' as const,
+        };
+        return isManagedOpaquePresetResourceDependencyV1(resource) ? { ...lifecycle, opaquePreset: true } : {
+            ...lifecycle,
+            ...(resource.resource ? { expectedResource: resource.resource } : {}),
+            ...(resource.nativeOperationRef ? { expectedNativeOperationRef: resource.nativeOperationRef } : {}),
+            ...(resource.recovery ? { expectedRecovery: resource.recovery } : {}),
+        };
+    });
     const confirmed = options?.confirmationRequired === false || await modal.confirm(
         t('managedCleanup.reviewTitle'),
         undefined,
@@ -91,7 +99,7 @@ export async function reviewManagedResourceRemoval(
                 { text: t('managedCleanup.removalReview') },
                 ...resources.flatMap(resource => {
                     const facts = managedResourceFacts(resource);
-                    const consoleUrl = resource.recovery?.consoleUrl;
+                    const consoleUrl = isManagedOpaquePresetResourceDependencyV1(resource) ? undefined : resource.recovery?.consoleUrl;
                     const link = consoleUrl ? { label: managedLifecycleActionLabel('openProvider', managedResourceProvider(resource)?.provider),
                         onPress: () => fireAndForget(openExternalUrl(consoleUrl), { tag: 'reviewManagedResourceRemoval.openConsole' }) } : undefined;
                     // The resource's line, then what tells it apart; its console link closes its own facts.

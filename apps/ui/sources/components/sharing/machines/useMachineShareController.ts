@@ -30,6 +30,7 @@ import { useShareViewerProfile } from '../useShareViewerProfile';
 import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { describeMachineShareTrust } from './machineShareTrust';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
 export type MachineShareGrantRow = ShareGrantRowModel & Readonly<{
     readiness: 'ready' | 'key_pending' | 'refused';
@@ -116,6 +117,21 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const intents = React.useRef(new Map<string, Mutation>());
     const names = React.useRef(new Map<string, string>());
     const response = state.response;
+    const groupLabelInputs = React.useMemo(() => response ? [
+        ...response.grants.flatMap(row => row.principal.kind === 'group' && row.display.groupName !== undefined
+            ? [{ id: row.principal.groupId, name: row.display.groupName }]
+            : []),
+        ...response.ownAccessSources.flatMap(source => source.principal.kind === 'group' && source.groupName !== undefined
+            ? [{ id: source.principal.groupId, name: source.groupName }]
+            : []),
+    ] : [], [response]);
+    const groupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope, groups: groupLabelInputs });
+    const grantDisplayName = (row: MachineAccessGrantRowV1) => row.principal.kind === 'group' && row.display.groupName !== undefined
+        ? groupDisplayNames.get(row.principal.groupId) ?? null
+        : row.display.name;
+    const sourceDisplayName = (source: MachineAccessGrantsListResponseV1['ownAccessSources'][number]) => source.principal.kind === 'group' && source.groupName !== undefined
+        ? groupDisplayNames.get(source.principal.groupId) ?? null
+        : source.displayName;
     const guestExecution = useMachineGuestExecution({ machineId, scope, execute, canManage: response?.canManage === true });
     // The grant confirmation is worded after commit; it reads the current placement, not a render-time copy.
     const guestExecutionRef = React.useRef(guestExecution);
@@ -238,7 +254,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const approval = useActionApprovalContinuation({ scopeKey: identity, serverId: scope.serverId, onExecuted: () => { void load(); } });
     const directory = useSessionAccessDirectory({ scope, availability: 'available', contextTeams: NO_TEAMS,
         operations: state.operations, revision, enabled: response?.canManage === true && state.phase === 'ready' });
-    for (const row of response?.grants ?? []) names.current.set(sessionAccessSubjectKey(row.principal), row.display.name ?? principal(row.principal, null).displayName);
+    for (const row of response?.grants ?? []) names.current.set(sessionAccessSubjectKey(row.principal), grantDisplayName(row) ?? principal(row.principal, null).displayName);
     const ownPrincipal = React.useMemo<PrincipalRefV1>(() => ({ kind: 'account', accountId: scope.accountId }), [scope.accountId]);
     const ownKey = sessionAccessSubjectKey(ownPrincipal);
     const isCustodian = response?.custodian.accountId === scope.accountId;
@@ -371,13 +387,14 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         const draft = intents.current.get(key);
         const incompatible = row.principal.kind === 'account'
             && row.audience.some(member => member.reason === 'recipient_encryption_incompatible');
-        return { grant: row.principal, principal: principal(row.principal, row.display.name), readiness: row.readiness,
+        const displayName = grantDisplayName(row);
+        return { grant: row.principal, principal: principal(row.principal, displayName), readiness: row.readiness,
             audience: row.audience, canPrepareKeys: row.audience.some(member => member.canPrepareKeys),
             level: incompatible ? { kind: 'locked', value: row.level,
-                reason: failure('recipient_encryption_incompatible', machineName, row.display.name ?? undefined) }
+                reason: failure('recipient_encryption_incompatible', machineName, displayName ?? undefined) }
                 : { kind: 'editable', value: draft?.actionId === 'machines.access.grant.set' ? draft.level : row.level, options: ['view', 'admin'] },
             removal: removal(row.principal, removalConsequences(row.removal.losesAccessAccountIds, row.audience)), operation };
-    }), [response, state.operations, machineName, scope.accountId, viewerProfile, confirmingRemoval, workRequesters]);
+    }), [response, state.operations, machineName, scope.accountId, viewerProfile, confirmingRemoval, workRequesters, groupDisplayNames]);
     const inherited = (response?.ownAccessSources ?? []).filter(source => source.principal.kind !== 'account');
     const viewerRow: MachineShareGrantRow | null = response && !isCustodian ? {
         grant: ownPrincipal, principal: principal(ownPrincipal, null), viewer: true,
@@ -385,7 +402,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         audience: [], canPrepareKeys: false,
         level: { kind: 'locked', value: response.access.role === 'manage' ? 'admin' : 'view', reason: { code: 'own_access', message: t('machines.sharing.ownHistory', { machine: machineName }) } },
         removal: response.ownDirectGrant ? { kind: 'allowed' } : { kind: 'blocked',
-            reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
+            reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, sourceDisplayName(source)).displayName).join(', ') }) } },
         operation: state.operations[ownKey] ?? IDLE,
     } : null;
     const model: ShareSheetModel<MachineShareGrantRow> = {

@@ -3,7 +3,7 @@ import { MachineVitalsHostFactsV1Schema } from '@happier-dev/protocol/machines/v
 import { MachineGuardViewV1Schema } from '@happier-dev/protocol/machines/guard/guardRpcV1';
 import { MachineGuardActivityListV1Schema } from '@happier-dev/protocol/machines/guard/activityV1';
 import { HappierStorageSummaryV1Schema } from '@happier-dev/protocol/storage/storageV1';
-import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import { DEMO_MACHINE_ID, DEMO_NOW_MS, DEMO_SECONDARY_MACHINE_ID } from './constants';
 
@@ -57,11 +57,13 @@ export function buildDemoMachineReadings() {
     }));
 }
 
-export function buildDemoMachinePresets() {
-    return ['Daily development', 'Clean review workspace'].map((name, index) => ManagedMachinePresetV1Schema.parse({
-        id: `demo-setup-${index}`, homeId: 'demo-home', revision: 1, name,
-        owner: { kind: 'account', accountId: 'demo-home' },
-        setup: { scripts: [{ body: index === 0 ? 'git config pull.rebase true' : 'git config diff.algorithm histogram', affects: 'none' }] },
-    }));
+export function buildDemoMachinePresets(): OpenedManagedMachinePresetV1[] {
+    return ['Daily development', 'Clean review workspace'].map((name, index) => {
+        const content = { v: 1 as const, name, setup: { scripts: [{ body: index === 0
+            ? 'git config pull.rebase true' : 'git config diff.algorithm histogram', affects: 'none' as const }] } };
+        return { id: `demo-setup-${index}`, homeId: 'demo-home', revision: 1,
+            owner: { kind: 'account', accountId: 'demo-home' },
+            contentEncryptionMode: 'plain', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            ...content, recipientProjection: { content: { t: 'plain', v: content }, recipientEnvelope: null } };
+    });
 }
-

@@ -20,6 +20,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { teamReadFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
 import { useTeamReadFailureAction } from '@/components/settings/teams/useTeamReadFailureAction';
 import { useTeamMemberGroups, type TeamMemberGroups } from '@/hooks/teams/useTeamMemberGroups';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
     getTeamMember,
@@ -87,6 +88,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const { context, groups } = props;
+    const groupDisplayNames = useTeamGroupDisplayNames({ scope: context.scope, groups: groups.rows });
 
     if (!context.team.capabilities.viewRoster) return null;
 
@@ -112,7 +114,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
                     <Item
                         key={group.id}
                         testID={`team-member-group:${group.id}`}
-                        title={group.name}
+                        title={groupDisplayNames.get(group.id) ?? t('common.unavailable')}
                         subtitle={[managedBy, archived ? t('teams.directory.archivedBadge') : null]
                             .filter((part): part is string => part !== null)
                             .join(' · ') || undefined}

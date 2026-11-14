@@ -13,7 +13,7 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { resolveHomeDisplayLabelForServerIdentity, resolveHomeDisplayNameForServerIdentity } from '@/components/settings/server/homeDisplayName';
 import { t } from '@/text';
 import { readMachineSetupAppIdentityV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { machineSetupSourceApplyOriginKeyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { z } from 'zod/mini';
 import { MachineSetupPlanUnavailableTargetV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -23,10 +23,12 @@ import type {
   MachineSetupPreparedApply,
   MachineSetupPreparedRemove,
   MachineSetupTargetReviewFacts,
+  MachineSetupTargetSourcePresentations,
 } from './machineSetupReview';
 import {
   countMachineSetupTargetChanges,
   groupMachineSetupChanges,
+  readMachineSetupTargetOpenedSource,
 } from './machineSetupReviewChanges';
 import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
 import { describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
@@ -82,9 +84,18 @@ export function MachineSetupPlanReview(
   );
   const single = targets.length === 1;
   const apps = targets.flatMap((target) =>
-    'recipePlans' in target ? reviewApps(target, factsOf(target.machineId), nameOf(target.machineId)) : [],
+    'recipePlans' in target
+      ? reviewApps(
+          target,
+          factsOf(target.machineId),
+          prepared.sourcePresentations?.find((entry) =>
+            entry.homeId === target.homeId && entry.machineId === target.machineId,
+          )?.sources,
+          nameOf(target.machineId),
+        )
+      : [],
   );
-  const changes = groupMachineSetupChanges(targets);
+  const changes = groupMachineSetupChanges(targets, prepared.sourcePresentations);
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
   // Items its new sources no longer have, by their recipe's own name; each stays unless removal is chosen.
@@ -155,7 +166,12 @@ export function MachineSetupPlanReview(
           // A new app deploys too, so the Machine isn't "already set up" while one waits. What each change is
           // reads under Changes, by kind.
           const count =
-            countMachineSetupTargetChanges(target) +
+            countMachineSetupTargetChanges(
+              target,
+              prepared.sourcePresentations?.find((entry) =>
+                entry.homeId === target.homeId && entry.machineId === target.machineId,
+              )?.sources,
+            ) +
             ('recipePlans' in target ? factsOf(target.machineId)?.review?.apps ?? [] : []).filter(
               (app) => app.kind === 'new',
             ).length;
@@ -489,28 +505,30 @@ type ReviewTarget = MachineSetupPreparedReview['input']['targets'][number];
 function reviewApps(
   target: ReviewTarget,
   facts: MachineSetupTargetReviewFacts | undefined,
+  sourcePresentations: MachineSetupTargetSourcePresentations['sources'] | undefined,
   machine: string,
 ) {
-  // A Machine that reported nothing about its apps lists every app of its sources as not known.
+  // A Machine that reported nothing about apps lists only locally opened exact sources as not known.
   const reported =
     facts?.review?.apps ??
-    target.sources.flatMap((source, sourceIndex) =>
-      (source.setup.items ?? []).flatMap((item, itemIndex) =>
+    target.sources.flatMap((_, sourceIndex) =>
+      (readMachineSetupTargetOpenedSource(target, sourceIndex, sourcePresentations)?.setup.items ?? []).flatMap((item, itemIndex) =>
         item.kind === 'app'
           ? [{ sourceIndex, itemIndex, kind: 'unreported' as const }]
           : [],
       ),
-    );
+    ) ?? [];
   return reported.flatMap((app) => {
-    const source = target.sources[app.sourceIndex];
+    const source = readMachineSetupTargetOpenedSource(target, app.sourceIndex, sourcePresentations);
+    const actionSource = target.sources[app.sourceIndex];
     const item = source?.setup.items?.[app.itemIndex];
-    if (!source || item?.kind !== 'app') return [];
+    if (!source || !actionSource || item?.kind !== 'app') return [];
     // Only a catalog app has a pin; its identity ignores the pin, so an accepted run of it with another pin is the change.
     const pinChanged = () => {
       if (item.definition.definition.from !== 'catalogApp') return false;
       const identity = readMachineSetupAppIdentityV1(item);
       const accepted = (
-        facts?.sourceFacts?.[machineSetupSourceOriginKeyV1(source)]
+        facts?.sourceFacts?.[machineSetupSourceApplyOriginKeyV1(actionSource)]
           ?.acceptedAppRuns ?? []
       ).filter(
         (run) =>

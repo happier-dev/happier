@@ -1,16 +1,20 @@
 import { MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
-    type MachineSetupPlanResultV1, type MachineSetupPlanUnavailableTargetV1,
+    type MachineSetupPlanResultV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { reviewMachineSetupSourceChangeV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import {
+    openManagedMachineSetupPlanSourcesV1,
+    type ManagedMachineSetupSourcePresentationV1,
+} from '@/sync/ops/machines/managedMachinePresetCustody';
 
 export type MachineSetupReviewTarget = Readonly<{
-    homeId: string; machineId: string; desiredRevision: number; sources: MachineSetupSourceV1; appChildren?: MachineSetupAppChildV1[];
+    homeId: string; machineId: string; desiredRevision: number; sources: MachineSetupSourceApplyV1; appChildren?: MachineSetupAppChildV1[];
     removeItemKeys?: string[];
     /** Snapshot read before proposing a source change; native retention normalizes the expected response. */
     current?: Pick<MachineSetupPlanResultV1, 'sources' | 'sourceFacts'>;
@@ -24,11 +28,18 @@ export type MachineSetupTargetReviewFacts = Readonly<{
     sourceFacts?: MachineSetupPlanResultV1['sourceFacts']; removalOffers?: MachineSetupPlanResultV1['removalOffers'];
     recipeTitles?: MachineSetupPlanResultV1['recipeTitles'];
 }>;
+export type MachineSetupTargetSourcePresentations = Readonly<{
+    homeId: string;
+    machineId: string;
+    sources: readonly ManagedMachineSetupSourcePresentationV1[];
+}>;
 export type MachineSetupPreparedApply = Readonly<{
     ok: true; input: MachineSetupApplyInputV1; review?: MachineSetupCombinedPlanResultV1['review'];
     facts: readonly MachineSetupTargetReviewFacts[];
     /** Native Plan dispositions retained in the same review, never executable or queued targets. */
     unavailableTargets?: readonly MachineSetupPlanUnavailableTargetV1[];
+    /** Exact locally opened Plan copies for presentation only; Action input remains opaque. */
+    sourcePresentations?: readonly MachineSetupTargetSourcePresentations[];
 }> | ActionExecuteFailure;
 
 /** The same review facts, with only the exact native removal continuation executable. */
@@ -51,13 +62,19 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
     const targets = params.targets.map(target => ({ homeId: target.homeId, machineId: target.machineId, sources: target.sources,
         mode: 'effects' as const, ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
         ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }) }));
-    const expectedSources: MachineSetupSourceV1[] = [];
+    const expectedSources: MachineSetupSourceApplyV1[] = [];
     for (const target of params.targets) {
-        if (!target.current) { expectedSources.push(target.sources); continue; }
-        const change = reviewMachineSetupSourceChangeV1({ currentSources: target.current.sources,
-            currentSourceFacts: target.current.sourceFacts, proposedSources: target.sources, removeItemKeys: target.removeItemKeys });
-        if (!change.ok) return change;
-        expectedSources.push(change.sources);
+        const currentSources = target.current?.sources;
+        const proposedSources = target.sources;
+        // Public direct/bundled sources retain the existing native-retention projection. An opaque
+        // preset stays exact here; its keyholding host owns reviewing its private source body.
+        if (currentSources?.every(source => source.kind !== 'accountPresetOpaque')
+            && proposedSources.every(source => source.kind !== 'accountPresetOpaque')) {
+            const change = reviewMachineSetupSourceChangeV1({ currentSources,
+                currentSourceFacts: target.current?.sourceFacts, proposedSources, removeItemKeys: target.removeItemKeys });
+            if (!change.ok) return change;
+            expectedSources.push(change.sources);
+        } else expectedSources.push(proposedSources);
     }
     const response = await params.executeAction('machines.setup.plan', params.combined ? {
         homeId: params.homeId, machineId: params.machineId, targets,
@@ -71,6 +88,7 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
     if (combined && (!combined.success || combined.data.targets.length !== targets.length)) return fail('managed_response_invalid');
     const admitted = [];
     const facts: MachineSetupTargetReviewFacts[] = [];
+    const sourcePresentations: MachineSetupTargetSourcePresentations[] = [];
     const unavailableTargets = [...params.unavailableTargets ?? []];
     for (const [index, expected] of params.targets.entries()) {
         const row = combined?.success ? combined.data.targets.find(target => target.homeId === expected.homeId && target.machineId === expected.machineId) : undefined;
@@ -82,6 +100,13 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         if (effects.data.desiredRevision !== expected.desiredRevision || !sameStrictJsonValue(effects.data.sources, expectedSources[index])) return fail('plan_changed');
         if (!sameStrictJsonValue(effects.data.removeItemKeys, expected.removeItemKeys)) return fail('plan_changed');
         if (expected.removeItemKeys !== undefined && effects.data.removalPlans === undefined) return fail('managed_response_invalid');
+        const presentations = await openManagedMachineSetupPlanSourcesV1({
+            ...(typeof params.context.serverId === 'string' ? { serverId: params.context.serverId } : {}),
+            ...(typeof params.context.expectedAccountId === 'string' ? { accountId: params.context.expectedAccountId } : {}),
+            plan: effects.data,
+            signal: params.context.signal,
+        });
+        if (!current()) return fail('continuation_retired');
         admitted.push({ homeId: expected.homeId, machineId: expected.machineId, sources: effects.data.sources,
             desiredRevision: effects.data.desiredRevision, recipePlans: effects.data.recipePlans, exclusions: effects.data.exclusions,
             ...(effects.data.removeItemKeys === undefined ? {} : { removeItemKeys: effects.data.removeItemKeys }),
@@ -92,10 +117,12 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             ...(effects.data.sourceFacts === undefined ? {} : { sourceFacts: effects.data.sourceFacts }),
             ...(effects.data.recipeTitles === undefined ? {} : { recipeTitles: effects.data.recipeTitles }),
             ...(effects.data.removalOffers === undefined ? {} : { removalOffers: effects.data.removalOffers }) });
+        sourcePresentations.push({ homeId: expected.homeId, machineId: expected.machineId, sources: presentations });
     }
     if (!admitted.length) return { ok: false, errorCode: 'machine_offline', error: 'machine_offline', details: { targets: unavailableTargets } };
     if (combined?.success && combined.data.review.machineId === null) return fail('machine_unavailable');
     return { ok: true, ...(combined?.success ? { review: combined.data.review } : {}), facts,
+        ...(sourcePresentations.length ? { sourcePresentations } : {}),
         ...(unavailableTargets.length ? { unavailableTargets } : {}), input: MachineSetupApplyInputV1Schema.parse({
         homeId: params.homeId, machineId: combined?.success ? combined.data.review.machineId : params.machineId, targets: admitted,
     }) };

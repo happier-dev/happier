@@ -57,7 +57,13 @@ export type HomeGovernanceActionInputById = {
     };
     readonly "home.accounts.delete": {
         accountId: string;
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -96,7 +102,7 @@ export type HomeGovernanceActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
     };
     readonly "home.accounts.signOutEverywhere": {
         accountId: string;
@@ -233,6 +239,7 @@ export type HomeGovernanceActionInputById = {
                     groupId: string;
                 };
                 teamResource: null | {
+                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -249,7 +256,6 @@ export type HomeGovernanceActionInputById = {
                             accountId: string;
                         };
                     };
-                    teamId: string;
                 };
             }[]> | undefined;
         };
@@ -404,6 +410,7 @@ export type HomeGovernanceActionResultById = {
                     groupId: string;
                 };
                 teamResource: null | {
+                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -420,7 +427,6 @@ export type HomeGovernanceActionResultById = {
                             accountId: string;
                         };
                     };
-                    teamId: string;
                 };
             }[]> | undefined;
         };
@@ -589,6 +595,7 @@ export type HomeGovernanceActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -605,7 +612,6 @@ export type HomeGovernanceActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -1096,7 +1102,7 @@ export type HomeGovernanceActionResultById = {
             summary: {
                 revision: number;
                 changes: {
-                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
+                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'sessionDefaults' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
                     from: unknown;
                     to: unknown;
                 }[];
@@ -1910,6 +1916,7 @@ export type HomeGovernanceActionResultById = {
                     groupId: string;
                 };
                 teamResource: null | {
+                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -1926,7 +1933,6 @@ export type HomeGovernanceActionResultById = {
                             accountId: string;
                         };
                     };
-                    teamId: string;
                 };
             }[]> | undefined;
         };
@@ -2322,7 +2328,7 @@ export type HomeGovernanceActionResultById = {
             summary: {
                 revision: number;
                 changes: {
-                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
+                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'sessionDefaults' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
                     from: unknown;
                     to: unknown;
                 }[];

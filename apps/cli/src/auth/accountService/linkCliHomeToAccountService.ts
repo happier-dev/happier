@@ -1,9 +1,12 @@
 import { publishAccountServiceHomeLink } from '@happier-dev/cli-common/accountService';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, ACCOUNT_DIRECTORY_ERROR_CODES_V1, AccountDirectoryHomePutRequestV1Schema, AccountDirectoryHomePutResponseV1Schema, AccountDirectoryLinkDeleteRequestV1Schema, AccountDirectoryLinkDeleteResponseV1Schema, AccountDirectoryLinkPutRequestV1Schema, AccountDirectoryLinkPutResponseV1Schema, AccountDirectoryMeResponseV1Schema, AccountDirectoryRouteErrorResponseV1Schema, buildAccountDirectoryHomeHttpPathV1, buildAccountDirectoryLinkHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, ACCOUNT_DIRECTORY_ERROR_CODES_V1, AccountDirectoryHomeLabelV1Schema, AccountDirectoryHomePutRequestV1Schema, AccountDirectoryHomePutResponseV1Schema, AccountDirectoryLinkDeleteRequestV1Schema, AccountDirectoryLinkDeleteResponseV1Schema, AccountDirectoryLinkPutRequestV1Schema, AccountDirectoryLinkPutResponseV1Schema, AccountDirectoryMeResponseV1Schema, AccountDirectoryRouteErrorResponseV1Schema, buildAccountDirectoryHomeHttpPathV1, buildAccountDirectoryLinkHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+
+import { CliPrivateLabelError, prepareCliPrivateLabel } from '@/api/privateLabels';
+import { admitCliReportedAccountMode } from '@/api/client/accountModeAdmission';
 
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -40,6 +43,8 @@ export type CliHomeUnlinkResult =
 
 class CliHomeRelinkConflictError extends Error {}
 class CliHomeTransportUnavailableError extends Error {}
+
+const ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account-directory/private-labels/recipient-census';
 
 function endpointUrl(endpoint: string, path: string): string {
   return `${endpoint.replace(/\/+$/u, '')}${path}`;
@@ -160,12 +165,21 @@ export async function linkCliHomeToAccountService(input: Readonly<{
       readAccountServiceCredential: async (identity) => identity === selection.serverIdentityId
         ? accountServiceCredential
         : null,
-      readAccountSubject: async (credential) => (await parsedRequest({
-        url: endpointUrl(selection.endpoint, ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1),
-        token: credential.token,
-        schema: AccountDirectoryMeResponseV1Schema,
-        signal: input.signal,
-      })).accountId,
+      readAccountSubject: async (credential) => {
+        const me = await parsedRequest({
+          url: endpointUrl(selection.endpoint, ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1),
+          token: credential.token,
+          schema: AccountDirectoryMeResponseV1Schema,
+          signal: input.signal,
+        });
+        const encryptionMode = await admitCliReportedAccountMode(me.encryptionMode, {
+          encryption: credential.accountContentPrivateKey ?? null,
+        });
+        if (encryptionMode === 'e2ee' && !credential.accountContentPrivateKey) {
+          throw new CliPrivateLabelError();
+        }
+        return { accountId: me.accountId, encryptionMode };
+      },
       publishLinkToHome: async ({ credential, issuerSubjectId, relink }) => {
         const acquired = await acquireTerminalAuthEnrollmentRuntime(descriptor, undefined, input.signal);
         if (!acquired.ok) throw new CliHomeTransportUnavailableError();
@@ -189,10 +203,23 @@ export async function linkCliHomeToAccountService(input: Readonly<{
           await acquired.close().catch(() => undefined);
         }
       },
-      publishHomeToAccountService: async ({ home, credential }) => {
+      publishHomeToAccountService: async ({ home, credential, issuer }) => {
+        const label = await prepareCliPrivateLabel({
+          endpoint: selection.endpoint,
+          token: credential.token,
+          accountId: issuer.accountId,
+          accountMode: issuer.encryptionMode,
+          recipientCensusPath: ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
+          binding: {
+            entity: 'account_directory_home',
+            field: 'label',
+            id: home.homeServerIdentityId,
+          },
+          value: AccountDirectoryHomeLabelV1Schema.parse(home.label),
+        });
         const body = AccountDirectoryHomePutRequestV1Schema.parse({
           v: 1,
-          label: home.label,
+          label,
           connectionDescriptor: home.connectionDescriptor,
         });
         await parsedRequest({

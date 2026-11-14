@@ -3,9 +3,10 @@ import type { DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '
 import type { DeploymentReadSnapshotV1 } from '@happier-dev/deployments';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { HappyError } from '@/utils/errors/errors';
+import { randomUUID } from '@/platform/randomUUID';
 import { useEnvironmentSecretBindingsEditor } from './useEnvironmentSecretBindingsEditor';
 import type { createDeploymentActions } from './deploymentActions';
 
@@ -126,14 +127,14 @@ export function useEnvironmentSecretBindingsDraft(options: EnvironmentSecretBind
         const next = new Set(now.bindings.map(environmentSecretBindingIdentityV1));
         const set = now.bindings.filter(binding => !sameStrictJsonValue(previous.get(environmentSecretBindingIdentityV1(binding)), binding));
         const remove = originalBindings.filter(binding => !next.has(environmentSecretBindingIdentityV1(binding)))
-            .map(({ source: _source, ...identity }) => identity);
+            .map(projectEnvironmentSecretBindingIdentityV1);
         const choiceEntries = [...now.providerChoices];
         const providerVariables = choiceEntries.length ? {
             useOurs: choiceEntries.filter(([, choice]) => choice === 'useOurs').map(([key]) => key),
             keepTheirs: choiceEntries.filter(([, choice]) => choice === 'keepTheirs').map(([key]) => key),
         } : undefined;
         const patch = { set, remove, ...(providerVariables ? { providerVariables } : {}) };
-        const savedBindings = applyEnvironmentSecretBindingsPatchV1(originalBindings, patch)
+        const savedBindings = applyEnvironmentSecretBindingsPatchV1(originalBindings, patch, randomUUID)
             .filter(binding => binding.purpose !== 'variable' || !providerVariables?.keepTheirs.includes(binding.name));
         const committed = now.options.bindingTarget === 'previewTemplate' && original.content.previewTemplate
             ? { ...original.content, previewTemplate: { ...original.content.previewTemplate,

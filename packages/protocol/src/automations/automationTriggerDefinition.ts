@@ -21,6 +21,7 @@ import {
   AutomationEventSourceInstanceIdV1Schema,
 } from './automationEventJsonBoundsV1.js';
 import { AutomationEventFilterV1Schema } from './automationEventFilterV1.js';
+import { AutomationDefinitionDisplayV1Schema } from './automationDefinitionDisplayV1.js';
 import {
   ENCRYPTED_STORED_CONTENT_SCHEMA,
   addAutomationStoredEnvelopeUtf8LimitIssue,
@@ -31,26 +32,8 @@ import { SessionPersonalEventKindV1Schema, resolveSessionPersonalFollowEventV1, 
 import { AutomationRunLifecycleTriggerSchema, AutomationRunLifecycleTriggerInputSchema } from './automationRunLifecycle.js';
 export * from './automationRunLifecycle.js';
 
-export const AutomationOnceScheduleSchema = lazyZodSchema(() => z.strictObject({
-    kind: z.literal('once'),
-    scheduledAt: z.number().check(z.int(), z.nonnegative(), z.refine(value => Number.isFinite(new Date(value).getTime()), 'Invalid schedule instant')),
-}));
-
-const AutomationScheduleSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  AutomationOnceScheduleSchema,
-  z.strictObject({
-    kind: z.literal('cron'),
-    scheduleExpr: z.string(),
-    everyMs: z.null(),
-    timezone: z.nullable(z.string()),
-  }),
-  z.strictObject({
-    kind: z.literal('interval'),
-    scheduleExpr: z.null(),
-    everyMs: z.number().check(z.int()),
-    timezone: z.nullable(z.string()),
-  }),
-]));
+import { AutomationScheduleSchema } from './automationSchedule.js';
+export { AutomationOnceScheduleSchema } from './automationSchedule.js';
 
 export const AutomationScheduleTriggerSchema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('schedule'),
@@ -115,6 +98,8 @@ export type AutomationPluginEventObservationTransportInput = z.infer<
 
 export const AutomationPluginEventDefinitionTriggerSchema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('pluginEvent'),
+  /** Account-private Automation label carried by the incumbent Event definition envelope. */
+  automationDisplay: z.optional(AutomationDefinitionDisplayV1Schema),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,

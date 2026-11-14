@@ -20,6 +20,7 @@ import { encrypt } from '../../../../../../cli/src/api/encryption';
 import { createFakeSocket, getSocketHandler } from '../../testkit/socketHarness';
 import { machineUpdateHandler } from '../../socket/machineUpdateHandler';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '../../socket/machineSocketInstallationProof';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('E2EE CLI pairing and retained Machine discovery (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -87,7 +88,7 @@ describe('E2EE CLI pairing and retained Machine discovery (real SQLite)', () => 
             const reRegistered = await app.inject({ method: 'POST', url: '/v1/machines', headers, payload });
             expect(reRegistered.statusCode, routeError?.stack ?? reRegistered.body).toBe(200);
             expect(reRegistered.json()).toMatchObject({ machine: { id: machineId, metadata, daemonState } });
-            const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Pairing bootstrap' });
+            const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Pairing bootstrap') });
             const bootstrap = await app.inject({ method: 'GET', url: '/v1/machines', headers: { ...headers, authorization: `Bearer ${pat.token}` } });
             expect(bootstrap.statusCode, routeError?.stack ?? bootstrap.body).toBe(200);
             expect(bootstrap.json()).toContainEqual(expect.objectContaining({ id: machineId }));

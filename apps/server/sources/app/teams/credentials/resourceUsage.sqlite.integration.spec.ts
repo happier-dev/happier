@@ -3,11 +3,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { plainPrivateLabel, storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { queryTeamCredentialUsage } from './resourceUsage';
 import { removeTeamMemberForActorInTx } from '../memberships/memberAdministration';
 import { recordTeamCredentialDirectDeliveryActivityInTx } from './resourceActivity';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { TeamCredentialUsageQueryInputV1Schema, TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
+import {
+  openPrivateLabelV1,
+  PrivateLabelStoredV1Schema,
+  serializePrivateLabelStoredV1,
+} from '@happier-dev/protocol/crypto/privateLabelV1';
+import { buildTeamCredentialUsageExportFromRecipientProjectionV1, TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCostFacts';
 
@@ -116,7 +122,7 @@ describe('Team credential resource usage query', () => {
     expect(result.breakdown?.map(row => row.key).sort()).toEqual(['unavailable_session', sessions[1]!.id, sessions[2]!.id].sort());
   });
 
-  it('uses the same real Home resource authority for export, including restricted-Team and outsider refusal', async () => {
+  it('projects an admitted resource label through the strict usage wire into the local export', async () => {
     const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
     const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
     const team = await db.team.create({ data: { name: 'Export authority', authenticationPolicy: {
@@ -124,23 +130,32 @@ describe('Team credential resource usage query', () => {
     } } });
     await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'admin' } });
     const resource = await db.teamCredentialResource.create({ data: { teamId: team.id,
-      custodianAccountId: custodian.id, displayName: 'Shared model', disclosureCeiling: 'brokered_only',
+      custodianAccountId: custodian.id,
+      displayName: serializePrivateLabelStoredV1(PrivateLabelStoredV1Schema.parse({
+        content: { t: 'plain', v: 'Shared model' }, recipients: [],
+      })),
+      disclosureCeiling: 'brokered_only',
       sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}', allMembersDeliveryMode: 'brokered' } });
     const query = { resourceId: resource.id, startMs: 0, endMs: Date.now(), granularity: 'day', costMode: 'auto' } as const;
-    const executorFor = (actorId: string) => createActionExecutor({ homeDomainAction: async ({ input }) => {
-      // This adapts the genuine Home query/HTTP result boundary; authorization and database reads stay real.
-      const value = await queryTeamCredentialUsage(actorId, TeamCredentialUsageQueryInputV1Schema.parse(input), TEST_AUTHENTICATION);
-      return 'ok' in value ? { ok: false, errorCode: value.error, error: value.error } : value;
-    } } as ActionExecutorDeps);
-    const request = { query, resourceName: 'Shared model' };
-    expect(await executorFor(custodian.id).execute('teams.credentials.usage.export', request, { surface: 'cli' }))
-      .toMatchObject({ ok: false, errorCode: 'team_authentication_required' });
+    expect(await queryTeamCredentialUsage(custodian.id, query, TEST_AUTHENTICATION))
+      .toMatchObject({ ok: false, error: 'team_authentication_required' });
     await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: null } });
-    const exported = await executorFor(custodian.id).execute('teams.credentials.usage.export', request, { surface: 'cli' });
-    expect(exported.ok).toBe(true);
-    if (exported.ok) expect(UsageFileResultSchema.parse(exported.result).mediaType).toBe('text/csv');
-    expect(await executorFor(outsider.id).execute('teams.credentials.usage.export', request, { surface: 'cli' }))
-      .toMatchObject({ ok: false, errorCode: 'not_found_or_not_visible' });
+    const admitted = await queryTeamCredentialUsage(custodian.id, query, TEST_AUTHENTICATION);
+    if ('ok' in admitted) throw new Error(`Usage refused: ${admitted.error}`);
+    const transported = TeamCredentialUsageQueryResultV1Schema.parse(JSON.parse(JSON.stringify(admitted)));
+    expect(transported.resourceDisplayName).toEqual({
+      content: { t: 'plain', v: 'Shared model' }, recipientEnvelope: null,
+    });
+    const exported = await buildTeamCredentialUsageExportFromRecipientProjectionV1({
+      input: { query },
+      readPage: async () => transported,
+      openLabel: async ({ binding, label }) => openPrivateLabelV1({ binding, label, readPolicy: { kind: 'team-resource' } }),
+    });
+    if ('ok' in exported) throw new Error(`Usage export refused: ${exported.error}`);
+    const file = UsageFileResultSchema.parse(exported);
+    expect(new TextDecoder().decode(decodeBase64(file.base64))).toContain('Shared model');
+    expect(await queryTeamCredentialUsage(outsider.id, query, TEST_AUTHENTICATION))
+      .toMatchObject({ ok: false, error: 'not_found_or_not_visible' });
   });
 
   it('requires restricted-Team qualification from a current source custodian before usage disclosure', async () => {
@@ -182,7 +197,7 @@ describe('Team credential resource usage query', () => {
       { teamId: team.id, accountId: manager.id, role: 'admin' },
       { teamId: team.id, accountId: other.id, role: 'member' },
     ] });
-    const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Builders', nameKey: 'builders' } });
+    const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Builders') } });
     await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: actorMembership.id, nativeContribution: true } });
     const resource = await db.teamCredentialResource.create({ data: {
       id: 'usage-resource', teamId: team.id, custodianAccountId: manager.id, displayName: 'Provider',
@@ -524,7 +539,7 @@ describe('Team credential resource usage query', () => {
     // The retained disclosure witness the recipient-material read writes on a
     // real first direct open — long before the queried range.
     await inTx((tx) => recordTeamCredentialDirectDeliveryActivityInTx(tx, {
-      teamId: team.id, resourceId: onceDisclosed.id, recipientAccountId: member.id, subjectDisplayName: 'Member',
+      teamId: team.id, resourceId: onceDisclosed.id, recipientAccountId: member.id, subjectDisplayName: plainPrivateLabel('Member'),
     }));
     const observedAt = new Date();
     await db.usageEvent.create({ data: {
@@ -640,7 +655,7 @@ describe('Team credential resource usage query', () => {
     const team = await db.team.create({ data: { name: 'Group token usage team' } });
     const actorMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
     await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
-    const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Builders', nameKey: 'builders' } });
+    const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Builders') } });
     await db.teamGroupMembership.create({ data: {
       teamId: team.id, teamGroupId: group.id, teamMembershipId: actorMembership.id, nativeContribution: true,
     } });
@@ -728,7 +743,7 @@ describe('Team credential resource usage query', () => {
       disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}', allMembersDeliveryMode: 'brokered',
     } });
     const externalKey = await db.teamCredentialExternalApiKey.create({ data: {
-      resourceId: resource.id, teamMembershipId: actorMembership.id, label: 'CI runner',
+      resourceId: resource.id, teamMembershipId: actorMembership.id, label: storedPlainPrivateLabel('CI runner'),
       displayPrefix: 'hapek_v1_abcd1234', secretDigest: 'digest',
     } });
     const observedAt = new Date();
@@ -756,7 +771,10 @@ describe('Team credential resource usage query', () => {
     const keyView = await queryTeamCredentialUsage(manager.id, { resourceId: resource.id, ...range, breakdown: 'external_api_key' }, TEST_AUTHENTICATION);
     if ('ok' in keyView) throw new Error('expected manager usage result');
     expect(keyView.breakdown).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: externalKey.id, label: 'CI runner' }),
+      expect.objectContaining({
+        key: externalKey.id,
+        privateLabel: { content: { t: 'plain', v: 'CI runner' }, recipientEnvelope: null },
+      }),
     ]));
 
     const managerSourceView = await queryTeamCredentialUsage(manager.id, { resourceId: resource.id, ...range, breakdown: 'source_member' }, TEST_AUTHENTICATION);

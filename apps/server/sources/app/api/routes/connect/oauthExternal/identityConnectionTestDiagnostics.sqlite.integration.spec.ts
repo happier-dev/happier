@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -117,14 +118,14 @@ describe("identity-connection test diagnostics", () => {
         });
 
         const engineering = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering") },
         });
         engineeringGroupId = engineering.id;
         const design = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Design", nameKey: "design" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Design") },
         });
         const otherTeamGroup = await db.teamGroup.create({
-            data: { teamId: otherTeam.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: otherTeam.id, name: storedPlainPrivateLabel("Engineering") },
         });
         await db.teamExternalGroupBinding.create({
             data: {

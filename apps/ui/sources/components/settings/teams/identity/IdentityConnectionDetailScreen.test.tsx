@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
+import type { TeamGroupNameProjectionV1, TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
@@ -10,15 +10,16 @@ import { t } from '@/text';
 const executeMock = vi.hoisted(() => vi.fn());
 const executeBindingMock = vi.hoisted(() => vi.fn());
 const announceMock = vi.hoisted(() => vi.fn());
+const openPrivateLabelMock = vi.hoisted(() => vi.fn());
 const groupBindingRowsMock = vi.hoisted(() => ({
     current: [] as Array<Readonly<{
         id: string;
         externalGroupId: string;
-        target: Readonly<{ teamGroupId: string; name: string; archivedAt: number | null }>;
+        target: Readonly<{ teamGroupId: string; name: TeamGroupNameProjectionV1; archivedAt: number | null }>;
     }>>,
 }));
 const nativeGroupsMock = vi.hoisted(() => ({
-    current: [] as Array<Readonly<{ id: string; name: string; memberCount: number }>>,
+    current: [] as Array<Readonly<{ id: string; name: TeamGroupNameProjectionV1; memberCount: number }>>,
     enabled: false,
     status: 'ready' as 'loading' | 'ready' | 'error',
     error: null as null | { kind: 'unreachable'; retryable: boolean; code: null },
@@ -122,6 +123,9 @@ vi.mock('./identityAdministrationClient', async (importOriginal) => ({
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
     announceAccessibilityMessage: announceMock,
 }));
+vi.mock('@/sync/ops/privateLabels/privateLabelClient', () => ({
+    createPrivateLabelClient: () => ({ open: openPrivateLabelMock }),
+}));
 vi.mock('@/hooks/teams/useTeamGroups', () => ({
     useTeamGroups: (params: { enabled: boolean }) => ({
         enabled: (nativeGroupsMock.enabled = params.enabled),
@@ -170,6 +174,10 @@ beforeEach(() => {
     nativeGroupsMock.error = null;
     nativeGroupsMock.reload.mockReset();
     announceMock.mockReset();
+    openPrivateLabelMock.mockReset();
+    openPrivateLabelMock.mockImplementation(async (input: Readonly<{
+        label: Readonly<{ content: Readonly<{ t: 'plain'; v: string }> }>;
+    }>) => input.label.content.v);
     executeBindingMock.mockReset();
     executeBindingMock.mockImplementation(async (actionId: string) => actionId === 'teams.externalGroupBindings.list'
         ? { ok: true, value: { items: groupBindingRowsMock.current, nextCursor: null } }
@@ -386,7 +394,10 @@ describe('IdentityConnectionDetailScreen test return', () => {
                     emailVerified: false,
                     groups: { state: 'complete', count: 2 },
                     eligibility: { status: 'ineligible', rules: [{ kind: 'email_domains', matched: false }] },
-                    mappedGroups: [{ id: 'group-1', name: 'Engineering' }],
+                    mappedGroups: [{
+                        id: 'group-1',
+                        name: { kind: 'available', label: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null } },
+                    }],
                 },
             },
         });
@@ -401,7 +412,12 @@ describe('IdentityConnectionDetailScreen test return', () => {
         await vi.waitFor(() => expect(
             screen.findByTestId('identity-test-diagnostics:mappedGroups'),
         ).not.toBeNull());
-        expect(findTestInstanceByTypeContainingText(screen.findByTestId('identity-test-diagnostics:mappedGroups')!, 'Text', 'Engineering')).toBeDefined();
+        await vi.waitFor(() => expect(
+            findTestInstanceByTypeContainingText(screen.findByTestId('identity-test-diagnostics:mappedGroups')!, 'Text', 'Engineering'),
+        ).toBeDefined());
+        expect(openPrivateLabelMock).toHaveBeenCalledWith(expect.objectContaining({
+            binding: { entity: 'team_group', field: 'name', id: 'group-1' },
+        }));
         expect(screen.findByTestId('identity-test-diagnostics:rule:email_domains')).not.toBeNull();
     });
 

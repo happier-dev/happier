@@ -3,13 +3,14 @@ import tweetnacl from 'tweetnacl';
 import { ExternalOAuthFinalizeAuthSuccessResponseSchema, ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
 import { KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin, createKeyChallengeV2SigningInput } from '@happier-dev/protocol/auth/keyChallenge';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 import { captureLoopbackOauthRedirect } from '@/cloud/loopbackOauthPkce';
 import { describeBrowserHandoffFallback, openBrowser } from '@/ui/openBrowser';
 import { createExternalAuthProof } from '@/auth/externalAuthProof';
-import type { CliAccountServiceSelection } from './cliAccountServiceSession';
+import type { CliAccountServiceRestrictedCredential, CliAccountServiceSelection } from './cliAccountServiceSession';
 
 type RequestedMethod = Readonly<{
   kind: 'key';
@@ -25,7 +26,7 @@ type RequestedMethod = Readonly<{
 export type CliAccountServiceAuthOutcome =
   | Readonly<{
       kind: 'authenticated';
-      credential: Readonly<{ token: string }>;
+      credential: CliAccountServiceRestrictedCredential;
       recoveryKey?: Uint8Array;
     }>
   | Readonly<{ kind: 'key_required' | 'update_required' | 'account_service_unavailable' | 'cancelled' | 'timed_out' | 'identity_mismatch' | 'destination_mismatch' | 'failed' }>;
@@ -154,7 +155,10 @@ export async function authenticateCliAccountService(
       return token
         ? {
             kind: 'authenticated',
-            credential: { token },
+            credential: {
+              token,
+              accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(key),
+            },
             ...(generatedKey ? { recoveryKey: generatedKey } : {}),
           }
         : { kind: 'failed' };
@@ -259,7 +263,12 @@ export async function authenticateCliAccountService(
     return finalized.success
       ? {
           kind: 'authenticated',
-          credential: { token: finalized.data.token },
+          credential: {
+            token: finalized.data.token,
+            ...(recoveryKey
+              ? { accountContentPrivateKey: deriveAccountMachineKeyFromRecoverySecret(recoveryKey) }
+              : {}),
+          },
           ...(recoveryKey ? { recoveryKey } : {}),
         }
       : { kind: 'key_required' };

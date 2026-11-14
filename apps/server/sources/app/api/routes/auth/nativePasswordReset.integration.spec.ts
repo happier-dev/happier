@@ -13,6 +13,7 @@ import { inTx } from "@/storage/inTx";
 import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import type { AuthMethodRouteContext } from "@/app/auth/methods/types";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("native Plain password reset", () => {
     let harness: LightSqliteHarness;
@@ -215,7 +216,7 @@ describe("native Plain password reset", () => {
         try {
             const session = await auth.createToken(prepared.account.id, undefined, { kind: "account", authority: "present_user",
                 authenticationEvidence: [{ kind: "home_method", methodId: "email_password" }] });
-            const pat = await auth.createApiToken({ accountId: prepared.account.id, tokenId: crypto.randomUUID(), label: "Preserved by reset" });
+            const pat = await auth.createApiToken({ accountId: prepared.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(prepared.account.id, "Preserved by reset") });
             const first = await prepared.issue();
             const sibling = await prepared.issue();
             const outcomes = await Promise.all([prepared.submit(first.rawBearer), prepared.submit(sibling.rawBearer)]);

@@ -5,8 +5,8 @@ import { deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphert
 import { AutomationOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1, deriveAutomationOccurrenceEvidenceEqualityTagV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { AutomationStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { openAutomationTemplateStoredForMigrationV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
-import { serializeAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import type { AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 import {
     AUTOMATION_TEMPLATE_V02_ENCRYPTED,
@@ -134,6 +134,80 @@ describe('Account transition Automation recovery', () => {
             })).toEqual([{ automationId: 'automation-old', status: 'locked' }]);
         }
         expect(writes).toEqual([]);
+    });
+
+    it.each([
+        {
+            kind: 'Action',
+            serialize: () => serializeAutomationStoredDefinitionExecutionRecipeV1({
+                v: 1,
+                templateVersion: 2,
+                template: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+                    kind: 'automation_template_payload', material: historicalMaterial,
+                    payload: { v: 1, prompt: 'Current task', display: { name: 'Private action', description: null } },
+                    randomBytes: length => new Uint8Array(length).fill(3),
+                }) },
+                triggerEvidence: null,
+                target: { kind: 'executionRun', request: { intent: 'task',
+                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+                    retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' } },
+            }),
+            readDisplay: (serialized: string) => {
+                const parsed = parseAutomationStoredDefinitionExecutionRecipeV1(serialized);
+                if (parsed.kind !== 'available' || parsed.recipe.template.t !== 'plain') throw new Error('expected plain Action recipe');
+                return parsed.recipe.template.v.display;
+            },
+        },
+        {
+            kind: 'Workflow',
+            serialize: () => serializeAutomationStoredWorkflowDefinitionRecipeV2({
+                v: 2,
+                templateVersion: 2,
+                workflow: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+                    kind: 'automation_template_payload', material: historicalMaterial,
+                    payload: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+                        display: { name: 'Private workflow', description: 'Keep this title private' } },
+                    randomBytes: length => new Uint8Array(length).fill(3),
+                }) },
+                triggerEvidence: null,
+            }),
+            readDisplay: (serialized: string) => {
+                const parsed = parseAutomationStoredWorkflowDefinitionRecipeV2(serialized);
+                if (parsed.kind !== 'available' || parsed.recipe.workflow.t !== 'plain') throw new Error('expected plain Workflow recipe');
+                return parsed.recipe.workflow.v.display;
+            },
+        },
+    ])('converts the current $kind display carrier with the existing Account transition', async ({ serialize, readDisplay }) => {
+        const recipe = serialize();
+        if (recipe.kind !== 'available') throw new Error('expected current recipe');
+        const retainedOuterField = { introducedByANewerWriter: true };
+        const retainedRecipe = JSON.stringify({ ...JSON.parse(recipe.serialized), retainedOuterField });
+        const sourceCredentials = { token: 'source', secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') };
+        const eventDisplay = { name: 'Private event monitor', description: 'Keep this Event title private' };
+        const triggerEnvelope = JSON.stringify({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+            kind: 'automation_trigger_definition', material: historicalMaterial,
+            payload: { v: 1, binding: { v: 1, automationId: 'automation-current', triggerId: 'trigger-current',
+                triggerRevision: 1, triggerKind: 'pluginEvent',
+                eventRef: { pluginId: 'com.example.events', localId: 'changed' },
+                sourceSelectorId: '11111111-1111-4111-8111-111111111111' },
+            definition: { v: 1, automationDisplay: eventDisplay } },
+            randomBytes: length => new Uint8Array(length).fill(4),
+        }) });
+        const directive = await buildAccountEncryptionMigrationAutomations({
+            accountId: 'account-current', fromMode: 'e2ee', toMode: 'plain',
+            inventory: { templates: [{ ...row(retainedRecipe), automationId: 'automation-current',
+                triggerDefinitionEnvelopes: [{ triggerId: AutomationTriggerIdSchema.parse('trigger-current'), triggerRevision: 1,
+                    envelope: triggerEnvelope }] }], runs: [] },
+            sourceCredentials, targetCredentials: null, sourceEncryption: null, targetEncryption: null,
+        });
+        if (directive.action !== 'migrate') throw new Error('expected migration directive');
+        expect(readDisplay(directive.templates[0]!.templateCiphertext)).toMatchObject({ name: expect.stringMatching(/^Private /) });
+        expect(JSON.parse(directive.templates[0]!.templateCiphertext)).toMatchObject({ retainedOuterField });
+        const migratedTrigger = AutomationStoredContentEnvelopeV1Schema.parse(
+            JSON.parse(directive.templates[0]!.triggerDefinitionEnvelopes[0]!.envelope),
+        );
+        if (migratedTrigger.t !== 'plain') throw new Error('expected plain Event envelope');
+        expect(migratedTrigger.v).toMatchObject({ definition: { automationDisplay: eventDisplay } });
     });
 
     it.each([AUTOMATION_TEMPLATE_V02_ENCRYPTED, AUTOMATION_TEMPLATE_V02_RAW_ENCRYPTED,

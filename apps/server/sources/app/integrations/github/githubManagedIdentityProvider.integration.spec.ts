@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const github = vi.hoisted(() => ({
@@ -103,7 +104,7 @@ describe("managed GitHub identity provider", () => {
             },
         });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Engineering", nameKey: "engineering" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Engineering") },
         });
         const binding = await db.teamExternalGroupBinding.create({
             data: {

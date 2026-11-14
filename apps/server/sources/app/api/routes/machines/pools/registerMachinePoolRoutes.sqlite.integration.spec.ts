@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+
+const readLabel = (value: string) => ({ kind: "available", label: { content: { t: "plain", v: value }, recipientEnvelope: null } });
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import type { MachineDaemonPresenceSocketServer } from "@/app/machines/machineDaemonPresence";
 import { createAuthenticatedTestApp } from "../../../testkit/sqliteFastify";
@@ -94,7 +97,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             { teamId: team.id, accountId: otherAccountId, role: 'member' },
         ] });
         await withPoolRoutes(async app => {
-            const definition = { poolId, name: 'Shared builders', audience: { kind: 'team', teamId: team.id },
+            const definition = { poolId, name: plainPrivateLabel('Shared builders'), audience: { kind: 'team', teamId: team.id },
                 members: [{ machineId, priorityTier: 0, enabled: true }] };
             const created = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: definition });
             expect(created.statusCode).toBe(200);
@@ -102,7 +105,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 access: { canManage: true, canResolve: true, canViewMembers: true } });
             const memberRead = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
             expect(memberRead.statusCode).toBe(200);
-            expect(memberRead.json()).toMatchObject({ pool: { name: definition.name, audience: definition.audience, members: [] },
+            expect(memberRead.json()).toMatchObject({ pool: { name: { kind: 'available', label: { content: definition.name.content, recipientEnvelope: null } }, audience: definition.audience, members: [] },
                 availability: presence === 'unavailable' ? { state: 'unknown' }
                     : { state: 'known', enabledCount: 1, connectedCount: presence === 'connected' ? 1 : 0 },
                 access: { canManage: false, canResolve: false, canViewMembers: false } });
@@ -144,7 +147,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             { teamId, accountId: otherAccountId, role: 'member' },
         ] });
         await withPoolRoutes(async app => {
-            const definition = { poolId, name: 'Published builders', audience: { kind: 'team', teamId: team.id },
+            const definition = { poolId, name: plainPrivateLabel('Published builders'), audience: { kind: 'team', teamId: team.id },
                 members: [{ machineId, priorityTier: 0, enabled: true }] };
             const retainedPoolId = '589396c1-a343-4d42-83e6-27d90bbc2e16';
             expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: definition })).statusCode).toBe(200);
@@ -165,7 +168,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(ownerRead.statusCode).toBe(200);
             expect(ownerRead.json()).toMatchObject({ pool: { members: [{ machineId }] }, access: { canManage: true, canViewMembers: true } });
             expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers, payload: {
-                ...definition, name: 'Still owned', expectedRevision: 0,
+                ...definition, name: plainPrivateLabel('Still owned'), expectedRevision: 0,
             } })).statusCode).toBe(200);
         });
     });
@@ -178,7 +181,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             { teamId: team.id, accountId: otherAccountId, role: 'member' },
         ] });
         await withPoolRoutes(async app => {
-            const definition = { poolId, name: 'Builders', members: [{ machineId, priorityTier: 0, enabled: true }] };
+            const definition = { poolId, name: plainPrivateLabel('Builders'), members: [{ machineId, priorityTier: 0, enabled: true }] };
             const denied = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers,
                 payload: { ...definition, audience: { kind: 'team', teamId: team.id } } });
             expect(denied.statusCode).toBe(404);
@@ -192,10 +195,10 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(await db.accountChange.count({ where: { accountId: otherAccountId, kind: 'machinePool', entityId: poolId } })).toBe(1);
             await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId } }, data: { role: 'member' } });
             const explicitUnchangedAudience = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
-                payload: { ...definition, name: 'Renamed builders', expectedRevision: 1, audience: { kind: 'team', teamId: team.id } } });
+                payload: { ...definition, name: plainPrivateLabel('Renamed builders'), expectedRevision: 1, audience: { kind: 'team', teamId: team.id } } });
             expect(explicitUnchangedAudience.statusCode).toBe(200);
             const omittedAudience = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
-                payload: { ...definition, name: 'Renamed again', expectedRevision: 2 } });
+                payload: { ...definition, name: plainPrivateLabel('Renamed again'), expectedRevision: 2 } });
             expect(omittedAudience.statusCode).toBe(200);
             expect(omittedAudience.json().pool.audience).toEqual(explicitUnchangedAudience.json().pool.audience);
             const before = await db.account.findUniqueOrThrow({ where: { id: otherAccountId }, select: { seq: true } });
@@ -221,8 +224,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: {
                     poolId,
-                    name: "  HTTP pool  ",
-                    description: "   ",
+                    name: plainPrivateLabel("HTTP pool"),
+                    description: null,
                     members: [
                         { machineId: fallbackMachineId, priorityTier: 3, enabled: true },
                         { machineId, priorityTier: 0, enabled: true },
@@ -233,7 +236,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(created.json()).toEqual({
                 pool: {
                     id: poolId,
-                    name: "HTTP pool",
+                    name: readLabel("HTTP pool"),
                     description: null,
                     audience: { kind: 'private' },
                     revision: 0,
@@ -287,8 +290,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 payload: {
                     poolId,
                     expectedRevision: 0,
-                    name: "Renamed pool",
-                    description: "Primary then fallback",
+                    name: plainPrivateLabel("Renamed pool"),
+                    description: plainPrivateLabel("Primary then fallback"),
                     members: [{ machineId: fallbackMachineId, priorityTier: 0, enabled: true }],
                 },
             });
@@ -296,8 +299,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(updated.json()).toMatchObject({
                 pool: {
                     revision: 1,
-                    name: "Renamed pool",
-                    description: "Primary then fallback",
+                    name: readLabel("Renamed pool"),
+                    description: readLabel("Primary then fallback"),
                     members: [{ machineId: fallbackMachineId, priorityTier: 0, enabled: true, state: "offline" }],
                 },
                 availability: { state: "known", enabledCount: 1, connectedCount: 0 },
@@ -339,7 +342,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
         await withPoolRoutes(async (app) => {
             const payload = {
                 poolId,
-                name: "Retried pool",
+                name: plainPrivateLabel("Retried pool"),
                 members: [{ machineId, priorityTier: 0, enabled: true }],
             };
             const first = await app.inject({ method: "POST", url: "/v1/machines/pools/create", headers, payload });
@@ -356,12 +359,12 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { ...payload, name: "Different definition" },
+                payload: { ...payload, name: plainPrivateLabel("Different definition") },
             });
             expect(diverged.statusCode).toBe(409);
             expect(diverged.json()).toMatchObject({
                 code: "pool_changed",
-                current: { pool: { name: "Retried pool", revision: 0 } },
+                current: { pool: { name: readLabel("Retried pool"), revision: 0 } },
             });
 
             for (const attempt of [0, 1]) {
@@ -388,7 +391,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { poolId, name: "Guarded", members: [{ machineId, priorityTier: 0, enabled: true }] },
+                payload: { poolId, name: plainPrivateLabel("Guarded"), members: [{ machineId, priorityTier: 0, enabled: true }] },
             });
             await app.inject({
                 method: "POST",
@@ -397,7 +400,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 payload: {
                     poolId,
                     expectedRevision: 0,
-                    name: "Guarded v1",
+                    name: plainPrivateLabel("Guarded v1"),
                     members: [{ machineId, priorityTier: 1, enabled: true }],
                 },
             });
@@ -409,14 +412,14 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 payload: {
                     poolId,
                     expectedRevision: 0,
-                    name: "Stale writer",
+                    name: plainPrivateLabel("Stale writer"),
                     members: [{ machineId, priorityTier: 9, enabled: false }],
                 },
             });
             expect(staleUpdate.statusCode).toBe(409);
             expect(staleUpdate.json()).toMatchObject({
                 code: "pool_changed",
-                current: { pool: { name: "Guarded v1", revision: 1 } },
+                current: { pool: { name: readLabel("Guarded v1"), revision: 1 } },
             });
 
             const staleDelete = await app.inject({
@@ -435,7 +438,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 payload: {
                     poolId,
                     expectedRevision: 1,
-                    name: "Must roll back",
+                    name: plainPrivateLabel("Must roll back"),
                     members: [
                         { machineId: fallbackMachineId, priorityTier: 0, enabled: true },
                         { machineId: foreignMachineId, priorityTier: 1, enabled: true },
@@ -452,7 +455,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 where: { id: poolId },
                 include: { members: true },
             });
-            expect(unchanged).toMatchObject({ name: "Guarded v1", revision: 1 });
+            expect(unchanged).toMatchObject({ name: storedPlainPrivateLabel("Guarded v1"), revision: 1 });
             expect(unchanged.members).toEqual([
                 expect.objectContaining({ machineId, priorityTier: 1, enabled: true }),
             ]);
@@ -477,7 +480,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers: otherHeaders,
-                payload: { poolId, name: "Private pool", members: [] },
+                payload: { poolId, name: plainPrivateLabel("Private pool"), members: [] },
             });
             expect(foreign.statusCode).toBe(200);
 
@@ -493,7 +496,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { poolId, name: "Mine now", members: [] },
+                payload: { poolId, name: plainPrivateLabel("Mine now"), members: [] },
             });
             expect(collision.statusCode).toBe(409);
             // The nondisclosing conflict carries no data owned by the other Account.
@@ -503,7 +506,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/update",
                 headers,
-                payload: { poolId, expectedRevision: 0, name: "Hijacked", members: [] },
+                payload: { poolId, expectedRevision: 0, name: plainPrivateLabel("Hijacked"), members: [] },
             });
             expect(hijack.statusCode).toBe(404);
             expect(hijack.json()).toEqual({ code: "pool_not_found" });
@@ -527,7 +530,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(destroy.json()).toEqual({ poolId, deleted: true });
 
             expect(await db.machinePool.findUniqueOrThrow({ where: { id: poolId } }))
-                .toMatchObject({ accountId: otherAccountId, name: "Private pool" });
+                .toMatchObject({ accountId: otherAccountId, name: storedPlainPrivateLabel("Private pool") });
             expect(await countOwnerChanges()).toBe(0);
         });
     });
@@ -551,7 +554,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: {
                     poolId,
-                    name: "Unknown field",
+                    name: plainPrivateLabel("Unknown field"),
                     accountId: otherAccountId,
                     members: [{ machineId, priorityTier: 0, enabled: true }],
                 },
@@ -565,7 +568,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: {
                     poolId,
-                    name: "Unknown member field",
+                    name: plainPrivateLabel("Unknown member field"),
                     members: [{ machineId, priorityTier: 0, enabled: true, weight: 5 }],
                 },
             });
@@ -577,7 +580,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: {
                     poolId,
-                    name: "Duplicate member",
+                    name: plainPrivateLabel("Duplicate member"),
                     members: [
                         { machineId, priorityTier: 0, enabled: true },
                         { machineId, priorityTier: 1, enabled: true },
@@ -590,7 +593,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { poolId, name: "   ", members: [] },
+                payload: { poolId, name: { content: { t: "encrypted", c: "malformed" }, recipients: [] }, members: [] },
             });
             expect(blankName.statusCode).toBe(400);
 
@@ -615,14 +618,14 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { poolId, name: "Owned", members: [{ machineId, priorityTier: 0, enabled: true }] },
+                payload: { poolId, name: plainPrivateLabel("Owned"), members: [{ machineId, priorityTier: 0, enabled: true }] },
             });
 
             for (const [url, payload] of [
                 ["/v1/machines/pools/list", {}],
                 ["/v1/machines/pools/get", { poolId }],
-                ["/v1/machines/pools/create", { poolId, name: "Anonymous", members: [] }],
-                ["/v1/machines/pools/update", { poolId, expectedRevision: 0, name: "Anonymous", members: [] }],
+                ["/v1/machines/pools/create", { poolId, name: plainPrivateLabel("Anonymous"), members: [] }],
+                ["/v1/machines/pools/update", { poolId, expectedRevision: 0, name: plainPrivateLabel("Anonymous"), members: [] }],
                 ["/v1/machines/pools/delete", { poolId, expectedRevision: 0 }],
                 ["/v1/machines/pools/resolve", { poolId, requestKey: "anonymous" }],
             ] as const) {
@@ -631,7 +634,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             }
 
             expect(await db.machinePool.findUniqueOrThrow({ where: { id: poolId }, include: { members: true } }))
-                .toMatchObject({ name: "Owned", revision: 0, members: [expect.objectContaining({ machineId })] });
+                .toMatchObject({ name: storedPlainPrivateLabel("Owned"), revision: 0, members: [expect.objectContaining({ machineId })] });
             expect(await countOwnerChanges()).toBe(1);
         });
     });
@@ -644,7 +647,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/machines/pools/create",
                 headers,
-                payload: { poolId, name: "Existing", members: [{ machineId, priorityTier: 0, enabled: true }] },
+                payload: { poolId, name: plainPrivateLabel("Existing"), members: [{ machineId, priorityTier: 0, enabled: true }] },
             });
 
             process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED = "0";
@@ -659,7 +662,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: {
                     poolId: "6e8b8e8f-6b1a-4c53-9f0b-6bd47a58f4d2",
-                    name: "Blocked",
+                    name: plainPrivateLabel("Blocked"),
                     members: [],
                 },
             });
@@ -674,7 +677,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(destroyed.statusCode).toBe(404);
 
             expect(await db.machinePool.count({ where: { accountId } })).toBe(1);
-            expect(await db.machinePool.findUniqueOrThrow({ where: { id: poolId } })).toMatchObject({ name: "Existing" });
+            expect(await db.machinePool.findUniqueOrThrow({ where: { id: poolId } })).toMatchObject({ name: storedPlainPrivateLabel("Existing") });
             expect(await countOwnerChanges()).toBe(1);
         });
     });

@@ -58,7 +58,7 @@ function payload(): TeamCredentialDirectMaterialPayloadV1 {
 }
 
 describe('Team credential direct material v1', () => {
-  it('accepts an omitted admission label while validating bounded metadata when present', () => {
+  it('accepts an admission without a server-readable resource label', () => {
     const value = payload();
     const response = {
       status: 'ready' as const,
@@ -72,11 +72,11 @@ describe('Team credential direct material v1', () => {
       },
     };
     expect(TeamCredentialDirectMaterialMineResponseV1Schema.parse(response)).toEqual(response);
-    const admittedResource = { displayName: 'Acme service', teamId: value.teamId };
+    const admittedResource = { teamId: value.teamId };
     expect(TeamCredentialDirectMaterialMineResponseV1Schema.parse({ ...response, admittedResource }))
       .toEqual({ ...response, admittedResource });
     expect(TeamCredentialDirectMaterialMineResponseV1Schema.safeParse({
-      ...response, admittedResource: { ...admittedResource, displayName: '' },
+      ...response, admittedResource: { ...admittedResource, displayName: 'Acme service' },
     }).success).toBe(false);
   });
 

@@ -175,14 +175,14 @@ export type ArtifactsActionResultById = {
     };
     readonly "artifact.get": {
         artifact: null | {
-            updatedAt: number;
             createdAt: number;
+            updatedAt: number;
             ownerAccountId: string;
-            header: Record<string, JsonValue>;
-            artifactId: string;
             access: 'admin' | 'edit' | 'owner' | 'view';
-            publicAudience: 'none' | 'retained' | 'unknown';
+            artifactId: string;
             seq: number;
+            header: Record<string, JsonValue>;
+            publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {
                 blobId: string;
                 mime: string;

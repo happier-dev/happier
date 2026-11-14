@@ -1,3 +1,5 @@
+import { plainPrivateLabel, prepareE2eePrivateLabelForAccount, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { computeTeamCredentialSourceMemberKeyV1 } from "@happier-dev/protocol/teams";
 import { ProviderConnectionIdSchema } from "@happier-dev/protocol/providers";
@@ -12,6 +14,7 @@ import {
     revokeTeamCredentialExternalApiKeyInTx,
     verifyTeamCredentialExternalApiKeyInTx,
 } from "./externalApiKey";
+import { readTeamCredentialActivityInTx } from "./resourceActivity";
 import {
     admitTeamCredentialExternalProviderRequestInTx,
     authorizeTeamCredentialExternalProviderModelCatalogInTx,
@@ -34,6 +37,63 @@ describe("Team credential external API key owner", () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it("stores an E2EE external-key label and its audit snapshot without server-readable text", async () => {
+        const manager = await db.account.create({ data: {
+            publicKey: crypto.randomUUID(), encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
+        } });
+        const team = await db.team.create({ data: { name: "Encrypted external key team" } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Provider"),
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
+            sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "encrypted-external-key", connectionSecurityFingerprint: "connection-security:v1:encrypted-external-key", credentialSlotId: "apiKey" }),
+            memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
+        } });
+        const keyId = crypto.randomUUID();
+        const label = await prepareE2eePrivateLabelForAccount(manager.id, {
+            entity: "team_credential_external_api_key", field: "label", id: keyId,
+        }, "E2EE automation key");
+
+        const created = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
+            authentication: TEST_AUTHENTICATION,
+            actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
+            keyId, label, expiresAt: null,
+        }));
+        expect(created).toMatchObject({ ok: true });
+        if (!created.ok) return;
+
+        const stored = await db.teamCredentialExternalApiKey.findUniqueOrThrow({
+            where: { id: keyId }, select: { label: true },
+        });
+        expect(stored.label).not.toContain("E2EE automation key");
+        expect(JSON.parse(stored.label)).toMatchObject({ content: { t: "encrypted" } });
+
+        const storedActivity = await db.teamCredentialActivityEvent.findFirstOrThrow({
+            where: { resourceId: resource.id, kind: "external_key_created" },
+            select: { subjectDisplayName: true },
+        });
+        expect(storedActivity.subjectDisplayName).not.toContain("E2EE automation key");
+        expect(JSON.parse(storedActivity.subjectDisplayName)).toMatchObject({
+            v: 1,
+            kind: "team_credential_external_api_key_label_snapshot",
+            externalApiKeyId: keyId,
+            label: { content: { t: "encrypted" } },
+        });
+
+        const activity = await inTx(tx => readTeamCredentialActivityInTx(tx, {
+            actorAccountId: manager.id, resourceId: resource.id, authentication: TEST_AUTHENTICATION,
+        }));
+        expect(activity).toMatchObject({
+            ok: true,
+            page: { items: [{
+                kind: "external_key_created",
+                externalApiKeyId: keyId,
+                subjectDisplayName: { content: { t: "encrypted" } },
+            }] },
+        });
+        expect(JSON.stringify(activity)).not.toContain("E2EE automation key");
+    });
+
     it("creates one-time resource-scoped material, lists only safe metadata, and verifies by digest", async () => {
         const manager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
@@ -41,12 +101,12 @@ describe("Team credential external API key owner", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
         expect(membership.id).not.toBe(recipient.id);
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "API clients", nameKey: "api-clients" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("API clients") } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
         } });
         const resource = await db.teamCredentialResource.create({ data: {
-            teamId: team.id, custodianAccountId: manager.id, displayName: "Shared provider",
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Shared provider"),
             disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
             sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "connection-1", connectionSecurityFingerprint: "connection-security:v1:1", credentialSlotId: "apiKey" }),
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
@@ -54,12 +114,18 @@ describe("Team credential external API key owner", () => {
         const created = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
             authentication: TEST_AUTHENTICATION,
             actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
-            label: "CI runner", expiresAt: null,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("CI runner"), expiresAt: null,
         }));
         expect(created.ok).toBe(true);
         if (!created.ok) return;
         expect(created.token).toMatch(/^hapek_v1_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$/u);
-        expect(created.key).toMatchObject({ resourceId: resource.id, teamMembershipId: membership.id, label: "CI runner", lastUsedAt: null, expiresAt: null });
+        expect(created.key).toMatchObject({
+            resourceId: resource.id,
+            teamMembershipId: membership.id,
+            label: { content: { t: "plain", v: "CI runner" }, recipientEnvelope: null },
+            lastUsedAt: null,
+            expiresAt: null,
+        });
         const stored = await db.teamCredentialExternalApiKey.findUnique({ where: { id: created.key.keyId } });
         expect(stored?.secretDigest).not.toContain(created.token);
         expect(stored?.secretDigest).not.toContain(created.token.slice(-43));
@@ -307,7 +373,7 @@ describe("Team credential external API key owner", () => {
         });
         try {
             const account = await db.account.create({ data: {
-                publicKey: crypto.randomUUID(), encryptionMode: "e2ee",
+                publicKey: crypto.randomUUID(), encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
             } });
             const team = await db.team.create({ data: {
                 name: "Qualified external key issuer",
@@ -323,7 +389,7 @@ describe("Team credential external API key owner", () => {
             const resource = await db.teamCredentialResource.create({ data: {
                 teamId: team.id,
                 custodianAccountId: account.id,
-                displayName: "Qualified provider",
+                displayName: storedPlainPrivateLabel("Qualified provider"),
                 disclosureCeiling: "brokered_only",
                 sessionUsePolicy: "personal_allowed",
                 sourceBindingJson: JSON.stringify({
@@ -346,12 +412,16 @@ describe("Team credential external API key owner", () => {
                 verifiedCredentialEvidence: authentication.authenticationEvidence,
                 operationContext: { kind: "present_user" },
             }))).resolves.toMatchObject({ status: "satisfied" });
+            const keyId = crypto.randomUUID();
+            const label = await prepareE2eePrivateLabelForAccount(account.id, {
+                entity: "team_credential_external_api_key", field: "label", id: keyId,
+            }, "Qualified unattended client");
             const created = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
                 actorAccountId: account.id,
                 authentication,
                 resourceId: resource.id,
                 teamMembershipId: membership.id,
-                label: "Qualified unattended client",
+                keyId, label,
                 expiresAt: null,
             }));
             expect(created).toMatchObject({
@@ -397,15 +467,19 @@ describe("Team credential external API key owner", () => {
     it("requires the exact assigned member to authorize a manager-created key without redisclosing its bearer", async () => {
         harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "", HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "true" });
         try {
-            const manager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
-            const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
+            const manager = await db.account.create({ data: {
+                publicKey: crypto.randomUUID(), encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
+            } });
+            const member = await db.account.create({ data: {
+                publicKey: crypto.randomUUID(), encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
+            } });
             const team = await db.team.create({ data: { name: "Assigned qualification", authenticationPolicy: {
                 v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
             } } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
             const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
             const resource = await db.teamCredentialResource.create({ data: {
-                teamId: team.id, custodianAccountId: manager.id, displayName: "Assigned provider",
+                teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Assigned provider"),
                 disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
                 sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "assigned-connection",
                     connectionSecurityFingerprint: "connection-security:v1:assigned", credentialSlotId: "apiKey" }),
@@ -413,9 +487,13 @@ describe("Team credential external API key owner", () => {
             } });
             const authentication = { ...TEST_AUTHENTICATION,
                 authenticationEvidence: [{ kind: "home_method" as const, methodId: "key_challenge" }] };
+            const keyId = crypto.randomUUID();
+            const label = await prepareE2eePrivateLabelForAccount(manager.id, {
+                entity: "team_credential_external_api_key", field: "label", id: keyId,
+            }, "Member tool", { teamIds: [team.id] });
             const created = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
                 actorAccountId: manager.id, authentication, resourceId: resource.id,
-                teamMembershipId: membership.id, label: "Member tool", expiresAt: null,
+                teamMembershipId: membership.id, keyId, label, expiresAt: null,
             }));
             expect(created).toMatchObject({ ok: true, key: { authenticationStatus: "authentication_required", canAuthorize: false } });
             if (!created.ok) throw new Error("expected pending assigned key");
@@ -467,7 +545,7 @@ describe("Team credential external API key owner", () => {
         const resource = await db.teamCredentialResource.create({ data: {
             teamId: team.id,
             custodianAccountId: manager.id,
-            displayName: "Restricted provider",
+            displayName: storedPlainPrivateLabel("Restricted provider"),
             disclosureCeiling: "brokered_only",
             sessionUsePolicy: "personal_allowed",
             sourceBindingJson: JSON.stringify({
@@ -485,7 +563,7 @@ describe("Team credential external API key owner", () => {
             authentication: TEST_AUTHENTICATION,
             resourceId: resource.id,
             teamMembershipId: membership.id,
-            label: "Unusable automation key",
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Unusable automation key"),
             expiresAt: null,
         }))).resolves.toEqual({ ok: false, error: "team_authentication_required" });
         expect(await db.teamCredentialExternalApiKey.count({ where: { resourceId: resource.id } })).toBe(0);
@@ -501,7 +579,7 @@ describe("Team credential external API key owner", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
         const resource = await db.teamCredentialResource.create({ data: {
-            teamId: team.id, custodianAccountId: manager.id, displayName: "Removal provider",
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Removal provider"),
             disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
             sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "connection-removal", connectionSecurityFingerprint: "connection-security:v1:removal", credentialSlotId: "apiKey" }),
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
@@ -509,7 +587,7 @@ describe("Team credential external API key owner", () => {
         const created = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
             authentication: TEST_AUTHENTICATION,
             actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
-            label: "Removed runner", expiresAt: null,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Removed runner"), expiresAt: null,
         }));
         expect(created.ok).toBe(true);
         if (!created.ok) return;
@@ -555,7 +633,17 @@ describe("Team credential external API key owner", () => {
         expect(await db.teamCredentialActivityEvent.findMany({
             where: { resourceId: resource.id, kind: "external_key_revoked" },
             select: { actorAccountId: true, subjectDisplayName: true },
-        })).toEqual([{ actorAccountId: manager.id, subjectDisplayName: "Removed runner" }]);
+        })).toEqual([expect.objectContaining({ actorAccountId: manager.id })]);
+        const [externalKeyActivity] = await db.teamCredentialActivityEvent.findMany({
+            where: { resourceId: resource.id, kind: "external_key_revoked" },
+            select: { subjectDisplayName: true },
+        });
+        expect(externalKeyActivity && JSON.parse(externalKeyActivity.subjectDisplayName)).toMatchObject({
+            v: 1,
+            kind: "team_credential_external_api_key_label_snapshot",
+            externalApiKeyId: created.key.keyId,
+            label: { content: { t: "plain", v: "Removed runner" } },
+        });
         expect(await db.teamCredentialActivityEvent.findMany({
             where: { resourceId: resource.id, kind: "audience_changed" },
             select: { actorAccountId: true, subjectDisplayName: true },
@@ -571,7 +659,7 @@ describe("Team credential external API key owner", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
         const resource = await db.teamCredentialResource.create({ data: {
-            teamId: team.id, custodianAccountId: manager.id, displayName: "Session-only provider",
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Session-only provider"),
             disclosureCeiling: "brokered_only", sessionUsePolicy: "team_context_required",
             sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "connection-2", connectionSecurityFingerprint: "connection-security:v1:2", credentialSlotId: "apiKey" }),
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
@@ -579,13 +667,13 @@ describe("Team credential external API key owner", () => {
         await expect(inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
             authentication: TEST_AUTHENTICATION,
             actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
-            label: "Should fail", expiresAt: null,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Should fail"), expiresAt: null,
         }))).resolves.toMatchObject({ ok: false, error: "session_policy_incompatible" });
         await db.teamCredentialResource.update({ where: { id: resource.id }, data: { sessionUsePolicy: "personal_allowed" } });
         await expect(inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
             authentication: TEST_AUTHENTICATION,
             actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
-            label: "Should fail", expiresAt: null,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Should fail"), expiresAt: null,
         }))).resolves.toMatchObject({ ok: true });
     });
 
@@ -594,14 +682,15 @@ describe("Team credential external API key owner", () => {
         const team = await db.team.create({ data: { name: "Revoke key team" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
         const resource = await db.teamCredentialResource.create({ data: {
-            teamId: team.id, custodianAccountId: manager.id, displayName: "Revocable provider",
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Revocable provider"),
             disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
             sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "connection-3", connectionSecurityFingerprint: "connection-security:v1:3", credentialSlotId: "apiKey" }),
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
         } });
         const create = (label: string) => inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
             authentication: TEST_AUTHENTICATION,
-            actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id, label, expiresAt: null,
+            actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel(label), expiresAt: null,
         }));
         const first = await create("first");
         const second = await create("second");

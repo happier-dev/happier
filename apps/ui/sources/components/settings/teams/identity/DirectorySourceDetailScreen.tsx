@@ -17,6 +17,7 @@ import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryGroupPageV1 } from '@happier-dev/protocol/teams';
@@ -135,6 +136,23 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
         archived: 'active',
         enabled: props.groupMappingsAvailable,
     });
+    const groupLabelInputs = React.useMemo(() => {
+        const groups = new Map<string, { id: string; name: (typeof nativeGroups.rows)[number]['name'] }>();
+        for (const group of nativeGroups.rows) groups.set(group.id, { id: group.id, name: group.name });
+        for (const group of directoryGroups.rows) {
+            if (group.mapping.state === 'bound' && group.mapping.teamGroupName !== null) {
+                groups.set(group.mapping.teamGroupId, {
+                    id: group.mapping.teamGroupId,
+                    name: group.mapping.teamGroupName,
+                });
+            }
+        }
+        return [...groups.values()];
+    }, [directoryGroups.rows, nativeGroups.rows]);
+    const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({
+        scope: props.scope,
+        groups: groupLabelInputs,
+    });
     const mappingAvailable = props.mutationsAvailable && directoryGroups.status === 'ready' && !directoryGroups.error;
 
     const changeMapping = React.useCallback(async (
@@ -217,7 +235,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
                     <Item testID="directory-group-map-create" pressableRef={focusChooser} onKeyDown={onChooserKeyDown} title={t('identityAdministration.mapCreate')} disabled={pendingGroupId !== null || !mappingAvailable} onPress={() => void changeMapping(selectedGroup, { kind: 'directory_created' })} showChevron={false} />
                     {nativeGroups.status === 'loading' && nativeGroups.rows.length === 0 ? <Item title={t('common.loading')} loading showChevron={false} /> : null}
                     {nativeGroups.isCurrent && nativeGroups.rows.length === 0 ? <Item testID="directory-native-groups-empty" title={t('teams.groups.emptyTitle')} showChevron={false} /> : null}
-                    {nativeGroups.rows.map((group) => <Item key={group.id} testID={`directory-group-native-target:${group.id}`} onKeyDown={onChooserKeyDown} title={group.name} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pendingGroupId !== null || !mappingAvailable || !nativeGroups.isCurrent} onPress={() => void changeMapping(selectedGroup, { kind: 'native_target', teamGroupId: group.id })} showChevron={false} />)}
+                    {nativeGroups.rows.map((group) => <Item key={group.id} testID={`directory-group-native-target:${group.id}`} onKeyDown={onChooserKeyDown} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pendingGroupId !== null || !mappingAvailable || !nativeGroups.isCurrent} onPress={() => void changeMapping(selectedGroup, { kind: 'native_target', teamGroupId: group.id })} showChevron={false} />)}
                     {nativeGroups.error ? <DirectoryListFailure testID="directory-native-groups" failure={nativeGroups.error} retry={nativeGroups.reload} /> : null}
                     {nativeGroups.hasMore && nativeGroups.status !== 'loading' && !nativeGroups.error ? <Item onKeyDown={onChooserKeyDown} title={t('identityAdministration.loadMore')} loading={nativeGroups.status === 'loading_more'} disabled={nativeGroups.status === 'loading_more'} onPress={() => void nativeGroups.loadMore()} showChevron={false} /> : null}
                     {selectedGroup.mapping.state === 'bound' ? <Item testID="directory-group-remove-mapping" onKeyDown={onChooserKeyDown} title={t('identityAdministration.removeMapping')} destructive disabled={pendingGroupId !== null || !mappingAvailable} onPress={() => void changeMapping(selectedGroup, null)} showChevron={false} /> : null}
@@ -234,7 +252,12 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
                                 testID={`directory-group:${group.id}`}
                                 title={group.displayName}
                                 subtitle={group.mapping.state === 'bound'
-                                    ? `${t('identityAdministration.mappedTo')}: ${directoryGroupMappingTargetLabel(group.mapping)}`
+                                    ? `${t('identityAdministration.mappedTo')}: ${directoryGroupMappingTargetLabel(
+                                        group.mapping,
+                                        group.mapping.teamGroupName === null
+                                            ? null
+                                            : openedGroupDisplayNames.get(group.mapping.teamGroupId),
+                                    )}`
                                     : t('identityAdministration.unmapped')}
                                 detail={group.memberCount === null ? undefined : t('teams.groups.memberCount', { count: group.memberCount })}
                                 loading={pendingGroupId === group.id}
@@ -256,7 +279,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
         if (directoryGroups.hasMore && directoryGroups.status !== 'loading' && !directoryGroups.error) result.push({ key: 'groups-more', element: <ItemGroup><Item testID="directory-groups-load-more" title={t('identityAdministration.loadMore')} loading={directoryGroups.status === 'loading_more'} disabled={directoryGroups.status === 'loading_more'} onPress={() => void directoryGroups.loadMore()} showChevron={false} /></ItemGroup> });
         if (failure) result.push({ key: 'groups-failure', element: <ItemGroup><SurfaceStateCard testID="directory-group-mapping-failure" kind="error" size="line" title={failure} accessibilitySemantics="alert" /></ItemGroup> });
         return [...result, ...(props.afterRows ?? [])];
-    }, [props.afterRows, changeMapping, choosingFor, closeChooser, focusChooser, onChooserKeyDown, directoryGroups.error, directoryGroups.hasMore, directoryGroups.loadMore, directoryGroups.reload, directoryGroups.rows, directoryGroups.status, failure, mappingAvailable, nativeGroups.error, nativeGroups.hasMore, nativeGroups.isCurrent, nativeGroups.loadMore, nativeGroups.reload, nativeGroups.rows, nativeGroups.status, pendingGroupId, props.beforeRows, props.groupMappingsAvailable, query, selectedGroup]);
+    }, [props.afterRows, changeMapping, choosingFor, closeChooser, focusChooser, onChooserKeyDown, directoryGroups.error, directoryGroups.hasMore, directoryGroups.loadMore, directoryGroups.reload, directoryGroups.rows, directoryGroups.status, failure, mappingAvailable, nativeGroups.error, nativeGroups.hasMore, nativeGroups.isCurrent, nativeGroups.loadMore, nativeGroups.reload, nativeGroups.rows, nativeGroups.status, openedGroupDisplayNames, pendingGroupId, props.beforeRows, props.groupMappingsAvailable, query, selectedGroup]);
 
     const chooserIndex = rows.findIndex((row) => row.key === `groups-choice:${choosingFor}`);
     React.useEffect(() => {

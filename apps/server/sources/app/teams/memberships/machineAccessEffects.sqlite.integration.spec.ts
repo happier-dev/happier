@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { decodeBase64 } from "privacy-kit";
 import type { Socket } from "socket.io";
@@ -31,7 +32,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
         const member = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const team = await db.team.create({ data: { name: "Machine membership effects" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Group", nameKey: "group" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Group") } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const machine = await db.machine.create({ data: {
             id: randomUUID(), accountId: owner.id,

@@ -4,9 +4,10 @@ import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactCon
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
-import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
+import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingV1Schema,
+    EnvironmentVariableBindingGrantReferenceV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
     environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
-    type EnvironmentSecretBindingV1 } from './storedAppInputV1.js';
+    type EnvironmentSecretBindingInputV1, type EnvironmentSecretBindingV1 } from './storedAppInputV1.js';
 
 /** Value-free coverage of current required Environment grants, under Environment read admission. */
 export const DeploymentEnvironmentSecretScopeV1Schema = lazyZodSchema(() => z.strictObject({
@@ -112,19 +113,30 @@ export function captureDeploymentBindingSavedSecretRevisionsV1(bindings: readonl
         .sort((a, b) => a.resourceId.localeCompare(b.resourceId));
 }
 
-/** Applies a settled, schema-admitted patch without disturbing unchanged purpose rows. */
+/** Applies a settled patch and gives a new variable one opaque Machine-grant reference exactly once. */
 export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly EnvironmentSecretBindingV1[], patch: Readonly<{
-    set: readonly EnvironmentSecretBindingV1[];
+    set: readonly EnvironmentSecretBindingInputV1[];
     remove: readonly EnvironmentSecretBindingIdentityV1[];
-}>): EnvironmentSecretBindingV1[] {
-    const replacements = new Map(patch.set.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+}>, createVariableGrantReference: () => string): EnvironmentSecretBindingV1[] {
+    const current = new Map(bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+    const replacements = new Map(patch.set.map(value => {
+        const binding = EnvironmentSecretBindingInputV1Schema.parse(value);
+        const identity = environmentSecretBindingIdentityV1(binding);
+        const previous = current.get(identity);
+        if (binding.purpose !== 'variable') return [identity, EnvironmentSecretBindingV1Schema.parse(binding)] as const;
+        const grantRef = previous?.purpose === 'variable' && previous.grantRef ? previous.grantRef
+            : EnvironmentVariableBindingGrantReferenceV1Schema.parse(createVariableGrantReference());
+        return [identity, EnvironmentSecretBindingV1Schema.parse({ ...binding, grantRef })] as const;
+    }));
     const removed = new Set(patch.remove.map(environmentSecretBindingIdentityV1));
     const result: EnvironmentSecretBindingV1[] = [];
     for (const binding of bindings) {
         const identity = environmentSecretBindingIdentityV1(binding);
         if (removed.has(identity)) continue;
         const replacement = replacements.get(identity);
-        result.push(replacement && !sameStrictJsonValue(binding, replacement) ? replacement : binding);
+        const saved = replacement && !sameStrictJsonValue(binding, replacement) ? replacement : binding;
+        result.push(saved.purpose === 'variable' && !saved.grantRef
+            ? EnvironmentSecretBindingV1Schema.parse({ ...saved, grantRef: createVariableGrantReference() }) : saved);
         replacements.delete(identity);
     }
     result.push(...replacements.values());

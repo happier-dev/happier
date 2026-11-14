@@ -3,8 +3,9 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
 import { type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
-import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -215,6 +216,32 @@ describe('SharedWithTeamsSourceAdministration', () => {
         expect(harness.requestsFor(LIST_PATH).at(-1)?.input).toMatchObject({ cursor: 'cursor-1' });
     });
 
+    it('opens each source resource label under its own resource binding without suppressing readable siblings', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        await harness.selectHomes([serverId]);
+        const readable = teamCredentialSourceResourceFixture({ id: 'resource-readable', displayName: 'Readable source' });
+        const unreadable = teamCredentialSourceResourceFixture({
+            id: 'resource-unreadable',
+            displayName: {
+                content: { t: 'encrypted', c: encodeBase64(new Uint8Array(40), 'base64') },
+                recipientEnvelope: null,
+            },
+        });
+        harness.answer(serverId, LIST_PATH, { body: { resources: [readable, unreadable] } });
+        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
+            scope={{ serverId, accountId: 'owner' }}
+            source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
+        />);
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Readable source'));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toEqual(expect.arrayContaining([
+            'shared-with-teams:resource:resource-readable',
+            'shared-with-teams:resource:resource-unreadable',
+        ]));
+        expect(screen.getTextContent()).toContain('teams.credentials.title');
+    });
+
     it('renders only server-authorized source-owner controls without needing Team membership', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
@@ -351,7 +378,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         // The editor opens under the row it edits and names that credential.
         const order = collectRenderedTestIds(screen.tree.toJSON());
         expect(order.indexOf('shared-with-teams:broker:resource-1:save')).toBeGreaterThan(order.indexOf('shared-with-teams:resource:resource-1'));
-        expect(JSON.stringify(screen.tree.toJSON())).toContain(`teams.credentials.detail.brokerLabel · ${row.displayName}`);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('teams.credentials.detail.brokerLabel · Claude Enterprise');
         selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));
@@ -429,7 +456,12 @@ describe('SharedWithTeamsSourceAdministration', () => {
             brokerPlacement: null,
             brokerPresentation: {
                 selectedTarget: null, eligibleTargets: [], selectedPool: null,
-                eligiblePools: [{ poolId, displayName: 'Travel Pool', availability: 'unavailable', availableMachineCount: 0 }],
+                eligiblePools: [{
+                    poolId,
+                    displayName: { kind: 'available', label: teamCredentialDisplayNameFixture('Travel Pool') },
+                    availability: 'unavailable',
+                    availableMachineCount: 0,
+                }],
             },
             capabilities: {
                 manageAudience: false, managePolicy: false, manageLimits: false,

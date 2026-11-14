@@ -176,7 +176,7 @@ describe('private installed Environment secret launch transport', () => {
         const secretSource = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: resource.value.revision };
         const boundDefinition = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: [roleService
             ? { purpose: 'dataRole', service: roleService, role: 'readOnlyPassword', source: secretSource }
-            : { purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: secretSource }] });
+            : { purpose: 'variable', phase: 'runtime', name: 'TOKEN', grantRef: crypto.randomUUID(), source: secretSource }] });
         const boundContent = await artifact('deployment-environment.v1', boundDefinition);
         const preparedBindings = { grants: [grant],
             referencedSavedSecretRevisions: roleService ? captureDeploymentBindingSavedSecretRevisionsV1(boundDefinition.bindings)
@@ -287,7 +287,7 @@ describe('private installed Environment secret launch transport', () => {
         };
         await expect(mint(input)).resolves.toMatchObject({ binding: { environmentId: destination.id } });
         await expect(mint({ ...input, expectedRevision: destination.revision + 1 }))
-            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+            .rejects.toMatchObject({ code: 'source_changed' });
         await expect(mint({ ...input, source: { ...input.source,
             origin: { environmentId: source.id, targetLinkId: destinationLink.id } } }))
             .rejects.toMatchObject({ code: 'credential_scope_denied' });
@@ -831,8 +831,8 @@ describe('private installed Environment secret launch transport', () => {
                 : { resourceId, mode, resourceDataKey: resourceKey, content: resourceContent, randomBytes: nacl.randomBytes }) }));
         if (!resource.ok) throw new Error(resource.error);
         const savedContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: [
-            { purpose: 'variable', name: 'PORT', phase: 'runtime', source: { kind: 'value', value: '3000' } },
-            { purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret',
+            { purpose: 'variable', name: 'PORT', phase: 'runtime', grantRef: crypto.randomUUID(), source: { kind: 'value', value: '3000' } },
+            { purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(), source: { kind: 'secret',
                 ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: resource.value.revision } },
         ] });
         const preparation = await prepareEnvironmentSecretBindingsV1({ environmentId: environment.environmentId,
@@ -908,7 +908,7 @@ describe('private installed Environment secret launch transport', () => {
         const grant: MachineSecretGrantV1 = { ...f.grant, resourceRevision: withdrawn.value.revision,
             sealedContent: 'owner-linked-without-team-resource-share' };
         const content = await f.artifact('deployment-environment.v1', { ...f.content, bindings: [{ purpose: 'variable',
-            phase: 'runtime', name: 'OWNER_TOKEN', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(f.resourceId),
+            phase: 'runtime', name: 'OWNER_TOKEN', grantRef: crypto.randomUUID(), source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(f.resourceId),
                 resourceRevision: withdrawn.value.revision } }] });
         const linked = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.owner.id, { serverId,
             environmentId: row.id, expectedRevision: row.revision, ...content, grants: [grant],
@@ -952,9 +952,9 @@ describe('private installed Environment secret launch transport', () => {
             const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
             const grant: MachineSecretGrantV1 = { ...f.grant, resourceId, resourceRevision: revision, sealedContent: 'foreign-owner-consented-seal' };
             const candidate = await f.artifact('deployment-environment.v1', { ...f.content, bindings: [
-                { purpose: 'variable', phase: 'runtime', name: 'OWNER_TOKEN', source: { kind: 'secret',
+                { purpose: 'variable', phase: 'runtime', name: 'OWNER_TOKEN', grantRef: crypto.randomUUID(), source: { kind: 'secret',
                     ref: formatSharedSavedSecretRefV1(f.resourceId), resourceRevision: f.resourceRevision } },
-                { purpose: 'variable', phase: 'runtime', name: 'FOREIGN_TOKEN', source: { kind: 'secret',
+                { purpose: 'variable', phase: 'runtime', name: 'FOREIGN_TOKEN', grantRef: crypto.randomUUID(), source: { kind: 'secret',
                     ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: revision } },
             ] });
             return { grant, result: await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.owner.id, { serverId,
@@ -1493,8 +1493,8 @@ describe('private installed Environment secret launch transport', () => {
             sealedContent: 'only-the-build-installed-box-ciphertext' };
         const bindingSource = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: resource.value.revision };
         const boundContent = await artifact('deployment-environment.v1', DeploymentEnvironmentContentV1Schema.parse({ ...emptyContent,
-            bindings: [{ purpose: 'variable', phase: 'runtime', name: 'RUNTIME_TOKEN', source: bindingSource },
-                { purpose: 'variable', phase: 'build', name: 'BUILD_TOKEN', source: bindingSource }] }));
+            bindings: [{ purpose: 'variable', phase: 'runtime', name: 'RUNTIME_TOKEN', grantRef: crypto.randomUUID(), source: bindingSource },
+                { purpose: 'variable', phase: 'build', name: 'BUILD_TOKEN', grantRef: crypto.randomUUID(), source: bindingSource }] }));
         const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, {
             serverId, environmentId: environment.environmentId, expectedRevision: linked.revision, ...boundContent,
             grants: [grant, builderGrant], referencedSavedSecretRevisions: [{ resourceId, revision: resource.value.revision }],

@@ -5,6 +5,7 @@ import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/pro
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
+import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamGroup } from '@/hooks/teams/useTeamGroups';
 import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -207,7 +208,13 @@ function SourceGroupName(props: Readonly<{
   const address = React.useMemo(() => createTeamAddress(props.scope.serverId, props.principal.teamId),
     [props.scope.serverId, props.principal.teamId]);
   const detail = useTeamGroup({ scope: props.scope, address, groupId: props.principal.groupId, enabled: true });
-  return props.children(detail.group?.name ?? t('projects.deployments.editors.chosenGroup'));
+  const openedGroupDisplayNames = useTeamGroupDisplayNames({
+    scope: props.scope,
+    groups: detail.group ? [detail.group] : [],
+  });
+  return props.children(detail.group
+    ? openedGroupDisplayNames.get(detail.group.id) ?? t('common.unavailable')
+    : t('projects.deployments.editors.chosenGroup'));
 }
 
 function TeamDeployerPicker(props: Readonly<{

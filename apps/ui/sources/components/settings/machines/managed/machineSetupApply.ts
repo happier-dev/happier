@@ -1,16 +1,17 @@
 import {
-    MachineSetupPlanResultV1Schema,
+    machineSetupSourceApplyOriginKeyV1, MachineSetupPlanResultV1Schema,
     type MachineSetupAppChildV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { prepareMachineSetupSourcesApplyInput, type MachineSetupPreparedApply } from './machineSetupReview';
 import { reviewMachineSetupRecipeInputs } from './MachineSetupRecipeInputs';
-import { machineSetupPresetSource, type MachineSetupPresetInput } from './machineSetupPresetChoices';
+import { machineSetupPresetApplySource, type MachineSetupPresetInput } from './machineSetupPresetChoices';
 
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { createMachinePresetCollectionClient } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 export type { MachineSetupPresetInput } from './machineSetupPresetChoices';
 
@@ -43,11 +44,21 @@ export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
     const parsed = MachineSetupPlanResultV1Schema.safeParse(outcome.result);
     if (!parsed.success) return fail('managed_response_invalid');
     const plan = parsed.data;
-    const proposed = machineSetupPresetSource({ ...params.preset, setup });
-    const origin = machineSetupSourceOriginKeyV1(proposed);
+    let presetContentOverride;
+    if (!('kind' in params.preset) && !sameStrictJsonValue(params.preset.setup, setup)) {
+        const { serverId, expectedAccountId } = params.context;
+        if (typeof serverId !== 'string' || typeof expectedAccountId !== 'string' || !params.preset.recipientProjection) return fail('content_unavailable');
+        const override = await createMachinePresetCollectionClient({ serverId, accountId: expectedAccountId }, params.homeId)
+            .prepareSetupOverride({ ...params.preset, recipientProjection: params.preset.recipientProjection }, setup, params.context.signal);
+        if (!current()) return fail('continuation_retired');
+        if (override.kind === 'failed') return fail(override.code);
+        presetContentOverride = override.kind === 'ready' ? override.override : undefined;
+    }
+    const proposed = machineSetupPresetApplySource({ ...params.preset, setup }, presetContentOverride);
+    const origin = machineSetupSourceApplyOriginKeyV1(proposed);
     let replaced = false;
     const sources = plan.sources.map(source => {
-        if (machineSetupSourceOriginKeyV1(source) !== origin) return source;
+        if (machineSetupSourceApplyOriginKeyV1(source) !== origin) return source;
         replaced = true;
         return proposed;
     });

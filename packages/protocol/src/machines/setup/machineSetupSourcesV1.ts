@@ -1,12 +1,15 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
 import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
 import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
 import { WorkflowRunIdV1Schema } from '../../workflows/workflowIdsV1.js';
+import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
+import { ManagedMachinePresetLaunchNameOverrideV1Schema,
+  type ManagedMachinePresetLaunchNameOverrideV1 } from '../managed/managedMachinePresetContentV1.js';
 import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMetadataFieldV1,
   type MachineMetadataFieldDefinitionV1, type MachineMetadataFieldPortV1 } from '../machineMetadataFieldV1.js';
 
@@ -40,7 +43,14 @@ export const MachineSetupSourceFactsMapV1Schema: z.ZodMiniType<MachineSetupSourc
   }))),
 })));
 export type MachineSetupSourceEntryV1 =
-  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setup: MachineSetupV1 }>
+  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setup: MachineSetupV1 } & (
+      | { /** Author-owned mode captured with this opened local copy; never inferred from ciphertext. */
+          contentEncryptionMode: 'plain' | 'e2ee';
+          /** A locally retained opaque recipe-input edit, replayed only through the Action wire. */
+          presetContentOverride?: ManagedMachinePresetLaunchNameOverrideV1 }
+      /** Retained copies predate captured modes; only the stored reader admits this branch. */
+      | { contentEncryptionMode?: never; presetContentOverride?: never }
+    )>
   | Readonly<{ kind: 'bundledPreset'; ref: { pluginId: string; localId: string; revision: string }; setup: MachineSetupV1 }>
   | Readonly<{ kind: 'direct'; setup: MachineSetupV1 }>
 ;
@@ -213,17 +223,23 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
 
 /** A root creation continuation delegates only its admitted setup snapshot. */
 export function matchesMachineSetupCreationSourcesV1(sources: MachineSetupSourceV1,
-  admitted: Readonly<{ preset: { id: string; revision: number }; setup: MachineSetupV1 }>): boolean {
+  admitted: Readonly<{ preset: { id: string; revision: number; contentEncryptionMode: 'plain' | 'e2ee' }; setup: MachineSetupV1 }>): boolean {
   return sources.length === 2 && sources.some(source => source.kind === 'accountPreset')
     && sources.some(source => source.kind === 'direct') && sources.every(source => source.kind === 'accountPreset'
       ? sameStrictJsonValue(source, { kind: 'accountPreset', presetId: admitted.preset.id,
-        presetRevision: admitted.preset.revision, setup: admitted.setup })
+        presetRevision: admitted.preset.revision, contentEncryptionMode: admitted.preset.contentEncryptionMode,
+        setup: admitted.setup })
       : source.kind === 'direct' && sameStrictJsonValue(source,
         { kind: 'direct', setup: {} }));
 }
 const accountPresetReference = lazyZodSchema(() => z.strictObject({
   kind: z.literal('accountPreset'), presetId: id(), presetRevision: revision(),
 }));
+const accountPresetSource = lazyZodSchema(() => z.extend(accountPresetReference, {
+  contentEncryptionMode: AccountEncryptionModeSchema,
+  presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+}));
+const accountPresetCopy = lazyZodSchema(() => z.extend(accountPresetSource, { setup: MachineSetupV1Schema }));
 const bundledPresetReference = lazyZodSchema(() => z.strictObject({
   kind: z.literal('bundledPreset'), ref: z.strictObject({
     pluginId: MachineRecipeReferenceV1Schema.shape.pluginId,
@@ -237,10 +253,28 @@ export const MachineSetupPresetReferenceV1Schema = lazyZodSchema(() => z.discrim
 ]));
 export type MachineSetupPresetReferenceV1 = z.infer<typeof MachineSetupPresetReferenceV1Schema>;
 
-export const MachineSetupSourceEntryV1Schema: z.ZodMiniType<MachineSetupSourceEntryV1> = lazyZodSchema(() => {
+export const MachineSetupSourceEntryV1Schema: z.ZodMiniType<MachineSetupSourceEntryV1> = defineStoredReadProjection<z.ZodMiniType<MachineSetupSourceEntryV1>>(
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
+    accountPresetCopy,
+    z.extend(bundledPresetReference, { setup: MachineSetupV1Schema }),
+    z.strictObject({ kind: z.literal('direct'), setup: MachineSetupV1Schema }),
+  ])),
+  () => z.union([
+    createStoredReadSchema(accountPresetCopy),
+    createStoredReadSchema(z.extend(accountPresetReference, {
+      setup: MachineSetupV1Schema,
+      // Known malformed current fields must not fall through to the legacy branch.
+      contentEncryptionMode: z.optional(z.never()),
+      presetContentOverride: z.optional(z.never()),
+    })),
+    createStoredReadSchema(MachineSetupNonAccountPresetSourceEntryV1Schema),
+  ]),
+);
+/** Saved Account Presets are local opened copies. They are never an Action/Home wire operand. */
+export type MachineSetupNonAccountPresetSourceEntryV1 = Exclude<MachineSetupSourceEntryV1, { kind: 'accountPreset' }>;
+export const MachineSetupNonAccountPresetSourceEntryV1Schema: z.ZodMiniType<MachineSetupNonAccountPresetSourceEntryV1> = lazyZodSchema(() => {
   const copy = { setup: MachineSetupV1Schema };
   return z.discriminatedUnion('kind', [
-    z.extend(accountPresetReference, copy),
     z.extend(bundledPresetReference, copy),
     z.strictObject({ kind: z.literal('direct'), ...copy }),
   ]);
@@ -273,10 +307,13 @@ export type MachineSetupDesiredV1 = Readonly<{
   version: 1; revision: number; sources: MachineSetupSourceV1;
   exclusions: Array<z.infer<typeof MachineSetupExclusionV1Schema>>;
   sourceFacts?: MachineSetupSourceFactsMapV1;
+  /** Original opened request retained only for exact retry of unfinished scripts. */
+  pendingScriptSources?: MachineSetupSourceV1;
 }>;
 export const MachineSetupDesiredV1Schema: z.ZodMiniType<MachineSetupDesiredV1> = lazyZodSchema(() => z.strictObject({
   version: z.literal(1), revision: revision(), sources: MachineSetupSourceV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
   sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
+  pendingScriptSources: z.optional(MachineSetupSourceV1Schema),
 }));
 export const MachineSetupDesiredV1ReadSchema = createStoredReadSchema(MachineSetupDesiredV1Schema);
 export function createEmptyMachineSetupDesiredV1(): MachineSetupDesiredV1 {
@@ -297,6 +334,7 @@ export async function mutateMachineSetupDesiredV1(input: Readonly<{
   expectedDesiredRevision: number; sources: MachineSetupSourceV1; exclusions: MachineSetupDesiredV1['exclusions'];
   /** Receiving native settlement only; public Action inputs have no provenance map. */
   observedSourceFacts?: MachineSetupSourceFactsMapV1;
+  pendingScriptSources?: MachineSetupSourceV1;
 }>, port: MachineMetadataFieldPortV1, options?: Readonly<{ signal?: AbortSignal }>) {
   const current = await getMachineSetupDesiredV1(port);
   if (current.status !== 'ready') return current;
@@ -304,7 +342,10 @@ export async function mutateMachineSetupDesiredV1(input: Readonly<{
     policy: current.policy, metadataVersion: current.metadataVersion };
   const sourceFacts = mergeMachineSetupSourceFacts(current.policy, input.sources, input.observedSourceFacts);
   const candidate = MachineSetupDesiredV1Schema.safeParse({ version: 1, revision: current.policy.revision,
-    sources: input.sources, exclusions: input.exclusions, ...(sourceFacts ? { sourceFacts } : {}) });
+    sources: input.sources, exclusions: input.exclusions, ...(sourceFacts ? { sourceFacts } : {}),
+    ...(input.pendingScriptSources && Object.values(sourceFacts ?? {}).some(facts => facts.pendingScripts?.length)
+      ? { pendingScriptSources: input.pendingScriptSources } : {}),
+  });
   if (!candidate.success) return { status: 'invalid' as const };
   // Only desired-content changes advance the review revision.
   const parsed = MachineSetupDesiredV1Schema.safeParse(sameStrictJsonValue(candidate.data, current.policy)

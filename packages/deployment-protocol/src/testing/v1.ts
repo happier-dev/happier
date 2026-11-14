@@ -15,10 +15,12 @@ type OwnServerReceiptDetailFixtureV1 = Omit<DeploymentReceiptDetailV1, 'content'
 /** Current producer-built opaque binding fixture; consumers never reconstruct the Saved Secret namespace. */
 export function createDeploymentSecretVariableBindingV1(input: Readonly<{
     name: string; phase: 'build' | 'runtime'; resourceId: string; resourceRevision: number;
-}>): Pick<EnvironmentVariableBindingV1, 'purpose' | 'name' | 'phase'> & { source: ReturnType<typeof DeploymentSecretBindingSourceV1Schema.parse> } {
+    grantRef?: string;
+}>): EnvironmentVariableBindingV1 {
     const source = DeploymentSecretBindingSourceV1Schema.parse({ kind: 'secret',
         ref: formatSharedSavedSecretRefV1(input.resourceId), resourceRevision: input.resourceRevision });
-    const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: input.name, phase: input.phase, source });
+    const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: input.name, phase: input.phase,
+        grantRef: input.grantRef ?? crypto.randomUUID(), source });
     return { ...binding, source };
 }
 

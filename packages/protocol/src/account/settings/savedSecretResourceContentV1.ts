@@ -7,7 +7,11 @@ export { SavedSecretPasskeySourceV1Schema, type SavedSecretPasskeySourceV1 } fro
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { sealEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
-import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
+import { computeContentPublicKeyFingerprint } from '../../machines/identity/contentPublicKeyFingerprint.js';
+import type {
+  SavedSecretResourceEnvelopeCensusRecipientV1,
+  SavedSecretResourceRecipientEnvelopeV1,
+} from './savedSecretCatalogV1.js';
 import {
   formatSharedSavedSecretRefV1,
 } from './savedSecretReferenceV1.js';
@@ -47,6 +51,32 @@ export { canShareSavedSecretResourceContentV1 } from './savedSecretResourceConte
 export { describeSavedSecretResourceContentV1, SavedSecretStorageDescriptorV1Schema,
   type SavedSecretStorageDescriptorV1 } from './savedSecretResourceContentSchemaV1.js';
 
+/**
+ * Seal one verified recipient's existing resource DEK. Audience/census policy
+ * remains with the caller that owns it; this is the canonical envelope codec.
+ */
+export function sealSavedSecretResourceRecipientEnvelopeV1(params: Readonly<{
+  resourceDataKey: Uint8Array;
+  recipientContentPublicKey: Uint8Array;
+  /** A verified census may retain its authoritative binding rather than recomputing it. */
+  recipientContentPublicKeyFingerprint?: string;
+  randomBytes: (length: number) => Uint8Array;
+}>): SavedSecretResourceRecipientEnvelopeV1 {
+  if (!(params.recipientContentPublicKey instanceof Uint8Array)
+    || params.recipientContentPublicKey.length !== tweetnacl.box.publicKeyLength) {
+    throw new Error('saved_secret_recipient_content_public_key_unavailable');
+  }
+  return {
+    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+      dataKey: params.resourceDataKey,
+      recipientPublicKey: params.recipientContentPublicKey,
+      randomBytes: params.randomBytes,
+    }), 'base64'),
+    recipientContentPublicKeyFingerprint: params.recipientContentPublicKeyFingerprint
+      ?? computeContentPublicKeyFingerprint(params.recipientContentPublicKey),
+  };
+}
+
 /** The resource census owns recipient authority/readiness; only owed ready envelopes are sealed. */
 export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<{
   recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
@@ -56,9 +86,12 @@ export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<
   return params.recipients.flatMap(recipient => recipient.readiness.status !== 'available'
     || recipient.envelopeStatus === 'prepared' ? [] : [{
       recipientAccountId: recipient.account.accountId,
-      encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.resourceDataKey,
-        recipientPublicKey: decodeBase64(recipient.readiness.contentPublicKey, 'base64'), randomBytes: params.randomBytes }), 'base64'),
-      recipientContentPublicKeyFingerprint: recipient.readiness.contentPublicKeyFingerprint,
+      ...sealSavedSecretResourceRecipientEnvelopeV1({
+        resourceDataKey: params.resourceDataKey,
+        recipientContentPublicKey: decodeBase64(recipient.readiness.contentPublicKey, 'base64'),
+        recipientContentPublicKeyFingerprint: recipient.readiness.contentPublicKeyFingerprint,
+        randomBytes: params.randomBytes,
+      }),
     }]);
 }
 

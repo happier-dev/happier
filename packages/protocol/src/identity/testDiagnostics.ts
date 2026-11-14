@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { TeamGroupNameProjectionV1Schema } from '../teams/groupLabel.js';
 
 const NonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
@@ -32,7 +33,7 @@ export const IdentityConnectionTestDiagnosticsV1Schema = lazyZodSchema(() => z.s
    */
   mappedGroups: z.array(z.strictObject({
     id: NonEmptyStringSchema,
-    name: NonEmptyStringSchema,
+    name: TeamGroupNameProjectionV1Schema,
   })),
 }));
 export type IdentityConnectionTestDiagnosticsV1 = z.infer<typeof IdentityConnectionTestDiagnosticsV1Schema>;

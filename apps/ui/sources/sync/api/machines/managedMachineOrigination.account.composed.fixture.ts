@@ -1,21 +1,33 @@
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedOpaquePresetReadV1, ManagedAcquireInputV1Schema, ManagedControlAdmissionInputV1Schema,
+    ManagedControllerReportV1Schema, ManagedControllerResizeReportV1Schema,
+    ManagedControllerIntentReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { RetentionCapabilitiesV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import signedRelease from './managedMachineOrigination.signedRelease.fixture.json';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { allowRealServerSocketBoundary, configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { encodeBase64 } from '@/encryption/base64';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import nacl from 'tweetnacl';
-import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeRequestSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
@@ -27,6 +39,12 @@ vi.mock('expo-constants', async original => {
     } };
 });
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: native.fetch }));
+// The receiving CLI uses Undici directly. Replace that third-party HTTP
+// boundary too, keeping Account activation and credential materialization real.
+vi.mock('undici', async original => ({ ...await original<typeof import('undici')>(),
+    fetch: (url: string, init?: RequestInit) => new URL(url).origin === 'https://api.vercel.com'
+        ? native.fetch(url, init) : globalThis.fetch(url, init),
+}));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 // Packaged assets and the native HTTP SDK are platform boundaries. The public
@@ -54,13 +72,13 @@ vi.mock('expo-crypto', async original => ({ ...await original<typeof import('exp
 installApprovalCommonModuleMocks();
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const [{ PLUGIN_MANIFEST }, { prepareAuthenticationInventory }, { createDefaultActionExecutor },
-    { reconcileProjectedPluginUiClientExecutables }] = await Promise.all([
-    import('../../../../../../packages/plugins/machine-vercel/src/manifest'),
-    import('@/dev/testkit/fixtures/connectedAccountAuthentication'),
-    import('@/sync/ops/actions/defaultActionExecutor'),
-    import('@/components/plugins/reactNative/clientExecutableActivation'),
-]);
+// These import the same App/runtime graph. Preload them in dependency order
+// after the external boundaries are installed, so fixture collection has one
+// deterministic evaluation order.
+const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/machine-vercel/src/manifest');
+const { prepareAuthenticationInventory } = await import('@/dev/testkit/fixtures/connectedAccountAuthentication');
+const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST,
     target: { artifactId: 'account-runtime', exportName: 'activateAccount' },
     projectPath: 'packages/plugins/machine-vercel', entryPath: 'packages/plugins/machine-vercel/src/manifest.ts',
@@ -78,15 +96,39 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
+function e2eeRecipient(accountId: string, contentPublicKey: Uint8Array) {
+    return {
+        account: { kind: 'account' as const, accountId, name: null, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+        readiness: { status: 'available' as const, contentPublicKey: encodeBase64(contentPublicKey, 'base64'),
+            contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(contentPublicKey) },
+        envelopeStatus: 'missing' as const,
+    };
+}
+
 export function registerManagedAccountHostTests(host: 'native' | 'browser') {
-const cases: ReadonlyArray<readonly [string, boolean, 'machines.managed.delete' | 'machines.managed.cancel' | null, boolean, boolean]> = host === 'native' ? [['native', false, null, false, false] as const] : [
-    ['browser', true, null, false, false],
-    ['browser delete', false, 'machines.managed.delete', false, false],
-    ['browser cancel', false, 'machines.managed.cancel', false, false],
-    ['browser absent cleanup', false, 'machines.managed.delete', true, false],
-    ['browser stopped retained cancel', false, 'machines.managed.cancel', false, true],
-] as const;
-it.each(cases)('%s host carries the designed Create/Send review through the public Account path', async (label, startAgent, cleanupAction, alreadyAbsent, stoppedCleanup) => {
+const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machines.managed.cancel' | null, boolean, boolean, boolean, boolean, ('bound' | 'unknown')?]> = host === 'native' ? [
+    ['native', false, null, false, false, false, false],
+    ['native E2EE one-off', false, null, false, false, false, false],
+    ['native opaque E2EE preset', false, null, false, false, true, false],
+    ['native opaque E2EE preset missing policy', false, null, false, false, true, false],
+    ['native opaque Plain preset missing policy', false, null, false, false, true, false],
+    ['native opaque E2EE preset refuses keyless Account', false, null, false, false, true, true],
+    ['native authored failure', false, null, false, false, false, false],
+] : [
+    ['browser', true, null, false, false, false, false],
+    ['browser delete', false, 'machines.managed.delete', false, false, false, false],
+    ['browser cancel', false, 'machines.managed.cancel', false, false, false, false],
+    ['browser absent cleanup', false, 'machines.managed.delete', true, false, false, false],
+    ['browser stopped retained cancel', false, 'machines.managed.cancel', false, true, false, false],
+    ['browser authored failure', false, null, false, false, false, false],
+    ['browser retained acquisition Delete bound', false, 'machines.managed.delete', false, false, false, false, 'bound'],
+    ['browser retained acquisition Delete unknown', false, 'machines.managed.delete', false, false, false, false, 'unknown'],
+];
+it.each(cases)('%s host carries the designed Create/Send review through the public Account path', async (label, startAgent, cleanupAction, alreadyAbsent, stoppedCleanup, opaquePreset, keylessE2ee, uncertainDelete) => {
+    const missingPolicy = label.includes('missing policy');
+    const plainPreset = label.includes('Plain preset');
+    const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
+    const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
     if (host === 'native') vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => null });
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
@@ -97,11 +139,18 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } =
         await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
     const accountId = 'native-managed-creator';
-    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const e2eeCredentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }),
+        secret: encodeBase64(new Uint8Array(32).fill(41), 'base64url') };
+    const credentials = e2eeAccount && !keylessE2ee
+        ? e2eeCredentials
+        : { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    // A Home may retain E2EE content after a token-only Account loses its
+    // content key. The fixture's writer key must not become that Account key.
+    const encryption = e2eeAccount ? await createEncryptionFromAuthCredentials(e2eeCredentials) : null;
     const serverUrl = 'https://native-managed-account.test';
     const homeId = 'srv_native_managed_account';
     const serverId = await homes.addHome({ name: 'Native managed', serverUrl, accountId, credentials, serverIdentityId: homeId,
-        accountEncryptionMode: 'plain', credentialResourcesEnabled: true });
+        accountEncryptionMode: e2eeAccount ? 'e2ee' : 'plain', credentialResourcesEnabled: true });
     // Model the current Home connection's observed descriptor, rather than the
     // harness's legacy URL-only profile. Enrollment transfers this same Home.
     const { reconcileServerProfileHomeConnectionDescriptor } = await import('@/sync/domains/server/serverProfiles');
@@ -116,17 +165,22 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     homes.answer(serverId, '/v1/features', { body: homeFeatures });
     homes.answer(serverId, '/v1/features/authenticated', { body: homeFeatures });
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
-    const provisioner = PLUGIN_MANIFEST.contributes.machineProvisioners?.[0];
-    if (!provisioner) throw new Error('Missing Vercel declaration');
+    const declaredProvisioner = PLUGIN_MANIFEST.contributes.machineProvisioners?.[0];
+    if (!declaredProvisioner) throw new Error('Missing Vercel declaration');
+    const provisioner = { ...declaredProvisioner,
+        retention: RetentionCapabilitiesV1Schema.parse(declaredProvisioner.retention) };
     const selected = { service: { pluginId: PLUGIN_MANIFEST.id, localId: 'vercel-account' }, accountId: 'explicit-selected' };
     const secret = 'private-selected-vercel-token';
     let credential: unknown;
     let configuration: unknown;
     let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
     let admissions = 0;
+    let admittedPresetPolicy: unknown;
     let allocations = 0;
+    let authoredNativeFailure: PluginError | undefined;
     let machineRpcs = 0;
     let approvals = 0;
+    let joinAttempts = 0;
     let guestDispatches = 0;
     let guestContinuation: unknown;
     let acquireDigest = '';
@@ -136,6 +190,50 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     let deletes = 0;
     let stops = 0;
     let readCreationStage: ((stage: 'installing' | 'joining') => Promise<void>) | undefined;
+    let admittedPresetContent: Readonly<{ content: unknown; recipients: readonly unknown[] }> | undefined;
+    let sourcePresetContent: typeof admittedPresetContent;
+    let presetReadProjection: unknown;
+    let presetContentOverride: unknown;
+    const homePaths: string[] = [];
+    const homeBodies: string[] = [];
+    const launch = { provider: { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id }, schemaVersion: 1, name: 'Guest',
+        choices: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 2, timeoutMs: 300000, snapshotExpirationMs: 0 },
+        credentials: [{ purpose: { consumer: { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id }, purpose: 'cloud-api' },
+            account: selected }] };
+    const retention = { kind: 'until-delete' as const };
+    const enrollmentIdentity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
+    const reviewedFacts = { launch, provisioner, retention, retentionCapabilities: provisioner.retention,
+        billing: provisioner.billing, optionStatus: 'current' as const, prerequisites: [], wakeOnAcceptedMessage: false };
+    const privatePresetName = 'Private opaque preset';
+    const privateLaunchName = 'Private opaque base launch';
+    const privateOverrideName = 'Private opaque machine name';
+    let input: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
+    const createOpaquePresetInput = async () => {
+        if (!encryption && !plainPreset) throw new Error('Missing E2EE preset writer encryption');
+        const { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
+            sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const privateLaunch = { ...launch, name: privateLaunchName };
+        const sealContent = { presetId: 'opaque-preset',
+            content: { v: 1 as const, name: privatePresetName, launch: privateLaunch },
+            randomBytes: (length: number) => new Uint8Array(length).fill(7) };
+        const sealed = encryption ? sealManagedMachinePresetContentV1({ ...sealContent, mode: 'e2ee',
+            recipientCensus: [e2eeRecipient(accountId, encryption.contentDataKey)] })
+            : sealManagedMachinePresetContentV1({ ...sealContent, mode: 'plain' });
+        admittedPresetContent = { content: sealed.content, recipients: sealed.recipients };
+        sourcePresetContent = admittedPresetContent;
+        presetReadProjection = projectManagedMachinePresetForRecipientV1({ content: sealed.content, recipients: sealed.recipients,
+            recipientAccountId: accountId });
+        const overrideContent = { presetId: 'opaque-preset', projection: presetReadProjection,
+            launchName: privateOverrideName, enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const } };
+        const override = encryption ? createManagedMachinePresetAcquireOverrideV1({ ...overrideContent,
+            mode: 'e2ee', accountId, accountKey: encryption.getContentPrivateKey(),
+            randomBytes: length => new Uint8Array(length).fill(11) })
+            : createManagedMachinePresetAcquireOverrideV1({ ...overrideContent, mode: 'plain' });
+        if (!override) throw new Error('Expected a same-DEK private acquire override');
+        presetContentOverride = override;
+        return ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: 'opaque-preset', revision: 1 },
+            ...(missingPolicy ? {} : { retention, wakeOnAcceptedMessage: false }), presetContentOverride: override });
+    };
     const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
     const installationPublicKey = encodeBase64(installationKeys.publicKey, 'base64url');
     const guest = { ...createPlainMachineRowFixture({ id: 'joined', accountId }),
@@ -144,20 +242,65 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         custodian: { accountId, displayName: 'Test Account' }, access: guest.access,
         canManage: true, grants: [], ownDirectGrant: true, ownAccessSources: [],
     });
+    let receiver: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
+    let receiverProjection: ReturnType<typeof buildDeferredDaemonProjectionSections> | undefined;
+    const request: typeof fetch = async (url, init) => {
+        const address = new URL(String(url));
+        if (address.origin === 'https://api.vercel.com') return native.fetch(url, init);
+        if (address.pathname === '/v1/machines/read-batch') {
+            const receivingMachine = receiver?.machine;
+            return createMachineReadBatchResponseFixture(init?.body,
+                id => id === 'joined' ? guest : receivingMachine && id === receivingMachine.id ? receivingMachine : null);
+        }
+        const response = await receiver?.handle(address, init);
+        if (response) return response;
+        return requestHome(url, init);
+    };
     connection = await restoreServerAccountForTest({ serverUrl, accountId, credentials,
         additionalRequestOrigins: ['https://api.vercel.com'],
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
-            vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string) => {
-                if (event.includes('rpc')) { machineRpcs++; throw new Error('Zero-Machine Account work cannot use Machine RPC'); }
+            vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+            vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+                if (event === 'rpc-call' && receiver && receiverProjection) {
+                    if (!payload || typeof payload !== 'object' || !('method' in payload)
+                        || typeof payload.method !== 'string' || !('params' in payload)
+                        || payload.method !== `${receiver.machine.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+                        throw new Error('Unexpected receiver RPC');
+                    }
+                    const content = { mode: 'plain' as const };
+                    const decoded = await socketRpcCodec.decodeRequestParams(content, payload.params, payload.method);
+                    const input = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(decoded.params);
+                    const read = 'sectionRead' in input ? input.sectionRead : undefined;
+                    const result = read ? receiverProjection.read(read.digest, read.offset, read.includeDigests)
+                        : receiverProjection.manifest;
+                    return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+                }
+                if (event.includes('rpc')) { machineRpcs++; throw new Error('Unexpected Machine operation RPC'); }
                 return { ok: true };
             });
         },
-        request: async (url, init) => {
+        request });
+    async function requestHome(url: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
             const address = new URL(String(url));
-            if (address.origin === 'https://api.vercel.com') return native.fetch(url, init);
             const path = address.pathname;
-            if (path === '/v1/machines/managed/actions/get') return Response.json(managed);
+            homePaths.push(path);
+            if (typeof init?.body === 'string') homeBodies.push(init.body);
+            if (path === '/v1/machines/presets/get') {
+                if (!sourcePresetContent) throw new Error('Missing exact preset content');
+                return Response.json({ kind: 'found', preset: {
+                    id: 'opaque-preset', homeId, revision: 1, owner: { kind: 'account', accountId },
+                    contentEncryptionMode: presetMode, ...sourcePresetContent,
+                    ...(missingPolicy ? {} : { retention, wakeOnAcceptedMessage: false }),
+                } });
+            }
+            if (path === '/v1/machines/managed/actions/get') {
+                const { projectManagedMachinePresetForRecipientV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+                return Response.json(opaquePreset && admittedPresetContent
+                    ? { machine: managed, presetContent: projectManagedMachinePresetForRecipientV1({
+                        ...admittedPresetContent, recipientAccountId: accountId }) }
+                    : managed);
+            }
             if (path === '/v1/machines/managed/actions/cancel') {
                 managed = ManagedMachineV1Schema.parse({ ...managed, creationState: 'canceled', desired: 'delete',
                     intentRevision: managed!.intentRevision + 1, cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
@@ -165,20 +308,46 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             }
             if (path.endsWith('/controller/admit-control')) {
                 const body = await new Response(init?.body).json();
+                if (opaquePreset && body.action === 'machines.managed.resize') {
+                    const admitted = ManagedControlAdmissionInputV1Schema.parse(body);
+                    expect(admitted).toMatchObject({ action: 'machines.managed.resize', input: {
+                        homeId, managedId: managed!.id, presetContentOverride: expect.any(Object),
+                    } });
+                    expect('size' in admitted.input).toBe(false);
+                    if (!admittedPresetContent) throw new Error('Missing persisted opaque preset content');
+                    return Response.json({ machine: managed, presetContent: admittedPresetContent,
+                        resizeProvisioner: provisioner, replayed: false });
+                }
+                if (opaquePreset && body.action === 'machines.managed.power.set') {
+                    const admitted = ManagedControlAdmissionInputV1Schema.parse(body);
+                    if (admitted.action !== 'machines.managed.power.set') throw new Error('Expected power admission');
+                    managed = ManagedMachineV1Schema.parse({ ...managed, desired: admitted.input.intent,
+                        intentRevision: managed!.intentRevision + 1 });
+                    return Response.json({ machine: managed, presetContent: admittedPresetContent, replayed: false });
+                }
                 expect(body).toMatchObject({ action: 'machines.managed.delete', input: { when: 'now', expectedRevision: managed!.intentRevision } });
                 managed = ManagedMachineV1Schema.parse({ ...managed, desired: 'delete', intentRevision: managed!.intentRevision + 1,
                     cleanup: { disposition: 'pending', reason: 'delete_requested' } });
-                return Response.json({ machine: managed, replayed: false });
+                return Response.json({ machine: managed, ...(opaquePreset ? { presetContent: admittedPresetContent } : {}), replayed: false });
             }
             if (path.endsWith('/controller/submit-intent')) {
                 const body = await new Response(init?.body).json();
                 if (managed?.submittedNativeEffect) return Response.json({ submitted: false, machine: managed });
                 managed = ManagedMachineV1Schema.parse({ ...managed, submittedNativeEffect: {
-                    requestId: body.requestId, intentRevision: body.expectedIntentRevision, intent: 'delete' } });
+                    requestId: body.requestId, intentRevision: body.expectedIntentRevision, intent: managed!.desired } });
                 return Response.json({ submitted: true, machine: managed });
             }
             if (path.endsWith('/controller/report-intent')) {
                 const body = await new Response(init?.body).json();
+                if (opaquePreset) {
+                    const report = ManagedControllerIntentReportV1Schema.parse(body);
+                    if (!('presetContent' in report) || !admittedPresetContent) throw new Error('Expected sealed native control report');
+                    expect(report.presetContent.t).toBe(plainPreset ? 'plain' : 'encrypted');
+                    expect(report.result).toEqual({ kind: report.result.kind });
+                    if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privateOverrideName);
+                    expect(JSON.stringify(report)).not.toContain(secret);
+                    admittedPresetContent = { ...admittedPresetContent, content: report.presetContent };
+                }
                 if (stoppedCleanup) {
                     expect(body).toMatchObject({ requestId: 'prior-delete', expectedIntentRevision: 2 });
                     expect(managed?.intentRevision).toBe(4);
@@ -186,11 +355,11 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 managed = ManagedMachineV1Schema.parse({ ...managed,
                     ...(body.result.kind === 'accepted' ? { nativeOperationRef: body.result.nativeOperationRef } : {}),
                     ...(body.observation ? { observation: body.observation } : {}),
+                    ...(opaquePreset && body.result.kind === 'confirmed' ? { submittedNativeEffect: undefined } : {}),
                     ...(body.observation?.availability === 'absent' ? { allocation: 'confirmed-absent', cleanup: undefined,
                         submittedNativeEffect: undefined, nativeOperationRef: undefined } : {}) });
                 return Response.json({ machine: managed });
             }
-            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => id === 'joined' ? guest : null);
             if (path === '/v1/machines/joined') return Response.json({ machine: guest });
             if (path === '/v1/machines/joined/access') return Response.json(guestAccess);
             if (path === '/v1/actions/session.spawn_new/execution-authorization') {
@@ -222,7 +391,39 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             if (path.endsWith('/controller/admit')) {
                 admissions++;
                 const body = await new Response(init?.body).json();
+                admittedPresetPolicy = body.presetPolicy;
+                if (missingPolicy && managed) {
+                    return Response.json({ machine: managed, presetContent: admittedPresetContent,
+                        ...(presetContentOverride === undefined ? {} : { presetContentOverride }), replayed: true });
+                }
                 acquireDigest = body.requestEnvelopeDigest;
+                if (opaquePreset) {
+                    const acquire = ManagedAcquireInputV1Schema.parse(body.input);
+                    if (acquire.selection.kind !== 'preset' || !admittedPresetContent || presetContentOverride === undefined) {
+                        throw new Error('Expected exact opaque preset admission');
+                    }
+                    const { resolveMachineRetentionPolicyV1 } = await import('@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1');
+                    const explicitPolicy = 'retention' in acquire
+                        ? { retention: acquire.retention, wakeOnAcceptedMessage: acquire.wakeOnAcceptedMessage } : undefined;
+                    const expectedPolicy = explicitPolicy ?? resolveMachineRetentionPolicyV1({
+                        billing: provisioner.billing, nativeCapabilities: provisioner.retention,
+                    });
+                    if (missingPolicy) {
+                        expect(explicitPolicy).toBeUndefined();
+                        expect(body.presetPolicy).toEqual({ retention: expectedPolicy.retention,
+                            wakeOnAcceptedMessage: expectedPolicy.wakeOnAcceptedMessage });
+                        expect(computeExternalActionRequestEnvelopeDigestV1(body.originalActionEnvelope)).toBe(body.requestEnvelopeDigest);
+                        expect(body.originalActionEnvelope.input).toEqual(acquire);
+                    } else {
+                        expect(explicitPolicy).toBeDefined();
+                    }
+                    managed = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: accountId,
+                        enrollmentAccountId: accountId,
+                        preset: { id: acquire.selection.id, revision: acquire.selection.revision, contentEncryptionMode: presetMode },
+                        retention: expectedPolicy.retention, wakeOnAcceptedMessage: expectedPolicy.wakeOnAcceptedMessage,
+                        allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0 });
+                    return Response.json({ machine: managed, presetContent: admittedPresetContent, presetContentOverride, replayed: false });
+                }
                 managed = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: accountId,
                     enrollmentAccountId: accountId, enrollmentIdentity: body.input.enrollmentIdentity,
                     launch: body.input.selection.launch, retention: body.input.selection.retention,
@@ -237,14 +438,54 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             }
             if (path.endsWith('/controller/report')) {
                 const body = await new Response(init?.body).json();
+                if (opaquePreset) {
+                    // The Account keyholder must reseal full native facts into the
+                    // admitted carrier before they cross the Home boundary.
+                    const report = ManagedControllerReportV1Schema.parse(body);
+                    if (!('presetContent' in report)) throw new Error('Expected opaque preset report');
+                    expect(report.result).toEqual({ kind: body.result.kind });
+                    if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privatePresetName);
+                    if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privateLaunchName);
+                    if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privateOverrideName);
+                    expect(JSON.stringify(report)).not.toContain(secret);
+                    if (!admittedPresetContent) throw new Error('Missing opaque preset admission carrier');
+                    admittedPresetContent = { content: report.presetContent, recipients: admittedPresetContent.recipients };
+                    presetContentOverride = undefined;
+                    managed = ManagedMachineV1Schema.parse({ ...managed,
+                        ...(report.result.kind === 'bound' ? { allocation: 'bound' as const } : {}),
+                        ...(report.bootstrapInstalled ? { bootstrapInstalled: true } : {}),
+                        ...(report.observation ? { observation: report.observation } : {}),
+                    });
+                    return Response.json({ machine: managed });
+                }
                 if (body.result.kind === 'bound') managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'bound', resource: body.result.resource,
+                    ...(managed?.allocation === 'may-exist' && managed.submittedNativeEffect?.intent !== 'delete' ? { nativeOperationRef: undefined } : {}),
                     ...(body.bootstrapInstalled ? { bootstrapInstalled: true } : {}) });
+                if (body.result.kind === 'pending') managed = ManagedMachineV1Schema.parse({ ...managed, nativeOperationRef: body.result.nativeOperationRef });
+                if (body.result.kind === 'unknown') managed = ManagedMachineV1Schema.parse({ ...managed, recovery: body.result.recovery });
                 if (body.observation) managed = ManagedMachineV1Schema.parse({ ...managed, observation: body.observation });
                 return Response.json({ machine: managed });
             }
+            if (path.endsWith('/controller/report-resize')) {
+                const body = await new Response(init?.body).json();
+                if (!opaquePreset) throw new Error('Only the opaque resize test reaches this endpoint');
+                const report = ManagedControllerResizeReportV1Schema.parse(body);
+                if (!('presetContent' in report)) throw new Error('Expected opaque preset resize report');
+                expect(report.result).toEqual({ kind: body.result.kind });
+                if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privatePresetName);
+                if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privateLaunchName);
+                if (!plainPreset) expect(JSON.stringify(report)).not.toContain(privateOverrideName);
+                expect(JSON.stringify(report)).not.toContain(secret);
+                expect(JSON.stringify(report)).not.toContain('memoryBytes');
+                if (!admittedPresetContent) throw new Error('Missing opaque resize carrier');
+                admittedPresetContent = { content: report.presetContent, recipients: admittedPresetContent.recipients };
+                return Response.json({ machine: managed });
+            }
             if (path.endsWith('/controller/current') || path.endsWith('/controller/enrollment-context')) return Response.json({ machine: managed });
-            if (path.endsWith('/controller/context')) return Response.json({ machine: managed, requestId: 'native-managed-create',
-                enrollmentInstallation: { machineId: 'joined', installationId: guest.installationId, installationPublicKey } });
+            if (path.endsWith('/controller/context')) return Response.json({ machine: managed,
+                ...(opaquePreset && admittedPresetContent ? { presetContent: admittedPresetContent,
+                    ...(presetContentOverride === undefined ? {} : { presetContentOverride }) } : {}),
+                requestId: 'native-managed-create', enrollmentInstallation: { machineId: 'joined', installationId: guest.installationId, installationPublicKey } });
             if (path === '/v1/auth/response') {
                 approvals++;
                 managed = ManagedMachineV1Schema.parse({ ...managed, enrolledMachineId: 'joined' });
@@ -252,11 +493,30 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             }
             if (path === '/v1/auth/request/status') return Response.json({ status: 'pending', supportsV2: true });
             return homes.request(url, init);
-        } });
+    }
     const account = await captureLazyActionAccountContext(serverId);
     try {
         expect(account.serverIdentityId).toBe(homeId);
         expect(await (await import('@/utils/system/runtimeFetch')).readRuntimeFetchHost(account.endpointUrl)).toBe(host);
+        if (keylessE2ee) {
+            input = await createOpaquePresetInput();
+            const context = bindPresentUserActionConfirmation('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
+                serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'native-managed-create',
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+            const { executeManagedMachineNativeAction } = await import('./managedMachineOrigination');
+            const refused = await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.acquire', input, context,
+                signal: new AbortController().signal });
+            expect(refused).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+            expect({ admissions, allocations, machineRpcs }).toEqual({ admissions: 1, allocations: 0, machineRpcs: 0 });
+            expect(homePaths.filter(path => path.includes('/machines/presets/') || path.includes('/machines/pools/')))
+                .toEqual(missingPolicy ? Array.from({ length: plainPreset ? 1 : 2 }, () => '/v1/machines/presets/get') : []);
+            const wire = homeBodies.join('\n');
+            expect(wire).not.toContain(privatePresetName);
+            expect(wire).not.toContain(privateLaunchName);
+            expect(wire).not.toContain(privateOverrideName);
+            expect(wire).not.toContain(secret);
+            return;
+        }
         const content = createUiConnectedAccountContent(account);
         const mode = await content.resolveAccountMode();
         credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: selected, authenticationModeId: 'token',
@@ -275,6 +535,142 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect((await reader.ensureCurrentAccountExecution(PLUGIN_MANIFEST.id)).kind).toBe('available');
         const projection = reader.readAccountUiProjection();
         if (!projection) throw new Error('Missing Account projection');
+        if (host === 'browser') {
+            const [{ default: Fastify }, { enableExternalActionHttpBody }, { installAxiosFastifyAdapter },
+                { createRequesterCurrentnessSocketHarness }, { executeExternalAction },
+                { prepareRequesterAccountActionContext }, { createCliActionExecutorFromCredentials },
+                { normalizeActionsSettingsV1 }] = await Promise.all([
+                import('fastify'),
+                import('../../../../../server/sources/app/api/utils/externalActionHttpBody'),
+                import('../../../../../cli/src/testkit/http/axiosAdapter'),
+                import('../../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness'),
+                import('../../../../../cli/src/daemon/externalActions/executeExternalAction'),
+                import('../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection'),
+                import('../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials'),
+                import('@happier-dev/protocol/actions/actionSettings'),
+            ]);
+            // The receiver reads the same Home over its genuine HTTP and update
+            // boundaries. Requester admission and the bundled CLI Account runtime
+            // run below those boundaries, including private requester-box custody.
+            const { verifyExternalActionExecutionAuthorizationCurrent } =
+                await import('../../../../../cli/src/api/externalActionExecutionAuthorization');
+            const updates = await createRequesterCurrentnessSocketHarness();
+            const allowUpdates = allowRealServerSocketBoundary(updates.serverUrl);
+            onTestFinished(async () => {
+                try { await updates.close(); } finally { allowUpdates.dispose(); }
+            });
+            const app = Fastify().withTypeProvider<import('fastify-type-provider-zod').ZodTypeProvider>();
+            onTestFinished(() => app.close());
+            enableExternalActionHttpBody(app);
+            const { registerAuthoredAccountActionRelease } = await import('../../../../../cli/src/plugins/runtime/accountPluginActions.testkit');
+            const { resolve: resolveSourcePath } = await import('node:path');
+            const accountProjectRoot = resolveSourcePath(import.meta.dirname, '../../../../../../packages/plugins/machine-vercel');
+            // Compile and serve the same real Account executable through the
+            // canonical release/artifact HTTP boundary used by CLI host tests.
+            await registerAuthoredAccountActionRelease(app, accountId, { primary: {
+                manifest: PLUGIN_MANIFEST, projectRoot: accountProjectRoot,
+                entryPath: resolveSourcePath(accountProjectRoot, 'src/manifest.ts'),
+                activateExport: 'activateAccount', manifestExport: null,
+            } });
+            app.route({ method: ['GET', 'POST'], url: '/*', handler: async (incoming, reply) => {
+                const headers = Object.fromEntries(Object.entries(incoming.headers)
+                    .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+                const response = await request(`${serverUrl}${incoming.url}`, { method: incoming.method, headers,
+                    ...(incoming.body === undefined ? {} : { body: JSON.stringify(incoming.body) }) });
+                reply.code(response.status);
+                response.headers.forEach((value, key) => reply.header(key, value));
+                return reply.send(await response.text());
+            } });
+            const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+            onTestFinished(restoreHttp);
+            type Admitted = Parameters<Parameters<typeof prepareRequesterAccountActionContext>[0]['createExecutor']>[0];
+            const { resolveAccountExecutionRuntime } = await import('../../../../../cli/src/plugins/runtime/accountExecutionRuntime');
+            const { listRuntimeContributedActionDefinitions } = await import('../../../../../cli/src/plugins/runtime/invocation/actions/createCommittedContributedActionDeps');
+            const catalogRuntime = await resolveAccountExecutionRuntime({ accountExecution: {
+                credentials: { ...credentials, encryption: null }, serverUrl, isCurrent: () => lifetime.isCurrent(),
+            } });
+            onTestFinished(() => catalogRuntime.registry.dispose());
+            const executor = (admitted?: Admitted) => {
+                const installationId = receiver?.machine.installationId;
+                return createCliActionExecutorFromCredentials({
+                credentials: admitted?.credentials ?? { ...credentials, encryption: null, credentialProvenance: 'stored_session' },
+                machineId: 'account-receiver', serverId, serverApiUrl: serverUrl, serverIdentityId: homeId,
+                pluginActionExecutionOwner: 'current_process',
+                listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(catalogRuntime.registry, selection),
+                ...(admitted ? { savedSecretOperationContext: admitted.savedSecretOperationContext,
+                    accountPluginActions: true as const } : {}),
+                ...(receiver && installationId ? { externalActionMachineRequestPrivateKey: receiver.installationPrivateKey,
+                    externalActionMachineInstallationId: installationId } : {}),
+                actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(
+                    admitted?.accountSettingsContext.settings.actionsSettingsV1),
+                    getAccountSettings: () => admitted?.accountSettingsContext.settings ?? null },
+            }); };
+            receiver = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: homeId, accountId,
+                machineId: 'account-receiver', actionId: 'action.invoke', tokenEpoch: 0,
+                failure: result => {
+                    const failure = ActionExecuteFailureSchema.safeParse(result);
+                    return failure.success ? failure.data : null;
+                },
+                execute: async (_input, context) => {
+                    if (!receiver) throw new Error('Receiver installation unavailable');
+                    const machineId = receiver.machine.id;
+                    const installationId = receiver.machine.installationId;
+                    if (!installationId) throw new Error('Receiver installation unavailable');
+                    const privateKey = receiver.installationPrivateKey;
+                    const result = await executeExternalAction({ actionId: 'action.invoke', envelope: context.envelope,
+                        principal: { accountId, authentication: { kind: 'account', tokenEpoch: 0 }, authority: 'present_user' },
+                        currentMachineId: machineId, currentInstallationId: installationId,
+                        currentAccountId: accountId, currentServerId: serverId, currentServerHttpBaseUrl: serverUrl,
+                        externalActionMachineRequestPrivateKey: privateKey, executionAuthorization: context.authorization,
+                        ...(context.signal ? { signal: context.signal } : {}),
+                        verifyExecutionAuthorization: async input => await verifyExternalActionExecutionAuthorizationCurrent({
+                            ...input, privateKey, installationId, serverHttpBaseUrl: serverUrl,
+                        }),
+                        resolveTarget: async ({ target }) => target ?? null, executor: executor(),
+                        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({
+                            authorization: input.authorization, purpose: { kind: 'external_action' },
+                            machineId, installationId, installationPrivateKey: privateKey,
+                            serverId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+                            isCurrent: async () => lifetime.isCurrent(), createExecutor: executor,
+                            ...(input.signal ? { signal: input.signal } : {}),
+                        }),
+                    });
+                    if (result.kind !== 'response' || !('execution' in result.response)) throw new Error(JSON.stringify(result));
+                    return result.response.execution.ok ? result.response.execution.result : result.response.execution;
+                } });
+            const [{ normalizePluginManifestV2 }, { projectLoadedPluginContributes },
+                { createResolvedContributionRegistry }, { buildPluginProjectionV2 },
+                { createPluginRuntimeOccurrenceId }, { resolve }] = await Promise.all([
+                import('../../../../../cli/src/plugins/manifest/normalize'),
+                import('../../../../../cli/src/plugins/projection/registry/fullProjection'),
+                import('../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry'),
+                import('../../../../../cli/src/plugins/projection/registry/projection/v2'),
+                import('../../../../../cli/src/plugins/runtime/runtimeSlots'),
+                import('node:path'),
+            ]);
+            // A receiver publishes the CLI projection, before the UI adds its
+            // Account placement facts. Derive it from the actual plugin manifest.
+            const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
+            const pluginRootPath = resolve(import.meta.dirname, '../../../../../../packages/plugins/machine-vercel');
+            const daemonEntry = manifest.entrypoints?.daemon;
+            if (!daemonEntry) throw new Error('Missing plugin daemon entry');
+            const registry = createResolvedContributionRegistry({ ...projectLoadedPluginContributes({
+                loadResult: { loadedPlugins: [{ pluginId: manifest.id, pluginRootPath,
+                    manifestPath: resolve(pluginRootPath, 'plugin.json'),
+                    daemonEntryPath: resolve(pluginRootPath, daemonEntry), devDaemonEntryPath: null,
+                    sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-machine-vercel',
+                        trustPolicy: 'local_trusted', installPolicy: 'copy' },
+                    manifest, compiledAccountManifest: manifest }], diagnosticsByPluginId: {} },
+                provenance: 'first_party',
+            }), occurrenceIdsByPluginId: { [manifest.id]: createPluginRuntimeOccurrenceId(manifest.id) } });
+            receiverProjection = buildDeferredDaemonProjectionSections({ protocolVersion: 1,
+                projectionDigest: 'a'.repeat(64),
+                projection: PluginProjectionV2Schema.parse(buildPluginProjectionV2({ registry, generation: 1 })) });
+            // Browser-reachable retained cleanup needs no online Machine.
+            await publishMachineInventoryForTest(lifetime.scope, uncertainDelete ? [] : [createHydratedPlainMachineFixture({
+                id: receiver.machine.id, accountId, machine: { activeAt: Date.now(), access: receiver.machine.access,
+                    installationId: receiver.machine.installationId } })]);
+        }
         await reconcileProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform: 'web', reader,
             accountLifetime: lifetime, loaderBackend: createPluginUiCommonJsLoaderBackend() });
         const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
@@ -303,13 +699,23 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             if (path === '/v2/teams/team_one') return Response.json({ id: 'team_one', billing: { plan: 'pro' } });
             if (path === '/v4/sandboxes') { allocations++; return Response.json(named()); }
             if (path === '/v2/sandboxes/happier-managed-1') {
+                if (label.endsWith('authored failure')) {
+                    authoredNativeFailure = new PluginError({ code: 'credential_unavailable',
+                    message: 'Sign in to the selected cloud account.', remediation: { kind: 'retry' },
+                    failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 403 },
+                    details: { nativeCause: { localCause: 'native_options_changed' }, privateOutput: secret } });
+                    throw authoredNativeFailure;
+                }
                 if (init?.method === 'DELETE') { deletes++; vendorAbsent = true; }
-                return allocations && !vendorAbsent ? Response.json(named()) : Response.json({}, { status: 404 });
+                return (allocations || uncertainDelete === 'bound') && !vendorAbsent ? Response.json(named()) : Response.json({}, { status: 404 });
             }
             if (path.endsWith('/stop')) { stops++; vendorStopped = true; return Response.json({}); }
             if (path === '/v2/sandboxes/snapshots') return Response.json({ snapshots: vendorStopped && !vendorAbsent ? [snapshot] : [], pagination: { next: null } });
             if (path === '/v2/sandboxes/sessions/sbx_one') return Response.json({ session });
-            if (path === '/v2/sandboxes/snapshots/snap_one') return Response.json({ snapshot: { ...snapshot, status: vendorAbsent ? 'deleted' : 'created' } });
+            if (path === '/v2/sandboxes/snapshots/snap_one') {
+                if (init?.method === 'DELETE') { deletes++; vendorAbsent = true; return Response.json({}); }
+                return Response.json({ snapshot: { ...snapshot, status: vendorAbsent ? 'deleted' : 'created' } });
+            }
             if (path.endsWith('/cmd') && init?.method === 'POST') {
                 const body = await new Response(init.body).json();
                 const id = `command-${commands.size}`;
@@ -330,6 +736,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 else if (command.includes('current_target=') && command.includes('version_path')) stdout = 'current=\nprevious=\n';
                 else if (command.includes("'auth' 'request'")) {
                     await readCreationStage?.('joining');
+                    joinAttempts++;
                     if (interruptJoin) return Response.json({ error: 'Join interrupted at native transport' }, { status: 503 });
                     stdout = JSON.stringify({ kind: 'remote_home_enrollment_pairing_request',
                     protocolVersion: 1, publicKey: encodeBase64(new Uint8Array(32).fill(1)), homeServerIdentityId: homeId,
@@ -363,17 +770,15 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     ? Reflect.get(error, 'code') : undefined }));
             expect(probe).toEqual({ phase: 'account_http', status: 200 });
         } finally { networkProbe.dispose(); }
-        const launch = { provider: { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id }, schemaVersion: 1, name: 'Guest',
-            choices: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 2, timeoutMs: 300000, snapshotExpirationMs: 0 },
-            credentials: [{ purpose: { consumer: { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id }, purpose: 'cloud-api' },
-                account: selected }] };
-        const retention = { kind: 'until-delete' as const };
-        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'one-off', homeId, launch, retention, wakeOnAcceptedMessage: false },
-            ...(startAgent ? { agentStart: { directory: { kind: 'managed' }, agentTarget: {
-                kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
-            } } } : {}),
-            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, reviewedFacts: { launch, provisioner, retention,
-                retentionCapabilities: provisioner.retention, billing: provisioner.billing, optionStatus: 'current', prerequisites: [], wakeOnAcceptedMessage: false } });
+        if (opaquePreset) {
+            input = await createOpaquePresetInput();
+        } else {
+            input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'one-off', homeId, launch, retention, wakeOnAcceptedMessage: false },
+                ...(startAgent ? { agentStart: { directory: { kind: 'managed' }, agentTarget: {
+                    kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                } } } : {}),
+                enrollmentIdentity, reviewedFacts });
+        }
         // Captured public release HTTP bytes keep signature verification and
         // guest installation real; no internal recipe or Action port is replaced.
         const releaseMetadataPaths: string[] = [];
@@ -398,24 +803,71 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         const context = bindPresentUserActionConfirmation('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
             serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'native-managed-create',
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+        if (uncertainDelete) {
+            const handle = { contributionRef: launch.provider, schemaVersion: 1,
+                value: { kind: 'acquire', name: 'happier-managed-1', managedId: 'managed-1', teamId: 'team_one', projectId: 'prj_one' } };
+            managed = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: accountId,
+                launch, retention, reviewedFacts, enrollmentIdentity,
+                allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+                wakeOnAcceptedMessage: false, nativeOperationRef: handle,
+                recovery: { reference: 'managed-1', reason: 'native_identity_unavailable' } });
+            const deletion = { homeId, managedId: managed.id, when: 'now' as const, expectedRevision: 0,
+                intent: 'delete' as const, reviewedDependencies: true as const };
+            const result = await executor.execute('machines.managed.delete', deletion,
+                bindPresentUserActionConfirmation('machines.managed.delete', deletion, {
+                    ...context, actionRequestId: 'retained-acquisition-delete', presentUserConfirmation: undefined,
+                }));
+            if (uncertainDelete === 'bound') {
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: managed.id } });
+                expect(managed).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+                expect(managed.submittedNativeEffect).toBeUndefined();
+                expect(deletes).toBe(1);
+            } else {
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: false,
+                    failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_pending' } });
+                expect(managed).toMatchObject({ allocation: 'may-exist', nativeOperationRef: handle });
+                expect(managed.submittedNativeEffect).toBeUndefined();
+                expect({ stops, deletes }).toEqual({ stops: 0, deletes: 0 });
+            }
+            expect({ admissions, allocations, approvals, guestDispatches, machineRpcs }).toEqual({
+                admissions: 0, allocations: 0, approvals: 0, guestDispatches: 0, machineRpcs: 0,
+            });
+            expect(JSON.stringify(result)).not.toContain(secret);
+            return;
+        }
         const discoveryContext = { ...context, presentUserConfirmation: undefined, actionRequestId: 'account-provider-discovery' };
         const probe = { homeId, contribution: launch.provider };
         expect(await executor.execute('machines.provisioners.check', probe, discoveryContext))
             .toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
-        expect(await executor.execute('machines.provisioners.check', { ...probe, credentials: launch.credentials }, discoveryContext))
-            .toMatchObject({ ok: true, result: { available: true } });
+        const providerCheck = await executor.execute('machines.provisioners.check', { ...probe, credentials: launch.credentials }, discoveryContext);
+        expect(providerCheck, JSON.stringify(providerCheck)).toMatchObject({ ok: true, result: { available: true } });
         expect(await executor.execute('machines.provisioners.options', {
             ...probe, credentials: launch.credentials, selectors: launch.choices,
         }, discoveryContext)).toMatchObject({ ok: true, result: { base: { available: true, launch: launch.choices } } });
         expect({ admissions, allocations, machineRpcs }).toEqual({ admissions: 0, allocations: 0, machineRpcs: 0 });
+        if (label.endsWith('authored failure')) {
+            const failure = await executor.execute('machines.managed.acquire', input, context);
+            expect(authoredNativeFailure).toBeDefined();
+            expect(allocations).toBe(0);
+            expect(failure, JSON.stringify({ boundaryError: { canonical: isPluginError(authoredNativeFailure),
+                sameErrorIntrinsic: new Function('return Error')() === Error } })).toMatchObject({ ok: false, errorCode: 'credential_unavailable',
+                error: 'Sign in to the selected cloud account.',
+                failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 403 },
+                details: { name: 'PluginError', message: 'Sign in to the selected cloud account.', remediation: { kind: 'retry' } },
+            });
+            expect(JSON.stringify(failure)).not.toContain(secret);
+            expect(allocations).toBe(0);
+            return;
+        }
         const stages = new Set<string>();
         readCreationStage = async stage => {
             const observed = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
                 ...context, actionRequestId: `stage-${stage}`, presentUserConfirmation: undefined,
             });
-            expect(observed).toMatchObject({ ok: true, result: { id: 'managed-1', allocation: 'bound' } });
             if (!observed.ok) throw new Error('Creation fact read failed');
-            const row = ManagedMachineV1Schema.parse(observed.result);
+            const row = ManagedMachineV1Schema.parse(isManagedOpaquePresetReadV1(observed.result)
+                ? observed.result.machine : observed.result);
+            expect(row).toMatchObject({ id: 'managed-1', allocation: 'bound' });
             expect(row.enrolledMachineId).toBeUndefined();
             if (stage === 'joining') expect.soft(row).toMatchObject({ bootstrapInstalled: true });
             else expect(row.bootstrapInstalled).toBeUndefined();
@@ -427,7 +879,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         if (startAgent) {
             const { runManagedMachineCreation } = await import('@/components/settings/machines/managed/managedMachineCreation');
             const created = await runManagedMachineCreation({
-                draft: { selection: input.selection, receipt: input.reviewedFacts!, enrollmentIdentity: input.enrollmentIdentity },
+                draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity },
                 acquisition: { requestId: 'native-managed-create', selection: input.selection },
                 agentStart: input.agentStart, scope: lifetime.scope, signal: new AbortController().signal,
                 isCurrent: () => lifetime.isCurrent(), onAcquisitionChange: () => {}, onProgress: () => {},
@@ -443,18 +895,34 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             interrupted = created.kind === 'succeeded' ? { ok: true, result: created.value }
                 : { ok: false, errorCode: code, error: code };
         }
+        if (missingPolicy) {
+            const { resolveMachineRetentionPolicyV1 } = await import('@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1');
+            const policy = resolveMachineRetentionPolicyV1({ billing: provisioner.billing, nativeCapabilities: provisioner.retention });
+            expect(admissions, JSON.stringify(interrupted)).toBe(1);
+            expect(admittedPresetPolicy, JSON.stringify(interrupted)).toEqual({
+                retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage });
+        }
         expect(releaseMetadataPaths).toEqual(['/repos/happier-dev/happier/releases/tags/cli-dev']);
         expect(stages, JSON.stringify(interrupted)).toEqual(new Set(['installing', 'joining']));
         readCreationStage = undefined;
+        if (missingPolicy && !plainPreset) {
+            // Replay the same root against the Home's real report-updated
+            // retained carrier; the source Preset has no native resource facts.
+            const replayed = await executor.execute('machines.managed.acquire', input, context);
+            expect(joinAttempts, JSON.stringify(replayed)).toBe(2);
+            expect({ admissions, allocations }).toEqual({ admissions: 2, allocations: 1 });
+        }
         let retried = interrupted;
         if (!startAgent) {
             expect(interrupted).toMatchObject({ ok: false });
             const retained = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
                 ...context, actionRequestId: 'stage-interrupted', presentUserConfirmation: undefined,
             });
-            expect(retained).toMatchObject({ ok: true, result: { allocation: 'bound', bootstrapInstalled: true } });
             if (!retained.ok) throw new Error('Interrupted creation read failed');
-            expect(ManagedMachineV1Schema.parse(retained.result).enrolledMachineId).toBeUndefined();
+            const retainedRow = ManagedMachineV1Schema.parse(isManagedOpaquePresetReadV1(retained.result)
+                ? retained.result.machine : retained.result);
+            expect(retainedRow).toMatchObject({ allocation: 'bound', bootstrapInstalled: true });
+            expect(retainedRow.enrolledMachineId).toBeUndefined();
             expect({ running, allocations, approvals, guestDispatches }).toEqual({ running: false, allocations: 1, approvals: 0, guestDispatches: 0 });
             if (cleanupAction) {
                 vendorAbsent = alreadyAbsent;
@@ -492,20 +960,90 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         const joined = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
             ...context, actionRequestId: 'stage-joined', presentUserConfirmation: undefined,
         });
-        expect(joined).toMatchObject({ ok: true, result: { allocation: 'bound', bootstrapInstalled: true, enrolledMachineId: 'joined' } });
+        if (!joined.ok) throw new Error('Joined creation read failed');
+        expect(ManagedMachineV1Schema.parse(isManagedOpaquePresetReadV1(joined.result)
+            ? joined.result.machine : joined.result)).toMatchObject({ allocation: 'bound', bootstrapInstalled: true, enrolledMachineId: 'joined' });
         expect({ admissions, allocations, approvals, machineRpcs, guestDispatches }).toEqual({
-            admissions: 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
+            admissions: missingPolicy && !plainPreset ? 2 : 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
         });
         if (startAgent) expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
         expect(JSON.stringify({ interrupted, retried })).not.toContain(secret);
+        if (missingPolicy) {
+            expect(homePaths.filter(path => path === '/v1/machines/presets/get')).toHaveLength(plainPreset ? 1 : 2);
+        }
+        if (plainPreset) {
+            expect(encryption).toBeNull();
+            expect(credentials).not.toHaveProperty('secret');
+            return;
+        }
+        let resized: ActionExecuteResult | undefined;
+        if (opaquePreset) {
+            const { createManagedMachinePresetResizeOverrideV1, projectManagedMachinePresetForRecipientV1 } =
+                await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+            if (!encryption || !admittedPresetContent || !managed?.preset
+                || managed.preset.contentEncryptionMode !== 'e2ee') throw new Error('Missing opaque resize custody');
+            const projection = projectManagedMachinePresetForRecipientV1({ content: admittedPresetContent.content,
+                recipients: admittedPresetContent.recipients, recipientAccountId: accountId });
+            const override = createManagedMachinePresetResizeOverrideV1({ presetId: managed.preset.id,
+                mode: 'e2ee', projection, accountId,
+                accountKey: encryption.getContentPrivateKey(), size: { memoryBytes: 6 * 1024 ** 3 },
+                randomBytes: length => new Uint8Array(length).fill(19) });
+            if (!override) throw new Error('Expected a sealed opaque resize override');
+            const resizeInput = { homeId, managedId: managed.id, presetContentOverride: override };
+            resized = await executor.execute('machines.managed.resize', resizeInput,
+                bindPresentUserActionConfirmation('machines.managed.resize', resizeInput, {
+                    ...context, actionRequestId: 'native-managed-opaque-resize', presentUserConfirmation: undefined,
+                }));
+            expect(resized, JSON.stringify(resized)).toMatchObject({ ok: true, result: {
+                result: { kind: 'unsupported' }, presetContent: expect.any(Object),
+            } });
+            expect(JSON.stringify(resized)).not.toContain('memoryBytes');
+        }
         const inspect = await executor.execute('machines.managed.inspect', { homeId, managedId: 'managed-1' }, {
-            ...context, actionRequestId: 'native-managed-inspect', presentUserConfirmation: undefined,
+            ...context, actionRequestId: undefined, presentUserConfirmation: undefined,
         });
         expect.soft(inspect, JSON.stringify(inspect)).toMatchObject({ ok: true, result: { machine: { id: 'managed-1',
             observation: { availability: 'present', power: 'running' } } } });
         expect.soft(allocations).toBe(1);
         expect.soft(approvals).toBe(1);
         expect.soft(JSON.stringify({ inspect, retried })).not.toContain(secret);
+        if (opaquePreset) {
+            const stopInput = { homeId, managedId: 'managed-1', when: 'now' as const,
+                expectedRevision: managed!.intentRevision, intent: 'stop' as const };
+            const stopped = await executor.execute('machines.managed.power.set', stopInput,
+                bindPresentUserActionConfirmation('machines.managed.power.set', stopInput, {
+                    ...context, actionRequestId: 'native-managed-opaque-stop', presentUserConfirmation: undefined,
+                }));
+            expect(stopped, JSON.stringify(stopped)).toMatchObject({ ok: true, result: { kind: 'accepted' } });
+            expect(stops).toBe(1);
+            const deleteInput = { homeId, managedId: 'managed-1', when: 'now' as const,
+                expectedRevision: managed!.intentRevision, intent: 'delete' as const, reviewedDependencies: true as const };
+            const deleted = await executor.execute('machines.managed.delete', deleteInput,
+                bindPresentUserActionConfirmation('machines.managed.delete', deleteInput, {
+                    ...context, actionRequestId: 'native-managed-opaque-delete', presentUserConfirmation: undefined,
+                }));
+            expect(deleted, JSON.stringify({ deleted, stops, deletes, allocation: managed?.allocation,
+                intentRevision: managed?.intentRevision, paths: homePaths.slice(-6) }))
+                .toMatchObject({ ok: true, result: { kind: 'accepted' } });
+            expect(deletes).toBe(1);
+            expect(managed?.allocation).toBe('confirmed-absent');
+            // Actual external Action responses retain the structural/ciphertext
+            // projection, never the local declaration or native resource.
+            expect(homePaths.filter(path => path.includes('/machines/presets/') || path.includes('/machines/pools/')))
+                .toEqual(missingPolicy ? Array.from({ length: plainPreset ? 1 : 2 }, () => '/v1/machines/presets/get') : []);
+            const homeWire = homeBodies.join('\n');
+            expect(homeWire).not.toContain(privatePresetName);
+            expect(homeWire).not.toContain(privateLaunchName);
+            expect(homeWire).not.toContain(privateOverrideName);
+            expect(homeWire).not.toContain(secret);
+            const outbound = JSON.stringify({ interrupted, retried, resized, joined, inspect });
+            expect(outbound).not.toContain(privatePresetName);
+            expect(outbound).not.toContain(privateLaunchName);
+            expect(outbound).not.toContain(privateOverrideName);
+            expect(outbound).not.toContain(secret);
+            expect(outbound).not.toContain('"launch"');
+            expect(outbound).not.toContain('"resource"');
+        }
     } finally { account.dispose(); }
-});
+}, 120_000);
 }

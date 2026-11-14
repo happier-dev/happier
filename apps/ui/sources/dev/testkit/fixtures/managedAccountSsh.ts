@@ -1,7 +1,8 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineMachineProvisionerSchemas, buildMachineProvisionerCloudInit, buildMachineProvisionerPinnedSshBootstrap,
     MachineProvisionerCheckResultV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
-    MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+    MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
+    MachineProvisionerResizeResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 
@@ -21,7 +22,10 @@ export const PLUGIN = definePlugin({ id: 'acme.cloud-ssh', version: '1.0.0',
         launchSchema: native.launch.jsonSchema, resourceSchema: native.resource.jsonSchema,
         platforms: ['linux', 'darwin', 'win32'], browserReachable: false, prerequisites: [],
         billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['delete'] },
-        bootstrapCredential: { kind: 'ssh' }, actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+        resize: { cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
+            memoryBytes: { kind: 'unsupported', code: 'fixture_memory_unsupported' },
+            diskBytes: { kind: 'unsupported', code: 'fixture_disk_unsupported' } },
+        bootstrapCredential: { kind: 'ssh' }, actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', resize: 'resize', destroy: 'destroy' },
     } },
     actions: {
         check: { ...defaults, title: 'Check', dangerLevel: 'safe', inputSchema: schemas.checkInput,
@@ -47,6 +51,9 @@ export const PLUGIN = definePlugin({ id: 'acme.cloud-ssh', version: '1.0.0',
             } },
         inspect: { ...defaults, title: 'Inspect', dangerLevel: 'safe', inputSchema: schemas.resourceInput,
             resultSchema: MachineProvisionerObservationV1Schema, async run() { return { observedAt: Date.now(), availability: 'present' as const, power: 'running' as const }; } },
+        resize: { ...defaults, title: 'Resize', dangerLevel: 'writesRemote', confirmation: { title: 'Resize the reviewed guest?' },
+            inputSchema: schemas.resizeInput, resultSchema: MachineProvisionerResizeResultV1Schema,
+            async run() { return { kind: 'confirmed' as const }; } },
         destroy: { ...defaults, title: 'Delete', dangerLevel: 'destructive', confirmation: { title: 'Create or delete the reviewed guest?' }, inputSchema: schemas.resourceInput,
             resultSchema: MachineProvisionerPowerResultV1Schema, async run() { return { kind: 'confirmed' as const }; } },
     },

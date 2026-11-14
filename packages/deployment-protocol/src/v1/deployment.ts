@@ -10,11 +10,11 @@ import { DeploymentStateV1Schema, deploymentInProgressStates } from '@happier-de
 import { DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, DeploymentServiceSubsetV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 import { DeploymentDigestV1Schema, DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTextV1Schema as text } from './ids.js';
-import { EnvironmentSecretBindingV1Schema, OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
+import { EnvironmentSecretBindingStoredReadV1Schema, OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
 import { deploymentStoredContentV1Schema } from './storedContent.js';
 import { DeploymentTeardownContentV1Schema } from './teardown.js';
 import { DeploymentCorrelationV1Schema } from './correlations.js';
-import { DeploymentReviewRevisionV1Schema } from './review.js';
+import { DeploymentReviewRevisionV1Schema, DeploymentMachineReviewV1Schema } from './review.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { DeploymentPreMigrationBackupV1Schema } from './backup.js';
 import { DeploymentReferenceAddressV1Schema } from '@happier-dev/protocol/deployments/deploymentReadsV1';
@@ -81,6 +81,8 @@ function hasExactServicePlatforms(projection: Readonly<{
 }
 export const OwnServerDeploymentRuntimeProjectionV1Schema = z.strictObject({
     machineId: id, installationId: id, platform: text, ...runtimeProjection,
+    /** Observed by this member’s admitted native review; old generations remain unknown. */
+    engineKind: z.optional(DeploymentMachineReviewV1Schema.shape.target.shape.engine),
 }).check(z.refine(hasExactServicePlatforms, { message: 'Service platforms must cover the exact ordered selected services.' }));
 export type OwnServerDeploymentRuntimeProjectionV1 = z.infer<typeof OwnServerDeploymentRuntimeProjectionV1Schema>;
 /** Native receipts keep their required Compose selectors; platform source uses the same repository identity without them. */
@@ -94,7 +96,7 @@ export const OwnServerDeploymentInputBasisV1Schema = z.strictObject({
     targetLinkId: id, targetLinkRevision: revision,
     sourceIntent: ownServerSourceIntentV1Schema, ...runtimeProjection,
     members: DeploymentOwnServerTargetMachinesV1Schema,
-    bindings: z.array(EnvironmentSecretBindingV1Schema), images,
+    bindings: z.array(EnvironmentSecretBindingStoredReadV1Schema), images,
     /** Capture the reviewed readiness policy; absence in old receipts means all services participate. */
     health: DeploymentTemplateV1Schema.shape.health,
     ownServer: z.optional(OwnServerEnvironmentConfigurationV1Schema),

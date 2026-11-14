@@ -31,6 +31,11 @@ import {
 import {
     workflowDefinitionArtifactSharingAdapterV1,
 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import {
+    openPrivateLabelV1,
+    projectPrivateLabelForRecipientV1,
+    sealPrivateLabelV1,
+} from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -73,6 +78,89 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             labels: [],
         },
     };
+
+    it('includes personal preset content in the atomic Account encryption transition', async () => {
+        const targetEncryption = await Encryption.create(new Uint8Array(32).fill(31));
+        const content = { t: 'plain' as const, v: { v: 1 as const, name: 'Private launch recipe',
+            setup: { scripts: [{ body: 'printf private-preset-setup' }] } } };
+        const input = {
+            ...emptyTransitionInventories,
+            fromMode: 'plain' as const,
+            toMode: 'e2ee' as const,
+            sourceEncryption: null,
+            targetEncryption,
+            machines: [], todos: [], artifacts: [], sessions: [],
+            sessionSourceCredentials: tokenOnlyCredentials,
+            sessionTargetCredentials: legacyCredentials,
+            managedMachinePresetsInventory: { presets: [{ presetId: 'private-preset', expectedRevision: 7, contentEncryptionMode: 'plain' as const,
+                content, recipientEnvelope: null }], snapshots: [] },
+        };
+        const result = await buildAccountEncryptionMigrationStorageDirectives(input);
+
+        expect(result).toMatchObject({ managedMachinePresets: {
+            presets: [{ presetId: 'private-preset', expectedRevision: 7,
+                replacement: { content: { t: 'encrypted' }, recipients: [{ accountId: 'account-a' }] } }],
+            snapshots: [],
+        } });
+        expect(JSON.stringify(result)).not.toContain('private-preset-setup');
+        const migrated = result.managedMachinePresets?.presets[0];
+        if (!migrated) throw new Error('Expected the personal preset replacement');
+        const ownerEnvelope = migrated.replacement.recipients.find(row => row.accountId === 'account-a')?.envelope;
+        if (!ownerEnvelope) throw new Error('Expected the target owner envelope');
+        const reversed = await buildAccountEncryptionMigrationStorageDirectives({
+            ...input, fromMode: 'e2ee', toMode: 'plain', sourceEncryption: targetEncryption, targetEncryption: null,
+            sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null,
+            managedMachinePresetsInventory: { presets: [{ presetId: 'private-preset', expectedRevision: 8,
+                contentEncryptionMode: 'e2ee', content: migrated.replacement.content, recipientEnvelope: ownerEnvelope }],
+                snapshots: [{ managedId: 'retained-acquisition', presetId: 'private-preset',
+                    contentEncryptionMode: 'e2ee', content: migrated.replacement.content, recipientEnvelope: ownerEnvelope }] },
+        });
+        expect(reversed.managedMachinePresets).toEqual({
+            presets: [{ presetId: 'private-preset', expectedRevision: 8, replacement: { content, recipients: [] } }],
+            snapshots: [{ managedId: 'retained-acquisition', presetId: 'private-preset',
+                expectedContentEncryptionMode: 'e2ee', expectedContent: migrated.replacement.content,
+                expectedRecipientEnvelope: ownerEnvelope, replacement: { content, recipients: [] } }],
+        });
+    });
+
+    it('includes Account private-label replacements in the signed storage directive', async () => {
+        const targetEncryption = await Encryption.create(new Uint8Array(32).fill(31));
+        const tokenId = '11111111-1111-4111-8111-111111111111';
+        const stored = sealPrivateLabelV1({
+            mode: 'plain',
+            binding: { entity: 'account_api_token', field: 'label', id: tokenId },
+            value: 'Private deployment credential',
+        });
+        const label = projectPrivateLabelForRecipientV1({ stored, recipientAccountId: 'account-a' });
+
+        const result = await buildAccountEncryptionMigrationStorageDirectives({
+            ...emptyTransitionInventories,
+            fromMode: 'plain',
+            toMode: 'e2ee',
+            sourceEncryption: null,
+            targetEncryption,
+            machines: [],
+            todos: [],
+            artifacts: [],
+            sessions: [],
+            sessionSourceCredentials: tokenOnlyCredentials,
+            sessionTargetCredentials: legacyCredentials,
+            privateLabels: [{ entity: 'account_api_token', field: 'label', id: tokenId, label }],
+        });
+
+        expect(result.privateLabels?.items).toHaveLength(1);
+        const item = result.privateLabels?.items[0];
+        const envelope = item?.label.recipients[0]?.envelope;
+        const dataKey = envelope
+            ? await targetEncryption.decryptEncryptionKey(envelope.encryptedDataKey)
+            : null;
+        expect(dataKey && item ? openPrivateLabelV1({
+            binding: { entity: item.entity, field: item.field, id: item.id },
+            label: item.label,
+            dataKey,
+            readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' },
+        }) : null).toBe('Private deployment credential');
+    });
 
     it.each(['plain', 'e2ee'] as const)('preserves Coach suppression content and version when converting a %s Account', async (fromMode) => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolPrivateViewV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -53,6 +53,16 @@ const alicePool = {
     },
     availability: { state: 'known' as const, connectedCount: 0, enabledCount: 0 },
 } satisfies MachinePoolViewV1;
+
+const alicePoolWire = {
+    pool: {
+        ...alicePool.pool,
+        name: { kind: 'available' as const, label: {
+            content: { t: 'plain' as const, v: alicePool.pool.name }, recipientEnvelope: null,
+        } },
+    },
+    availability: alicePool.availability,
+} satisfies MachinePoolPrivateViewV1;
 
 async function enableMachinePoolsFeatures(serverIds: readonly string[]): Promise<void> {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
@@ -118,7 +128,7 @@ describe('machine pool Account lifetime', () => {
         await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
 
         await switchActiveHomeToBob();
-        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePool] }));
+        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePoolWire] }));
 
         await expect(pending).rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(getStorage().getState().machinePoolListByServerId[boundary.activeServerId]).toBeUndefined();
@@ -142,7 +152,7 @@ describe('machine pool Account lifetime', () => {
             if (pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (pathname === '/v1/auth/ping') return Response.json({ ok: true });
             boundary.pendingResponses.push({ url: String(url), resolve: () => {} });
-            return Response.json({ pools: [alicePool] });
+            return Response.json({ pools: [alicePoolWire] });
         });
         const pending = refreshMachinePools(boundary.activeServerId);
         await credentialsReached;
@@ -158,7 +168,7 @@ describe('machine pool Account lifetime', () => {
         const pending = refreshMachinePools(boundary.activeServerId);
         await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
         transportBoundary.delayRelease = true;
-        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePool] }));
+        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePoolWire] }));
         await vi.waitFor(() => expect(transportBoundary.pendingReleases.length).toBeGreaterThan(0));
 
         await switchActiveHomeToBob();
@@ -189,7 +199,7 @@ describe('machine pool Account lifetime', () => {
         expect(new URL(boundary.pendingResponses[0]!.url).origin).toBe('https://home-b.test');
 
         getStorage().getState().activateProfileScope({ serverId: boundary.activeServerId, accountId: 'bob' });
-        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePool] }));
+        boundary.pendingResponses[0]?.resolve(Response.json({ pools: [alicePoolWire] }));
 
         await expect(pending).resolves.toEqual([alicePool]);
         expect(getStorage().getState().machinePoolListByServerId[boundary.backgroundServerId]).toEqual([alicePool]);

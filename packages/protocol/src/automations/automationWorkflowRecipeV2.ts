@@ -23,6 +23,20 @@ import {
   AutomationStoredContentEnvelopeV1Schema,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from './automationStoredContentEnvelopeV1.js';
+import {
+  isAvailableE2eeAutomationAccountEncryptionV1,
+  type AvailableAutomationAccountEncryptionV1,
+} from './automationAccountCurrentnessV1.js';
+import { openAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
+import {
+  AutomationDefinitionDisplayV1Schema,
+  type AutomationDefinitionDisplayV1,
+} from './automationDefinitionDisplayV1.js';
+
+export {
+  AutomationDefinitionDisplayV1Schema,
+  type AutomationDefinitionDisplayV1,
+} from './automationDefinitionDisplayV1.js';
 
 const UTF8_ENCODER = new TextEncoder();
 const visibleTeamIdSchema = lazyZodSchema(() => z.optional(z.nullable(preservedBoundedNfcString(191, 'Team ids'))));
@@ -76,6 +90,8 @@ const LegacyAutomationDeploymentTriggerV1Schema = lazyZodSchema(() => z.strictOb
 }));
 
 export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.strictObject({
+  /** Present for every new definition; omitted only by retained 0.2 storage. */
+  display: z.optional(AutomationDefinitionDisplayV1Schema),
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   workspace: z.strictObject({
     directory: z.string().check(z.minLength(1)),
@@ -102,6 +118,41 @@ export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSc
   ...AutomationStoredWorkflowDefinitionV2Schema.shape,
   deploymentTriggers: z.optional(z.array(LegacyAutomationDeploymentTriggerV1Schema)),
 })));
+
+export type AutomationStoredWorkflowDefinitionV2OpenResult =
+  | Readonly<{ kind: 'available'; definition: AutomationStoredWorkflowDefinitionV2 }>
+  | Readonly<{ kind: 'contentInvalid' | 'modeMismatch' }>;
+
+/**
+ * The one Account-codec opener for the V2 Workflow definition carrier. It
+ * never reinterprets an E2EE envelope as plain content, while stored reads
+ * retain the released fields needed by pre-display rows.
+ */
+export function openAutomationStoredWorkflowDefinitionV2(params: Readonly<{
+  workflow: unknown;
+  encryption: AvailableAutomationAccountEncryptionV1;
+}>): AutomationStoredWorkflowDefinitionV2OpenResult {
+  const envelope = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema).safeParse(params.workflow);
+  if (!envelope.success) return { kind: 'contentInvalid' };
+  let raw: unknown;
+  if (!isAvailableE2eeAutomationAccountEncryptionV1(params.encryption)) {
+    if (envelope.data.t !== 'plain') return { kind: 'modeMismatch' };
+    raw = envelope.data.v;
+  } else {
+    if (envelope.data.t !== 'encrypted') return { kind: 'modeMismatch' };
+    const opened = openAccountScopedBlobCiphertext({
+      kind: 'automation_template_payload',
+      material: params.encryption.material.material,
+      ciphertext: envelope.data.c,
+    });
+    if (!opened) return { kind: 'contentInvalid' };
+    raw = opened.value;
+  }
+  const definition = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(raw);
+  return definition.success
+    ? { kind: 'available', definition: definition.data }
+    : { kind: 'contentInvalid' };
+}
 
 /**
  * The current Automation definition recipe for managed workflows.

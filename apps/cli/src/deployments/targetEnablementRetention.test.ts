@@ -14,6 +14,18 @@ const machine = ManagedMachineV1Schema.parse({ id: 'allocation', homeId: 'home',
     resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
     desired: 'start', desiredWhen: 'now', intentRevision: 4,
     retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true });
+
+function opaquePresetRead(row: typeof machine) {
+    const { launch, resource, ...structural } = row;
+    if (!resource) throw new Error('opaque_fixture_requires_resource');
+    return {
+        machine: { ...structural, preset: { id: 'preset-allocation', revision: 1, contentEncryptionMode: 'plain' as const } },
+        presetContent: { content: { t: 'plain' as const, v: {
+            v: 1 as const, name: launch.name, launch,
+            nativeResult: { kind: 'bound' as const, resource },
+        } }, recipientEnvelope: null },
+    };
+}
 const reference = { contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
 type Request = Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0];
 const create: Request = { actionId: 'deployments.environments.create', context: {}, input: {
@@ -44,7 +56,7 @@ describe('target enablement retention offer', () => {
     }
     const cleanup: (() => void | Promise<void>)[] = [];
     afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
-    async function boundary(machines = [machine]) {
+    async function boundary(machines: readonly unknown[] = [machine]) {
         const app = fastify();
         cleanup.push(() => app.close());
         app.post(managedMachineActionEndpointPathV1('machines.managed.list'), request => {
@@ -78,6 +90,13 @@ describe('target enablement retention offer', () => {
     it('leaves existing until-delete allocations unchanged', async () => {
         expect(await prepareDeploymentTargetEnablementRetention(create,
             await boundary([{ ...machine, retention: { kind: 'until-delete' } }]), null)).toBeNull();
+    });
+    it('offers the retention edit from an opaque preset list row', async () => {
+        expect(await prepareDeploymentTargetEnablementRetention(create, await boundary([opaquePresetRead(machine)]), null))
+            .toMatchObject({ children: [{ action: 'machines.managed.retention.update', input: {
+                homeId: 'home', managedId: 'allocation', expectedIntentRevision: 4,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            } }] });
     });
     it('uses the composition Home identity when the caller uses a local profile id', async () => {
         expect(await prepareDeploymentTargetEnablementRetention({ ...link,

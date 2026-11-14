@@ -16,6 +16,45 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return prototype === Object.prototype || prototype === null;
 }
 
+/** Identity-bound sidecars are not JSON fields, but must travel with their incoming row. */
+function isSidecarKey(value: object, key: PropertyKey): boolean {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && (typeof key === 'symbol' || !descriptor.enumerable);
+}
+
+function sameOwnPropertyDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
+    if (left === undefined || right === undefined) return left === right;
+    if (left.enumerable !== right.enumerable || left.configurable !== right.configurable) return false;
+    if ('value' in left || 'value' in right) {
+        return 'value' in left && 'value' in right
+            && Object.is(left.value, right.value)
+            && left.writable === right.writable;
+    }
+    return left.get === right.get && left.set === right.set;
+}
+
+/**
+ * Structural JSON reconciliation can rebuild a plain record. Preserve its
+ * non-JSON identity basis and treat a changed basis as a real row change so
+ * an exact recipient projection never remains attached to an older snapshot.
+ */
+function retainIncomingSidecars(previous: object, next: object, members: object): boolean {
+    const nextSidecars = Reflect.ownKeys(next).filter(key => isSidecarKey(next, key));
+    const nextSidecarSet = new Set(nextSidecars);
+    let samePrevious = true;
+    for (const key of nextSidecars) {
+        const descriptor = Object.getOwnPropertyDescriptor(next, key)!;
+        Object.defineProperty(members, key, descriptor);
+        if (!sameOwnPropertyDescriptor(Object.getOwnPropertyDescriptor(previous, key), descriptor)) samePrevious = false;
+    }
+    for (const key of Reflect.ownKeys(previous)) {
+        if (isSidecarKey(previous, key) && !nextSidecarSet.has(key)) {
+            samePrevious = false;
+        }
+    }
+    return samePrevious;
+}
+
 /**
  * Returns `previous` when `next` carries the same value, otherwise `next` with each equal nested
  * array, record and member replaced by its previous identity (at the deepest equal level).
@@ -51,6 +90,7 @@ export function retainDeep<T>(previous: T | undefined, next: T, options?: Readon
         if (retained !== previous[key]) samePrevious = false;
         if (retained !== next[key]) sameNext = false;
     }
+    if (!retainIncomingSidecars(previous, next, members)) samePrevious = false;
     return (samePrevious ? previous : sameNext ? next : options ? Object.freeze(members) : members) as T;
 }
 

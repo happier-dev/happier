@@ -1,6 +1,6 @@
 import type { ManagedCredentialDeliveryResultV1, ManagedCredentialInstallInputV1, ManagedNativeCredentialBindingV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedCredentialDeliveryFailureCodeV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerNativeCredentialApplyResultV1Schema, type MachineProvisionerNativeCredentialBindingV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
@@ -13,7 +13,7 @@ import type { createManagedNativeInvocation } from './reconcile';
 
 export type ComposeManagedNativeCredentialsInput = Readonly<{
   request: ManagedCredentialInstallInputV1;
-  machine: ManagedMachineV1;
+  machine: ManagedMachineFullV1;
   /** Home-qualified owned census; its producer excludes unrelated prepared rows. */
   bindings: readonly ManagedNativeCredentialBindingV1[];
   /** Home's current-use classification, distinct from retained rule ownership. */
@@ -29,8 +29,8 @@ const refused = (code: string = 'provider_authorization_changed'): Extract<Manag
 };
 const unknown = (): Extract<ManagedCredentialDeliveryResultV1, { kind: 'unknown' }> => ({ kind: 'unknown', code: 'action_outcome_unknown' });
 
-function describeBinding(binding: ManagedNativeCredentialBindingV1, machine: ManagedMachineV1,
-  controller: NonNullable<ManagedMachineV1['controller']>): MachineProvisionerNativeCredentialBindingV1 | null {
+function describeBinding(binding: ManagedNativeCredentialBindingV1, machine: ManagedMachineFullV1,
+  controller: NonNullable<ManagedMachineFullV1['controller']>): MachineProvisionerNativeCredentialBindingV1 | null {
   const { safeFacet, delivery, providerModelSelection: selected } = binding;
   const { model, providerAuthorizationTicket: ticket, endpoint, credentialTransport } = delivery;
   if (binding.managedId !== machine.id || safeFacet.managedId !== machine.id

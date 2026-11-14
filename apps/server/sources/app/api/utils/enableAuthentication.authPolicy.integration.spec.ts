@@ -8,6 +8,7 @@ import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "./enableAuthentication";
 import { encryptString } from "@/modules/encrypt";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("enableAuthentication (auth policy) (integration)", () => {
     let harness: LightSqliteHarness;
@@ -177,7 +178,7 @@ describe("enableAuthentication (auth policy) (integration)", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Request-local expiry provenance",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Request-local expiry provenance"),
             expiresAt,
         });
 

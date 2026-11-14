@@ -41,7 +41,7 @@ function readDeployHostRecipe(result: HostPlan, machineId: string) {
   const { sources, support } = plan;
   return support.flatMap(row => {
     const source = sources[row.sourceIndex];
-    const item = source?.setup.items?.[row.itemIndex];
+    const item = source && source.kind !== 'accountPresetOpaque' ? source.setup.items?.[row.itemIndex] : undefined;
     return item && item.kind !== 'app' && item.selection.ref.pluginId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.pluginId
       && item.selection.ref.recipeId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.recipeId ? [{ item, status: row.status }] : [];
   })[0];

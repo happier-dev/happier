@@ -23,6 +23,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
 import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 // Runtime-loaded cross-package ports keep server compilation inside its root;
 // implementations and their own alias/source resolution stay real.
@@ -85,7 +86,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
         const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
-            accountId: account.id, tokenId: randomUUID(), label: 'Acquire completion',
+            accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Acquire completion'),
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const app = fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -248,7 +249,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                     machineId: controller.machineId, accountId: controlActor.id, createdByAccountId: account.id, accessLevel: 'admin',
                 } });
                 const controlApiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
-                    accountId: controlActor.id, tokenId: randomUUID(), label: 'Native control completion',
+                    accountId: controlActor.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(controlActor.id, 'Native control completion'),
                 });
                 const controlToken = controlApiToken?.token ?? await auth.createToken(controlActor.id, undefined,
                     { kind: 'account', authority: 'present_user' });

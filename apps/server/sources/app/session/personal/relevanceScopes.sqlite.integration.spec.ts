@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -75,7 +76,7 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
         await db.session.update({ where: { id: shared.id }, data: { responsibleAccountId: viewer.id } });
         const team = await db.team.create({ data: { name: randomUUID() } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers', nameKey: 'readers' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Readers') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: shared.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: shared.id, teamGroupId: group.id, accessLevel: 'view', effectiveAt: new Date() } });

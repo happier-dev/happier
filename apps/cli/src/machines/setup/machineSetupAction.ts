@@ -1,15 +1,16 @@
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema,
+  type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { machineSetupSourceOriginKeyV1, machineSetupItemKeyV1,
-  type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol';
+import { machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1,
+  MachineSetupSourceV1Schema, type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -25,7 +26,7 @@ import { applyMachineSetup, removeMachineSetup, prepareMachineSetupStages } from
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { projectBackupReceiverPlanResults } from './backupReceiverResult';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
-import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
+import { prepareMachineSetupPlanV1, type MachineSetupLocalPlanInputV1, type MachineSetupLocalPlanResultV1 } from './prepareMachineSetupPlan';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
@@ -41,6 +42,8 @@ import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/co
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { withReachabilityJoinCredential } from '../reachability/prepareReachabilityJoinCredential';
+import { createManagedPresetHydrator, type ManagedPresetHydrator } from '../managed/presetHydration';
+import { hydrateManagedOpaqueSetupSourcesV1, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 
 export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
@@ -73,6 +76,53 @@ function observeInitialPresence(sources: MachineSetupSourceV1,
   return sourceFacts;
 }
 
+function actionSourcesForHome(sources: MachineSetupSourceApplyV1): MachineSetupSourceApplyV1 {
+  // Bundled presets are already locally declared and checked below. The Home
+  // resolver owns only saved-preset recipient projections plus the direct arm.
+  return sources.filter(source => source.kind !== 'bundledPreset');
+}
+
+async function resolveLocalMachineSetupSources(params: Readonly<{
+  sources: MachineSetupSourceApplyV1;
+  resolved: unknown;
+  hydrator: ManagedPresetHydrator;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources: MachineSetupResolvedSourceV1;
+  creation?: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> }> | null> {
+  const response = MachineSetupResolveResultV1Schema.safeParse(params.resolved);
+  if (!response.success || !('sources' in response.data)) return null;
+  const requested = actionSourcesForHome(params.sources);
+  let responseIndex = 0;
+  const aligned = params.sources.map(source => source.kind === 'bundledPreset'
+    ? source : response.data.sources[responseIndex++]);
+  if (responseIndex !== response.data.sources.length) return null;
+  const resolvedSources = MachineSetupResolvedSourceV1Schema.safeParse(aligned);
+  if (!resolvedSources.success) return null;
+  const hasOpaque = requested.some(source => source.kind === 'accountPresetOpaque');
+  if (!hasOpaque) {
+    const parsed = MachineSetupSourceV1Schema.safeParse(params.sources);
+    if (!parsed.success || !sameStrictJsonValue(response.data.sources, requested)) return null;
+    return { sources: parsed.data, resolvedSources: resolvedSources.data,
+      ...(response.data.creation === undefined ? {} : { creation: response.data.creation }) };
+  }
+  const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: requested, resolvedSources: response.data.sources,
+    open: async source => await params.hydrator.openRecipientProjection({ presetId: source.presetId,
+      mode: source.mode, projection: source.projection, signal: params.signal }) });
+  if (!opened) return null;
+  let index = 0;
+  const local = params.sources.map(source => source.kind === 'bundledPreset' ? source : opened[index++]);
+  if (index !== opened.length) return null;
+  const parsed = MachineSetupSourceV1Schema.safeParse(local);
+  return parsed.success ? { sources: parsed.data, resolvedSources: resolvedSources.data,
+    ...(response.data.creation === undefined ? {} : { creation: response.data.creation }) } : null;
+}
+
+function projectMachineSetupPlanResult(result: MachineSetupLocalPlanResultV1,
+  resolvedSources?: MachineSetupResolvedSourceV1, wireSources?: MachineSetupSourceApplyV1): MachineSetupPlanResultV1 {
+  return { ...result, sources: wireSources ?? projectManagedOpaqueSetupSourcesV1(result.sources),
+    ...(resolvedSources === undefined ? {} : { resolvedSources }) };
+}
+
 /** Saved copies use the captured content port; new selections demand exact native checks. */
 export function createMachineSetupPlanAction(params: Readonly<{
   apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient,
@@ -100,22 +150,46 @@ export function createMachineSetupPlanAction(params: Readonly<{
     if (input.machineId !== params.machineId || input.homeId !== params.homeId) return fail('target_mismatch');
     if (context.machineAdmission && (context.machineAdmission.machineId !== params.machineId
       || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent())) return fail('machine_admission_changed');
-    if (context.externalActionExecutionAuthorization?.binding.managedContinuation && input.sources !== undefined) {
-      if (input.mode !== 'effects' || !params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
+    const { sources: wireSources, ...inputWithoutSources } = input;
+    let localInput: MachineSetupLocalPlanInputV1 = inputWithoutSources;
+    let resolvedSources: MachineSetupResolvedSourceV1 | undefined;
+    const resolveHomeSources = async (sources: MachineSetupSourceApplyV1) => {
+      const lifetime = signal ?? context.signal;
+      let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
+      const runtime = await params.apiMachine.resolveMachineSetupRuntime!({ ...(lifetime ? { signal: lifetime } : {}),
+        onUnavailable: reason => { runtimeRefusal = reason; },
+        ...(context.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
+        ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}) });
+      if (!runtime || !runtime.isCurrent || !await runtime.isCurrent()) return {
+        failure: machineSetupTargetUnavailable('installed_runtime', runtimeRefusal ?? 'runtime_closed'),
+      };
+      const admitted = await requestMachineSetupHome({ runtime, context, installation: params.installation!, homeId: params.homeId,
+        actionId: 'machines.setup.plan', path: '/v1/machines/setup/resolve', body: { homeId: input.homeId,
+          machineId: input.machineId, sources: actionSourcesForHome(sources) }, ...(lifetime ? { signal: lifetime } : {}) });
+      const resolved = await resolveLocalMachineSetupSources({ sources, resolved: admitted,
+        hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }), signal: lifetime });
+      if (!resolved) return { failure: fail('machine_setup_response_invalid') };
+      if (!await runtime.isCurrent()) return { failure: machineSetupTargetUnavailable('installed_runtime', 'runtime_closed') };
+      return { resolved };
+    };
+    if (wireSources !== undefined) {
+      const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
+      const needsOpaqueOpen = wireSources.some(source => source.kind === 'accountPresetOpaque');
+      if ((managedContinuation && input.mode !== 'effects') || ((managedContinuation || needsOpaqueOpen)
+        && (!params.installation || !params.apiMachine.resolveMachineSetupRuntime))) return fail('admission_unavailable');
       try {
-        const lifetime = signal ?? context.signal;
-        let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
-        const runtime = await params.apiMachine.resolveMachineSetupRuntime({ ...(lifetime ? { signal: lifetime } : {}),
-          onUnavailable: reason => { runtimeRefusal = reason; },
-          ...(context.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
-          ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}) });
-        if (!runtime || !runtime.isCurrent || !await runtime.isCurrent())
-          return machineSetupTargetUnavailable('installed_runtime', runtimeRefusal ?? 'runtime_closed');
-        const admitted = MachineSetupResolveResultV1Schema.parse(await requestMachineSetupHome({ runtime, context,
-          installation: params.installation, homeId: params.homeId, actionId: 'machines.setup.plan', path: '/v1/machines/setup/resolve',
-          body: { homeId: input.homeId, machineId: input.machineId, sources: input.sources }, ...(lifetime ? { signal: lifetime } : {}) }));
-        if (!('sources' in admitted) || !sameStrictJsonValue(admitted.sources, input.sources)) return fail('machine_setup_response_invalid');
-        if (!await runtime.isCurrent()) return machineSetupTargetUnavailable('installed_runtime', 'runtime_closed');
+        let localSources: MachineSetupSourceV1 | null;
+        if (!managedContinuation && !needsOpaqueOpen) {
+          const parsed = MachineSetupSourceV1Schema.safeParse(wireSources);
+          localSources = parsed.success ? parsed.data : null;
+        } else {
+          const opened = await resolveHomeSources(wireSources);
+          if ('failure' in opened) return opened.failure;
+          localSources = opened.resolved.sources;
+          resolvedSources = opened.resolved.resolvedSources;
+        }
+        if (!localSources) return fail('machine_setup_response_invalid');
+        localInput = { ...inputWithoutSources, sources: localSources };
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
@@ -124,6 +198,24 @@ export function createMachineSetupPlanAction(params: Readonly<{
     }
     const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
+    if (wireSources === undefined && current.status === 'ready') {
+      const currentWireSources = projectManagedOpaqueSetupSourcesV1(current.policy.sources);
+      if (currentWireSources.some(source => source.kind === 'accountPresetOpaque')) {
+        if (!params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
+        try {
+          const opened = await resolveHomeSources(currentWireSources);
+          if ('failure' in opened) return opened.failure;
+          // The desired snapshot owns the attached revision. A resolver may not
+          // substitute a newer preset while producing its presentation carrier.
+          if (!sameStrictJsonValue(opened.resolved.sources, current.policy.sources)) return fail('machine_setup_response_invalid');
+          resolvedSources = opened.resolved.resolvedSources;
+        } catch (error) {
+          const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
+          return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan'), errorCode: code };
+        }
+      }
+    }
     if (input.updates) {
       if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
       if (!params.apiMachine.refreshMachineSetupUpdates || !params.apiMachine.publishMachineSetupUpdates) return fail('target_unavailable');
@@ -134,13 +226,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
           ? await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.updates.scope, ...options })
           : { observation: await params.apiMachine.refreshMachineSetupUpdates(options) };
         if (input.mode === 'effects') await params.apiMachine.publishMachineSetupUpdates(updates.observation);
-        return withAdministratorPrerequisite({ desiredRevision: current.policy.revision, sources: current.policy.sources,
+        return withAdministratorPrerequisite(projectMachineSetupPlanResult({ desiredRevision: current.policy.revision, sources: current.policy.sources,
           exclusions: current.policy.exclusions, support: [], updates,
           ...(input.mode === 'effects' ? { review: { target: { homeId: input.homeId, machineId: input.machineId },
             administratorRequired: 'plan' in updates && updates.plan ? machineSetupPlansRequireAdministratorV1([updates.plan]) : null,
             downtime: 'plan' in updates && updates.plan ? updates.plan.steps.length ? 'possible' as const : 'none' as const : 'unknown' as const,
           } } : {}),
-        });
+        }));
       } catch (error) {
         const code = (signal ?? context.signal)?.aborted ? 'cancelled'
           : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -151,7 +243,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     let recipeLease: PluginRuntimeRegistryLease | undefined;
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
     try {
-      result = await prepareMachineSetupPlanV1({ input, current,
+      result = await prepareMachineSetupPlanV1({ input: localInput, current,
         observation: params.apiMachine.getMachineSetupObservationSnapshot?.(),
         ...(params.installation ? { installationId: params.installation.installationId } : {}),
         ...(params.apiMachine.captureMachineAdminAccess ? { readAdminAccessObservation: params.apiMachine.captureMachineAdminAccess().observe } : {}),
@@ -171,9 +263,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
         installationId: params.installation.installationId, entries: result.recipePlans });
       if (backupReceivers.length) result = { ...result, backupReceivers };
     }
-    return withAdministratorPrerequisite(await prepareMachineSetupApps(input, result, { ...context, ...(signal ? { signal } : {}) }, {
+    const appPrepared = await prepareMachineSetupApps(localInput, result, { ...context, ...(signal ? { signal } : {}) }, {
       ...params.appPreparation, ...(params.installation ? { installationId: params.installation.installationId } : {}),
-    }));
+    });
+    return withAdministratorPrerequisite('errorCode' in appPrepared ? appPrepared : projectMachineSetupPlanResult(appPrepared, resolvedSources,
+      current.status === 'ready' && current.policy.sources.some(source => source.kind === 'accountPreset'
+        && source.contentEncryptionMode !== undefined) || wireSources?.some(source => source.kind === 'accountPresetOpaque')
+        ? wireSources : undefined));
   };
 }
 
@@ -204,7 +300,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
     const lifetime = signal ?? context.signal ?? new AbortController().signal;
     if (input.machineId !== params.machineId || input.homeId !== params.homeId) return fail('target_mismatch');
     const admission = context.machineAdmission;
-    if (!context.externalActionExecutionAuthorization) return fail('admission_unavailable');
+    const authorization = context.externalActionExecutionAuthorization;
+    if (!authorization) return fail('admission_unavailable');
     if (admission && (admission.machineId !== params.machineId || admission.installationId !== params.installation.installationId
       || !context.verifyMachineAdmissionCurrent)) return fail('machine_admission_changed');
     let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
@@ -256,41 +353,58 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         // A failed script publishes the approved sources and its unfinished
         // ordinals. Exact Workflow retry keeps the frozen review, while the
         // desired owner supplies that progress; ordinary stale reviews still fail.
-        const continuingScripts = mode === 'apply' && input.removeItemKeys === undefined
+        const mayContinueScripts = mode === 'apply' && input.removeItemKeys === undefined
           && current.policy.revision > input.desiredRevision
-          && context.externalActionExecutionAuthorization.binding.workflowActionOrigin !== undefined
-          && sameStrictJsonValue(current.policy.sources, input.sources)
-          && sameStrictJsonValue(current.policy.exclusions, input.exclusions ?? current.policy.exclusions)
+          && authorization.binding.workflowActionOrigin !== undefined
           && Object.values(current.policy.sourceFacts ?? {}).some(facts => facts.pendingScripts?.length);
-        if (current.policy.revision !== input.desiredRevision && !continuingScripts) return fail('plan_changed');
-        // Native recipes finish before scripts; a confirmed partial script
-        // publication therefore resumes scripts without replaying those effects.
-        const reviewedRecipePlans = continuingScripts ? [] : input.recipePlans;
+        if (current.policy.revision !== input.desiredRevision && !mayContinueScripts) return fail('plan_changed');
         // Admission captured this desired snapshot and installed runtime once.
         // Finite stages consume it; only local cancellation retires this work.
         // Final publication still uses the desired owner's revision-aware CAS.
         const isActive = async () => !cancellationSignal.aborted;
-        const retainedByOrigin = new Map(current.policy.sources.map(source => [machineSetupSourceOriginKeyV1(source), source]));
-        const sources = input.sources;
-        const exclusions = input.exclusions ?? current.policy.exclusions;
         const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
-        if (managedContinuation) {
-          // Creation continuation consumes the Home's exact retained snapshot;
-          // ordinary approved copies do not require live Preset certification.
-          const resolved = MachineSetupResolveResultV1Schema.parse(await request('/v1/machines/setup/resolve', {
-            homeId: input.homeId, machineId: input.machineId, sources,
-          }, cancellationSignal));
-          if (!('sources' in resolved) || !sameStrictJsonValue(resolved.sources, sources)) return fail('machine_setup_response_invalid');
-          creation = resolved.creation;
+        const wireSources = input.sources;
+        let sources: MachineSetupSourceV1;
+        if (managedContinuation || wireSources.some(source => source.kind === 'accountPresetOpaque')) {
+          const resolved = await request('/v1/machines/setup/resolve', {
+            homeId: input.homeId, machineId: input.machineId, sources: actionSourcesForHome(wireSources),
+          }, cancellationSignal);
+          const opened = await resolveLocalMachineSetupSources({ sources: wireSources, resolved,
+            hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
+            signal: cancellationSignal });
+          if (!opened) return fail('machine_setup_response_invalid');
+          sources = opened.sources;
+          creation = opened.creation;
+        } else {
+          const parsed = MachineSetupSourceV1Schema.safeParse(wireSources);
+          if (!parsed.success) return fail('machine_setup_response_invalid');
+          sources = parsed.data;
         }
-        const personalPresetCopies: MachineSetupSourceV1 = [];
+        const originalSources = sources;
+        const continuingScripts = mayContinueScripts
+          && sameStrictJsonValue(current.policy.pendingScriptSources ?? current.policy.sources, originalSources)
+          && sameStrictJsonValue(current.policy.exclusions, input.exclusions ?? current.policy.exclusions);
+        if (current.policy.revision !== input.desiredRevision && !continuingScripts) return fail('plan_changed');
+        const reviewedRecipePlans = continuingScripts ? [] : input.recipePlans;
+        if (continuingScripts) sources = current.policy.sources;
+        else {
+          const change = reviewMachineSetupSourceChangeV1({ currentSources: current.policy.sources,
+            currentSourceFacts: current.policy.sourceFacts, proposedSources: originalSources,
+            ...(input.removeItemKeys === undefined ? {} : { removeItemKeys: input.removeItemKeys }) });
+          if (!change.ok) return change;
+          sources = change.sources;
+        }
+        const retainedByOrigin = new Map(current.policy.sources.map(source => [machineSetupSourceOriginKeyV1(source), source]));
+        const exclusions = input.exclusions ?? current.policy.exclusions;
         for (const source of sources) {
           const retained = retainedByOrigin.get(machineSetupSourceOriginKeyV1(source));
           if (retained && sameStrictJsonValue(retained, source)) continue;
           if (Object.values(source.setup.secretRefs?.bindings ?? {})
             .some(binding => parseSavedSecretRefV1(binding.ref).kind === 'personal')) {
-            if (source.kind === 'accountPreset') personalPresetCopies.push(source);
-            else if (requesterAccountId !== custodianAccountId) return fail('credential_unavailable');
+            // Saved-preset source custody was already verified by the one
+            // opaque Home resolve above. Direct and bundled inputs have no
+            // such owner projection and retain their existing refusal.
+            if (source.kind !== 'accountPreset' && requesterAccountId !== custodianAccountId) return fail('credential_unavailable');
           }
           if (source.kind === 'bundledPreset') {
             const lease = await acquireRecipes();
@@ -311,17 +425,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             if (!sameStrictJsonValue(authored, structure)) return fail('machine_setup_preset_unavailable');
           }
         }
-        if (!managedContinuation && personalPresetCopies.length) {
-          // The existing Home resolver owns source-Account secret custody;
-          // the admitted actor need not be the Preset or Machine custodian.
-          const custodySources: MachineSetupSourceV1 = [...personalPresetCopies, { kind: 'direct', setup: {} }];
-          const resolved = MachineSetupResolveResultV1Schema.parse(await request('/v1/machines/setup/resolve', {
-            homeId: input.homeId, machineId: input.machineId, sources: custodySources,
-          }, cancellationSignal));
-          if (!('sources' in resolved) || !sameStrictJsonValue(resolved.sources, custodySources)) return fail('machine_setup_response_invalid');
-          creation = resolved.creation;
-        }
-        const candidates = sources.filter(source => source.kind === 'accountPreset');
+        const candidates = projectManagedOpaqueSetupSourcesV1(sources)
+          .filter(source => source.kind === 'accountPresetOpaque');
         if (!creation && candidates.length) {
           // Current Machine-held copies need no attachment certification.
           // Only the incumbent creation snapshot can supply Report origin.
@@ -368,7 +473,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const observedSourceFacts = observeInitialPresence(sources, planned.recipePlans ?? []);
         if (prepared && !prepared.ok) return prepared;
         if (mode !== 'remove') {
-          const appFacts = await prepareMachineSetupAcceptedAppRuns({ input, context, isCurrent: isActive,
+          const appFacts = await prepareMachineSetupAcceptedAppRuns({ input, localSources: sources, context, isCurrent: isActive,
             signal: cancellationSignal });
           if (!appFacts) return fail('machine_setup_app_preparation_unavailable');
           for (const [origin, facts] of Object.entries(appFacts)) {
@@ -432,7 +537,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             });
           },
           terminalCustody: { kind: 'machine', serverId: params.homeId, machineId: params.machineId,
-            homeServerIdentityId: context.externalActionExecutionAuthorization!.binding.serverIdentityId,
+            homeServerIdentityId: authorization.binding.serverIdentityId,
             installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies
           Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
         const executeNative = (connectorSecretGrant?: NonNullable<typeof elevation>['connectorSecretGrant']) => {
@@ -478,7 +583,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             }
           }
           const written = await desired.apply({ expectedDesiredRevision: current.policy.revision, sources,
-            exclusions, observedSourceFacts }, { signal: cancellationSignal });
+            exclusions, observedSourceFacts,
+            ...(!sameStrictJsonValue(sources, originalSources) ? { pendingScriptSources: originalSources } : {}),
+          }, { signal: cancellationSignal });
           if (written.status !== 'applied' && written.status !== 'unchanged' && written.status !== 'satisfied') {
             const code = written.status === 'conflict' ? 'plan_changed' : `machine_setup_content_${written.status}`;
             throw Object.assign(new Error(code), { code });

@@ -15,11 +15,14 @@ import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 
 import type { TeamSectionContext } from '../teamSectionContext';
 import { orderTeamCredentialResources } from './teamCredentialPresentation';
+import { useOpenedTeamCredentialDisplayNames } from './teamCredentialPrivateLabels';
 
 type TeamCredentialsProjection = Readonly<{
     featureEnabled: boolean;
     projection: TeamCredentialResourcesProjection;
     rows: readonly (TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1)[];
+    /** Opened only from already-loaded recipient projections, keyed by resource id. */
+    displayNames: Readonly<Record<string, string | null>>;
     recipientPending: boolean;
     error: HomeDomainFailure | null;
     settled: boolean;
@@ -41,7 +44,6 @@ export function useTeamCredentialsProjection(
         scope: context.scope,
         address: context.address,
         enabled: featureEnabled,
-        search,
         filter,
     });
     // Administration is custodian-scoped for members. The recipient catalog owns
@@ -52,18 +54,33 @@ export function useTeamCredentialsProjection(
         address: context.address,
         enabled: needsRecipientCatalog,
     });
-    const rows = React.useMemo(() => {
+    const loadedRows = React.useMemo(() => {
         const byId = new Map<string, TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1>(
             projection.rows.map(resource => [resource.id, resource]),
         );
-        const query = search?.trim().toLocaleLowerCase() ?? '';
         if (needsRecipientCatalog) for (const resource of catalog.resources) {
-            if (!byId.has(resource.id) && (!query || resource.displayName.toLocaleLowerCase().includes(query))) {
+            if (!byId.has(resource.id)) {
                 byId.set(resource.id, resource);
             }
         }
-        return orderTeamCredentialResources([...byId.values()]);
-    }, [catalog.resources, needsRecipientCatalog, projection.rows, search]);
+        return [...byId.values()];
+    }, [catalog.resources, needsRecipientCatalog, projection.rows]);
+    const displayNames = useOpenedTeamCredentialDisplayNames({
+        scope: context.scope,
+        resources: loadedRows,
+        enabled: featureEnabled,
+    });
+    const rows = React.useMemo(() => {
+        const query = search?.trim().toLocaleLowerCase() ?? '';
+        const isOpened = (resourceId: string) => Object.prototype.hasOwnProperty.call(displayNames, resourceId);
+        const matching = query === '' ? loadedRows : loadedRows.filter((resource) => {
+            // Keep a newly loaded row in place until its label opener settles;
+            // a pending local decrypt must not masquerade as "no matches".
+            if (!isOpened(resource.id)) return true;
+            return displayNames[resource.id]?.toLocaleLowerCase().includes(query) === true;
+        });
+        return orderTeamCredentialResources(matching, displayNames);
+    }, [displayNames, loadedRows, search]);
     const recipientPending = needsRecipientCatalog && !catalog.resolved && !catalog.error;
     const error = projection.error ?? (needsRecipientCatalog ? catalog.error : null);
     const settled = projection.status === 'ready' && !recipientPending && !error;
@@ -73,5 +90,5 @@ export function useTeamCredentialsProjection(
     const retry = async () => {
         await Promise.all([projection.retry(), ...(needsRecipientCatalog ? [catalog.reload()] : [])]);
     };
-    return { featureEnabled, projection, rows, recipientPending, error, settled, totalCount, retry };
+    return { featureEnabled, projection, rows, displayNames, recipientPending, error, settled, totalCount, retry };
 }

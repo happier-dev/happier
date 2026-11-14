@@ -9,13 +9,17 @@ import { CollectionListGroupLabel } from '@/components/ui/lists/collection/Colle
 import { t } from '@/text';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { Item } from '@/components/ui/lists/Item';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 afterEach(standardCleanup);
+
+const scope = createServerAccountScope('catalog-home', 'catalog-reader')!;
+const label = (value: string) => ({ content: { t: 'plain' as const, v: value }, recipientEnvelope: null });
 
 describe('TeamCredentialCatalogSettingsGroup', () => {
     it('keeps unverified catalog evidence separate from available resource readiness', async () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource', teamId: 'team', displayName: 'Team models', resourceRevision: 1,
+            id: 'resource', teamId: 'team', displayName: label('Team models'), resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
             sourcePresentation: { kind: 'provider', provider: {
@@ -30,11 +34,12 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                 confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
             }],
         });
-        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Team models" sourceKind="provider"
+        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup scope={scope} title="Team models" sourceKind="provider"
             catalog={{ resources: [resource], teamNameById: { team: 'Acme' }, homeNameByTeamId: {},
                 resourceStatusByKey: new Map([['team:resource', { kind: 'current' as const }]]), current: true, condition: null, reload: async () => undefined }}
             onOpen={() => undefined} />);
         const row = screen.findAllByType(Item).find(item => item.props.testID === 'team-credential-catalog-resource:team:resource');
+        await vi.waitFor(() => expect(row?.props.title).toBe('Team models'));
         expect(screen.getTextContent()).toContain(t('settingsProviders.status.notChecked'));
         expect(row?.props.accessibilityLabel).toContain(t('settingsProviders.status.notChecked'));
         expect(row?.props.disabled).toBe(false);
@@ -42,7 +47,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
 
     it('keeps the rail heading a name and explains a cold catalog failure beside one retry', async () => {
         const onRetry = vi.fn();
-        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Provided by Teams" variant="rail" sourceKind="provider"
+        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup scope={scope} title="Provided by Teams" variant="rail" sourceKind="provider"
             catalog={{ resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: false,
                 condition: { reason: 'offline', retryable: true }, reload: async () => undefined }}
             onRetry={onRetry} onOpen={() => undefined} />);
@@ -60,20 +65,20 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     it('withholds an unknown zero during loading and keeps a confirmed empty catalog absent', async () => {
         const catalog = { resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(),
             current: false, condition: { reason: 'loading' as const, retryable: false }, reload: async () => undefined };
-        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Provided by Teams" variant="rail" sourceKind="provider"
+        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup scope={scope} title="Provided by Teams" variant="rail" sourceKind="provider"
             catalog={catalog} onOpen={() => undefined} />);
         expect(screen.findAllByType(CollectionListGroupLabel)[0]?.props.count).toBeUndefined();
         expect(screen.getTextContent()).not.toContain('0');
         expect(screen.findAllByType(SurfaceStateCard)[0]?.props.kind).toBe('loading');
 
-        await screen.update(<TeamCredentialCatalogSettingsGroup title="Provided by Teams" variant="rail" sourceKind="provider"
+        await screen.update(<TeamCredentialCatalogSettingsGroup scope={scope} title="Provided by Teams" variant="rail" sourceKind="provider"
             catalog={{ ...catalog, current: true, condition: null }} onOpen={() => undefined} />);
         expect(screen.getTextContent()).toBe('');
     });
     it('shows one applicable least-privilege resource and opens it by canonical identity', async () => {
         const onOpen = vi.fn();
         const provider = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: label('Acme Provider'), sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const }, recoveryAction: null, deliveryMode: 'brokered' as const,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],
@@ -92,6 +97,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         };
         const screen = await renderScreen(
             <TeamCredentialCatalogSettingsGroup
+                scope={scope}
                 title="Provided by Teams"
                 sourceKind="provider"
                 catalog={{
@@ -117,7 +123,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         const onOpen = vi.fn();
         const onRetry = vi.fn();
         const resource = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: label('Acme Provider'), sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const }, recoveryAction: 'retry' as const, deliveryMode: 'direct' as const,
             mayBroker: false, mayReceiveDirect: true, directMaterialState: 'stale' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],
@@ -128,6 +134,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         };
         const screen = await renderScreen(
             <TeamCredentialCatalogSettingsGroup
+                scope={scope}
                 title="Provided by Teams"
                 variant="rail"
                 sourceKind="provider"
@@ -152,6 +159,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         const onRetry = vi.fn();
         const screen = await renderScreen(
             <TeamCredentialCatalogSettingsGroup
+                scope={scope}
                 title="Provided by Teams"
                 sourceKind="provider"
                 catalog={{
@@ -172,6 +180,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     it('does not show a disabled catalog as last-known data', async () => {
         const screen = await renderScreen(
             <TeamCredentialCatalogSettingsGroup
+                scope={scope}
                 title="Shared with you"
                 sourceKind="connected_service"
                 catalog={{
@@ -189,7 +198,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     it('keeps an exact current repair row reachable while another catalog slice is stale', async () => {
         const onOpen = vi.fn();
         const resource = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: label('Acme Provider'), sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' as const }, recoveryAction: 'retry' as const,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale' as const, sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],
@@ -200,6 +209,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         };
         const screen = await renderScreen(
             <TeamCredentialCatalogSettingsGroup
+                scope={scope}
                 title="Provided by Teams"
                 sourceKind="provider"
                 catalog={{

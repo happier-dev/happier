@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { AccountStatusV1, HomeRoleV1 } from "@happier-dev/protocol";
 import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from "@happier-dev/protocol/changes";
@@ -345,8 +346,7 @@ describe("Provider-reset Account replacement", () => {
         const nativeGroup = await db.teamGroup.create({
             data: {
                 teamId: membership.teamId,
-                name: "Replacement continuity",
-                nameKey: nextId("replacement-continuity"),
+                name: storedPlainPrivateLabel("Replacement continuity"),
             },
         });
         const groupBinding = await db.teamExternalGroupBinding.create({

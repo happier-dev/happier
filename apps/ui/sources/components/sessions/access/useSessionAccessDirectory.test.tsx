@@ -68,7 +68,11 @@ function team(id: string) {
 }
 
 function group(teamId: string, id: string) {
-    return { id, teamId, name: id };
+    return {
+        id,
+        teamId,
+        name: { kind: 'available' as const, label: { content: { t: 'plain' as const, v: id }, recipientEnvelope: null } },
+    };
 }
 
 function membership(id: string, accountId: string, firstName: string, status: 'active' | 'suspended') {
@@ -254,7 +258,9 @@ describe('useSessionAccessDirectory', () => {
             status: 'ready', error: null, hasMore: true, loadMore: memberLoadMore, reload: vi.fn(),
         } as never);
         vi.mocked(useTeamGroups).mockReturnValue({
-            rows: [{ v: 1, id: 'group-7', teamId: 'team-a', name: 'Platform', memberCount: 3 }],
+            rows: [{ v: 1, id: 'group-7', teamId: 'team-a', name: {
+                kind: 'available', label: { content: { t: 'plain', v: 'Platform' }, recipientEnvelope: null },
+            }, memberCount: 3 }],
             status: 'error', error: { kind: 'unreachable', retryable: true, code: null }, hasMore: false,
             loadMore: vi.fn(), reload: groupRetry, isCurrent: false,
         } as never);
@@ -273,13 +279,19 @@ describe('useSessionAccessDirectory', () => {
         latest.loadMore('account');
         expect(memberLoadMore).toHaveBeenCalledOnce();
 
+        await vi.waitFor(async () => {
+            const groupRows = await latest.sections.find((section) => section.kind === 'group')!
+                .resolveCandidates!('', new AbortController().signal);
+            expect(groupRows[0]).toMatchObject({
+                principal: {
+                    ref: { kind: 'group', teamId: 'team-a', groupId: 'group-7' },
+                    displayName: 'Platform',
+                },
+                teamGroup: { teamId: 'team-a', teamGroupId: 'group-7' },
+            });
+        });
         const groups = latest.sections.find((section) => section.kind === 'group')!;
         expect(groups.status).toBe('error');
-        const groupRows = await groups.resolveCandidates!('', new AbortController().signal);
-        expect(groupRows[0]).toMatchObject({
-            principal: { ref: { kind: 'group', teamId: 'team-a', groupId: 'group-7' } },
-            teamGroup: { teamId: 'team-a', teamGroupId: 'group-7' },
-        });
         latest.retry('group');
         expect(groupRetry).toHaveBeenCalledOnce();
         // An empty lookup is not a lookup: it leaves the roster on its unqueried sequence

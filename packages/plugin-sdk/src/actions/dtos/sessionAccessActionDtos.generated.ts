@@ -158,7 +158,25 @@ export type SessionAccessActionResultById = {
             kind: 'group';
             teamId: string;
             groupId: string;
-            name: string;
+            name: {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             teamName: string;
         } | {
             kind: 'team';
@@ -243,7 +261,25 @@ export type SessionAccessActionResultById = {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
-                name: string;
+                name: {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
                 teamName: string;
             } | {
                 kind: 'team';
@@ -363,8 +399,21 @@ export type SessionAccessActionResultById = {
         credentialBindingConsequences?: undefined | {
             resourceId: string;
             teamId: string;
-            displayName: string;
             policy: 'team_context_required' | 'team_visibility_required';
+            displayName: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
         }[];
     } | {
         visibility: 'self';

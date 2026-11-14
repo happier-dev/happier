@@ -1,5 +1,6 @@
-import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1, EnvironmentSecretBindingV1,
-    EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1, EnvironmentSecretBindingInputV1,
+    EnvironmentSecretBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
+import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -17,6 +18,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecr
 import { normalizeStoredComposeDefinitionInput, parseNativeComposeSource } from '@/workspaces/projectSetup/nativeComposeSource';
 import { withDeploymentTemplateGeneratedSecretsForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
@@ -31,7 +33,7 @@ export type PreviewTemplateCreationPlanForHost = Readonly<{
     data: readonly Readonly<{ service: string; database: string }>[];
     preparations: readonly Readonly<{ input: DeploymentTemplateInstantiationPreparationInputV1; prepared: Preparation }>[];
     selections: readonly Selection[];
-    explicitBindings?: readonly EnvironmentVariableBindingV1[];
+    explicitBindings?: readonly EnvironmentVariableBindingInputV1[];
     serviceExports?: NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports'];
     backup?: Selection['destinationBackup'];
 }>;
@@ -143,7 +145,6 @@ export async function preparePreviewCompanionTemplateCreationForHost(input: Read
     const rows = (await prepareNativeSelections(input, host)).filter(row => row.placement.placement === 'companion');
     if (!rows.length) return refuse('template_needs_review');
     const preparations: PreviewTemplateCreationPlanForHost['preparations'][number][] = [];
-    const bindings: EnvironmentVariableBindingV1[] = [];
     const backups: NonNullable<Selection['destinationBackup']>[] = [];
     const serviceExports: NonNullable<PreviewTemplateCreationPlanForHost['serviceExports']> = [];
     let content: DeploymentEnvironmentContentV1 | undefined;
@@ -161,14 +162,14 @@ export async function preparePreviewCompanionTemplateCreationForHost(input: Read
         const definition = await normalizeStoredComposeDefinitionInput({ from: 'compose', document: prepared.document,
             profiles: prepared.profiles, services: prepared.services, primaryService: prepared.primaryService,
             ...(prepared.publicFiles ? { publicFiles: prepared.publicFiles } : {}) });
-        bindings.push(...prepared.bindings);
         const data = prepared.template.data?.at(-1) ?? refuse('template_needs_review');
         if (!data.variables?.host || !data.variables.port) return refuse('template_needs_review');
         const output = Object.values(prepared.template.exports ?? {}).find(output => output.service === data.service);
         if (!output) return refuse('template_needs_review');
         serviceExports.push({ key: data.service, service: data.service, containerPort: output.port,
             scheme: output.scheme ?? refuse('template_needs_review'), exposure: 'loopback', transport: { kind: 'iroh' } });
-        content = { name: input.name, retainPreviousDeployments: 1, definition, bindings: [...bindings],
+        content = { name: input.name, retainPreviousDeployments: 1, definition,
+            bindings: applyEnvironmentSecretBindingsPatchV1(content?.bindings ?? [], { set: prepared.bindings, remove: [] }, randomUUID),
             ownServer: createOwnServerEnvironmentConfigurationV1(), template: { ...prepared.template,
                 definition: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest } } };
         preparations.push({ input: preparation, prepared });
@@ -191,7 +192,7 @@ export async function preparePreviewNativeDataPlacementsForHost(input: Readonly<
 export async function preparePreviewTemplateCreationForHost(input: Readonly<{
     name: string; definition: Extract<DeploymentEnvironmentContentV1['definition'], { kind: 'repository' }>;
     existingTemplate: DeploymentEnvironmentContentV1['template']; selections: readonly Selection[]; context: ActionExecutorContext;
-    explicitBindings?: readonly EnvironmentVariableBindingV1[];
+    explicitBindings?: readonly EnvironmentVariableBindingInputV1[];
 }>, host: Host): Promise<PreviewTemplateCreationPlanForHost> {
     if (!input.definition.compose) return refuse('deployment_source_unavailable');
     const rows = await prepareNativeSelections(input, host);
@@ -226,7 +227,7 @@ export async function preparePreviewTemplateCreationForHost(input: Readonly<{
 export async function materializePreviewTemplateBindingsForHost(plan: PreviewTemplateCreationPlanForHost,
     context: ActionExecutorContext, host: Host): Promise<EnvironmentSecretBindingV1[]> {
     const custody = templateCustody(context, host);
-    const bindings = new Map<string, EnvironmentSecretBindingV1>();
+    const bindings = new Map<string, EnvironmentSecretBindingInputV1>();
     for (const step of plan.preparations) {
         const generated: StoredAppPresetInputV1['bindings'] = [];
         await withDeploymentTemplateGeneratedSecretsForHost(async createGeneratedSecret => {
@@ -243,15 +244,15 @@ export async function materializePreviewTemplateBindingsForHost(plan: PreviewTem
         for (const binding of prepared.bindings) bindings.set(`${binding.phase}:${binding.name}`, binding);
     }
     for (const binding of plan.explicitBindings ?? []) bindings.set(`${binding.phase}:${binding.name}`, binding);
-    return [...bindings.values()];
+    return applyEnvironmentSecretBindingsPatchV1([], { set: [...bindings.values()], remove: [] }, randomUUID);
 }
 
 /** The app consumes the companion's fresh variable refs and its ordinary private export. */
 export function readPreviewCompanionBindingsForHost(plan: PreviewTemplateCreationPlanForHost,
-    bindings: readonly EnvironmentSecretBindingV1[], environmentId: string): EnvironmentVariableBindingV1[] {
+    bindings: readonly EnvironmentSecretBindingV1[], environmentId: string): EnvironmentVariableBindingInputV1[] {
     const declarations = plan.template?.data ?? [];
     const names = new Set(declarations.flatMap(data => Object.values(data.variables ?? {})));
-    const result = new Map(bindings.filter((binding): binding is EnvironmentVariableBindingV1 =>
+    const result = new Map<string, EnvironmentVariableBindingInputV1>(bindings.filter((binding): binding is EnvironmentVariableBindingV1 =>
         binding.purpose === 'variable' && names.has(binding.name)).map(binding => [binding.name, binding]));
     for (const data of declarations) for (const component of ['host', 'port'] as const) {
         const name = data.variables?.[component] ?? refuse('template_needs_review');

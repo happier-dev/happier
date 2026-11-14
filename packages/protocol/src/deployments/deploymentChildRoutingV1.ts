@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js';
+import { createManagedMachineV1BaseShape } from '../machines/managed/managedMachineV1.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
@@ -16,9 +17,11 @@ const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deplo
         ...DeploymentArtifactContentReferenceV1Schema.shape }) };
 
 /** Non-content admission references beside E2EE params, authenticated by the incumbent source signature. */
-export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => {
+    const managedFields = createManagedMachineV1BaseShape(PluginJsonValueV2Schema, PluginJsonValueV2Schema);
+    return z.discriminatedUnion('kind', [
     z.strictObject({ v: z.literal(1), kind: z.literal('snapshot'), actionId: z.literal('deployments.backups.restore'),
-        machineId: id, installationId: id, managedId: id, intentRevision: ManagedMachineV1Schema.shape.intentRevision, actionOperationId: id,
+        machineId: id, installationId: id, managedId: id, intentRevision: managedFields.intentRevision, actionOperationId: id,
         input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id, machineId: id,
             installationId: id, prepareOperationId: id, expectedRevision: revision }) }),
     z.strictObject({ v: z.literal(1), kind: z.literal('dataRole'), actionId: z.literal('deployments.bindings.set'),
@@ -42,7 +45,8 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminate
         phase: z.enum(['activate', 'restore', 'observe', 'cleanup']), selectedDeploymentId: id }),
 ]).check(z.refine(value => value.kind !== 'member' || value.phase !== 'cleanup' || value.selectedDeploymentId === value.deploymentId),
     z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
-    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined))));
+    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined)));
+});
 export type DeploymentChildRoutingV1 = z.infer<typeof DeploymentChildRoutingV1Schema>;
 
 /** The sender and receiver derive one tuple from admitted work; callers cannot author another routing basis. */

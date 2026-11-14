@@ -51,6 +51,25 @@ describe('AutomationStoredWorkflowDefinitionRecipeV2', () => {
     expect(parseAutomationStoredWorkflowDefinitionRecipeV2(serialized.serialized)).toEqual(serialized);
   });
 
+  it('keeps a new Automation display label inside the existing private workflow payload', () => {
+    const labelled = {
+      ...recipe,
+      workflow: {
+        ...recipe.workflow,
+        v: {
+          ...recipe.workflow.v,
+          display: { name: 'Nightly release review', description: 'Review the release branch every night' },
+        },
+      },
+    };
+
+    expect(AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(labelled)).toEqual(labelled);
+    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(labelled);
+    expect(serialized.kind).toBe('available');
+    if (serialized.kind !== 'available') throw new Error('expected labelled recipe');
+    expect(parseAutomationStoredWorkflowDefinitionRecipeV2(serialized.serialized)).toEqual(serialized);
+  });
+
   it('is accepted by the existing Automation definition writer contract', () => {
     expect(AutomationDefinitionCreateRequestSchema.safeParse({
       automationId: 'automation-1',

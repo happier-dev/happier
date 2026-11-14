@@ -1,9 +1,11 @@
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
     DeploymentEnvironmentGetInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1,
     matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1,
-    EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol';
+    } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -30,13 +32,16 @@ import type { DeploymentBindingPreparationRequestV1, PreparedDeploymentBindingSt
 import { createDeploymentArtifactForHost } from '../createArtifactForHost';
 import { prepareEnvironmentSecretBindings, type EnvironmentSecretInstallation } from './environmentSecretBindingService';
 import { assertDeploymentSecretInvocationCurrent, readEnvironmentSecretBindingPreparationForHost } from './readEnvironmentSecretLaunchAdmissionForHost';
+import { deploymentUnavailableError, projectDeploymentFailure } from '../deploymentFailure';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 function failure(error: unknown): ActionExecuteFailure {
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code
         : error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object'
             && 'code' in error.data && typeof error.data.code === 'string' ? error.data.code : 'deployment_content_unavailable';
-    return { ok: false, errorCode: code, error: code };
+    return code === 'deployment_unavailable'
+        ? projectDeploymentFailure(code, error, 'deployment.bindings.prepare')
+        : { ok: false, errorCode: code, error: code };
 }
 export { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 
@@ -124,7 +129,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             if (!current.ok) return refuse(current.error);
             const candidate = 'set' in input ? { ok: true as const, content: { ...current.content,
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
-                    { set: input.set.map(binding => EnvironmentSecretBindingV1Schema.parse(binding)), remove: input.remove }) } }
+                    { set: input.set, remove: input.remove }, randomUUID) } }
                 : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
             if (!candidate.ok) return refuse(candidate.error);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
@@ -202,7 +207,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     runtimeInstallations: [], existingGrants: [], assertCurrent });
                 return await complete(prepared.grants);
             }
-            if (targetLinkId && !loaded.targetLinks.some(link => link.id === targetLinkId)) return refuse('deployment_unavailable');
+            if (targetLinkId && !loaded.targetLinks.some(link => link.id === targetLinkId))
+                throw deploymentUnavailableError('deployment.bindings.prepare.target_link', 'not_found');
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('secret_missing');
             admission = await readEnvironmentSecretBindingPreparationForHost({ credentials,
@@ -285,7 +291,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 ...(targetLinkContent ? { targetLinkContent } : {}) };
         } catch (error) {
             const result = failure(request.context.signal?.aborted ? { code: 'cancelled' } : error);
-            return providerVariables ? { ...result, effectAttempted: true, details: { providerVariables } } : result;
+            return providerVariables ? carryActionFailureDiagnostic({ ...result, effectAttempted: true, details: { providerVariables } }, result) : result;
         }
         finally { try { await dataRolePreparation?.dispose(); } finally { admission?.release(); } }
     });

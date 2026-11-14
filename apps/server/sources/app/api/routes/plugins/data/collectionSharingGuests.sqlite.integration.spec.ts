@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
@@ -76,7 +77,7 @@ describe('Collection sharing Team guests through authenticated routes', () => {
             const team = await db.team.create({ data: { name: 'Collection sharing Team' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
             const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role } });
-            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Editors', nameKey: 'editors' } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Editors') } });
             await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
                 teamMembershipId: membership.id, nativeContribution: true } });
             await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: owner.id, input: { manifest } });

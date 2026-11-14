@@ -1,18 +1,23 @@
+import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import axios from '@/api/client/credentialAxios';
 import { MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { redactManagedMachineCredentialReferences } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
+    isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineFullV1,
+    type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecuteResult, ActionExecutorContext, JsonValue, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import { executeManagedProvisionerDiscovery, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
-import { ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, type ManagedAcceptedV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedAdmissionInputV1Schema, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { executeManagedProvisionerDiscovery, qualifyManagedOpaquePresetProvisionerV1,
+    readManagedOpaquePresetProvisionerV1, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedGetOutputV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1, type ManagedAcceptedV1, type ManagedAcquireInputV1, type ManagedAdmissionOutputV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -50,8 +55,11 @@ import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
 import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
+import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure, isUncertainManagedControllerRequest } from './controllerErrors';
+import { createManagedPresetHydrator, openManagedPresetCarrier, withManagedOpaquePresetReview,
+    type ManagedPresetDefinitionOpener, type ManagedPresetHydrator } from './presetHydration';
 export { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 export type ManagedMachineAcquisitionDriverInput = Readonly<{
@@ -74,6 +82,92 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 }>;
+
+type OpaqueManagedAdmission = Extract<ManagedAdmissionOutputV1, { presetContent: unknown }>;
+
+function isOpaqueManagedAdmission(admission: ManagedAdmissionOutputV1): admission is OpaqueManagedAdmission {
+    return 'presetContent' in admission;
+}
+
+const normalizeManagedPresetCarrier = openManagedPresetCarrier;
+
+async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDriverInput,
+    machine: Pick<ManagedMachineFullV1, 'launch'>): Promise<MachineProvisionerContributionV1> {
+    const candidates = (registry: ResolvedExecutablePluginRuntimeRegistry) => registry.contributes.machineProvisioners?.map(candidate => ({
+        contribution: candidate.identity, descriptor: candidate.definition,
+    })) ?? [];
+    const declared = readManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(input.runtimeRegistry) });
+    if (!declared?.actions.acquire) throw new ManagedMachineControllerError('provider_unavailable');
+    const roleHost = await resolveManagedRoleRuntime(input, machine.launch.provider.pluginId, declared.actions.acquire);
+    const provider = qualifyManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(roleHost.runtimeRegistry) });
+    if (!provider?.actions.acquire) throw new ManagedMachineControllerError('provider_unavailable');
+    await resolveManagedRoleCredentialAuthorizations(roleHost, machine.launch.provider, provider.actions.acquire,
+        machine.launch.credentials, { descriptor: provider, launch: machine.launch.choices });
+    return provider;
+}
+
+async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInput,
+    acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
+    hydrator: ManagedPresetHydrator, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
+        provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>, signal?: AbortSignal) {
+    const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
+        { homeId: acquisition.selection.homeId, id: acquisition.selection.id },
+        { headers: { Authorization: `Bearer ${input.credentials.token}` }, ...(signal ? { signal } : {}) });
+    const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
+    if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+    const preset = read.preset;
+    if (preset.revision !== acquisition.selection.revision) throw new ManagedMachineControllerError('request_conflict');
+    return await hydrator.withPresetDefinition(preset, async (opened, open) => {
+        if (!opened.launch) throw new ManagedMachineControllerError('credential_unavailable');
+        const provisioner = await qualifyManagedPresetAcquire(input, { launch: opened.launch });
+        const prepared = await prepareManagedOpaquePresetAcquireV1({ content: preset.content,
+            override: acquisition.presetContentOverride, provisioner, open });
+        if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
+        const { category: _category, ...policy } = resolveMachineRetentionPolicyV1({ billing: provisioner.billing,
+            nativeCapabilities: provisioner.retention, presetOverride: preset,
+            machineOverride: { retention: acquisition.retention, wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } });
+        return await accept(policy, provisioner, open);
+    }, signal);
+}
+
+async function openManagedPresetAdmissionWithHydrator(params: Readonly<{
+    input: ManagedMachineAcquisitionDriverInput;
+    acquisition: ManagedAcquireInputV1;
+    admission: ManagedAdmissionOutputV1;
+    hydrator: ManagedPresetHydrator;
+    signal?: AbortSignal;
+    preparation?: Readonly<{ provisioner: MachineProvisionerContributionV1; open: ManagedPresetDefinitionOpener }>;
+}>): Promise<ManagedMachineFullV1> {
+    const selection = params.acquisition.selection;
+    if (selection.kind !== 'preset') {
+        if (isOpaqueManagedAdmission(params.admission)) throw new ManagedMachineControllerError('request_conflict');
+        return ManagedMachineFullV1Schema.parse(params.admission.machine);
+    }
+    if (!isOpaqueManagedAdmission(params.admission) || params.admission.machine.preset.id !== selection.id
+        || params.admission.machine.preset.revision !== selection.revision) {
+        throw new ManagedMachineControllerError('request_conflict');
+    }
+    const admission = params.admission;
+    const preparation = params.preparation;
+    const heldOpen = preparation ? (content: Parameters<ManagedPresetDefinitionOpener>[0]) =>
+        preparation.open(content, admission.presetContent.recipients) : undefined;
+    const opened = await params.hydrator.openSnapshot(params.admission.machine, params.admission.presetContent, params.signal, heldOpen);
+    if (!opened.launch) throw new ManagedMachineControllerError('credential_unavailable');
+    const provisioner = params.preparation?.provisioner ?? await qualifyManagedPresetAcquire(params.input, { launch: opened.launch });
+    return await params.hydrator.prepareAdmissionAcquire(params.admission.machine, params.admission.presetContentOverride,
+        provisioner, params.signal, heldOpen);
+}
+
+/** Opens and qualifies the private preset snapshot at its installed custodian. */
+export async function openManagedPresetAdmission(params: Readonly<{
+    input: ManagedMachineAcquisitionDriverInput;
+    acquisition: ManagedAcquireInputV1;
+    admission: ManagedAdmissionOutputV1;
+    signal?: AbortSignal;
+}>): Promise<ManagedMachineFullV1> {
+    const hydrator = createManagedPresetHydrator(params.input);
+    return await openManagedPresetAdmissionWithHydrator({ ...params, hydrator });
+}
 export type ManagedMachineExecutionOptions = Readonly<{
     requestId: string;
     context?: ActionExecutorContext;
@@ -81,26 +175,27 @@ export type ManagedMachineExecutionOptions = Readonly<{
     /** Scheduler retirement is separate from the independently admitted pending input. */
     policySchedulerSignal?: AbortSignal;
     policyPurpose?: ManagedPolicyPurposeV1;
-    policyMachine?: ManagedMachineV1;
+    policyMachine?: ManagedMachineFullV1;
     /** Exact pending request projected from Home's current retention admission. */
     retentionContinuationRequestId?: string;
     /** Original admitted finite request; distinct from the controller's native policy authority. */
     actionOrigin?: ExternalActionExecutionAuthorizationV1;
     /** The installed Action owner evaluates current policy/Ask at effect time. */
-    runPolicyAction?: (machine: ManagedMachineV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
+    runPolicyAction?: (machine: ManagedMachineFullV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineFullV1>) => Promise<ManagedMachineFullV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
-    runAgentStart?: (input: Readonly<{ machine: ManagedMachineV1 }>) => Promise<void>;
-    runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
+    runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1 }>) => Promise<void>;
+    runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineFullV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
     /** Content-free installed Account socket; every wake re-reads the signed row. */
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
 }>;
 
 /** The controller transport consumes the server's row/currentness authority. */
-export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput, options: ManagedMachineExecutionOptions, action: ManagedMachineActionIdV1) {
+export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput, options: ManagedMachineExecutionOptions,
+    action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator = createManagedPresetHydrator(input)) {
     let policyMachine = options.policyMachine;
     let homeRetry: HomeOperationRetry | undefined;
     let submittedIdentity: CapturedManagedNativeIdentity | undefined;
-    function assertConnection(machine: ManagedMachineV1): void {
+    function assertConnection(machine: Pick<ManagedMachineV1, 'homeId' | 'controller'>): void {
         if (machine.homeId !== input.homeId || machine.controller && (machine.controller.machineId !== input.controller.machineId
             || machine.controller.installationId !== input.controller.installationId)) throw new ManagedMachineControllerError('controller_unavailable');
     }
@@ -187,7 +282,12 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         catch { throw requestFailure(path, 'schema', response.status, undefined, managedId); }
     }
     async function post<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined = options.signal): Promise<T> {
-        const run = () => postOnce(path, body, schema, signal);
+        const prepared = path === '/v1/machines/managed/controller/report'
+            ? await hydrator.prepareControllerReport('report', body, signal ?? undefined)
+            : path === '/v1/machines/managed/controller/report-intent'
+                ? await hydrator.prepareControllerReport('report-intent', body, signal ?? undefined)
+                : body;
+        const run = () => postOnce(path, prepared, schema, signal);
         // Only the repeatable authority observation is replayed. Every retry
         // obtains fresh request authorization; submit/report/native effects do not replay.
         return path === '/v1/machines/managed/controller/current' && homeRetry
@@ -235,19 +335,19 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             throw requestFailure(path, 'currentness', undefined, undefined, readManagedId(body));
         }
     }
-    function correlation(machine: ManagedMachineV1): ManagedControllerCurrentnessV1 & Readonly<{ controller: ManagedControllerV1 }> {
+    function correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1 & Readonly<{ controller: ManagedControllerV1 }> {
         const current = ManagedControllerCurrentnessV1Schema.parse({
             homeId: input.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
             requestId: options.requestId, controller: input.controller,
         });
         return { ...current, controller: input.controller };
     }
-    async function row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineV1> {
-        const machine = (await post(`/v1/machines/managed/controller/${path}`, body, ManagedControllerMachineOutputV1Schema, signal)).machine;
+    async function row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineFullV1> {
+        const machine = hydrator.normalize((await post(`/v1/machines/managed/controller/${path}`, body, ManagedControllerMachineOutputV1Schema, signal)).machine);
         if (options.policyPurpose) policyMachine = machine;
         return machine;
     }
-    async function readCurrent(machine: ManagedMachineV1, nativeRole?: 'inspect'): Promise<ManagedMachineV1 | null> {
+    async function readCurrent(machine: ManagedMachineFullV1, nativeRole?: 'inspect'): Promise<ManagedMachineFullV1 | null> {
         if (options.signal?.aborted) return null;
         try {
             const current = await row('current', { ...correlation(machine), ...(nativeRole ? { nativeRole } : {}) });
@@ -274,7 +374,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 : requestFailure('/v1/machines/managed/controller/current', 'currentness', undefined, undefined, machine.id);
         }
     }
-    async function isCurrent(machine: ManagedMachineV1, nativeRole?: 'inspect'): Promise<boolean> {
+    async function isCurrent(machine: ManagedMachineFullV1, nativeRole?: 'inspect'): Promise<boolean> {
         // Passive lifetime queries fail closed. Effect admission uses the strict
         // read so an unreadable source retains its typed refusal.
         try { return await readCurrent(machine, nativeRole) !== null; }
@@ -285,21 +385,30 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             return false;
         }
     }
-    async function submitIdentity(machine: ManagedMachineV1, kind: 'acquire' | 'rebuild') {
+    async function submitIdentity(machine: ManagedMachineFullV1, kind: 'acquire' | 'rebuild') {
         const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
             candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
             && candidate.definition.schemaVersion === machine.launch.schemaVersion);
         const path = kind === 'acquire' ? 'submit' : 'submit-intent';
-        const submitted = await post(`/v1/machines/managed/controller/${path}`, correlation(machine), ManagedControllerSubmitOutputV1Schema);
+        const response = await post(`/v1/machines/managed/controller/${path}`, correlation(machine), ManagedControllerSubmitOutputV1Schema);
+        const submitted = { ...response, machine: hydrator.normalize(response.machine) };
         if (submitted.submitted && provider) submittedIdentity = captureManagedSubmittedNativeIdentity({ kind,
-            machine: submitted.machine, provisioner: provider.definition });
+            machine: hydrator.structural(submitted.machine), privateMachine: submitted.machine, provisioner: provider.definition });
         return submitted;
     }
-    async function reportIssuedNativeFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, kind: CapturedManagedNativeIdentity['kind'], identity = submittedIdentity, configurationFacts?: ManagedMachineV1['reviewedFacts']): Promise<ManagedMachineV1> {
-            const { result, captured } = readManagedIssuedNativeFact({ machine, fact, action, kind, captured: identity, correlation });
+    async function reportIssuedNativeFact(machine: ManagedMachineFullV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, kind: CapturedManagedNativeIdentity['kind'], identity = submittedIdentity, configurationFacts?: ManagedMachineFullV1['reviewedFacts']): Promise<ManagedMachineFullV1> {
+            const { result, captured } = readManagedIssuedNativeFact({ machine: hydrator.structural(machine), privateMachine: machine,
+                fact, action, kind, captured: identity, correlation });
             assertConnection(captured.machine);
             const reportPath = kind === 'rebuild' ? 'report-intent' : 'report';
-            const body = { ...correlation(captured.machine), result, ...(configurationFacts ? { configurationFacts } : {}) };
+            // A restart opens the daemon-stored admitted snapshot, whose sealed
+            // review remains the exact acquisition basis. Never ask Home to
+            // reconstruct or receive that private review a second time.
+            const opaquePreset = hydrator.isOpaque(machine);
+            const reviewedFacts = configurationFacts ?? (opaquePreset ? hydrator.readReviewedFacts(machine) : undefined);
+            if (reviewedFacts && !opaquePreset) hydrator.rememberReviewedFacts(machine, reviewedFacts);
+            const body = { ...correlation(captured.machine), result,
+                ...(reviewedFacts === undefined ? {} : { configurationFacts: reviewedFacts }) };
             if (!originProjection()) return await row(reportPath, body, null);
             const authorization = options.context?.externalActionExecutionAuthorization;
             const target = options.context?.externalActionTarget;
@@ -315,22 +424,25 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             // tuple. A generic origin-lifetime probe would incorrectly erase
             // this already-issued identity when new-effect authority retires.
             const path = `/v1/machines/managed/controller/${reportPath}`;
+            const prepared = reportPath === 'report'
+                ? await hydrator.prepareControllerReport('report', body, null)
+                : await hydrator.prepareControllerReport('report-intent', body, null);
             let headers: ReturnType<typeof resolveExternalActionServerRequestHeaders>;
             try {
                 headers = resolveExternalActionServerRequestHeaders({ context: options.context, effectActionId: action,
-                    method: 'POST', path, body, daemonToken: input.token, serverIdentityId: input.homeId,
+                    method: 'POST', path, body: prepared, daemonToken: input.token, serverIdentityId: input.homeId,
                     privateKey: input.externalActionMachineRequestPrivateKey, installationId: input.controller.installationId });
             } catch { throw requestFailure(path, 'currentness', undefined, undefined, captured.machine.id); }
             if (!headers.ok) throw new ManagedMachineControllerError('admission_unavailable');
-            return (await request(path, body, headers.headers, ManagedControllerMachineOutputV1Schema, null)).machine;
+            return hydrator.normalize((await request(path, prepared, headers.headers, ManagedControllerMachineOutputV1Schema, null)).machine);
     }
     return {
         post, row, correlation, readCurrent, isCurrent, isOriginCurrent, assertConnection,
         setHomeOperationRetry(lifetime?: HomeOperationRetry) { homeRetry = lifetime; },
-        async submit(machine: ManagedMachineV1) { return await submitIdentity(machine, 'acquire'); },
-        async submitIntent(machine: ManagedMachineV1) { return await submitIdentity(machine, 'rebuild'); },
+        async submit(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'acquire'); },
+        async submitIntent(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'rebuild'); },
         /** Capture the admitted paid handle immediately before its safe native reconciliation. */
-        async preparePendingAcquireBoundReport(machine: ManagedMachineV1) {
+        async preparePendingAcquireBoundReport(machine: ManagedMachineFullV1) {
             if (action !== 'machines.managed.acquire' && action !== 'machines.managed.bootstrap.retry') {
                 throw new ManagedMachineControllerError('admission_unavailable');
             }
@@ -340,14 +452,15 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
                 candidate.identity.pluginId === current.launch.provider.pluginId && candidate.identity.localId === current.launch.provider.localId
                 && candidate.definition.schemaVersion === current.launch.schemaVersion);
-            const captured = captureManagedPendingNativeIdentity({ machine, current, provisioner: provider?.definition });
+            const captured = captureManagedPendingNativeIdentity({ machine: hydrator.structural(machine), privateMachine: machine,
+                current: hydrator.structural(current), privateCurrent: current, provisioner: provider?.definition });
             return async (bound: Extract<AcquireResultV1, { kind: 'bound' }>) => await reportIssuedNativeFact(machine, bound, 'pending-acquire', captured);
         },
         /** Only a captured, actually issued native result can retain public identity after origin withdrawal. */
-        async reportIssuedAcquireFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedMachineV1['reviewedFacts']) {
+        async reportIssuedAcquireFact(machine: ManagedMachineFullV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedMachineFullV1['reviewedFacts']) {
             return await reportIssuedNativeFact(machine, fact, 'acquire', submittedIdentity, configurationFacts);
         },
-        async reportIssuedRebuildBound(machine: ManagedMachineV1, bound: Extract<AcquireResultV1, { kind: 'bound' }>) {
+        async reportIssuedRebuildBound(machine: ManagedMachineFullV1, bound: Extract<AcquireResultV1, { kind: 'bound' }>) {
             return await reportIssuedNativeFact(machine, bound, 'rebuild');
         },
     };
@@ -355,7 +468,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
 export type ManagedMachineControllerClient = ReturnType<typeof createManagedMachineControllerClient>;
 
 export type ManagedNativeSnapshotRequest = Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     label: string;
     reason: string;
     options: ManagedMachineExecutionOptions;
@@ -395,9 +508,30 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         inFlight.set(params.machine.id, work);
         try { await work; } finally { if (inFlight.get(params.machine.id) === work) inFlight.delete(params.machine.id); }
     }
-    const nativeLifetimeRenewal = (machine: ManagedMachineV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+    const nativeLifetimeRenewal = (machine: ManagedMachineFullV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
         candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
         && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
+    async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal'>,
+        action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator): Promise<ManagedMachineFullV1> {
+        if (!isManagedOpaquePresetMachineV1(machine)) {
+            return machine;
+        }
+        // Policy census is deliberately structural. Context is the sole cold
+        // daemon delivery edge for an opaque snapshot before a native effect.
+        const client = createManagedMachineControllerClient(input, options, action, hydrator);
+        client.assertConnection(machine);
+        const context = await client.post('/v1/machines/managed/controller/context', {
+            homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
+            controller: input.controller,
+        }, ManagedControllerContextOutputV1Schema);
+        const retained = await normalizeManagedPresetCarrier(context, hydrator, options.signal);
+        if (retained.machine.id !== machine.id || retained.machine.homeId !== machine.homeId
+            || retained.machine.intentRevision !== machine.intentRevision) {
+            throw new ManagedMachineControllerError('intent_changed');
+        }
+        client.assertConnection(retained.machine);
+        return retained.machine;
+    }
     return {
         /**
          * Places one Session on a managed target under the target's EXISTING custody
@@ -413,31 +547,34 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             request.lifetime.throwIfAborted();
             if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
             const readCurrent = input.readPolicyCurrent;
-            let current = await readCurrent(request.managedId, request.lifetime);
-            if (!current || current.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
-            if (current.custodianAccountId !== request.requesterAccountId) throw new ManagedMachineControllerError('managed_target_access_unavailable');
+            const initial = await readCurrent(request.managedId, request.lifetime);
+            if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
+            if (initial.custodianAccountId !== request.requesterAccountId) throw new ManagedMachineControllerError('managed_target_access_unavailable');
             // The authority ends with the Session, and also when the row stops admitting this requester
             // (custody handed over, row gone): every running channel is aborted then.
             const revoked = new AbortController();
             const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
-            const admit = (row: ManagedMachineV1 | null): ManagedMachineV1 => {
+            const hydrator = createManagedPresetHydrator(input);
+            const options = { requestId: `session-target:${request.sessionId}`, signal: lifetime };
+            const admit = async (row: ManagedMachineV1 | null): Promise<ManagedMachineFullV1> => {
                 if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
                 if (row.custodianAccountId !== request.requesterAccountId) {
                     revoked.abort();
                     throw new ManagedMachineControllerError('managed_target_access_unavailable');
                 }
-                return row;
+                return await openPolicyMachine(row, options, 'machines.managed.inspect', hydrator);
             };
-            const authority = createManagedNativeInvocation({ input, options: { requestId: `session-target:${request.sessionId}`, signal: lifetime },
+            let current = await admit(initial);
+            const authority = createManagedNativeInvocation({ input, options,
                 machine: current, action: 'session.spawn_new', sessionTarget: { sessionId: request.sessionId, lifetime } }, () => current!);
             const invoke: typeof authority.invoke = async (role, body, io) => {
-                current = admit(await readCurrent(request.managedId, lifetime));
+                current = await admit(await readCurrent(request.managedId, lifetime));
                 return await authority.invoke(role, body, io);
             };
             // Pushed row changes (no polling): a hand-over or removal revokes even an idle open channel.
             const unsubscribe = input.subscribeManagedMachineChanges?.(() => {
                 if (lifetime.aborted) return;
-                void readCurrent(request.managedId, lifetime).then(row => { try { current = admit(row); } catch { /* revoked */ } }, () => undefined);
+                void readCurrent(request.managedId, lifetime).then(async row => { try { current = await admit(row); } catch { /* revoked */ } }, () => undefined);
             });
             if (unsubscribe) lifetime.addEventListener('abort', () => unsubscribe(), { once: true });
             if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
@@ -486,15 +623,15 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 return { kind: 'unknown', code: error instanceof ManagedMachineControllerError ? error.code : 'native_snapshot_outcome_unknown' };
             }
         },
-        supportsNativeLifetimeRenewal(machine: ManagedMachineV1): boolean {
-            return Boolean(nativeLifetimeRenewal(machine) && machine.observation?.availability === 'present'
-                && machine.observation.power === 'running' && machine.observation.nativeExpiry !== undefined);
+        async supportsNativeLifetimeRenewal(machine: ManagedMachineV1,
+            options?: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal'>): Promise<boolean> {
+            const hydrator = createManagedPresetHydrator(input);
+            const current = await openPolicyMachine(machine, options ?? { requestId: machine.id },
+                machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
+            return Boolean(nativeLifetimeRenewal(current) && current.observation?.availability === 'present'
+                && current.observation.power === 'running' && current.observation.nativeExpiry !== undefined);
         },
         async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
-            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                candidate.identity.pluginId === machine.launch.provider.pluginId
-                && candidate.identity.localId === machine.launch.provider.localId);
-            if (!contribution?.definition.nativeCredentialDelivery) return;
             if (!input.externalActionMachineRequestPrivateKey || !input.prepareTeamCredentialNativeSource) {
                 throw new ManagedMachineControllerError('credential_unavailable');
             }
@@ -506,20 +643,35 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const policy = census.nativeCredentialPolicies?.find(row => row.managedId === machine.id);
             if (!admitted || !policy) throw new ManagedMachineControllerError('admission_unavailable');
             const action = 'machines.managed.credentials.install' as const;
-            const client = createManagedMachineControllerClient(input, options, action);
+            const hydrator = createManagedPresetHydrator(input);
+            const client = createManagedMachineControllerClient(input, options, action, hydrator);
             client.assertConnection(admitted);
-            const invocation = createManagedNativeInvocation({ input, options, client, machine: admitted, action,
-                nativePolicyAdmission: true }, () => admitted);
-            const result = await applyManagedNativeCredentialPolicy({ machine: admitted, bindings: policy.bindings,
+            const context = await client.post('/v1/machines/managed/controller/context', {
+                homeId: admitted.homeId, managedId: admitted.id, expectedIntentRevision: admitted.intentRevision,
+                controller: input.controller, includeNativeCredentialBindings: true,
+            }, ManagedControllerContextOutputV1Schema);
+            const retained = await normalizeManagedPresetCarrier(context, hydrator, options.signal);
+            client.assertConnection(retained.machine);
+            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                candidate.identity.pluginId === retained.machine.launch.provider.pluginId
+                && candidate.identity.localId === retained.machine.launch.provider.localId);
+            if (!contribution?.definition.nativeCredentialDelivery) return;
+            const invocation = createManagedNativeInvocation({ input, options, client, machine: retained.machine, action,
+                nativePolicyAdmission: true }, () => retained.machine);
+            const result = await applyManagedNativeCredentialPolicy({ machine: retained.machine, bindings: policy.bindings,
                 desiredBindingKeys: policy.desiredBindingKeys, prepareSource: input.prepareTeamCredentialNativeSource,
                 invoke: invocation.invoke, signal: options.signal });
             if (result.kind !== 'confirmed') throw new ManagedMachineControllerError(result.code);
         },
-        async executePolicy(machine: ManagedMachineV1, purpose: ManagedPolicyPurposeV1, options: ManagedMachineExecutionOptions): Promise<JsonValue> {
+        async executePolicy(structuralMachine: ManagedMachineV1, purpose: ManagedPolicyPurposeV1,
+            options: ManagedMachineExecutionOptions): Promise<JsonValue> {
+            const hydrator = createManagedPresetHydrator(input);
             if (!options.context?.operationAcceptance?.operationId || !options.context.operationOwnerUpdate
                 || options.context.externalActionCredential || options.context.externalActionExecutionAuthorization) {
                 throw new ManagedMachineControllerError('admission_unavailable');
             }
+            const machine = await openPolicyMachine(structuralMachine, options,
+                structuralMachine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
             if (purpose.kind === 'accepted-input-start' && purpose.target.origin.kind === 'finite-command') {
                 const origin = options.actionOrigin?.binding;
                 if (!origin || origin.requestId !== purpose.target.origin.actionRequestId
@@ -530,7 +682,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             const nativeLifetime = purpose.kind === 'retention' && nativeLifetimeRenewal(machine)
                 ? createManagedNativeInvocation({ input, options, machine, action: 'machines.managed.power.set',
-                    client: createManagedMachineControllerClient(input, options, 'machines.managed.power.set'), nativePolicyAdmission: true }, () => machine) : undefined;
+                    client: createManagedMachineControllerClient(input, options, 'machines.managed.power.set', hydrator), nativePolicyAdmission: true }, () => machine) : undefined;
             const prepared = purpose.kind === 'retention'
                 ? await prepareManagedRetentionPolicy({ input, options, machine, purpose,
                     ...(nativeLifetime ? { renew: async (deadlineAt?: number) => MachineProvisionerRenewResultV1Schema.parse(
@@ -560,7 +712,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 }
                 const admissionOptions = { ...options, policyPurpose: prepared.purpose, policyMachine: machine };
                 const admissionClient = createManagedMachineControllerClient(input, admissionOptions,
-                    purpose.kind === 'creation-cleanup' ? 'machines.managed.delete' : 'machines.managed.power.set');
+                    purpose.kind === 'creation-cleanup' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
                 admissionClient.assertConnection(machine);
                 // Ask may settle before admit-policy runs. The original signed
                 // target is already sufficient for the pending owner's exact CAS.
@@ -568,10 +720,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const policyInput = ManagedPolicyAdmissionInputV1Schema.parse({ ...admissionClient.correlation(machine), purpose: prepared.purpose });
                 // Preparation projects the reviewed effect without changing the
                 // retained row. Shared Ask owns admission as well as native IO.
-                const preview = (await admissionClient.post(
-                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedControllerMachineOutputV1Schema)).machine;
+                const preview = hydrator.normalize((await admissionClient.post(
+                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedControllerMachineOutputV1Schema)).machine);
                 let accepted: ReturnType<typeof ManagedIntentResultSchema.parse> | undefined;
-                const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineV1> => {
+                const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineFullV1> => {
                     if (context) {
                         if (context.operationAcceptance?.operationId !== options.context?.operationAcceptance?.operationId
                             || context.signal !== options.signal || context.operationOwnerUpdate !== options.context?.operationOwnerUpdate) {
@@ -585,8 +737,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     // /current belongs to an already admitted request. This new
                     // policy still has no custody there; admit-policy atomically
                     // checks its reviewed revision, purpose and controller instead.
-                    const admitted = await admissionClient.post(
-                        '/v1/machines/managed/controller/admit-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema);
+                    const admitted = await normalizeManagedPresetCarrier(await admissionClient.post(
+                        '/v1/machines/managed/controller/admit-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
+                    hydrator, options.signal);
                     const approvedContext = context ?? options.context!;
                     const policyAction = options.runPolicyAction;
                     let initialApprovalPending = true;
@@ -603,7 +756,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                             return policyAction(currentMachine, runEffect);
                         } : undefined };
                     const action = admitted.machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
-                    const client = createManagedMachineControllerClient(input, currentOptions, action);
+                    const client = createManagedMachineControllerClient(input, currentOptions, action, hydrator);
                     accepted = ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: admitted.machine.id,
                         intentRevision: admitted.machine.intentRevision, operation: { operationId: options.context!.operationAcceptance!.operationId } });
                     options.context!.operationOwnerUpdate!.update({ domainRef: { kind: 'managedMachine', id: admitted.machine.id } });
@@ -647,7 +800,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         async execute(action: ManagedMachineActionIdV1, body: unknown, options: ManagedMachineExecutionOptions): Promise<JsonValue | null> {
             const parsed = ManagedMachineActionInputSchemasV1[action].parse(body);
             const review = 'selection' in parsed ? resolveManagedAcquireReviewV1(ManagedAcquireInputV1Schema.parse(parsed)) : parsed;
-            const client = createManagedMachineControllerClient(input, options, action);
+            const hydrator = createManagedPresetHydrator(input);
+            const client = createManagedMachineControllerClient(input, options, action, hydrator);
             if (MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === action)) {
                 if (review.homeId !== input.homeId) throw new ManagedMachineControllerError('controller_unavailable');
                 const operationId = options.context?.operationAcceptance?.operationId;
@@ -661,9 +815,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     return { ...failure, failureCause: error.failureCause ?? projectActionFailureCauseV1(error, action),
                         details: { ...(options.requestId ? { requestId: options.requestId } : {}), ...error.details } };
                 };
-                let admission: ReturnType<typeof ManagedAdmissionOutputV1Schema.parse>;
+                let rawAdmission: ReturnType<typeof ManagedAdmissionOutputV1Schema.parse>;
                 try {
-                    admission = await client.post('/v1/machines/managed/controller/admit-control', request, ManagedAdmissionOutputV1Schema);
+                    rawAdmission = await client.post('/v1/machines/managed/controller/admit-control', request, ManagedAdmissionOutputV1Schema);
                 } catch (error) {
                     // Lost transport/schema acknowledgement cannot establish that
                     // this write rolled back. database_connection_unavailable also
@@ -676,30 +830,41 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: managedId } });
                     return unconfirmed(error, null);
                 }
+                const admission = await normalizeManagedPresetCarrier(rawAdmission, hydrator, options.signal);
                 // Move's destination is in the input; the current executor is
                 // validated by the admitted row/server, not that destination.
                 if (action === MANAGED_RESIZE_ACTION_ID_V1) {
                     const machine = admission.machine;
                     client.assertConnection(machine);
-                    const provisioner = admission.resizeProvisioner;
+                    // The Home projection deliberately has no private provider
+                    // definition. The installed daemon declaration is the sole
+                    // executable capability for the locally opened snapshot.
+                    const provisioner = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                        candidate.identity.pluginId === machine.launch.provider.pluginId
+                        && candidate.identity.localId === machine.launch.provider.localId
+                        && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition;
                     if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
                     options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
+                    const size = hydrator.isOpaque(machine)
+                        ? await hydrator.prepareResize(machine, 'presetContentOverride' in parsed ? parsed.presetContentOverride : undefined, options.signal)
+                        : 'size' in parsed ? parsed.size
+                            : (() => { throw new ManagedMachineControllerError('credential_unavailable'); })();
                     let native: ReturnType<typeof createManagedNativeInvocation> | undefined;
                     const resize = await executeManagedMachineResize({ machine, provisioner,
-                        size: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(parsed).size,
+                        size,
                         invoke: (role, body, io) => {
-                            native ??= createManagedNativeInvocation({ input, options, client, machine, action,
-                                admittedProvisioner: provisioner }, () => machine);
+                            native ??= createManagedNativeInvocation({ input, options, client, machine, action }, () => machine);
                             return native.invoke(role, body, io);
                         }, io: { signal: options.signal },
                         guestStartup: { transport: provisioner.bootstrapTransport,
                             channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
                         waitForObservation: createManagedNativeObservationWait(options.signal) });
-                    await client.post('/v1/machines/managed/controller/report-resize', { homeId: machine.homeId,
-                        managedId: machine.id, requestId: options.requestId, ...resize }, ManagedControllerMachineOutputV1Schema, null);
-                    return ManagedResizeOutputV1Schema.parse(resize);
+                    const reported = await hydrator.prepareResizeReport({ homeId: machine.homeId,
+                        managedId: machine.id, requestId: options.requestId, ...resize }, options.signal);
+                    await client.post('/v1/machines/managed/controller/report-resize', reported.report, ManagedControllerMachineOutputV1Schema, null);
+                    return ManagedResizeOutputV1Schema.parse(reported.output);
                 }
-                if (!executesIntent) return admission.machine;
+                if (!executesIntent) return hydrator.structural(admission.machine);
                 client.assertConnection(admission.machine);
                 if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');
                 const accepted = ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: admission.machine.id,
@@ -729,19 +894,20 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action === 'machines.managed.credentials.install') {
                 const request = ManagedMachineActionInputSchemasV1[action].parse(parsed);
-                const machine = await client.post(managedMachineActionEndpointPathV1('machines.managed.get'), {
+                const machine = unwrapManagedMachineReadV1(await client.post(managedMachineActionEndpointPathV1('machines.managed.get'), {
                     homeId: request.homeId, managedId: request.managedId,
-                }, ManagedMachineV1Schema);
+                }, ManagedGetOutputV1Schema));
                 client.assertConnection(machine);
-                let retained = await client.post('/v1/machines/managed/controller/context', {
+                const retainedContext = await client.post('/v1/machines/managed/controller/context', {
                     homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
                     controller: input.controller, includeNativeCredentialBindings: true,
                 }, ManagedControllerContextOutputV1Schema);
+                let retained = await normalizeManagedPresetCarrier(retainedContext, hydrator, options.signal);
                 client.assertConnection(retained.machine);
                 if (!retained.nativeCredentialBindings || !retained.nativeCredentialDesiredBindingKeys) return { kind: 'refused', code: 'credential_unavailable' };
                 if (!input.prepareTeamCredentialNativeSource) return { kind: 'refused', code: 'provider_unavailable' };
                 const currentOptions = { ...options, requestId: retained.requestId };
-                const currentClient = createManagedMachineControllerClient(input, currentOptions, action);
+                const currentClient = createManagedMachineControllerClient(input, currentOptions, action, hydrator);
                 try {
                     const submitted = await currentClient.post('/v1/machines/managed/controller/report', {
                         ...currentClient.correlation(retained.machine), credentialDelivery: { request, phase: 'submitted' },
@@ -749,11 +915,12 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     if (!submitted.submitted) return { kind: 'unknown', code: 'action_outcome_unknown' };
                     // The durable exact-request claim precedes every vendor
                     // effect. Reread its complete desired census under that claim.
-                    retained = await currentClient.post('/v1/machines/managed/controller/context', {
+                    const currentContext = await currentClient.post('/v1/machines/managed/controller/context', {
                         homeId: retained.machine.homeId, managedId: retained.machine.id,
                         expectedIntentRevision: retained.machine.intentRevision,
                         controller: input.controller, includeNativeCredentialBindings: true,
                     }, ManagedControllerContextOutputV1Schema);
+                    retained = await normalizeManagedPresetCarrier(currentContext, hydrator, options.signal);
                     currentClient.assertConnection(retained.machine);
                     if (!retained.nativeCredentialBindings || !retained.nativeCredentialDesiredBindingKeys) return { kind: 'unknown', code: 'action_outcome_unknown' };
                 } catch {
@@ -899,38 +1066,66 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action === 'machines.managed.acquire') {
                 const acquisition = ManagedAcquireInputV1Schema.parse(parsed);
-                if (acquisition.enrollmentIdentity.kind === 'dedicatedDaemonUser'
-                    && acquisition.enrollmentIdentity.adminAccessAtCreation === 'ask'
+                const hasAttendedEnrollmentRequirement = (identity: ManagedMachineFullV1['enrollmentIdentity']) => identity.kind === 'dedicatedDaemonUser'
+                    && identity.adminAccessAtCreation === 'ask'
                     && (options.context?.surface === 'agent' || options.context?.surface === 'mcp'
-                        || options.context?.authority === 'account_automation' || options.context?.actionCaller?.kind === 'session')) {
+                        || options.context?.authority === 'account_automation' || options.context?.actionCaller?.kind === 'session');
+                if (acquisition.selection.kind === 'one-off' && hasAttendedEnrollmentRequirement(acquisition.enrollmentIdentity)) {
                     throw new ManagedMachineControllerError('enrollment_attendance_required');
                 }
                 const operationId = options.context?.operationAcceptance?.operationId;
                 if (!operationId || (acquisition.agentStart && !options.runAgentStart)) throw new ManagedMachineControllerError('admission_unavailable');
                 const { agentStart, ...computeInput } = acquisition;
+                let admittedExecutionOptions = options;
+                let openedRequiresEnrollmentRead = false;
+                const needsPresetPolicy = isManagedPresetAcquireInputV1(acquisition)
+                    && (acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
+                if (needsPresetPolicy && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
                 const admission = await executeManagedMachineAcquire({ host: 'native',
                     admit: async () => {
-                        const admitted = await client.post('/v1/machines/managed/controller/admit', ManagedAdmissionInputV1Schema.parse({
-                            input: computeInput, requestId: options.requestId, continuationPresent: Boolean(agentStart),
-                        }), ManagedAdmissionOutputV1Schema);
-                        client.assertConnection(admitted.machine);
-                        return admitted.machine;
+                        const admit = async (presetPolicy?: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
+                            preparation?: Readonly<{ provisioner: MachineProvisionerContributionV1; open: ManagedPresetDefinitionOpener }>) => {
+                            const admitted = await client.post('/v1/machines/managed/controller/admit', ManagedAdmissionInputV1Schema.parse({
+                                input: computeInput, requestId: options.requestId, continuationPresent: Boolean(agentStart),
+                                ...(presetPolicy ? { presetPolicy, originalActionEnvelope: options.context?.originalActionEnvelope } : {}),
+                            }), ManagedAdmissionOutputV1Schema);
+                            client.assertConnection(admitted.machine);
+                            return await openManagedPresetAdmissionWithHydrator({ input, acquisition, admission: admitted,
+                                hydrator, signal: options.signal, ...(preparation ? { preparation } : {}) });
+                        };
+                        const machine = needsPresetPolicy && isManagedPresetAcquireInputV1(acquisition)
+                            ? await withManagedPresetPolicy(input, acquisition, hydrator,
+                                (policy, provisioner, open) => admit(policy, { provisioner, open }), options.signal)
+                            : await admit();
+                        if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
+                            throw new ManagedMachineControllerError('enrollment_attendance_required');
+                        }
+                        openedRequiresEnrollmentRead = machine.enrollmentIdentity.kind === 'dedicatedDaemonUser';
+                        const opaqueMachine = hydrator.structural(machine);
+                        admittedExecutionOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
+                            ? withManagedOpaquePresetReview(options, { machine, opaqueMachine,
+                                parent: { actionId: action, input: acquisition }, requestId: options.requestId })
+                            : options;
+                        return machine;
                     },
                     onAccepted: machine => {
                         const accepted: ManagedAcceptedV1 = { managedId: machine.id, operation: { operationId } };
                         options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
                         options.context?.operationAcceptance?.accept(accepted);
                     },
-                    run: machine => reconcileOnce({ input, options, client, machine, action }),
+                    run: machine => reconcileOnce({ input, options: admittedExecutionOptions, client, machine, action }),
                 });
                 const accepted: ManagedAcceptedV1 = { managedId: admission.machine.id, operation: { operationId } };
-                let enrolled = admission.machine.machineSetup || agentStart || acquisition.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+                let enrolled = admission.machine.machineSetup || agentStart || openedRequiresEnrollmentRead
                     ? await client.row('current', client.correlation(admission.machine)) : admission.machine;
                 client.assertConnection(enrolled);
                 if (enrolled.machineSetup && !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
                     if (!enrolled.enrolledMachineId || !options.runEnvironmentSetup) throw new ManagedMachineControllerError('admission_unavailable');
                     const joined = enrolled;
-                    try { enrolled = await options.runEnvironmentSetup({ machine: joined, isCurrent: async () => !options.signal?.aborted }); }
+                    try {
+                        enrolled = hydrator.normalize(await options.runEnvironmentSetup({ machine: joined,
+                            isCurrent: async () => !options.signal?.aborted }));
+                    }
                     catch (error) {
                         if (!agentStart || options.signal?.aborted) throw error;
                         const current = await client.readCurrent(joined);
@@ -985,16 +1180,22 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     ? ManagedMachineActionInputSchemasV1['machines.managed.bootstrap.retry'].parse(parsed)
                     : null;
                 const inspection = request ? null : ManagedMachineActionInputSchemasV1['machines.managed.inspect'].parse(parsed);
-                const inspected = request ? null : options.policyMachine ?? await client.post(managedMachineActionEndpointPathV1('machines.managed.get'),
-                    { homeId: inspection!.homeId, managedId: inspection!.managedId }, ManagedMachineV1Schema);
+                const inspected = request ? null : options.policyMachine ?? unwrapManagedMachineReadV1(await client.post(managedMachineActionEndpointPathV1('machines.managed.get'),
+                    { homeId: inspection!.homeId, managedId: inspection!.managedId }, ManagedGetOutputV1Schema));
                 if (inspected) client.assertConnection(inspected);
-                const retained = await client.post('/v1/machines/managed/controller/context', {
+                const retainedContext = await client.post('/v1/machines/managed/controller/context', {
                     homeId: request?.homeId ?? inspected!.homeId, managedId: request?.managedId ?? inspected!.id,
                     expectedIntentRevision: request?.expectedIntentRevision ?? inspected!.intentRevision, controller: input.controller,
                 }, ManagedControllerContextOutputV1Schema);
+                const retained = await normalizeManagedPresetCarrier(retainedContext, hydrator, options.signal);
                 client.assertConnection(retained.machine);
-                const recoveryOptions = { ...options, requestId: retained.requestId };
-                const recoveryClient = createManagedMachineControllerClient(input, recoveryOptions, action);
+                const recoveryBaseOptions = { ...options, requestId: retained.requestId };
+                const opaqueMachine = hydrator.structural(retained.machine);
+                const recoveryOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
+                    ? withManagedOpaquePresetReview(recoveryBaseOptions, { machine: retained.machine, opaqueMachine,
+                        parent: { actionId: action, input: request ?? inspection! }, requestId: retained.requestId,
+                    }) : recoveryBaseOptions;
+                const recoveryClient = createManagedMachineControllerClient(input, recoveryOptions, action, hydrator);
                 if (action === 'machines.managed.bootstrap.retry') {
                     const operationId = options.context?.operationAcceptance?.operationId;
                     if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');
@@ -1008,10 +1209,16 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     ? { machine: await reconcileManagedIntent({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action }) }
                     : await reconcileManagedMachine({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action });
                 if (result === null) return null;
-                const output = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result);
+                if (typeof result !== 'object' || Array.isArray(result) || !('machine' in result)) {
+                    throw new ManagedMachineControllerError('invalid_request');
+                }
+                const localMachine = ManagedMachineFullV1Schema.safeParse(result.machine);
+                if (!localMachine.success) throw new ManagedMachineControllerError('invalid_request');
+                const output = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse({ ...result,
+                    machine: hydrator.structural(localMachine.data) });
                 const requester = options.context?.externalActionExecutionAuthorization?.binding.accountId;
                 if (inspection?.includeGuestDiagnostics) {
-                    const machine = output.machine;
+                    const machine = localMachine.data;
                     const provisioner = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
                         candidate.identity.pluginId === machine.launch.provider.pluginId
                         && candidate.identity.localId === machine.launch.provider.localId)?.definition;

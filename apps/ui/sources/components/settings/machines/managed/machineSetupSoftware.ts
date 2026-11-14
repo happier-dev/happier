@@ -56,8 +56,11 @@ export async function prepareMachineSetupSoftwareApplyInput(params: SoftwarePlan
         if (!row) return fail('managed_response_invalid');
         if ('status' in row) { unavailableTargets.push(row); continue; }
         const plan = row.plan;
-        const attachedKeys = new Set(detaching ? plan.sources.flatMap(source => source.kind === 'direct' ? []
-            : (source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)])) : []);
+        // Preserve direct items shared with readable preset sources. Opaque source bodies are
+        // retained and reviewed by the keyholding resolver after resolve.
+        const attachedKeys = new Set(detaching ? plan.sources.flatMap(source =>
+            source.kind === 'direct' || source.kind === 'accountPresetOpaque' ? []
+                : (source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)])) : []);
         const sources = plan.sources.map(source => {
             if (source.kind !== 'direct') return source;
             if (detaching) return { ...source, setup: { ...source.setup,

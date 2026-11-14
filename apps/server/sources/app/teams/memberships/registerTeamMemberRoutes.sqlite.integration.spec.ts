@@ -1,3 +1,4 @@
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 import { decodeBase64 } from "privacy-kit";
@@ -168,7 +169,11 @@ describe("Team member and Group routes (SQLite integration)", () => {
         expect(added.statusCode).toBe(200);
         const membershipId = added.json().id as string;
         const group = await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "Developers", requestKey: crypto.randomUUID(),
+            v: 1,
+            teamId,
+            groupId: crypto.randomUUID(),
+            name: plainPrivateLabel("Developers"),
+            requestKey: crypto.randomUUID(),
         });
         expect(group.statusCode).toBe(200);
         expect((await post("/v1/teams/groups/members/add", ownerAccountId, {
@@ -359,13 +364,19 @@ describe("Team member and Group routes (SQLite integration)", () => {
         const membershipId = memberAdded.json().id;
 
         const created = await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "Developers", requestKey: crypto.randomUUID(),
+            v: 1,
+            teamId,
+            groupId: crypto.randomUUID(),
+            name: plainPrivateLabel("Developers"),
+            requestKey: crypto.randomUUID(),
         });
         expect(created.statusCode).toBe(200);
         const group = created.json();
-        expect(group.name).toBe("Developers");
+        expect(group.name).toEqual({
+            kind: "available",
+            label: { content: { t: "plain", v: "Developers" }, recipientEnvelope: null },
+        });
         expect(group.memberCount).toBe(0);
-        expect(group.nameKey).toBeUndefined();
 
         const added = await post("/v1/teams/groups/members/add", ownerAccountId, {
             v: 1, teamId, groupId: group.id, accountId: person.id, historyAccess: "all_existing",
@@ -411,58 +422,6 @@ describe("Team member and Group routes (SQLite integration)", () => {
         expect(restored.json().archivedAt).toBeNull();
     });
 
-    it("rejects a duplicate Group name in the same Team through the wire", async () => {
-        const { teamId, ownerAccountId } = await teamWithOwner("Group name");
-        await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "Design", requestKey: crypto.randomUUID(),
-        });
-        const duplicate = await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "design", requestKey: crypto.randomUUID(),
-        });
-        expect(duplicate.statusCode).toBe(409);
-        expect(duplicate.json()).toEqual({ error: "group_name_taken" });
-    });
-
-    it("maps a commit-time Group rename collision to the canonical typed refusal", async () => {
-        const { teamId, ownerAccountId } = await teamWithOwner("Concurrent Group rename");
-        const created = await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "Original", requestKey: crypto.randomUUID(),
-        });
-        expect(created.statusCode).toBe(200);
-
-        // Force the database boundary to introduce the competing name only
-        // after the service's ordinary collision read. This deterministically
-        // exercises the same unique-constraint race as two concurrent renames,
-        // while keeping the internal service path real.
-        await db.$executeRawUnsafe(`
-            CREATE TRIGGER "TeamGroup_commit_time_name_collision"
-            BEFORE UPDATE OF "nameKey" ON "TeamGroup"
-            WHEN NEW."nameKey" = 'concurrent name'
-            BEGIN
-                INSERT INTO "TeamGroup" (
-                    "id", "teamId", "name", "nameKey", "createdAt", "updatedAt"
-                ) VALUES (
-                    'commit-time-collision', NEW."teamId", 'Concurrent name',
-                    'concurrent name', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                );
-            END
-        `);
-        try {
-            const response = await post("/v1/teams/groups/update", ownerAccountId, {
-                v: 1,
-                teamId,
-                groupId: created.json().id,
-                name: "Concurrent name",
-            });
-            expect(response.statusCode).toBe(409);
-            expect(response.json()).toEqual({ error: "group_name_taken" });
-        } finally {
-            await db.$executeRawUnsafe(
-                'DROP TRIGGER IF EXISTS "TeamGroup_commit_time_name_collision"',
-            );
-        }
-    });
-
     /**
      * The nested membership-history envelope addresses.
      *
@@ -479,7 +438,11 @@ describe("Team member and Group routes (SQLite integration)", () => {
         const roster = await post("/v1/teams/members/list", ownerAccountId, { v: 1, teamId, filter: "members" });
         const membershipId = roster.json().items[0].id;
         const created = await post("/v1/teams/groups/create", ownerAccountId, {
-            v: 1, teamId, name: "History", requestKey: crypto.randomUUID(),
+            v: 1,
+            teamId,
+            groupId: crypto.randomUUID(),
+            name: plainPrivateLabel("History"),
+            requestKey: crypto.randomUUID(),
         });
         const groupId = created.json().id;
         await post("/v1/teams/groups/members/add", ownerAccountId, {
@@ -551,8 +514,7 @@ describe("Team member and Group routes (SQLite integration)", () => {
 
         const group = await db.teamGroup.create({ data: {
             teamId: team.id,
-            name: "Mounted encrypted group",
-            nameKey: crypto.randomUUID(),
+            name: storedPlainPrivateLabel("Mounted encrypted group"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id,

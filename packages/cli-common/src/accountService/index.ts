@@ -1,5 +1,5 @@
-import { AccountDirectoryHomeEntryV1Schema, createHomeCredentialDestinationDigestV1, createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
-import type { AccountDirectoryHomeEntryV1, HomeConnectionDescriptorV1, HomeCredentialDestinationSelectionV1, HomeLoginAssertionV1, HomeLoginRedemptionResultV1, HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
+import { OpenedAccountDirectoryHomeEntryV1Schema, type OpenedAccountDirectoryHomeEntryV1, type HomeConnectionDescriptorV1, type HomeCredentialDestinationSelectionV1, type HomeLoginAssertionV1, type HomeLoginRedemptionResultV1, type HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
+import { createHomeCredentialDestinationDigestV1, createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1, type AccountDirectoryMeResponseV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { HomeTargetInput } from '../homeTarget/homeTarget.js';
 import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestRedirectPolicy.js';
 
@@ -95,7 +95,7 @@ export function selectAccountServiceAuthenticationMethod(input: Readonly<{
 }
 
 export type AccountServiceDirectoryProjection = Readonly<{
-  homes: readonly AccountDirectoryHomeEntryV1[];
+  homes: readonly OpenedAccountDirectoryHomeEntryV1[];
   preferredHomeServerIdentityId: string | null;
 }>;
 
@@ -112,16 +112,16 @@ export type AccountContinuationIntent =
 
 export type AccountServiceHomeTargetResolution =
   | Readonly<{ kind: 'invalid_directory'; reason: Extract<AccountServiceDirectoryClassification, { kind: 'invalid' }>['reason'] }>
-  | Readonly<{ kind: 'selected'; basis: 'explicit' | 'preferred' | 'sole'; home: AccountDirectoryHomeEntryV1 }>
-  | Readonly<{ kind: 'choose_home'; homes: AccountDirectoryHomeEntryV1[] }>
+  | Readonly<{ kind: 'selected'; basis: 'explicit' | 'preferred' | 'sole'; home: OpenedAccountDirectoryHomeEntryV1 }>
+  | Readonly<{ kind: 'choose_home'; homes: OpenedAccountDirectoryHomeEntryV1[] }>
   | Readonly<{ kind: 'no_homes' }>
   | Readonly<{ kind: 'explicit_target_not_linked'; homeServerIdentityId: string }>;
 
 export type AccountServiceDirectoryClassification =
   | Readonly<{
       kind: 'ready';
-      homes: readonly AccountDirectoryHomeEntryV1[];
-      preferredHome: AccountDirectoryHomeEntryV1 | null;
+      homes: readonly OpenedAccountDirectoryHomeEntryV1[];
+      preferredHome: OpenedAccountDirectoryHomeEntryV1 | null;
     }>
   | Readonly<{
       kind: 'invalid';
@@ -153,7 +153,7 @@ export function classifyAccountServiceDirectory(
         homeServerIdentityId: topLevelIdentity,
       };
     }
-    if (!AccountDirectoryHomeEntryV1Schema.safeParse(home).success || seen.has(topLevelIdentity)) {
+    if (!OpenedAccountDirectoryHomeEntryV1Schema.safeParse(home).success || seen.has(topLevelIdentity)) {
       return {
         kind: 'invalid',
         reason: 'invalid_directory',
@@ -218,8 +218,8 @@ export function findAccountServiceDirectoryAdoptionFailure(
 
 /** Adopts every valid Directory Home without owning or consulting client focus. */
 export async function adoptAccountServiceDirectoryHomes(input: Readonly<{
-  homes: readonly AccountDirectoryHomeEntryV1[];
-  adoptHome: (home: AccountDirectoryHomeEntryV1) => Promise<unknown>;
+  homes: readonly OpenedAccountDirectoryHomeEntryV1[];
+  adoptHome: (home: OpenedAccountDirectoryHomeEntryV1) => Promise<unknown>;
   shouldCancel?: () => boolean;
 }>): Promise<AccountServiceDirectoryAdoptionResult> {
   const adopted: AccountServiceDirectoryAdoptionTarget[] = [];
@@ -262,7 +262,7 @@ export type AccountServiceAssertionVerificationResult =
 
 /** Verifies the assertion and its exact Directory row before transport or redemption. */
 export function verifyAccountServiceHomeAssertionRequest(input: Readonly<{
-  home: AccountDirectoryHomeEntryV1;
+  home: OpenedAccountDirectoryHomeEntryV1;
   issuerServerIdentityId: string;
   requesterPublicKeyBase64: string;
   assertion: HomeLoginAssertionV1;
@@ -304,7 +304,7 @@ export type AccountServiceAuthenticatedHomeObservation = Readonly<{
 }>;
 
 export function verifyAccountServiceAuthenticatedHomeObservation(input: Readonly<{
-  home: AccountDirectoryHomeEntryV1;
+  home: OpenedAccountDirectoryHomeEntryV1;
   assertion: HomeLoginAssertionV1;
   observation: AccountServiceAuthenticatedHomeObservation;
 }>): AccountServiceAssertionVerificationResult {
@@ -334,13 +334,13 @@ export type AccountServiceHomeEnrollmentAdapters<SecretKey, Transport, HomeCrede
     homeServerIdentityId: string;
     clientBoxPublicKeyBase64: string;
   }>) => Promise<HomeLoginAssertionV1>;
-  openHomeTransport: (home: AccountDirectoryHomeEntryV1) => Promise<Readonly<{
+  openHomeTransport: (home: OpenedAccountDirectoryHomeEntryV1) => Promise<Readonly<{
     transport: Transport;
     authenticatedCredentialDestination: HomeCredentialDestinationSelectionV1;
   }>>;
   observeHomeBeforeRedemption: (input: Readonly<{
     transport: Transport;
-    home: AccountDirectoryHomeEntryV1;
+    home: OpenedAccountDirectoryHomeEntryV1;
   }>) => Promise<AccountServiceAuthenticatedHomeObservation>;
   redeemAssertion: (input: Readonly<{
     transport: Transport;
@@ -354,17 +354,17 @@ export type AccountServiceHomeEnrollmentAdapters<SecretKey, Transport, HomeCrede
   observeAuthenticatedHome: (input: Readonly<{
     transport: Transport;
     credential: HomeCredential;
-    home: AccountDirectoryHomeEntryV1;
+    home: OpenedAccountDirectoryHomeEntryV1;
   }>) => Promise<AccountServiceAuthenticatedHomeObservation>;
   commitHomeCredential: (input: Readonly<{
     transport: Transport;
-    home: AccountDirectoryHomeEntryV1;
+    home: OpenedAccountDirectoryHomeEntryV1;
     assertion: HomeLoginAssertionV1;
     credential: HomeCredential;
     observation: AccountServiceAuthenticatedHomeObservation;
   }>) => Promise<Commit>;
   reconcileAuthenticatedHome: (input: Readonly<{
-    home: AccountDirectoryHomeEntryV1;
+    home: OpenedAccountDirectoryHomeEntryV1;
     assertion: HomeLoginAssertionV1;
     observation: AccountServiceAuthenticatedHomeObservation;
   }>) => Promise<void>;
@@ -375,7 +375,7 @@ export type AccountServiceHomeApproval<SecretKey> = Readonly<{
   approvalId: string;
   homeServerIdentityId: string;
   expiresAtMs: number;
-  home: AccountDirectoryHomeEntryV1;
+  home: OpenedAccountDirectoryHomeEntryV1;
   assertion: HomeLoginAssertionV1;
   requesterSecretKey: SecretKey;
 }>;
@@ -400,7 +400,7 @@ export type AccountServiceHomeEnrollmentResult<SecretKey, Commit> =
   | Readonly<{ kind: 'unavailable'; error: unknown }>;
 
 export async function continueAccountServiceHomeEnrollment<SecretKey, Transport, HomeCredential, Commit>(input: Readonly<{
-  home: AccountDirectoryHomeEntryV1;
+  home: OpenedAccountDirectoryHomeEntryV1;
   assertion: HomeLoginAssertionV1;
   requesterSecretKey: SecretKey;
   approvalId?: string;
@@ -550,7 +550,7 @@ export async function continueAccountServiceHomeEnrollment<SecretKey, Transport,
 }
 
 export async function enrollAccountServiceHome<SecretKey, Transport, HomeCredential, Commit>(input: Readonly<{
-  home: AccountDirectoryHomeEntryV1;
+  home: OpenedAccountDirectoryHomeEntryV1;
   issuerServerIdentityId: string;
   adapters: AccountServiceHomeEnrollmentAdapters<SecretKey, Transport, HomeCredential, Commit>;
   nowMs?: number;
@@ -665,7 +665,7 @@ export type AccountServiceDirectoryJourneyResult<SecretKey, Commit> =
       failure: AccountServiceDirectoryAdoptionFailure;
     }>
   | Readonly<{ kind: 'no_linked_homes'; adoption: AccountServiceDirectoryAdoptionResult }>
-  | Readonly<{ kind: 'choose_home'; homes: AccountDirectoryHomeEntryV1[]; adoption: AccountServiceDirectoryAdoptionResult }>
+  | Readonly<{ kind: 'choose_home'; homes: OpenedAccountDirectoryHomeEntryV1[]; adoption: AccountServiceDirectoryAdoptionResult }>
   | Readonly<{ kind: 'explicit_target_not_linked'; homeServerIdentityId: string; adoption: AccountServiceDirectoryAdoptionResult }>
   | Readonly<{ kind: 'cancelled'; adoption: AccountServiceDirectoryAdoptionResult }>
   | Readonly<{
@@ -683,7 +683,7 @@ export async function runAccountServiceDirectoryJourney<SecretKey, Transport, Ho
   directory: AccountServiceDirectoryProjection;
   explicitHomeServerIdentityId?: string;
   issuerServerIdentityId: string;
-  adoptHome: (home: AccountDirectoryHomeEntryV1) => Promise<unknown>;
+  adoptHome: (home: OpenedAccountDirectoryHomeEntryV1) => Promise<unknown>;
   enrollmentAdapters: AccountServiceHomeEnrollmentAdapters<SecretKey, Transport, HomeCredential, Commit>;
   nowMs?: number;
   shouldCancel?: () => boolean;
@@ -755,14 +755,17 @@ export async function runAccountServiceDirectoryJourney<SecretKey, Transport, Ho
 }
 
 export type AccountServiceHomeLinkTarget = Pick<
-  AccountDirectoryHomeEntryV1,
+  OpenedAccountDirectoryHomeEntryV1,
   'homeServerIdentityId' | 'canonicalServerUrl' | 'label' | 'connectionDescriptor'
 >;
+
+/** The authenticated Directory subject and its persisted author mode. */
+export type AccountServiceHomeLinkIssuer = Pick<AccountDirectoryMeResponseV1, 'accountId' | 'encryptionMode'>;
 
 export type AccountServiceHomeLinkAdapters<HomeCredential, AccountServiceCredential> = Readonly<{
   readHomeCredential: (homeServerIdentityId: string) => Promise<HomeCredential | null>;
   readAccountServiceCredential: (issuerServerIdentityId: string) => Promise<AccountServiceCredential | null>;
-  readAccountSubject: (credential: AccountServiceCredential) => Promise<string>;
+  readAccountSubject: (credential: AccountServiceCredential) => Promise<AccountServiceHomeLinkIssuer>;
   publishLinkToHome: (input: Readonly<{
     home: AccountServiceHomeLinkTarget;
     credential: HomeCredential;
@@ -775,6 +778,7 @@ export type AccountServiceHomeLinkAdapters<HomeCredential, AccountServiceCredent
   publishHomeToAccountService: (input: Readonly<{
     home: AccountServiceHomeLinkTarget;
     credential: AccountServiceCredential;
+    issuer: AccountServiceHomeLinkIssuer;
   }>) => Promise<void>;
 }>;
 
@@ -806,7 +810,8 @@ export async function publishAccountServiceHomeLink<HomeCredential, AccountServi
     if (accountServiceCredential === null) {
       return { kind: 'unavailable', reason: 'account_service_credentials_unavailable' };
     }
-    const issuerSubjectId = (await input.adapters.readAccountSubject(accountServiceCredential)).trim();
+    const issuer = await input.adapters.readAccountSubject(accountServiceCredential);
+    const issuerSubjectId = issuer.accountId.trim();
     if (!issuerSubjectId) return { kind: 'failed', error: new Error('account_service_subject_unavailable') };
     if (input.shouldCancel?.()) return { kind: 'cancelled' };
     await input.adapters.publishLinkToHome({
@@ -821,6 +826,7 @@ export async function publishAccountServiceHomeLink<HomeCredential, AccountServi
     await input.adapters.publishHomeToAccountService({
       home: input.home,
       credential: accountServiceCredential,
+      issuer: { ...issuer, accountId: issuerSubjectId },
     });
     return { kind: 'linked', homeServerIdentityId: input.home.homeServerIdentityId };
   } catch (error) {

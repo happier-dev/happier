@@ -338,7 +338,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                     ))}
                 </ItemGroup></SettingAnchor>
             ) : null}
-            {provider.kind === 'oidc' && testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} /> : null}
+            {provider.kind === 'oidc' && testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} scope={props.context.scope} /> : null}
             {error ? <ItemGroup><Item testID="identity-provider-failure" title={identityAdministrationFailureMessage(error)} showChevron={false} /></ItemGroup> : null}
             <SettingSection section={HOME_IDENTITY_PROVIDER_SETTINGS.sectionRefs.actions}><ItemGroup title={t('identityAdministration.actions')}>
                 {provider.kind === 'oidc' ? (

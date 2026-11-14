@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -182,7 +183,7 @@ describe("Team directory routes", () => {
             },
         });
         const target = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Developers", nameKey: "developers" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Developers")},
         });
         const headers = { "x-test-user-id": owner.id };
 
@@ -292,7 +293,7 @@ describe("Team directory routes", () => {
             },
         });
         const target = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Restricted target", nameKey: "restricted target" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Restricted target")},
         });
         const deniedBinding = await app.inject({
             method: "PUT",

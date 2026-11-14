@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -12,6 +11,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { ApiTokenRow } from '../ApiTokenRow';
+import type { ApiTokenSettingsToken } from '../apiTokenSettingsController';
 import { useApiTokenGrantNames } from '../grant/useApiTokenGrantCatalogs';
 import { useApiTokenOperations } from '../useApiTokenOperations';
 import { useApiTokenSettingsClock } from '../useApiTokenSettingsClock';
@@ -35,7 +35,7 @@ export const ApiTokensCollectionRail = React.memo(function ApiTokensCollectionRa
     const operations = useApiTokenOperations(controller);
     const busy = state.phase === 'loading' || state.createPending || state.operation !== null;
 
-    const open = React.useCallback((token: AccountApiTokenSummaryV1) => {
+    const open = React.useCallback((token: ApiTokenSettingsToken) => {
         const href = apiTokenRowHref(token);
         // Switching tokens replaces the open detail; an embed opens in its own collection.
         const result = runGuardedNavigation(() => (token.embedConfig !== null ? router.push(href as never) : router.replace(href as never)));

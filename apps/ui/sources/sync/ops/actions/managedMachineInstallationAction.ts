@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedMachineActionClient, invokeManagedInstallationResponse, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { ManagedTerminalPairingContextV1Schema, type ManagedInstallationResponseV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { approveTerminalPairing } from '@/auth/terminal/approveTerminalPairing';
@@ -9,6 +10,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import { createManagedMachinePresetReadCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** Resolve the controller and open installer question from current owners, never caller-supplied task authority. */
@@ -24,10 +26,23 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
                 || context.runtimeAccountId && context.runtimeAccountId !== account.accountId) return fail('action_account_scope_changed');
             if (!account.serverIdentityId || account.serverIdentityId !== input.homeId) return fail('server_target_mismatch');
             return await withActionAccountRequestSignal(account, context.signal, async signal => {
-                const machine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
+                const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
                     { homeId: input.homeId, managedId: input.managedId }, { signal });
+                const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
+                let machine: ManagedMachineV1 | undefined;
+                try {
+                    // The default Action executor owns this module's load graph. Keep the
+                    // collection reader at its actual post-GET boundary so this Action does
+                    // not eagerly pull the front-door executor back through collection setup.
+                    const { openManagedMachineReadSnapshotsAtCustody } = await import(
+                        '@/sync/ops/machines/machinePresetCollectionClient',
+                    );
+                    [machine] = await openManagedMachineReadSnapshotsAtCustody([read], custody);
+                } finally {
+                    await custody?.dispose();
+                }
                 account.assertCurrent();
-                if (machine.id !== input.managedId || machine.homeId !== input.homeId
+                if (!machine || machine.id !== input.managedId || machine.homeId !== input.homeId
                     || machine.creationState !== 'active' || machine.archivedAt !== undefined
                     || machine.allocation !== 'bound' || !machine.resource || machine.cleanup || machine.desired === 'delete') return fail('no_prompt');
                 // Foreground Account enrollment owns its private prompts inline.

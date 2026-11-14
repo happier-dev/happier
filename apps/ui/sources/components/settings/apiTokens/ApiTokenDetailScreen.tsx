@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { Redirect, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -27,6 +26,7 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import { buildApiTokenRowPresentation } from './apiTokenSettingsPresentation';
+import type { ApiTokenSettingsToken } from './apiTokenSettingsController';
 import { API_TOKENS_COLLECTION_ROOT, apiTokenEmbedDetailPath } from './collection/apiTokensCollection';
 import { useApiTokenSettingsScopeController } from './collection/ApiTokenSettingsScope';
 import { apiTokenGrantModelKey, apiTokenGrantOffersAutomations } from './grant/apiTokenGrantDraft';
@@ -88,7 +88,7 @@ export const ApiTokenDetailScreen = React.memo(function ApiTokenDetailScreen() {
     return <ApiTokenDetail token={token} />;
 });
 
-const ApiTokenDetail = React.memo(function ApiTokenDetail(props: Readonly<{ token: AccountApiTokenSummaryV1 }>) {
+const ApiTokenDetail = React.memo(function ApiTokenDetail(props: Readonly<{ token: ApiTokenSettingsToken }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const controller = useApiTokenSettingsScopeController();
@@ -214,7 +214,7 @@ const ApiTokenDetail = React.memo(function ApiTokenDetail(props: Readonly<{ toke
     );
 });
 
-function ApiTokenActionsFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 }>) {
+function ApiTokenActionsFacts(props: Readonly<{ token: ApiTokenSettingsToken }>) {
     const groups = useApiTokenGrantActionGroups();
     const actions = props.token.grant.actions;
     return (
@@ -239,7 +239,7 @@ function ApiTokenActionsFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 
  * The session limits a grant may carry (sessions it starts, permission modes), shown whenever they
  * are set so a restricted token never reads as unrestricted. Neither is shown when absent.
  */
-function ApiTokenSessionFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 }>) {
+function ApiTokenSessionFacts(props: Readonly<{ token: ApiTokenSettingsToken }>) {
     const { create, permissionModes } = props.token.grant;
     const agentType = useApiTokenGrantModeAgentType(create?.agentTargetKey ?? null);
     if (create === null && permissionModes === null) return null;
@@ -279,7 +279,7 @@ function ApiTokenCreateFact(props: Readonly<{ machineId: string }>) {
     );
 }
 
-function ApiTokenTargetFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 }>) {
+function ApiTokenTargetFacts(props: Readonly<{ token: ApiTokenSettingsToken }>) {
     const { theme } = useUnistyles();
     const targets = props.token.grant.targets;
     return (
@@ -361,7 +361,7 @@ function ApiTokenAutomationFacts(props: Readonly<{ automationIds: readonly strin
     );
 }
 
-function ApiTokenModelFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 }>) {
+function ApiTokenModelFacts(props: Readonly<{ token: ApiTokenSettingsToken }>) {
     const { theme } = useUnistyles();
     const models = props.token.grant.models;
     const groups = useApiTokenGrantModelGroups(models);

@@ -3,18 +3,22 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentBackupNativeFailureV1Schema } from './deploymentBackupActionsV1.js';
-import { ManagedMachineV1Schema, ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
+import { createManagedMachineV1BaseShape, ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { MachineProvisionerSnapshotFactsV1Schema, MachineProvisionerSnapshotConsistencyV1Schema, MachineProvisionerSnapshotResultV1Schema } from '../plugins/contributions/machineProvisioners.js';
 
 /** Exact provider facts retained by restore preparation; the full resource stays private. */
-export const DeploymentNativeSnapshotOfferV1Schema = lazyZodSchema(() => z.strictObject({
-  managedId: id, intentRevision: ManagedMachineV1Schema.shape.intentRevision, controller: ManagedControllerV1Schema,
-  resource: z.nonoptional(ManagedMachineV1Schema.shape.resource), contribution: asProtocolZod(PluginContributionIdentityV1Schema),
-  ...MachineProvisionerSnapshotFactsV1Schema.shape,
-  consistency: MachineProvisionerSnapshotConsistencyV1Schema,
-}));
+export const DeploymentNativeSnapshotOfferV1Schema = lazyZodSchema(() => {
+  const managedFields = createManagedMachineV1BaseShape(PluginJsonValueV2Schema, PluginJsonValueV2Schema);
+  return z.strictObject({
+    managedId: id, intentRevision: managedFields.intentRevision, controller: ManagedControllerV1Schema,
+    resource: z.nonoptional(managedFields.resource), contribution: asProtocolZod(PluginContributionIdentityV1Schema),
+    ...MachineProvisionerSnapshotFactsV1Schema.shape,
+    consistency: MachineProvisionerSnapshotConsistencyV1Schema,
+  });
+});
 export type DeploymentNativeSnapshotOfferV1 = z.infer<typeof DeploymentNativeSnapshotOfferV1Schema>;
 
 /** A review reason only; remote Engine selection never becomes a physical-Machine guess. */

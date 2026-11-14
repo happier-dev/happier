@@ -3,6 +3,7 @@ import {
     AutomationDefinitionListItemSchema,
     AutomationV3RunListItemSchema,
 } from '@happier-dev/protocol/automations/automationApiV3';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -120,6 +121,9 @@ beforeEach(async () => {
         network.setHttpResponder(async (input) => {
             const url = new URL(String(input));
             if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            });
             if (url.pathname === '/v3/automations') return Response.json(await listAutomationDefinitionsMock());
             if (/^\/v3\/automations\/[^/]+\/runs$/u.test(url.pathname)) return Response.json(await listAutomationDefinitionRunsMock());
             return null;
@@ -159,6 +163,7 @@ describe('fetchAndApplyAutomations', () => {
         expect(appliedSummary).not.toHaveProperty('templateCiphertext');
         expect(appliedSummary).not.toHaveProperty('executionRecipe');
         expect(network.httpRequests).toEqual(expect.arrayContaining([{
+            method: 'GET',
             url: 'https://automations-sync.example.test/v3/automations/event-1/runs?limit=20',
             token: `Bearer ${credentials.token}`,
         }]));
@@ -181,6 +186,94 @@ describe('fetchAndApplyAutomations', () => {
         expect(applyAutomations.mock.calls[0]?.[0]?.[0]).toMatchObject({
             detail: { kind: 'unloaded', templateVersion: 3 },
         });
+    });
+
+    it('opens one current Workflow display carrier for the list without a detail fanout', async () => {
+        const privateSummary = AutomationDefinitionListItemSchema.parse({
+            ...eventSummary, id: 'private-workflow', name: 'Automation', description: null,
+            targetType: null, existingSessionId: null,
+            executionRecipe: { v: 2, templateVersion: 3, triggerEvidence: null,
+                workflow: { t: 'plain', v: {
+                    workspace: { directory: '/workspace/project' }, executionTarget: { kind: 'session' },
+                    display: { name: 'Nightly release review', description: 'Review the release branch every night' },
+                } } },
+        });
+        listAutomationDefinitionsMock.mockResolvedValue({ automations: [privateSummary], nextCursor: null });
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+
+        await fetchAndApplyAutomations({ credentials, requestContext, applyAutomations });
+
+        expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
+            id: 'private-workflow', name: 'Nightly release review',
+            description: 'Review the release branch every night',
+        })], null);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
+            .map(({ url }) => new URL(url).pathname)).toEqual(['/v3/automations']);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness')).toHaveLength(2);
+    });
+
+    it('opens one current Action display carrier for the list without a detail fanout', async () => {
+        const privateSummary = AutomationDefinitionListItemSchema.parse({
+            ...eventSummary, id: 'private-action', name: 'Automation', description: null,
+            targetType: null, existingSessionId: null,
+            executionRecipe: { v: 1, templateVersion: 3, triggerEvidence: null,
+                template: { t: 'plain', v: { v: 1, prompt: '',
+                    actionInput: { kind: 'literal', value: { incident: 'INC-42' } },
+                    display: { name: 'Refresh incident index', description: 'Run the incident action' },
+                } },
+                target: { kind: 'contributedAction', action: { pluginId: 'com.example.incidents', localId: 'refresh' } },
+            },
+        });
+        listAutomationDefinitionsMock.mockResolvedValue({ automations: [privateSummary], nextCursor: null });
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+
+        await fetchAndApplyAutomations({ credentials, requestContext, applyAutomations });
+
+        expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
+            id: 'private-action', name: 'Refresh incident index',
+            description: 'Run the incident action',
+        })], null);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
+            .map(({ url }) => new URL(url).pathname)).toEqual(['/v3/automations']);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness')).toHaveLength(2);
+    });
+
+    it('opens one current observation-only Event display carrier for the list without a detail fanout', async () => {
+        const trigger = eventSummary.triggers[0];
+        if (!trigger || trigger.kind !== 'pluginEvent') throw new Error('Expected plugin Event trigger fixture');
+        const privateSummary = AutomationDefinitionListItemSchema.parse({
+            ...eventSummary, id: 'private-event', name: 'Automation', description: null,
+            targetType: null, existingSessionId: null,
+            observationOnly: { kind: 'observationOnly', templateVersion: 3 },
+            triggers: [{
+                ...trigger,
+                triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    mode: 'plain',
+                    binding: {
+                        v: 1, automationId: 'private-event', triggerId: trigger.id,
+                        triggerRevision: trigger.revision, triggerKind: 'pluginEvent',
+                        eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId,
+                    },
+                    definition: {
+                        v: 1, sourceInstanceId: 'github:repository:1234',
+                        sourceConfig: { repository: 'happier-dev/happier' },
+                        displayLabel: 'happier-dev/happier', filter: null, maximumObservationAgeMs: null,
+                        automationDisplay: { name: 'Repository alerts', description: 'Notify on repository changes' },
+                    },
+                })),
+            }],
+        });
+        listAutomationDefinitionsMock.mockResolvedValue({ automations: [privateSummary], nextCursor: null });
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+
+        await fetchAndApplyAutomations({ credentials, requestContext, applyAutomations });
+
+        expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
+            id: 'private-event', name: 'Repository alerts', description: 'Notify on repository changes',
+        })], null);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
+            .map(({ url }) => new URL(url).pathname)).toEqual(['/v3/automations']);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness')).toHaveLength(2);
     });
 
     it('refreshes already-loaded run lists through the shared request-concurrency owner', async () => {
@@ -317,6 +410,7 @@ describe('fetchAndApplyAutomationRuns', () => {
         });
 
         expect(network.httpRequests).toEqual(expect.arrayContaining([{
+            method: 'GET',
             url: 'https://automations-sync.example.test/v3/automations/event-1/runs?limit=20&cursor=opaque-root-page',
             token: `Bearer ${credentials.token}`,
         }]));

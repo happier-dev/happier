@@ -1,4 +1,4 @@
-import type { ManagedMachineRefV1, ManagedMachineV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ActionAdmittedExecutionV1, ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, ActionMachineRuntimeDemandV1, ActionPreparedMachineTargetV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveMachineWakeNativeIntentV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -16,7 +16,7 @@ export type ManagedWakePreparationReads = Readonly<{
     readSessionMachineId(target: Extract<ActionMachineRuntimeDemandV1['target'], { kind: 'session' }>,
         context: ActionExecutorContext): Promise<string | null | ActionExecuteFailure>;
     readManagedMachine(input: ManagedMachineRefV1,
-        context: ActionExecutorContext): Promise<ManagedMachineV1 | null | ActionExecuteFailure>;
+        context: ActionExecutorContext): Promise<ManagedMachineFullV1 | null | ActionExecuteFailure>;
     readSelectedProvisioners?: ManagedProvisionerSelectionRead;
 }>;
 
@@ -32,7 +32,7 @@ export type ManagedMachineRuntimeDemandExecution = ActionAdmittedExecutionV1 & R
 }>;
 
 /** The same concrete operand is reviewed at preparation and invoked by execution. */
-export function managedMachineWakePowerInput(machine: ManagedMachineV1): Extract<ManagedMachineActionInputV1<'machines.managed.power.set'>, { when: 'now' }> {
+export function managedMachineWakePowerInput(machine: ManagedMachineFullV1): Extract<ManagedMachineActionInputV1<'machines.managed.power.set'>, { when: 'now' }> {
     const intent = resolveMachineWakeNativeIntentV1(machine.observation?.power,
         machine.reviewedFacts?.retentionCapabilities.supportedIntents ?? ['start']);
     if (!intent) throw new ManagedMachineControllerError('provider_unavailable');

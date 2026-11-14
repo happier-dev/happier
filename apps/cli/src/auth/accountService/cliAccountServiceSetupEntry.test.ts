@@ -8,6 +8,9 @@ import {
   encodeBase64,
   type AccountDirectoryHomeEntryV1,
 } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -174,11 +177,68 @@ const accountServiceAuthority = {
   serverIdentityId: accountService.serverIdentityId,
   canonicalServerUrl: accountService.canonicalServerUrl,
 } as const;
+const homeLabel = 'Home A';
+const preferredOtherHomeLabel = 'Home B';
+
+function directoryAccountSummary(encryptionMode: 'plain' | 'e2ee' = 'plain') {
+  return {
+    v: 1,
+    accountId: 'account-1',
+    encryptionMode,
+    displayName: null,
+    avatar: null,
+    linkedAuthenticationMethods: [],
+  };
+}
+
+function plainDirectoryLabel(value: string) {
+  return {
+    content: { t: 'plain' as const, v: value },
+    recipientEnvelope: null,
+  };
+}
+
+function encryptedDirectoryLabelForAccountKey(accountContentPrivateKey: Uint8Array) {
+  const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(accountContentPrivateKey).publicKey;
+  const dataKey = new Uint8Array(32).fill(29);
+  try {
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey,
+      recipientPublicKey,
+      randomBytes: (length) => new Uint8Array(length).fill(31),
+    });
+    const stored = sealPrivateLabelV1({
+      mode: 'e2ee',
+      binding: {
+        entity: 'account_directory_home',
+        field: 'label',
+        id: home.homeServerIdentityId,
+      },
+      value: 'Private Home',
+      dataKey,
+      recipients: [{
+        accountId: 'account-1',
+        envelope: {
+          encryptedDataKey: encodeBase64(envelope, 'base64'),
+          recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipientPublicKey),
+        },
+      }],
+      randomBytes: (length) => new Uint8Array(length).fill(37),
+    });
+    return {
+      content: stored.content,
+      recipientEnvelope: stored.recipients[0]!.envelope,
+    };
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
 const home: AccountDirectoryHomeEntryV1 = {
   v: 1,
   homeServerIdentityId: 'srv_home_a',
   canonicalServerUrl: 'https://home-a.example.test',
-  label: 'Home A',
+  label: plainDirectoryLabel(homeLabel),
   preferred: true,
   connectionDescriptor: {
     v: 1,
@@ -194,7 +254,7 @@ const preferredOtherHome: AccountDirectoryHomeEntryV1 = {
   ...home,
   homeServerIdentityId: 'srv_home_b',
   canonicalServerUrl: 'https://home-b.example.test',
-  label: 'Home B',
+  label: plainDirectoryLabel(preferredOtherHomeLabel),
   connectionDescriptor: {
     ...home.connectionDescriptor,
     homeServerIdentityId: 'srv_home_b',
@@ -255,9 +315,12 @@ function setStderrTtyForTest(isTTY: boolean): () => void {
 
 async function configureProductionJourney(options: Readonly<{
   mode?: 'plain' | 'e2ee';
+  directoryEncryptionMode?: 'plain' | 'e2ee';
   modeStatus?: number;
   modeTransportFailure?: boolean;
   homeToken?: string;
+  accountContentPrivateKey?: Uint8Array;
+  directoryLabel?: AccountDirectoryHomeEntryV1['label'];
   selection?: 'explicit' | 'preferred' | 'sole' | 'chooser';
   authenticatedObservationProvenance?: 'authenticated' | 'public';
   /** Redeem on the first attempt instead of requiring Home approval first. */
@@ -288,7 +351,15 @@ async function configureProductionJourney(options: Readonly<{
   const activeServerIdBeforeJourney = configuration.activeServerId;
   const session = createCliAccountServiceSessionOwner({ happyHomeDir });
   await session.selectService(accountService);
-  await session.replaceCredential({ service: accountService, credential: { token: 'account-service-token' } });
+  await session.replaceCredential({
+    service: accountService,
+    credential: {
+      token: 'account-service-token',
+      ...(options.accountContentPrivateKey
+        ? { accountContentPrivateKey: options.accountContentPrivateKey }
+        : {}),
+    },
+  });
 
   let authenticatedObservationProvenance = options.authenticatedObservationProvenance ?? 'authenticated';
   fetchServerFeaturesSnapshotMock.mockImplementation(async (input: Readonly<{ serverUrl: string; token?: string }>) => {
@@ -344,9 +415,13 @@ async function configureProductionJourney(options: Readonly<{
   let requesterPublicKeyBase64 = '';
   let assertionRequests = 0;
   const redeemedAssertions: unknown[] = [];
+  const directoryHomeBase = {
+    ...home,
+    ...(options.directoryLabel !== undefined ? { label: options.directoryLabel } : {}),
+  };
   const directoryHome = options.selection === 'sole' || options.selection === 'explicit' || options.selection === 'chooser'
-    ? { ...home, preferred: false }
-    : home;
+    ? { ...directoryHomeBase, preferred: false }
+    : directoryHomeBase;
   let redemptions = 0;
   let modeStatus = options.modeStatus ?? 200;
   let resolveApproval!: () => void;
@@ -370,7 +445,9 @@ async function configureProductionJourney(options: Readonly<{
         bodyPresent: init?.body != null,
       });
     }
-    if (url.endsWith('/v1/account-directory/me')) return Response.json({});
+    if (url.endsWith('/v1/account-directory/me')) {
+      return Response.json(directoryAccountSummary(options.directoryEncryptionMode));
+    }
     if (url.endsWith('/v1/account-directory/homes')) {
       return Response.json({
         v: 1,
@@ -465,6 +542,7 @@ async function configureProductionJourney(options: Readonly<{
 
 async function createDuplicateStoredHomeIdentity(
   entry: AccountDirectoryHomeEntryV1,
+  label: string,
 ): Promise<void> {
   await updateSettings((current) => {
     const now = Date.now();
@@ -472,7 +550,7 @@ async function createDuplicateStoredHomeIdentity(
     const secondId = `${entry.homeServerIdentityId}-duplicate-2`;
     const profile = (id: string, descriptor: AccountDirectoryHomeEntryV1['connectionDescriptor']) => ({
       id,
-      name: entry.label,
+      name: label,
       serverUrl: descriptor.canonicalServerUrl,
       webappUrl: descriptor.canonicalServerUrl,
       createdAt: now,
@@ -569,6 +647,84 @@ describe('production CLI Account Service approval continuation', () => {
     expect(harness.continueMachineAndService).toHaveBeenCalledOnce();
   });
 
+  it('opens an E2EE Directory Home label with the retained Account key before shared selection', async () => {
+    const accountContentPrivateKey = new Uint8Array(32).fill(43);
+    const harness = await configureProductionJourney({
+      immediateRedemption: true,
+      accountContentPrivateKey,
+      directoryEncryptionMode: 'e2ee',
+      directoryLabel: encryptedDirectoryLabelForAccountKey(accountContentPrivateKey),
+    });
+
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).resolves.toMatchObject({ kind: 'home_entered', homeServerIdentityId: home.homeServerIdentityId });
+
+    expect((await listServerProfiles()).find(
+      (profile) => profile.homeConnectionDescriptor?.homeServerIdentityId === home.homeServerIdentityId,
+    )?.name).toBe('Private Home');
+  });
+
+  it('refuses a Plain Directory Home label under the captured E2EE Account mode before enrollment', async () => {
+    const accountContentPrivateKey = new Uint8Array(32).fill(43);
+    const harness = await configureProductionJourney({
+      immediateRedemption: true,
+      accountContentPrivateKey,
+      directoryEncryptionMode: 'e2ee',
+      directoryLabel: plainDirectoryLabel('Stale Home label'),
+    });
+
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).resolves.toEqual({ kind: 'account_service_unavailable' });
+
+    expect(harness.assertionRequestCount()).toBe(0);
+    expect(acquireTerminalAuthEnrollmentRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('uses a transient neutral label only for a null Directory bootstrap marker', async () => {
+    const harness = await configureProductionJourney({ immediateRedemption: true, directoryLabel: null });
+
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).resolves.toMatchObject({ kind: 'home_entered', homeServerIdentityId: home.homeServerIdentityId });
+
+    expect((await listServerProfiles()).find(
+      (profile) => profile.homeConnectionDescriptor?.homeServerIdentityId === home.homeServerIdentityId,
+    )?.name).toBe('Home');
+  });
+
+  it('fails closed before enrollment when an E2EE Directory label lacks this reader envelope', async () => {
+    const encrypted = encryptedDirectoryLabelForAccountKey(new Uint8Array(32).fill(47));
+    const harness = await configureProductionJourney({
+      immediateRedemption: true,
+      directoryLabel: { ...encrypted, recipientEnvelope: null },
+    });
+
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).resolves.toEqual({ kind: 'account_service_unavailable' });
+
+    expect(harness.assertionRequestCount()).toBe(0);
+    expect(acquireTerminalAuthEnrollmentRuntimeMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     '/v1/account-directory/me',
     '/v1/account-directory/homes',
@@ -584,8 +740,14 @@ describe('production CLI Account Service approval continuation', () => {
       timeoutMs: 10_000,
       continueMachineAndService: harness.continueMachineAndService,
     })).resolves.toMatchObject({ kind: 'home_entered', homeServerIdentityId: home.homeServerIdentityId });
-    expect(requests.filter(path => path === redirectPath)).toHaveLength(2);
-    expect(redirectedRequests).toEqual([{ authorizationPresent: false, bodyPresent: false }]);
+    // A stored credential is first validated through `/me`; the directory
+    // read then captures that same endpoint's persisted mode for label opening.
+    const redirectCount = redirectPath === '/v1/account-directory/me' ? 2 : 1;
+    expect(requests.filter(path => path === redirectPath)).toHaveLength(redirectCount * 2);
+    expect(redirectedRequests).toEqual(Array.from({ length: redirectCount }, () => ({
+      authorizationPresent: false,
+      bodyPresent: false,
+    })));
     expect(harness.continueMachineAndService).toHaveBeenCalledOnce();
   });
 
@@ -641,7 +803,7 @@ describe('production CLI Account Service approval continuation', () => {
 
   it('does not request or redeem an assertion when selected-Home profile adoption fails', async () => {
     const harness = await configureProductionJourney();
-    await createDuplicateStoredHomeIdentity(home);
+    await createDuplicateStoredHomeIdentity(home, homeLabel);
 
     await expect(runCliAccountServiceSetupEntry({
       endpoint: accountService.endpoint,
@@ -663,7 +825,7 @@ describe('production CLI Account Service approval continuation', () => {
 
   it('enters an explicit selected Home and reports another Home adoption failure', async () => {
     const harness = await configureProductionJourney({ selection: 'explicit' });
-    await createDuplicateStoredHomeIdentity(preferredOtherHome);
+    await createDuplicateStoredHomeIdentity(preferredOtherHome, preferredOtherHomeLabel);
     const result = runCliAccountServiceSetupEntry({
       endpoint: accountService.endpoint,
       intent: {
@@ -684,7 +846,7 @@ describe('production CLI Account Service approval continuation', () => {
       homeServerIdentityId: home.homeServerIdentityId,
       directoryAdoptionFailures: [{
         homeServerIdentityId: preferredOtherHome.homeServerIdentityId,
-        label: preferredOtherHome.label,
+        label: preferredOtherHomeLabel,
       }],
     });
     expect(harness.redemptionCount()).toBe(2);
@@ -848,6 +1010,7 @@ describe('production CLI Account Service approval continuation', () => {
       const url = String(urlInput);
       requestedUrls.push(url);
       if (url.endsWith('/v1/auth/probe')) return Response.json({});
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary());
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
       }
@@ -871,6 +1034,7 @@ describe('production CLI Account Service approval continuation', () => {
 
     expect(requestedUrls).toEqual([
       `${runtimeOrigin}/v1/auth/probe`,
+      `${runtimeOrigin}/v1/account-directory/me`,
       `${runtimeOrigin}/v1/account-directory/homes`,
     ]);
     expect(requestedUrls.every((url) => !url.startsWith(accountService.endpoint))).toBe(true);
@@ -988,6 +1152,7 @@ describe('production CLI Account Service approval continuation', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request) => {
       const url = String(urlInput);
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary());
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
       }
@@ -1102,13 +1267,16 @@ describe('production CLI Account Service approval continuation', () => {
     expect(registerMachineWithAuthenticatedHomeRuntimeMock).not.toHaveBeenCalled();
   });
 
-  it.each(['plain', 'e2ee'] as const)('preserves existing encryption material only for the same exact Home Account in %s mode', async (mode) => {
+  it.each([
+    { mode: 'plain' as const, custody: 'historical' as const },
+    { mode: 'e2ee' as const, custody: undefined },
+  ])('preserves existing encryption material only for the same exact Home Account in $mode mode', async ({ mode, custody }) => {
     const oldToken = createJwtWithSub('account-a', 'old');
     const refreshedToken = createJwtWithSub('account-a', 'new');
     const harness = await configureProductionJourney({ mode, homeToken: refreshedToken });
     const adopted = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: home.connectionDescriptor,
-      suggestedName: home.label,
+      suggestedName: homeLabel,
       observation: 'exact',
     });
     const serverDir = join(process.env.HAPPIER_HOME_DIR!, 'servers', adopted.profile.id);
@@ -1116,6 +1284,7 @@ describe('production CLI Account Service approval continuation', () => {
     await writeFile(join(serverDir, 'access.key'), JSON.stringify({
       token: oldToken,
       secret: encodeBase64(new Uint8Array(32).fill(7)),
+      ...(custody ? { custody } : {}),
     }));
     const result = runCliAccountServiceSetupEntry({
       endpoint: accountService.endpoint,
@@ -1131,10 +1300,12 @@ describe('production CLI Account Service approval continuation', () => {
     const persistence = await import('@/persistence');
     expect(await persistence.readStoredCredentialsForServerId(adopted.profile.id)).toMatchObject({
       token: refreshedToken, encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      ...(custody ? { accountE2eeCustody: custody } : {}),
     });
     expect(writeCredentialsTokenOnlyForServerIdMock).toHaveBeenCalledWith(adopted.profile.id, {
       token: refreshedToken,
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      ...(custody ? { accountE2eeCustody: custody } : {}),
     });
   });
 
@@ -1146,7 +1317,7 @@ describe('production CLI Account Service approval continuation', () => {
     const harness = await configureProductionJourney({ mode: 'e2ee', homeToken: refreshedToken });
     const adopted = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: home.connectionDescriptor,
-      suggestedName: home.label,
+      suggestedName: homeLabel,
       observation: 'exact',
     });
     const serverDir = join(process.env.HAPPIER_HOME_DIR!, 'servers', adopted.profile.id);
@@ -1186,7 +1357,7 @@ describe('production CLI Account Service approval continuation', () => {
     const harness = await configureProductionJourney({ mode: 'e2ee', homeToken: differentAccountToken });
     const adopted = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: home.connectionDescriptor,
-      suggestedName: home.label,
+      suggestedName: homeLabel,
       observation: 'exact',
     });
     const serverDir = join(process.env.HAPPIER_HOME_DIR!, 'servers', adopted.profile.id);
@@ -1481,7 +1652,7 @@ describe('production CLI Account Service approval continuation', () => {
     };
     const existing = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: newerDescriptor,
-      suggestedName: home.label,
+      suggestedName: homeLabel,
       observation: 'exact',
     });
 
@@ -1785,7 +1956,7 @@ describe('production CLI Account Service approval continuation', () => {
     vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request) => {
       const url = String(urlInput);
       requestedUrls.push(url);
-      if (url.endsWith('/v1/account-directory/me')) return Response.json({});
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary());
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
       }
@@ -1820,7 +1991,7 @@ describe('production CLI Account Service approval continuation', () => {
     const promptSecretInputFn = vi.fn(async () => encodeBase64(new Uint8Array(32), 'base64url'));
     vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request) => {
       const url = String(urlInput);
-      if (url.endsWith('/v1/account-directory/me')) return Response.json({});
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary());
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
       }
@@ -1853,7 +2024,7 @@ describe('production CLI Account Service approval continuation', () => {
     fetchServerFeaturesSnapshotMock.mockResolvedValue(readyAccountServiceFeatures(accountService));
     vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request) => {
       const url = String(urlInput);
-      if (url.endsWith('/v1/account-directory/me')) return Response.json({});
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary());
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [home], preferredHomeServerIdentityId: home.homeServerIdentityId });
       }
@@ -1888,10 +2059,12 @@ describe('production CLI Account Service approval continuation', () => {
     });
     const promptInputFn = vi.fn(async () => 'k');
     const promptSecretInputFn = vi.fn(async () => encodeBase64(new Uint8Array(32), 'base64url'));
-    vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request) => {
+    vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request, init?: RequestInit) => {
       const url = String(urlInput);
       if (url.endsWith('/v1/account-directory/me')) {
-        return new Response(null, { status: 401 });
+        return new Headers(init?.headers).get('Authorization') === 'Bearer rejected-account-service-token'
+          ? new Response(null, { status: 401 })
+          : Response.json(directoryAccountSummary());
       }
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
@@ -2154,7 +2327,7 @@ describe('CLI named-account key login accepts the displayed recovery-key form', 
         authBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         return Response.json({ token: 'restricted-directory-token' });
       }
-      if (url.endsWith('/v1/account-directory/me')) return Response.json({});
+      if (url.endsWith('/v1/account-directory/me')) return Response.json(directoryAccountSummary('e2ee'));
       if (url.endsWith('/v1/account-directory/homes')) {
         return Response.json({ v: 1, homes: [], preferredHomeServerIdentityId: null });
       }

@@ -19,6 +19,42 @@ const wire = vi.hoisted(() => {
 vi.mock('socket.io-client', () => ({ io: wire.io }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+function opaquePresetRead(machine: ReturnType<typeof ManagedMachineV1Schema.parse>) {
+    const { launch, resource, observation, ...structural } = machine;
+    if (!resource) throw new Error('opaque_fixture_requires_resource');
+    return {
+        machine: {
+            ...structural,
+            preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' as const },
+            ...(observation ? { observation } : {}),
+        },
+        presetContent: {
+            content: {
+                t: 'plain' as const,
+                v: {
+                    v: 1 as const,
+                    name: launch.name,
+                    launch,
+                    reviewedFacts: {
+                        launch,
+                        ...(machine.controller ? { controller: machine.controller } : {}),
+                        optionStatus: 'current' as const,
+                        billing: { location: 'unknown' as const, stoppedBilling: 'unknown' as const },
+                        prerequisites: [],
+                        retentionCapabilities: { supportedIntents: ['start', 'stop'] as const },
+                        retention: machine.retention,
+                        wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
+                        preset: { id: 'preset', revision: 1, name: launch.name },
+                    },
+                    nativeResult: { kind: 'bound' as const, resource },
+                    ...(observation ? { observation } : {}),
+                },
+            },
+            recipientEnvelope: null,
+        },
+    };
+}
+
 it.each(['ready', 'cancelled'] as const)('settles admitted CLI wake on exact guest %s without polling', async outcome => {
     vi.useFakeTimers();
     let managed = ManagedMachineV1Schema.parse({ id: 'retained', homeId: 'srv_home', custodianAccountId: 'owner',
@@ -82,4 +118,30 @@ it.each(['ready', 'cancelled'] as const)('settles admitted CLI wake on exact gue
     expect(post.mock.calls.filter(([url]) => String(url).endsWith('/power'))).toHaveLength(1);
     expect(wire.socket.connected).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
+});
+
+it('opens the server-selected opaque preset read before preparing caller-owned wake', async () => {
+    const full = ManagedMachineV1Schema.parse({ id: 'retained', homeId: 'srv_home', custodianAccountId: 'owner',
+        enrolledMachineId: 'guest', allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 4,
+        launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+        resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+        controller: { machineId: 'controller', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        observation: { availability: 'present', power: 'stopped', storage: 'retained', observedAt: 1 },
+    });
+    const opaque = opaquePresetRead(full);
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { machine: { id: 'guest', active: false, kind: 'persistent', revokedAt: null,
+        replacedByMachineId: null, managedMachineRef: { homeId: 'srv_home', managedId: 'retained' } } } });
+    vi.spyOn(axios, 'post').mockImplementation(async url => {
+        if (String(url).endsWith('/get')) return { status: 200, data: opaque };
+        throw new Error(`Unexpected write ${String(url)}`);
+    });
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const plan = await prepareCliManagedMachineWake({ actionId: 'daemon.filesystem.readFile', input: { rootPath: '/work', path: 'a' },
+        context: { surface: 'cli' as const }, machineRuntimeDemand: { target: { kind: 'machine', machineId: 'guest' } } }, {
+        provisionerAccount: { token, credentials: { token, encryption: null }, serverUrl: 'https://home.test' },
+        readSessionMachineId: async () => null,
+        managedMachineAction: async request => (await axios.post('https://home.test/get', request.input)).data,
+    });
+    expect(plan).toMatchObject({ children: [{ action: 'machines.managed.power.set', role: 'managed-wake',
+        input: { homeId: 'srv_home', managedId: 'retained', when: 'now', expectedRevision: 4, intent: 'start' } }] });
 });

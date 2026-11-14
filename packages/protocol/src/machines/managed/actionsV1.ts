@@ -12,9 +12,10 @@ import { MachineProvisionersListResultV1Schema, MachineProvisionerCheckResultV1S
 import * as actionOperations from '../../actions/operations/v1.js';
 import { BugReportMachineDiagnosticsSnapshotSchema } from '../../bugs/reports/machineDiagnostics.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../../account/settings/savedSecretResourceActionsV1.js';
+import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRetentionDefaultsV1.js';
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
-import { ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
-import { AcquireResultV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema } from './providerFactsV1.js';
+import { ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
+import { AcquireResultV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 export { MANAGED_CONTROL_ACTION_IDS_V1, type ManagedControlActionIdV1 } from './actionIdsV1.js';
 import { ManagedConfigurationFactsV1Schema, ManagedOneOffSelectionV1Schema, ManagedPresetSelectionV1Schema } from './managedConfigurationV1.js';
@@ -23,7 +24,7 @@ import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } 
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachineReferenceCensusV1Schema } from '../machineReferenceCensusV1.js';
-import { MachineSetupSourceV1Schema, MachineSetupSourceEntryV1Schema, MachineSetupExclusionV1Schema,
+import { MachineSetupNonAccountPresetSourceEntryV1Schema, machineSetupSourceOriginKeyV1, MachineSetupExclusionV1Schema,
   MachineSetupExclusionsV1Schema, MachineSetupSourceFactsMapV1Schema, MachineSetupAppOriginV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1Schema, MachineSetupUpdatesObservationV1Schema } from '../setup/machineSetupObservationV1.js';
 import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
@@ -37,10 +38,12 @@ import * as deploymentActions from '../../deployments/deploymentActionsV1.js';
 import * as deploymentTemplates from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workflowStartPreparationV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
-import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
+import { ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema } from '../../actions/externalActionApi.js';
 import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema, ManagedNativeCredentialBindingV1Schema } from './credentialDeliveryV1.js';
 import { ManagedCreationScopeRetentionChoiceV1Schema } from './managedMachineV1.js';
 import { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
+import { ManagedMachinePresetLaunchNameOverrideV1Schema, ManagedMachinePresetRecipientProjectionV1Schema, ManagedMachinePresetStoredContentCarrierV1Schema, ManagedMachinePresetRecipientsV1Schema } from './managedMachinePresetContentV1.js';
+import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 export { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 export * from './credentialDeliveryV1.js';
 export { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
@@ -61,8 +64,59 @@ export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strict
   homeId: id(), machineId: id(), presetId: id(), presetRevision: revision(),
 }));
 export type MachineSetupPresetApplyInputV1 = z.infer<typeof MachineSetupPresetApplyInputV1Schema>;
+
+/** A saved encrypted preset crosses Home by address only; its setup stays with the keyholding target. */
+export const MachineSetupOpaquePresetSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('accountPresetOpaque'), presetId: id(), presetRevision: revision(),
+  /** Persisted author mode, verified by the server against the saved Preset. */
+  contentEncryptionMode: AccountEncryptionModeSchema,
+  /** Optional keyholder-sealed setup edit for this exact preset snapshot. */
+  presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+}));
+export type MachineSetupOpaquePresetSourceV1 = z.infer<typeof MachineSetupOpaquePresetSourceV1Schema>;
+
+/** Input sources are carried through Actions. Only the daemon's local source model carries preset setup bytes. */
+export const MachineSetupSourceApplyEntryV1Schema = lazyZodSchema(() => z.union([
+  MachineSetupNonAccountPresetSourceEntryV1Schema,
+  MachineSetupOpaquePresetSourceV1Schema,
+]));
+export type MachineSetupSourceApplyEntryV1 = z.infer<typeof MachineSetupSourceApplyEntryV1Schema>;
+/** Canonical Action-wire identity for a setup source, including opaque saved presets. */
+export function machineSetupSourceApplyOriginKeyV1(source: MachineSetupSourceApplyEntryV1): string {
+  return source.kind === 'accountPresetOpaque' ? `account:${source.presetId}` : machineSetupSourceOriginKeyV1(source);
+}
+export const MachineSetupSourceApplyV1Schema = lazyZodSchema(() => z.array(MachineSetupSourceApplyEntryV1Schema).check(
+  z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
+    { message: 'Setup has exactly one implicit direct source.' }),
+  z.refine(sources => new Set(sources.map(machineSetupSourceApplyOriginKeyV1)).size === sources.length,
+    { message: 'Each setup source is attached once.' }),
+));
+export type MachineSetupSourceApplyV1 = z.infer<typeof MachineSetupSourceApplyV1Schema>;
+
+/** Only the authenticated target receives its own envelope for an opaque preset source. */
+export const MachineSetupResolvedOpaquePresetSourceV1Schema = lazyZodSchema(() => z.extend(
+  MachineSetupOpaquePresetSourceV1Schema,
+  { presetContent: ManagedMachinePresetRecipientProjectionV1Schema },
+));
+export type MachineSetupResolvedOpaquePresetSourceV1 = z.infer<typeof MachineSetupResolvedOpaquePresetSourceV1Schema>;
+export const MachineSetupResolvedSourceEntryV1Schema = lazyZodSchema(() => z.union([
+  MachineSetupNonAccountPresetSourceEntryV1Schema,
+  MachineSetupResolvedOpaquePresetSourceV1Schema,
+]));
+export type MachineSetupResolvedSourceEntryV1 = z.infer<typeof MachineSetupResolvedSourceEntryV1Schema>;
+function readMachineSetupResolvedSourceOriginKeyV1(source: MachineSetupResolvedSourceEntryV1): string {
+  return source.kind === 'accountPresetOpaque' ? `account:${source.presetId}` : machineSetupSourceOriginKeyV1(source);
+}
+export const MachineSetupResolvedSourceV1Schema = lazyZodSchema(() => z.array(MachineSetupResolvedSourceEntryV1Schema).check(
+  z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
+    { message: 'Setup has exactly one implicit direct source.' }),
+  z.refine(sources => new Set(sources.map(readMachineSetupResolvedSourceOriginKeyV1)).size === sources.length,
+    { message: 'Each setup source is attached once.' }),
+));
+export type MachineSetupResolvedSourceV1 = z.infer<typeof MachineSetupResolvedSourceV1Schema>;
+
 export const MachineSetupSourcesApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), sources: MachineSetupSourceV1Schema,
+  homeId: id(), machineId: id(), sources: MachineSetupSourceApplyV1Schema,
 }));
 export type MachineSetupSourcesApplyInputV1 = z.infer<typeof MachineSetupSourcesApplyInputV1Schema>;
 export const MachineSetupRecipePlanV1Schema = lazyZodSchema(() => z.strictObject({
@@ -118,7 +172,7 @@ export const MachineSetupApplyInputV1Schema = lazyZodSchema(() => z.strictObject
   { message: 'Setup targets must be unique.' })));
 export type MachineSetupApplyInputV1 = z.infer<typeof MachineSetupApplyInputV1Schema>;
 export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), sources: z.optional(MachineSetupSourceV1Schema),
+  homeId: id(), machineId: id(), sources: z.optional(MachineSetupSourceApplyV1Schema),
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
@@ -153,7 +207,7 @@ export type MachineSetupUpdatesRolloutInputV1 = z.infer<typeof MachineSetupUpdat
 export type MachineSetupUpdatesApplyInputV1 = z.infer<typeof MachineSetupUpdatesApplyInputV1Schema>;
 /** Removal carries full review context but no executable app/script/toolchain operands. */
 export const MachineSetupRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), sources: MachineSetupSourceV1Schema,
+  homeId: id(), machineId: id(), sources: MachineSetupSourceApplyV1Schema,
   desiredRevision: revision(), removeItemKeys: removalKeys(), removalPlans: z.array(MachineSetupRemovalPlanV1Schema),
   exclusions: z.optional(MachineSetupExclusionsV1Schema),
 }));
@@ -179,8 +233,28 @@ export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject
   host: z.optional(WorkflowCombinedActionHostReviewV1Schema),
 }));
 export type MachineSetupPlanReviewV1 = z.infer<typeof MachineSetupPlanReviewV1Schema>;
+
+/** A daemon may expose the exact Home-resolved opaque source beside its Plan. */
+function sameMachineSetupPlanResolvedSourceV1(
+  source: MachineSetupSourceApplyEntryV1,
+  resolved: MachineSetupResolvedSourceEntryV1,
+): boolean {
+  if (source.kind !== resolved.kind) return false;
+  if (source.kind !== 'accountPresetOpaque') return sameStrictJsonValue(source, resolved);
+  if (resolved.kind !== 'accountPresetOpaque') return false;
+  if (source.presetId !== resolved.presetId
+    || source.presetRevision !== resolved.presetRevision
+    || source.contentEncryptionMode !== resolved.contentEncryptionMode) return false;
+  if (source.presetContentOverride === undefined || resolved.presetContentOverride === undefined) {
+    return source.presetContentOverride === resolved.presetContentOverride;
+  }
+  return sameStrictJsonValue(source.presetContentOverride, resolved.presetContentOverride);
+}
+
 export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject({
-  desiredRevision: revision(), sources: MachineSetupSourceV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
+  desiredRevision: revision(), sources: MachineSetupSourceApplyV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
+  /** Presentation-only caller-relative ciphertext from the exact controller resolve. */
+  resolvedSources: z.optional(MachineSetupResolvedSourceV1Schema),
   sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
   appOrigins: z.optional(z.array(MachineSetupAppOriginV1Schema)),
   removeItemKeys: z.optional(removalKeys()), removalOffers: z.optional(z.array(MachineSetupRemovalOfferV1Schema)),
@@ -196,7 +270,21 @@ export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject
   appReviews: z.optional(z.array(MachineSetupAppReviewV1Schema)),
   review: z.optional(MachineSetupPlanReviewV1Schema),
   updates: z.optional(z.strictObject({ observation: MachineSetupUpdatesObservationV1Schema, plan: z.optional(MachineSetupEffectPlanV1Schema) })),
-}));
+}).check(z.superRefine((value, context) => {
+  if (value.resolvedSources === undefined) return;
+  if (value.resolvedSources.length !== value.sources.length) {
+    context.addIssue({ code: 'custom', path: ['resolvedSources'],
+      message: 'Resolved setup source projections must align with the Plan sources' });
+    return;
+  }
+  value.sources.forEach((source, index) => {
+    const resolved = value.resolvedSources![index]!;
+    if (!sameMachineSetupPlanResolvedSourceV1(source, resolved)) {
+      context.addIssue({ code: 'custom', path: ['resolvedSources', index],
+        message: 'Resolved setup source projection must match the Plan source' });
+    }
+  });
+})));
 export type MachineSetupPlanResultV1 = z.infer<typeof MachineSetupPlanResultV1Schema>;
 /** Keep the target owner's executable Plan fields; presentation facts never enter Apply. */
 export function machineSetupApplyTargetFromPlanV1(
@@ -273,14 +361,14 @@ const MachineSetupCreationOriginV1Schema = lazyZodSchema(() => z.strictObject({ 
 export const MachineSetupResolveInputV1Schema = lazyZodSchema(() => z.union([
   MachineSetupSourcesApplyInputV1Schema,
   z.strictObject({ homeId: id(), machineId: id(), purpose: z.literal('creationOrigin'),
-    candidates: z.array(MachineSetupSourceEntryV1Schema).check(z.refine(
-      candidates => candidates.every(candidate => candidate.kind === 'accountPreset'),
+    candidates: z.array(MachineSetupSourceApplyEntryV1Schema).check(z.refine(
+      candidates => candidates.every(candidate => candidate.kind === 'accountPresetOpaque'),
       { message: 'Creation origin candidates are Account Preset copies.' })),
   }),
 ]));
 export type MachineSetupResolveInputV1 = z.infer<typeof MachineSetupResolveInputV1Schema>;
 export const MachineSetupResolveResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ sources: MachineSetupSourceV1Schema, creation: z.optional(MachineSetupCreationOriginV1Schema) }),
+  z.strictObject({ sources: MachineSetupResolvedSourceV1Schema, creation: z.optional(MachineSetupCreationOriginV1Schema) }),
   z.strictObject({ purpose: z.literal('creationOrigin'), creation: z.optional(MachineSetupCreationOriginV1Schema) }),
 ]));
 export const MachineSetupReportInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineSetupPresetApplyInputV1Schema, {
@@ -294,13 +382,19 @@ export type MachineSetupReportInputV1 = z.infer<typeof MachineSetupReportInputV1
 export const ManagedAcquireInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ selection: ManagedOneOffSelectionV1Schema, creationScopeRetention: z.optional(ManagedCreationScopeRetentionChoiceV1Schema), enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
     reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
-  z.strictObject({ selection: ManagedPresetSelectionV1Schema, creationScopeRetention: z.optional(ManagedCreationScopeRetentionChoiceV1Schema), enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, controller: z.optional(ManagedControllerV1Schema),
-    retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean(),
-    agentStart: z.optional(ManagedAcquireAgentStartV1Schema), reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
+  z.strictObject({ selection: ManagedPresetSelectionV1Schema, creationScopeRetention: z.optional(ManagedCreationScopeRetentionChoiceV1Schema), controller: z.optional(ManagedControllerV1Schema),
+    retention: z.optional(RetentionV1Schema), wakeOnAcceptedMessage: mini.optional(mini.boolean()),
+    /** Same-DEK private admission delta (including enrollment identity); Home stores only this tagged carrier. */
+    presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+    agentStart: z.optional(ManagedAcquireAgentStartV1Schema) }),
 ]));
+/** Selection kind owns the branch; optional policy and sealed deltas do not identify it. */
+export function isManagedPresetAcquireInputV1(input: ManagedAcquireInputV1): input is Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }> {
+  return input.selection.kind === 'preset';
+}
 /** One-off effects live in the selection; preset requests carry the separately reviewed policy. */
 export function resolveManagedAcquireReviewV1(input: ManagedAcquireInputV1) {
-  if ('retention' in input) return { homeId: input.selection.homeId, ...(input.controller === undefined ? {} : { controller: input.controller }),
+  if (isManagedPresetAcquireInputV1(input)) return { homeId: input.selection.homeId, ...(input.controller === undefined ? {} : { controller: input.controller }),
     retention: input.retention, wakeOnAcceptedMessage: input.wakeOnAcceptedMessage };
   return { homeId: input.selection.homeId, ...(input.selection.controller === undefined ? {} : { controller: input.selection.controller }),
     retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage };
@@ -309,14 +403,71 @@ export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ mana
 export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(mini.boolean()),
   presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),
 }));
-export const ManagedListOutputV1Schema = lazyZodSchema(() => z.strictObject({ machines: mini.array(ManagedMachineV1Schema) }));
-export const ManagedGetOutputV1Schema = lazyZodSchema(() => z.lazy(() => ManagedMachineV1Schema));
+/** An Account read of an opaque row carries the exact stored ciphertext and only that Account's envelope. */
+export const ManagedOpaquePresetReadV1Schema = lazyZodSchema(() => z.strictObject({
+  machine: ManagedOpaquePresetMachineV1Schema,
+  presetContent: ManagedMachinePresetRecipientProjectionV1Schema,
+}));
+export type ManagedOpaquePresetReadV1 = z.infer<typeof ManagedOpaquePresetReadV1Schema>;
+export const ManagedMachineReadV1Schema = lazyZodSchema(() => z.union([
+  ManagedMachinePublicFullV1Schema,
+  ManagedOpaquePresetReadV1Schema,
+]));
+export type ManagedMachineReadV1 = z.infer<typeof ManagedMachineReadV1Schema>;
+/** Normalizes the two validated public read shapes before structural consumers inspect a Machine. */
+export function unwrapManagedMachineReadV1(read: ManagedMachineReadV1): ManagedMachineV1 {
+  return 'machine' in read ? read.machine : read;
+}
+export function isManagedOpaquePresetReadV1(value: unknown): value is ManagedOpaquePresetReadV1 {
+  return ManagedOpaquePresetReadV1Schema.safeParse(value).success;
+}
+export const ManagedListOutputV1Schema = lazyZodSchema(() => z.strictObject({ machines: mini.array(ManagedMachineReadV1Schema) }));
+export const ManagedGetOutputV1Schema = lazyZodSchema(() => z.lazy(() => ManagedMachineReadV1Schema));
 export const ManagedGetInputV1Schema = lazyZodSchema(() => z.strictObject(target()));
 export const ManagedMutationInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));
 export const ManagedRebuildInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), ...DevcontainerRebuildIntentV1Schema.def.shape }));
-export const ManagedResizeInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), size: MachineProvisionerSizeV1Schema }));
-export const ManagedResizeOutputV1Schema = lazyZodSchema(() => z.strictObject({ result: asProtocolZod(MachineProvisionerResizeResultV1Schema), observation: z.optional(ProviderObservationV1Schema) }));
-export const ManagedControllerResizeReportV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), requestId: id(), ...ManagedResizeOutputV1Schema.shape }));
+/** A preset resize carries its private requested size in an existing sealed-content override. */
+export const ManagedOpaquePresetResizeInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...target(), presetContentOverride: ManagedMachinePresetLaunchNameOverrideV1Schema,
+}));
+export type ManagedOpaquePresetResizeInputV1 = z.infer<typeof ManagedOpaquePresetResizeInputV1Schema>;
+export const ManagedResizeInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...target(), size: MachineProvisionerSizeV1Schema }),
+  ManagedOpaquePresetResizeInputV1Schema,
+]));
+/** Opaque preset resize reports retain outcome state only; native details remain in sealed content. */
+export const ManagedOpaquePresetResizeResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('confirmed') }),
+  z.strictObject({ kind: z.literal('unknown') }),
+  z.strictObject({ kind: z.literal('refused') }),
+  z.strictObject({ kind: z.literal('unsupported') }),
+]));
+export type ManagedOpaquePresetResizeResultV1 = z.infer<typeof ManagedOpaquePresetResizeResultV1Schema>;
+export function projectManagedOpaquePresetResizeResultV1(
+  result: Readonly<{ kind: string }>,
+): ManagedOpaquePresetResizeResultV1 {
+  switch (result.kind) {
+    case 'confirmed':
+    case 'unknown':
+    case 'refused':
+    case 'unsupported':
+      return { kind: result.kind };
+    default:
+      throw new Error(`Unsupported opaque managed resize result: ${result.kind}`);
+  }
+}
+export const ManagedResizeOutputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ result: asProtocolZod(MachineProvisionerResizeResultV1Schema), observation: z.optional(ProviderObservationV1Schema) }),
+  z.strictObject({ result: ManagedOpaquePresetResizeResultV1Schema,
+    presetContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+    observation: z.optional(ManagedOpaquePresetObservationV1Schema) }),
+]));
+export const ManagedControllerResizeReportV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...target(), requestId: id(), result: asProtocolZod(MachineProvisionerResizeResultV1Schema), observation: z.optional(ProviderObservationV1Schema) }),
+  z.strictObject({ ...target(), requestId: id(), result: ManagedOpaquePresetResizeResultV1Schema,
+    presetContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+    observation: z.optional(ManagedOpaquePresetObservationV1Schema) }),
+]));
 export type ManagedControllerResizeReportV1 = z.infer<typeof ManagedControllerResizeReportV1Schema>;
 export const ManagedPowerInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...ManagedIntentInputSchema.def.options[0].def.shape, intent: z.enum(['start', 'stop', 'suspend', 'resume']) }),
@@ -362,12 +513,71 @@ export const ManagedCommittedIdleEvidenceV1Schema = lazyZodSchema(() => z.strict
   proof: MachineInstallationProofV1Schema,
 }));
 export type ManagedCommittedIdleEvidenceV1 = z.infer<typeof ManagedCommittedIdleEvidenceV1Schema>;
-export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), result: AcquireResultV1Schema,
-  configurationFacts: mini.optional(ManagedConfigurationFactsV1Schema),
-  bootstrapInstalled: z.optional(z.literal(true)), observation: mini.optional(ProviderObservationV1Schema),
-}).check(z.superRefine((value, context) => {
-  if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
-})));
+/**
+ * A controller may replace only an opaque preset's private content snapshot
+ * after applying a per-Machine name. Recipient envelopes remain admission
+ * authority and never travel on this report path.
+ */
+export const ManagedControllerPresetContentV1Schema = lazyZodSchema(() =>
+  ManagedMachinePresetStoredContentCarrierV1Schema,
+);
+export type ManagedControllerPresetContentV1 = z.infer<typeof ManagedControllerPresetContentV1Schema>;
+/** Opaque preset reports retain outcome state only; native provider values stay in sealed preset content. */
+export const ManagedOpaquePresetAcquireResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('bound') }),
+  z.strictObject({ kind: z.literal('pending') }),
+  z.strictObject({ kind: z.literal('unknown') }),
+  z.strictObject({ kind: z.literal('rejected') }),
+]));
+export type ManagedOpaquePresetAcquireResultV1 = z.infer<typeof ManagedOpaquePresetAcquireResultV1Schema>;
+
+/** Canonical report projection; native provider values remain in sealed preset content. */
+export function projectManagedOpaquePresetAcquireResultV1(result: AcquireResultV1): ManagedOpaquePresetAcquireResultV1 {
+  return { kind: result.kind };
+}
+
+/** Opaque preset reports retain outcome state only; native provider values stay in sealed preset content. */
+export const ManagedOpaquePresetIntentResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('accepted') }),
+  z.strictObject({ kind: z.literal('bound') }),
+  z.strictObject({ kind: z.literal('confirmed') }),
+  z.strictObject({ kind: z.literal('pending') }),
+  z.strictObject({ kind: z.literal('unknown') }),
+  z.strictObject({ kind: z.literal('refused') }),
+]));
+export type ManagedOpaquePresetIntentResultV1 = z.infer<typeof ManagedOpaquePresetIntentResultV1Schema>;
+
+/** Canonical report projection for destroy/rebuild results. */
+export function projectManagedOpaquePresetIntentResultV1(
+  result: Readonly<{ kind: string }>,
+): ManagedOpaquePresetIntentResultV1 {
+  switch (result.kind) {
+    case 'accepted':
+    case 'bound':
+    case 'confirmed':
+    case 'pending':
+    case 'unknown':
+    case 'refused':
+      return { kind: result.kind };
+    default:
+      throw new Error(`Unsupported opaque managed intent result: ${result.kind}`);
+  }
+}
+
+export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...current(), result: AcquireResultV1Schema,
+    configurationFacts: mini.optional(ManagedConfigurationFactsV1Schema),
+    bootstrapInstalled: z.optional(z.literal(true)), observation: mini.optional(ProviderObservationV1Schema),
+  }).check(z.superRefine((value, context) => {
+    if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
+  })),
+  z.strictObject({ ...current(), result: ManagedOpaquePresetAcquireResultV1Schema,
+    presetContent: ManagedControllerPresetContentV1Schema,
+    bootstrapInstalled: z.optional(z.literal(true)), observation: mini.optional(ManagedOpaquePresetObservationV1Schema),
+  }).check(z.superRefine((value, context) => {
+    if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
+  })),
+]));
 export const ManagedControllerCredentialDeliveryReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), controller: ManagedControllerV1Schema,
   credentialDelivery: z.union([
     z.strictObject({ request: ManagedCredentialInstallInputV1Schema, phase: z.literal('submitted') }),
@@ -379,7 +589,13 @@ export const ManagedControllerCredentialDeliveryReportV1Schema = lazyZodSchema((
 export const ManagedControllerCredentialDeliveryReportOutputV1Schema = lazyZodSchema(() => z.strictObject({
   machine: ManagedMachineV1Schema, credentialDeliveryResult: ManagedCredentialDeliveryResultV1Schema,
 }));
-export const ManagedEnrollmentCorrelationV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), resource: ManagedResourceV1Schema }));
+/** Opaque preset enrollment proves only the admitted bound lifecycle; its native identity stays sealed. */
+export const ManagedEnrollmentFullCorrelationV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), resource: ManagedResourceV1Schema }));
+export type ManagedEnrollmentFullCorrelationV1 = z.infer<typeof ManagedEnrollmentFullCorrelationV1Schema>;
+export const ManagedEnrollmentCorrelationV1Schema = lazyZodSchema(() => z.union([
+  ManagedEnrollmentFullCorrelationV1Schema,
+  z.strictObject({ ...current() }),
+]));
 /** Controller admission never receives ordinary composer text or startup instructions. */
 export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union([
   z.omit(ManagedAcquireInputV1Schema._zod.def.options[0], { agentStart: true }),
@@ -387,8 +603,33 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
 ]));
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean(),
   requestEnvelopeDigest: z.optional(ExternalActionManagedContinuationV1Schema.shape.acquireRequestEnvelopeDigest),
+  /** Native-qualified defaults are separate from the unchanged signed requester input. */
+  presetPolicy: z.optional(MachineRetentionPolicyV1Schema),
+  originalActionEnvelope: z.optional(ExternalActionRequestEnvelopeSchema),
 }));
-export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, replayed: mini.boolean(), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }));
+/**
+ * An opaque preset admission carries only the structural allocation row.  The
+ * private launch/setup snapshot is opened by the installed custodian daemon
+ * with its Account key before native reconciliation.
+ */
+export const ManagedAdmissionPresetContentV1Schema = lazyZodSchema(() => z.strictObject({
+  content: ManagedMachinePresetStoredContentCarrierV1Schema,
+  recipients: ManagedMachinePresetRecipientsV1Schema,
+}));
+export type ManagedAdmissionPresetContentV1 = z.infer<typeof ManagedAdmissionPresetContentV1Schema>;
+/** @deprecated Use the canonical opaque managed-machine projection. */
+export const ManagedAdmissionStructuralMachineV1Schema = lazyZodSchema(() => ManagedOpaquePresetMachineV1Schema);
+export type ManagedAdmissionStructuralMachineV1 = z.infer<typeof ManagedAdmissionStructuralMachineV1Schema>;
+export const ManagedAdmissionMachineV1Schema = lazyZodSchema(() => ManagedMachineV1Schema);
+export type ManagedAdmissionMachineV1 = z.infer<typeof ManagedAdmissionMachineV1Schema>;
+export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ machine: ManagedMachinePublicFullV1Schema, replayed: mini.boolean(), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
+  z.strictObject({ machine: ManagedAdmissionStructuralMachineV1Schema, presetContent: ManagedAdmissionPresetContentV1Schema,
+    /** Retained opaque launch-name replacement for the admitted allocation only. */
+    presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+    replayed: mini.boolean(), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
+]));
+export type ManagedAdmissionOutputV1 = z.infer<typeof ManagedAdmissionOutputV1Schema>;
 export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
   requestId: z.optional(id()),
   includeEnrollmentInstallation: z.optional(z.literal(true)),
@@ -398,11 +639,19 @@ export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.stric
 export const ManagedEnrollmentInstallationV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: id(), installationId: id(), installationPublicKey: MachineInstallationPublicKeySchema,
 }));
-export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, requestId: id(),
+const managedControllerContextOutputFields = () => ({
+  requestId: id(),
   nativeCredentialBindings: z.optional(z.array(ManagedNativeCredentialBindingV1Schema)),
   nativeCredentialDesiredBindingKeys: z.optional(z.array(id())),
   enrollmentInstallation: z.optional(ManagedEnrollmentInstallationV1Schema),
-}));
+});
+/** Context is the restart-safe delivery edge for opaque preset content. */
+export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ machine: ManagedMachinePublicFullV1Schema, ...managedControllerContextOutputFields() }),
+  z.strictObject({ machine: ManagedOpaquePresetMachineV1Schema, presetContent: ManagedAdmissionPresetContentV1Schema,
+    presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+    ...managedControllerContextOutputFields() }),
+]));
 export const ManagedControllerMachineOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema }));
 export const ManagedControllerSubmitOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, submitted: mini.boolean() }));
 /** Only the admitted controller captures this source-owned metadata before native spend. */
@@ -482,7 +731,13 @@ export const ManagedControlAdmissionInputV1Schema = lazyZodSchema(() => z.discri
   z.strictObject({ action: z.literal('machines.managed.retire'), input: ManagedRetireInputV1Schema, requestId: id() }),
 ]));
 export type ManagedControlAdmissionInputV1 = z.infer<typeof ManagedControlAdmissionInputV1Schema>;
-export const ManagedControllerIntentReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), result: z.union([asProtocolZod(MachineProvisionerDestroyResultV1Schema), asProtocolZod(MachineProvisionerRebuildResultV1Schema)]), observation: mini.optional(ProviderObservationV1Schema) }));
+export const ManagedControllerIntentReportV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...current(), result: z.union([asProtocolZod(MachineProvisionerDestroyResultV1Schema), asProtocolZod(MachineProvisionerRebuildResultV1Schema)]),
+    observation: mini.optional(ProviderObservationV1Schema) }),
+  z.strictObject({ ...current(), result: ManagedOpaquePresetIntentResultV1Schema,
+    presetContent: ManagedControllerPresetContentV1Schema,
+    observation: mini.optional(ManagedOpaquePresetObservationV1Schema) }),
+]));
 export type ManagedControllerIntentReportV1 = z.infer<typeof ManagedControllerIntentReportV1Schema>;
 export function managedMachineActionEndpointPathV1(action: ManagedMachineActionIdV1): string {
   const suffix = action.startsWith('machines.managed.') ? action.slice('machines.managed.'.length) : action;

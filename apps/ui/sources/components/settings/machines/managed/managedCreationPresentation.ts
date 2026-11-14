@@ -75,6 +75,7 @@ export function managedConfirmedAbsenceState(machine: Pick<ManagedMachineV1, 're
 
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
 export function managedCreationState(machine: ManagedMachineV1, context: ManagedCreationContext = {}): ManagedLifecycleState {
+    const name = machine.launch?.name ?? t('common.machine');
     if (machine.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(machine);
     if (machine.cleanup) return machine.creationState === 'canceled' && machine.cleanup.disposition === 'pending'
         ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
@@ -83,7 +84,7 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
         const acquire = operation?.observation === 'available' && !operation.isUnavailableProjection
             ? operation.snapshot : undefined;
         return classifyManagedMachineAllocationV1(machine, acquire) === 'creating'
-            ? { kind: 'creating', name: machine.launch.name } : { kind: 'mayExist', name: machine.launch.name };
+            ? { kind: 'creating', name } : { kind: 'mayExist', name };
     }
     const operation = currentManagedCreationOperation(machine, context.operation, context);
     const observedOperation = operation?.observation === 'available' && !operation.isUnavailableProjection ? operation.snapshot : null;
@@ -122,8 +123,8 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
     if (machine.allocation !== 'unsubmitted') return { kind: 'resourceReady' };
     // Provider calls run where the account lives: an offline controller is what nothing waits on but the user.
     return context.controller && !context.controller.online && context.provider
-        ? { kind: 'controllerWaiting', name: machine.launch.name, controller: context.controller.name, provider: context.provider }
-        : { kind: 'creationWaiting', name: machine.launch.name };
+        ? { kind: 'controllerWaiting', name, controller: context.controller.name, provider: context.provider }
+        : { kind: 'creationWaiting', name };
 }
 
 export function describeManagedCreation(machine: ManagedMachineV1, context?: ManagedCreationContext) {

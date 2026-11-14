@@ -14,6 +14,7 @@ import { enableAuthentication } from "../../utils/enableAuthentication";
 import { enableErrorHandlers } from "../../utils/enableErrorHandlers";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -425,7 +426,7 @@ describe("Home login approval (gate + routes) (integration)", () => {
                 auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" }),
                 auth.createToken(account.id, { session: "approval-terminal" }, { kind: "terminal", authority: "account_automation" }),
                 auth.createToken(account.id, undefined, { kind: "account_directory", authority: "present_user" }),
-                auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "approval PAT" }),
+                auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, "approval PAT") }),
             ]);
 
             const app = createTestApp();

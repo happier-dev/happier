@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 import { encodeBase64 as encodeBase64Bytes } from "privacy-kit";
@@ -290,7 +291,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
             teamId: team.id, accountId: recipient.id, role: "member", sessionAccessStartsAt: null,
         } });
         const group = await db.teamGroup.create({ data: {
-            teamId: team.id, name: "Developers", nameKey: crypto.randomUUID(),
+            teamId: team.id, name: storedPlainPrivateLabel("Developers"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,
@@ -770,7 +771,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
             teamId: team.id, accountId: recipient.id, role: "member", sessionAccessStartsAt: null,
         } });
         const group = await db.teamGroup.create({ data: {
-            teamId: team.id, name: "Group-only", nameKey: crypto.randomUUID(),
+            teamId: team.id, name: storedPlainPrivateLabel("Group-only"),
         } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,

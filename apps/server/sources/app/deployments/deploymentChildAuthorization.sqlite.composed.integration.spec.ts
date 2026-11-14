@@ -1,4 +1,5 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -319,7 +320,7 @@ describe('deployment children retain their controller Action authority', () => {
             targets: { machines: options.templateRoot ? [controller.id] : [], sessions: [],
                 environments: options.templateRoot ? [] : [environment.id] } };
         const api = credential === 'api' ? await auth.createApiToken({ accountId: account.id,
-            tokenId: crypto.randomUUID(), label: 'Deployment', grant }) : null;
+            tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Deployment'), grant }) : null;
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
             accountId: account.id, ...(api ? { principalId: account.id, credentialId: api.tokenId, grant }
                 : { authentication: { kind: 'account' as const, tokenEpoch: account.tokenEpoch } }),

@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeaderV1, readDeploymentArtifactJsonBodyV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { DeploymentEnvironmentContentV1Schema } from './environment.js';
+import { DeploymentEnvironmentContentStoredReadV1Schema } from './environment.js';
 import { DeploymentDomainContentV1Schema } from './domain.js';
 import { DeploymentTargetLinkContentV1Schema } from './target.js';
 import { DeploymentContentV1Schema, DeploymentStepV1Schema, type DeploymentContentV1, type DeploymentStepV1 } from './deployment.js';
@@ -47,8 +47,8 @@ function readContent<T>(reference: ContentReference, artifact: DeploymentArtifac
     return content.success ? { ok: true, content: content.data, title: opened.title } : { ok: false, error: 'deployment_content_unavailable' };
 }
 
-export function readDeploymentEnvironmentArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentEnvironmentContentV1Schema>> {
-    return readContent(reference, artifact, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentV1Schema);
+export function readDeploymentEnvironmentArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentEnvironmentContentStoredReadV1Schema>> {
+    return readContent(reference, artifact, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentStoredReadV1Schema);
 }
 export function readDeploymentDomainArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentDomainContentV1Schema>> {
     return readContent(reference, artifact, 'deployment-domain.v1', DeploymentDomainContentV1Schema);

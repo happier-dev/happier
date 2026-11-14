@@ -20,7 +20,7 @@ export const sessionAccessSubjectKey = sharePrincipalKey;
 
 export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalSummaryV1, viewer?: Readonly<{
     accountId?: string | null; profile?: AccountDisplayProfileV1 | null;
-}>): SessionAccessPrincipalPresentation {
+}>, openedGroupDisplayName?: string | null): SessionAccessPrincipalPresentation {
     const ref: PrincipalRefV1 = principal.kind === 'account' ? {kind:'account',accountId:principal.accountId}
         : principal.kind === 'team' ? {kind:'team',teamId:principal.teamId}
             : {kind:'group',teamId:principal.teamId,groupId:principal.groupId};
@@ -29,7 +29,9 @@ export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalS
             profile: principal,
             viewerProfile: viewer?.profile,
             avatarUrl: principal.avatarUrl,
-        } : { name: principal.name, ...(principal.kind === 'group' ? { teamName: principal.teamName } : {}) }) });
+        } : principal.kind === 'group'
+            ? { name: openedGroupDisplayName, teamName: principal.teamName }
+            : { name: principal.name }) });
 }
 
 /**
@@ -44,12 +46,17 @@ export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalS
 export function projectSessionAccessCredentialConsequences(
     consequences: readonly SessionTeamCredentialBindingConsequenceV1[] | undefined,
     scope: Readonly<{ teamId: string | null; policy: SessionTeamCredentialBindingConsequenceV1['policy'] }>,
+    openedDisplayNames: Readonly<Record<string, string | null>> = {},
 ): readonly string[] {
     if (!consequences || scope.teamId === null) return [];
-    const names = consequences
-        .filter((row) => row.teamId === scope.teamId && row.policy === scope.policy)
-        .map((row) => row.displayName);
-    return names.length === 0 ? [] : [t('session.access.credentialsLost', { names: names.join(', ') })];
+    const affected = consequences.filter((row) => row.teamId === scope.teamId && row.policy === scope.policy);
+    const names = affected.flatMap((row) => {
+        const name = openedDisplayNames[row.resourceId];
+        return name ? [name] : [];
+    });
+    return affected.length === 0 ? [] : [t('session.access.credentialsLost', {
+        names: names.length > 0 ? names.join(', ') : t('teams.credentials.title'),
+    })];
 }
 
 /**
@@ -101,6 +108,8 @@ export function projectSessionAccessEditorSnapshot(input: Readonly<{
     viewerProfile?: AccountDisplayProfileV1 | null;
     operations?: Readonly<Record<string, SessionAccessGrantOperationModel>>;
     confirmingRemoval?: string | null;
+    openedCredentialDisplayNames?: Readonly<Record<string, string | null>>;
+    openedGroupDisplayNames?: ReadonlyMap<string, string | null>;
 }>): Pick<SessionAccessEditorModel, 'owner' | 'viewerAccess' | 'grants' | 'accessMode' | 'readOnlyReason' | 'summary'> {
     const { snapshot } = input;
     const editable = snapshot.effectiveAccess.capabilities.manageAccess;
@@ -127,7 +136,8 @@ export function projectSessionAccessEditorSnapshot(input: Readonly<{
         const reason = transitions.reason ? presentSessionAccessReason(transitions.reason) : denied;
         return {
             grant: row.grant.subject,
-            principal: projectSessionAccessPrincipal(row.principal, { accountId: input.viewerAccountId, profile: input.viewerProfile }),
+            principal: projectSessionAccessPrincipal(row.principal, { accountId: input.viewerAccountId, profile: input.viewerProfile },
+                row.principal.kind === 'group' ? input.openedGroupDisplayNames?.get(row.principal.groupId) : undefined),
             level: editable && transitions.accessLevels.length > 0
                 ? {kind:'editable',value:row.grant.accessLevel,options:transitions.accessLevels}
                 : {kind:'locked',value:row.grant.accessLevel,reason},
@@ -145,6 +155,7 @@ export function projectSessionAccessEditorSnapshot(input: Readonly<{
                             teamId: row.grant.subject.kind === 'team' ? row.grant.subject.teamId : null,
                             policy: 'team_visibility_required',
                         },
+                        input.openedCredentialDisplayNames,
                     )}
                     : {kind:'allowed'})
                 : {kind:'blocked',reason},

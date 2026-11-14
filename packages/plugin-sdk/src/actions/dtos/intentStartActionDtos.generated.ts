@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type IntentStartActionInputById = {
     readonly "subagents.plan.start": {
@@ -489,8 +489,8 @@ export type IntentStartActionInputById = {
         reviewRunIds?: string[] | undefined;
     };
     readonly "review.explain_findings": {
-        cwd: string;
         expectedRevision: number;
+        cwd: string;
         resultId: string;
         findingIds: {
             runId: string;
@@ -561,6 +561,7 @@ export type IntentStartActionResultById = {
             failureCause?: undefined | {
                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                actionCause?: ActionFailureCauseV1 | undefined;
                 code?: string | undefined;
                 retryable?: boolean | undefined;
                 requestId?: string | undefined;

@@ -36,6 +36,7 @@ import { isMachineOperationSupportedForRequester, type MachineOperationRequester
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 import { classifyMachineAvailabilityState } from './machineStateGuards';
 import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
@@ -551,13 +552,19 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
         currentRequesterDisplayIdentities.push(...accounts.map(account => ({ accountId: account.id, displayName: resolveAccountDisplayLabelV1(account) ?? '' })));
     }
     const displayNames = new Map(currentRequesterDisplayIdentities?.map(account => [account.accountId, account.displayName]));
+    const projectGroupName = (source: typeof sources[number]) => source.principal.kind === 'group' && source.groupNameSerialized !== undefined
+        ? projectTeamGroupNameForRecipient({ serialized: source.groupNameSerialized, recipientAccountId: input.actorAccountId })
+        : undefined;
     const grants: MachineAccessGrantRowV1[] = [];
     if (canManage) for (const source of sources) {
         const accountIds = source.accountIds.filter(accountId => accountId !== row.accountId);
         const states = await Promise.all(accountIds.map(accountId => accessFromFactsInTx(tx, row, accountId, undefined,
             roles.get(row.id)?.get(accountId) ?? null)));
         const afterRemoval = projectMachineRoles(graph, source.accountIds, new Map([[row.id, sources.filter(candidate => candidate !== source)]]));
-        grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: { name: source.displayName },
+        const groupName = projectGroupName(source);
+        grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: {
+            name: source.displayName, ...(groupName ? { groupName } : {}),
+        },
             readiness: grantReadiness(states).readiness,
             audience: accountIds.map((accountId, index) => ({ accountId, displayName: displayNames.get(accountId) ?? '',
                 readiness: states[index]?.accessState ?? 'refused', reason: states[index]?.reason ?? (states[index] ? null : 'machine_unavailable'),
@@ -568,7 +575,10 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
         ...(access.accessState !== 'ready' && access.reason ? { reason: access.reason } : {}) },
         canManage, grants, ownDirectGrant: row.accountGrants.some(grant => grant.accountId === input.actorAccountId),
         ...(currentRequesterDisplayIdentities ? { currentRequesterDisplayIdentities } : {}),
-        ownAccessSources: sources.filter(source => source.accountIds.includes(input.actorAccountId)).map(source => ({ principal: source.principal, displayName: source.displayName })) };
+        ownAccessSources: sources.filter(source => source.accountIds.includes(input.actorAccountId)).map(source => {
+            const groupName = projectGroupName(source);
+            return { principal: source.principal, displayName: source.displayName, ...(groupName ? { groupName } : {}) };
+        }) };
 }
 
 async function managerInTx(tx: Tx, input: MachineActor, options: Readonly<{ requireCurrentKeyHolder?: boolean }> = {}) {

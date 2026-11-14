@@ -2,7 +2,8 @@ import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { AccountDirectoryMeResponseV1 } from '@happier-dev/protocol/auth/accountDirectory';
-import { createHomeCredentialDestinationDigestV1, type AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { createHomeCredentialDestinationDigestV1, type AccountDirectoryHomeEntryV1 as WireAccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { OpenedAccountDirectoryHomeEntryV1 as AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/openedAccountDirectoryHome';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -10,6 +11,14 @@ import { encryptBox } from '@/encryption/libsodium';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+
+/** Project the fixture's client-opened Home model at the Account Directory wire boundary. */
+export function toAccountDirectoryHomeWire(home: AccountDirectoryHomeEntryV1): WireAccountDirectoryHomeEntryV1 {
+    return {
+        ...home,
+        label: { content: { t: 'plain', v: home.label }, recipientEnvelope: null },
+    };
+}
 
 export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?: boolean }> = {}) {
     const homeRecoverySecret = new Uint8Array(32).fill(7);
@@ -39,7 +48,8 @@ export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?:
         mode: 'plain' as 'plain' | 'e2ee',
         directoryStatus: 200, loginAssertionStatus: 200, exchangeStatus: 200, exchangeError: 'invalid_request',
         me: {
-            v: 1 as const, accountId: 'account-directory', displayName: 'Ada Lovelace' as string | null, avatar: null as string | null,
+            v: 1 as const, accountId: 'account-directory', encryptionMode: 'plain' as const,
+            displayName: 'Ada Lovelace' as string | null, avatar: null as string | null,
             linkedAuthenticationMethods: [{ providerId: 'github', login: 'ada' as string | null }],
         } as AccountDirectoryMeResponseV1,
         calls: [] as Array<{ endpoint: string; path: string; init?: RequestInit }>,
@@ -61,11 +71,14 @@ export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?:
             actions: [{ kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed',
                 origin: 'home', presentation: { displayName: 'Account key' } }],
         } satisfies AuthEntryProjectionV1);
+        if (path === '/v1/account-directory/private-labels/recipient-census') return json({
+            contentEncryptionMode: state.mode, recipients: [],
+        });
         if (path === '/v1/account-directory/homes') return json(
-            state.directoryStatus === 200 ? { v: 1, homes: state.homes, preferredHomeServerIdentityId: state.preferredHomeServerIdentityId }
+            state.directoryStatus === 200 ? { v: 1, homes: state.homes.map(toAccountDirectoryHomeWire), preferredHomeServerIdentityId: state.preferredHomeServerIdentityId }
                 : { error: 'invalid_token' }, state.directoryStatus);
         if (path === '/v1/account-directory/me') return json(
-            state.directoryStatus === 200 ? state.me : { error: 'invalid_token' }, state.directoryStatus);
+            state.directoryStatus === 200 ? { ...state.me, encryptionMode: state.mode } : { error: 'invalid_token' }, state.directoryStatus);
         if (path.includes('/login-assertion')) {
             if (state.loginAssertionStatus !== 200) {
                 return json({ error: 'invalid_token' }, state.loginAssertionStatus);

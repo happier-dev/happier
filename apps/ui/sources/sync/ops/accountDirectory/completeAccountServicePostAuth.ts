@@ -1,4 +1,5 @@
-import type { AccountDirectoryErrorCodeV1, AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { AccountDirectoryErrorCodeV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { OpenedAccountDirectoryHomeEntryV1 as AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/openedAccountDirectoryHome';
 import {
     findAccountServiceDirectoryAdoptionFailure,
     resolveAccountServiceHomeTarget,

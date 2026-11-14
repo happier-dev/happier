@@ -2212,7 +2212,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         const actionId = 'teams.credentials.usage.export';
         const query = { resourceId: 'resource', startMs: 0, endMs: 1000, granularity: 'day', costMode: 'auto' };
         try {
-            const minted = await mint(actionId, proposal(actionId, { query, resourceName: 'Shared model' }));
+            const minted = await mint(actionId, proposal(actionId, { query }));
             expect(minted.statusCode).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
             const read = bindHomeDomainActionHttpRequestV1('teams.credentials.usage.query', query);

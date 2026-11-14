@@ -1,3 +1,4 @@
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from "fastify";
 import axios from 'axios';
@@ -2313,7 +2314,7 @@ describe("external Action execution authorization", () => {
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
             machineId, principal, level: 'admin' }));
         const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(),
-            label: 'Scoped setup', grant: { ...API_TOKEN_FULL_GRANT_V1,
+            label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Scoped setup'), grant: { ...API_TOKEN_FULL_GRANT_V1,
                 actions: { families: [], ids: [actionId] },
                 targets: { sessions: [], machines: [machineId] } } });
         const homeId = await getOrCreateServerIdentityId();
@@ -2902,7 +2903,7 @@ describe("external Action execution authorization", () => {
         const privateRows = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)
             || actionId === 'projects.inspect' || actionId === 'projects.worker.status';
         const actionToken = actionId === 'projects.worker.status' ? (await auth.createApiToken({ accountId: fixture.account.id,
-            tokenId: crypto.randomUUID(), label: 'Status only', grant: { ...API_TOKEN_FULL_GRANT_V1,
+            tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Status only'), grant: { ...API_TOKEN_FULL_GRANT_V1,
                 actions: { families: [], ids: [actionId] }, targets: { sessions: [], machines: [fixture.machine.id] } } })).token : token;
         const homeId = await getOrCreateServerIdentityId();
         const workspace = { serverId: homeId, workspaceId: 'accepted', machineId: fixture.machine.id, rootPath: '/workspace/project' };
@@ -3380,7 +3381,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: true });
         const actionId = 'teams.credentials.usage.export';
         const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(),
-            label: 'Usage export', grant: { ...API_TOKEN_FULL_GRANT_V1,
+            label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Usage export'), grant: { ...API_TOKEN_FULL_GRANT_V1,
                 actions: { families: [], ids: [actionId] }, targets: { sessions: [], machines: [fixture.machine.id] } } });
         const { app } = await createApp(fixture.team.id);
         const query = { resourceId: 'resource', startMs: 0, endMs: 1000, granularity: 'day', costMode: 'auto' };
@@ -5716,7 +5717,7 @@ describe("external Action execution authorization", () => {
         // The installed daemon derives plaintext operands; Home enforces the
         // captured credential's resource ceiling on each signed route operand.
         const scopedPat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(),
-            label: 'receiver Machine only', grant: { ...API_TOKEN_FULL_GRANT_V1,
+            label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'receiver Machine only'), grant: { ...API_TOKEN_FULL_GRANT_V1,
                 targets: { sessions: [], machines: [fixture.machine.id] } } });
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, registerSessionFollowRoutes);
         try {
@@ -8023,7 +8024,7 @@ describe("external Action execution authorization", () => {
                 const sourceAllowed = credential !== 'target-only';
                 const token = credential === 'account'
                     ? await auth.createToken(receiver.account.id, undefined, { kind: 'account', authority: 'present_user' })
-                    : (await auth.createApiToken({ accountId: receiver.account.id, tokenId: crypto.randomUUID(), label: 'sync-endpoint-scope',
+                    : (await auth.createApiToken({ accountId: receiver.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(receiver.account.id, 'sync-endpoint-scope'),
                         grant: credential === 'unrestricted' ? API_TOKEN_FULL_GRANT_V1 : { ...API_TOKEN_FULL_GRANT_V1,
                             targets: { machines: [receiver.machine.id, ...(sourceAllowed ? [source.id] : [])], sessions: [] } } })).token;
                 const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
@@ -8172,7 +8173,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
             modelId: 'allowed-model' }], permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'source-root-home-proof',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'source-root-home-proof'),
             grant: { ...API_TOKEN_FULL_GRANT_V1,
                 ...(scope === 'scoped' ? { actions: { families: [], ids: ['session.handoff'] } } : {}), ...callerInputConstraints } });
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -8421,7 +8422,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'allowed-model' }],
             permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'retained-target-release',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'retained-target-release'),
             grant: { ...API_TOKEN_FULL_GRANT_V1, ...callerInputConstraints } });
         const sourceCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const targetCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -8586,7 +8587,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'allowed-model' }],
             permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'ordinary-source-writer',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'ordinary-source-writer'),
             grant: { ...API_TOKEN_FULL_GRANT_V1, ...callerInputConstraints } });
         const sourceCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const targetCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -8696,7 +8697,7 @@ describe("external Action execution authorization", () => {
         }
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
             modelId: 'allowed-model' }], permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'source-writer-target',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'source-writer-target'),
             grant: { ...API_TOKEN_FULL_GRANT_V1,
                 ...(scope === 'scoped' ? { actions: { families: [], ids: ['session.handoff'] } } : {}), ...callerInputConstraints } });
         const sourceCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -8963,7 +8964,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
             modelId: 'allowed-model' }], permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'shared-target',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'shared-target'),
             grant: { ...API_TOKEN_FULL_GRANT_V1,
                 ...(scope === 'scoped' ? { actions: { families: [], ids: ['session.handoff'] } } : {}), ...callerInputConstraints } });
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -9097,7 +9098,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
             modelId: 'allowed-model' }], permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'source-scoped',
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'source-scoped'),
             grant: { ...API_TOKEN_FULL_GRANT_V1,
                 ...(scope === 'scoped' ? { actions: { families: [], ids: ['session.handoff'] } } : {}), ...callerInputConstraints } });
         const custodian = fixture.account;
@@ -10093,7 +10094,7 @@ describe("external Action execution authorization", () => {
                 const crossAccount = await issue(otherTerminal, { ...body, envelope: { ...envelope, input: { ...envelope.input, decision: 'cancel' } } });
                 expect(crossAccount.statusCode).not.toBe(200);
             }
-            const approvalPat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'explicit-reviewer',
+            const approvalPat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'explicit-reviewer'),
                 grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true, actions: { families: [], ids: [actionId] } } });
             const approvalPatIssued = await issue(approvalPat.token);
             expect(approvalPatIssued.statusCode).toBe(200);
@@ -11746,7 +11747,7 @@ describe("external Action execution authorization", () => {
         try {
             const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ["session.message.send" as const] },
                 targets: { sessions: [session.id], machines: [] }, approve: false, permissionModes: ["default" as const] };
-            const issued = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: "input", grant });
+            const issued = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, "input"), grant });
             const principal = (await auth.verifyTokenForRoute(issued.token))?.apiTokenPrincipal;
             if (!principal) throw new Error("Missing authenticated test principal");
             const target = { kind: "session" as const, sessionId: session.id };
@@ -11804,7 +11805,7 @@ describe("external Action execution authorization", () => {
         try {
             const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId, 'execution.run.get', 'execution.run.ensure'] },
                 targets: { sessions: sessions.map(session => session.id), machines: [fixture.machine.id] } };
-            const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'bounded-refine', grant });
+            const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'bounded-refine'), grant });
             const envelope = { ...fixture.envelope,
                 input: { cwd: '/repo', resultId: 'saved-A', expectedRevision: 0,
                     ...(actionId === 'scm.diffSummary.refine' ? { output: 'summary', instructions: 'Clarify' }
@@ -11881,7 +11882,7 @@ describe("external Action execution authorization", () => {
         await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id, data: 'key' } });
         const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.agent.transition' as const] },
             targets: { sessions: [session.id], machines: [fixture.machine.id] }, permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'transition', grant });
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'transition'), grant });
         const token = credential === 'account'
             ? await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' }) : pat.token;
         const { app } = await createApp(fixture.team.id);
@@ -11971,7 +11972,7 @@ describe("external Action execution authorization", () => {
             if (credential === 'api_token') {
                 const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.agent.transition' as const] },
                     targets: { sessions: [session.id], machines: [] } };
-                const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'exact-session', grant });
+                const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'exact-session'), grant });
                 const principal = (await auth.verifyTokenForRoute(pat.token))?.apiTokenPrincipal;
                 if (!principal) throw new Error('Missing authenticated test principal');
                 const exactEnvelope = { ...fixture.envelope, requestId: crypto.randomUUID(), target: rootTarget,
@@ -11987,7 +11988,7 @@ describe("external Action execution authorization", () => {
                 await auth.updateApiToken({ accountId: fixture.account.id, tokenId: pat.tokenId, grant: API_TOKEN_FULL_GRANT_V1 });
                 expect((await read(exact)).statusCode).toBe(401);
                 const machineGrant = { ...grant, targets: { sessions: [], machines: [fixture.machine.id] } };
-                const machinePat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'machine-scope', grant: machineGrant });
+                const machinePat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'machine-scope'), grant: machineGrant });
                 const machinePrincipal = (await auth.verifyTokenForRoute(machinePat.token))?.apiTokenPrincipal;
                 if (!machinePrincipal) throw new Error('Missing authenticated Machine-scoped principal');
                 const machineRoot = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: authorization.binding.serverIdentityId,
@@ -12121,7 +12122,7 @@ describe("external Action execution authorization", () => {
         try {
             const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.agent.transition' as const] },
                 targets: { sessions: [session.id], machines: [fixture.machine.id] }, permissionModes: ['default' as const] };
-            const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: 'fence', grant });
+            const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'fence'), grant });
             const originalToken = credential === 'account' ? await auth.createToken(fixture.account.id, undefined,
                 { kind: 'account', authority: 'present_user' }) : pat.token;
             if (!originalToken) throw new Error('Original caller credential unavailable');
@@ -13426,7 +13427,7 @@ describe("external Action execution authorization", () => {
             randomBytes: length => new Uint8Array(length).fill(19),
         });
         const parent = await auth.createApiToken({ accountId: fixture.account.id, tokenId,
-            label: 'Settings-built E2EE embed parent', grant, embedConfig, encryption: { access: encryptionAccess } });
+            label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Settings-built E2EE embed parent'), grant, embedConfig, encryption: { access: encryptionAccess } });
         const credential = formatAccountApiTokenCredentialV1({ bearer: parent.token, serverIdentityId,
             accountId: fixture.account.id, contentPublicKey: encodeBase64(contentPublicKey),
             wrappingSecret: Buffer.from(wrappingSecret).toString('base64url') });
@@ -13535,7 +13536,7 @@ describe("external Action execution authorization", () => {
             const parent = await auth.verifyPat(fixture.pat.token);
             if (!parent.ok) throw new Error('fixture credential was not verified');
             const childGrant = { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: ['S1'], machines: [] } };
-            const mintChild = () => auth.createChildApiToken({ principal: parent, tokenId: crypto.randomUUID(), label: 'Session',
+            const mintChild = async () => auth.createChildApiToken({ principal: parent, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Session'),
                 expiresAt: new Date(Date.now() + 60_000), grant: childGrant,
                 resolveSessionMachine: (sessionId) => resolveCurrentSessionMachineFromServer({
                     io, presence, accountId: fixture.account.id, sessionId,

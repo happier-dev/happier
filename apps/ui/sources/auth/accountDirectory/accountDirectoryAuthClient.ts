@@ -4,8 +4,12 @@ import {
     normalizeAccountDirectoryEndpoint,
     isTokenOnlyAuthCredentials,
     isLegacyAuthCredentials,
+    isDataKeyAuthCredentials,
+    readAccountE2eeCustody,
     TokenStorage,
     parseAccountContinuationIntent,
+    type AccountDirectoryCredentialRetention,
+    type AuthCredentials,
     type TokenOnlyAuthCredentials,
     type PendingAccountDirectoryAuth,
 } from '@/auth/storage/tokenStorage';
@@ -24,6 +28,7 @@ import { AccountDirectoryRequestError, isAccountDirectoryRelinkConflict } from '
 import { AccountDirectoryRouteErrorResponseV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { loginEmailPassword } from '@/auth/password/loginEmailPassword';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { isServerFeaturesProbeRetryable, probeServerFeaturesAtUrl, type ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { AccountDirectoryCapabilitiesSchema, type AccountDirectoryCapabilities } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import {
@@ -434,12 +439,32 @@ export async function acquireAccountServiceAuthTransport(target: Readonly<{ serv
 async function commitAccountDirectoryCredentials(
     target: Readonly<{ endpoint: string; serverIdentityId: string }>,
     credentials: TokenOnlyAuthCredentials,
+    retention?: AccountDirectoryCredentialRetention,
 ): Promise<TokenOnlyAuthCredentials> {
-    const stored = await TokenStorage.accountDirectoryAuthCredentials.set(target, credentials);
+    const stored = await TokenStorage.accountDirectoryAuthCredentials.set(target, credentials, retention);
     if (!stored) {
         throw new Error('Failed to persist Account Service credentials');
     }
     return credentials;
+}
+
+/**
+ * Directory transport stays token-only. When the authenticated source supplied
+ * Account material, retain only its canonical derived content key so captured
+ * Directory custody can open Account-scoped envelopes after restart.
+ */
+async function deriveAccountDirectoryCredentialRetention(
+    credentials: AuthCredentials,
+): Promise<AccountDirectoryCredentialRetention | undefined> {
+    if (!isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials)) return undefined;
+    const encryption = await createEncryptionFromAuthCredentials(credentials);
+    return {
+        retainedContentKey: {
+            publicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+            machineKey: encodeBase64(encryption.getContentPrivateKey(), 'base64'),
+            ...(readAccountE2eeCustody(credentials) === 'historical' ? { custody: 'historical' as const } : {}),
+        },
+    };
 }
 
 export const accountDirectoryAuthClient = {
@@ -554,16 +579,25 @@ export const accountDirectoryAuthClient = {
             throw new Error('Account Service returned non-Directory credentials');
         }
         input.signal?.throwIfAborted();
-        return await commitAccountDirectoryCredentials({ endpoint: endpointUrl, serverIdentityId: endpointServerIdentityId }, credentials);
+        const retention = await deriveAccountDirectoryCredentialRetention({
+            token: credentials.token,
+            secret: encodeBase64(input.secret, 'base64url'),
+        });
+        input.signal?.throwIfAborted();
+        return await commitAccountDirectoryCredentials(
+            { endpoint: endpointUrl, serverIdentityId: endpointServerIdentityId },
+            credentials,
+            retention,
+        );
     },
 
     /**
      * Email and password sign-in to an account service, through the one native password login
      * owner. The Account's stored mode decides the branch (the service's prelogin answer): a Plain
      * Account gets its Directory credential from the password route; an E2EE Account unlocks its
-     * key from the password envelope and redeems it at the Directory Key Challenge. Only the token
-     * enters Directory custody; an E2EE key is handed back for the session to hold, as key sign-in
-     * does, and never persisted here.
+     * key from the password envelope and redeems it at the Directory Key Challenge. Directory
+     * transport remains token-only; E2EE custody retains only the canonical derived content key,
+     * while the recovered secret remains transient session material.
      */
     async loginWithPassword(input: Readonly<{
         endpointUrl: string;
@@ -612,10 +646,12 @@ export const accountDirectoryAuthClient = {
             if (keyAuthSecret && keyAuthSecret.length !== 32) {
                 throw new HappyError('Password authentication failed', false, { kind: 'auth', code: 'authentication_failed' });
             }
+            const retention = await deriveAccountDirectoryCredentialRetention(credentials);
             input.signal?.throwIfAborted();
             const committed = await commitAccountDirectoryCredentials(
                 { endpoint: endpointUrl, serverIdentityId },
                 { token: credentials.token },
+                retention,
             );
             return { credentials: committed, keyAuthSecret };
         } catch (error) {

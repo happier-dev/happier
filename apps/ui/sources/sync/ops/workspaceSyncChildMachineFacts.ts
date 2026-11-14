@@ -1,8 +1,10 @@
 import { DevcontainerChildProjectionV1Schema } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { WorkspaceSyncChildMachineFacts, WorkspaceSyncChildMachineProjection } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actions/actionAccountContext';
+import { createManagedMachinePresetReadCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
 
 /** One admitted Machine census, with each demanded child's retained facts shared
  * by its projections. A later census always reads fresh facts. */
@@ -36,10 +38,20 @@ export async function readUiWorkspaceSyncChildMachineFacts(account: LazyActionAc
                 let pending = childFacts.get(machineId);
                 if (!pending) {
                     pending = (async () => {
-                        const managedMachine = await managed.execute('machines.managed.get', {
+                        const read = await managed.execute('machines.managed.get', {
                             homeId: account.serverId, managedId: child.projection.relation.managedMachineId,
                         }, { signal });
-                        if (!managedMachine.controller) throw new Error('Child controller is unavailable');
+                        const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
+                        let managedMachine: ManagedMachineV1 | undefined;
+                        try {
+                            const { openManagedMachineReadSnapshotsAtCustody } = await import(
+                                '@/sync/ops/machines/machinePresetCollectionClient',
+                            );
+                            [managedMachine] = await openManagedMachineReadSnapshotsAtCustody([read], custody);
+                        } finally {
+                            await custody?.dispose();
+                        }
+                        if (!managedMachine?.controller) throw new Error('Child controller is unavailable');
                         return { ...child, installationId, managedMachine,
                             controller: { ...managedMachine.controller, available: false } };
                     })();

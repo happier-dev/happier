@@ -4,21 +4,46 @@ import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/acc
 import axios from '@/api/client/credentialAxios';
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
-  type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { ManagedGetInputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MachinePoolListOutputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+  type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1,
+  type MachineReferencePoolListV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { ManagedGetInputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
+  unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachinePoolListOutputV1Schema, type MachinePoolListOutputV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import type { listAutomationDefinitions } from '@/api/automations';
 import type { createCliProfileStore, createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import type { readSettings } from '@/persistence';
+import type { readSettings, StoredCredentials } from '@/persistence';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateViews } from '@/api/privateLabels';
 
 async function readDeploymentReferencePage(serverUrl: string, input: MachineDeploymentReferencesInputV1,
   headers: ReturnType<typeof buildCurrentAccountStoredContentCompatibilityHttpHeaders> & Readonly<{ Authorization: string }>,
   signal?: AbortSignal): Promise<MachineDeploymentReferencesPageV1> {
   const response = await axios.get(`${serverUrl}/v1/deployments/machine-references`, { headers, signal, params: input });
   return MachineDeploymentReferencesPageV1Schema.parse(response.data);
+}
+
+/** The reference census accepts only locally opened Pool names, never the wire projection. */
+export function openCliMachineReferencePoolList(input: Readonly<{
+  raw: MachinePoolListOutputV1;
+  credentials: StoredCredentials;
+  accountContentEncryptionMode: 'plain' | 'e2ee';
+}>): MachineReferencePoolListV1 | null {
+  const requiresAccountKey = input.raw.pools.some(({ pool }) => [pool.name, pool.description]
+    .some((projection) => projection !== null && projection.kind === 'available'
+      && projection.label.content.t === 'encrypted'));
+  const accountKey = requiresAccountKey ? deriveCliPrivateLabelAccountKey(input.credentials.encryption) : null;
+  try {
+    return openCliMachinePoolPrivateViews({
+      views: input.raw.pools,
+      accountContentEncryptionMode: input.accountContentEncryptionMode,
+      ...(accountKey ? { accountKey } : {}),
+    });
+  } finally {
+    accountKey?.fill(0);
+  }
 }
 
 /** Exact requester role read, independent of managed-allocation/artifact/profile setup. */
@@ -59,11 +84,11 @@ export function createCliManagedMachineReferences(
     return await runWithServerHttpBaseUrl(machineReferenceServerUrl, async () => {
       const [{ buildCurrentAccountStoredContentCompatibilityHttpHeaders }, { listAutomationDefinitions }] = await Promise.all([import("@/api/clientCompatibility/cliClientCompatibility"), import("@/api/automations")]);
       const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials!.token}` };
-      let machine: ReturnType<typeof ManagedGetOutputV1Schema.parse>;
+      let machine: ReturnType<typeof unwrapManagedMachineReadV1>;
       try {
         const response = await axios.post(`${machineReferenceServerUrl}${managedMachineActionEndpointPathV1('machines.managed.get')}`,
           ManagedGetInputV1Schema.parse({ homeId: input.homeId, managedId: input.managedId }), { headers, signal });
-        machine = ManagedGetOutputV1Schema.parse(response.data);
+        machine = unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(response.data));
         if (machine.homeId !== input.homeId || machine.id !== input.managedId) return unavailable('target');
       } catch { return unavailable('target'); }
       let profileStore: ReturnType<typeof createCliProfileStore> | undefined;
@@ -93,9 +118,22 @@ export function createCliManagedMachineReferences(
           if (!profileStore) throw new Error('profile_catalog_unavailable');
           return await profileStore.readProfileCatalog();
         },
-        readPools: async () => {
+        readPools: async (): Promise<MachineReferencePoolListV1> => {
           const response = await axios.post(`${machineReferenceServerUrl}${machinePoolActionEndpointPathV1('machines.pools.list')}`, {}, { headers, signal });
-          return MachinePoolListOutputV1Schema.parse(response.data);
+          const raw = MachinePoolListOutputV1Schema.parse(response.data);
+          const currentness = await fetchAccountEncryptionCurrentness({
+            credentials: params.credentials!,
+            token: params.credentials!.token,
+            serverBaseUrl: machineReferenceServerUrl,
+            signal,
+          });
+          const opened = openCliMachineReferencePoolList({
+            raw,
+            credentials: params.credentials!,
+            accountContentEncryptionMode: currentness.mode,
+          });
+          if (!opened) throw new Error('machine_pool_private_label_unavailable');
+          return opened;
         },
         readAssignments: cursor => listAutomationDefinitions({ token: params.credentials!.token, ...(cursor ? { cursor } : {}) }),
         readDeployments: selection => readDeploymentReferencePage(machineReferenceServerUrl, selection, headers, signal),

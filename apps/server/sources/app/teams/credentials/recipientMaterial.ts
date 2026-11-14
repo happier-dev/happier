@@ -1,3 +1,5 @@
+import type { TeamCredentialActionOperationConsumerV1 } from '@happier-dev/protocol/teams/credentials/actionOperationV1';
+import { admitTeamCredentialActionDeclarationInTx } from './actionDeclarationAdmission';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1, parseTeamCredentialDirectMaterialStoredV1, parseTeamCredentialSourceVersionV1, type TeamCredentialDirectMaterialUseV1, type TeamCredentialDirectMaterialStoredV1, type TeamCredentialDirectMaterialMineResponseV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { type TeamCredentialPreparationOutputV1 } from '@happier-dev/protocol/teams/credentials/actionsV1';
@@ -20,6 +22,7 @@ import {
 } from "./resourceSourceResolver";
 import { matchesTeamCredentialRecipientBinding } from "./recipientMaterialCurrentness";
 import { recordTeamCredentialDirectDeliveryActivityInTx } from "./resourceActivity";
+import { readTeamCredentialResourceDisplayNameStored } from './privateLabels';
 import { admitTeamCredentialOperationBindingInTx } from "./sessionBinding";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
@@ -573,7 +576,9 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             | { kind: "session"; sessionId: string }
             | { kind: "execution_run"; executionRunId: string; parentSessionId: string | null }
             | { kind: "platform_operation"; operationId: string }
+            | TeamCredentialActionOperationConsumerV1
         >;
+        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
         sessionAuthentication: SessionAccessAuthentication;
         authentication: TeamOperationAuthenticationContext;
     }>,
@@ -612,8 +617,8 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
         consumer: input.consumer.kind === "session"
             ? input.consumer
-            : input.consumer.kind === "platform_operation"
-                ? { kind: "platform_operation", resourceId: input.resourceId }
+            : input.consumer.kind !== "execution_run"
+                ? { kind: input.consumer.kind, resourceId: input.resourceId }
                 : { kind: "execution_run", parentSessionId: input.consumer.parentSessionId, resourceId: input.resourceId },
         accountId: input.recipientAccountId,
         slot: input.slot,
@@ -622,6 +627,16 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     });
     if (!admitted.ok || admitted.binding.resourceId !== input.resourceId) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "access_removed" as const };
+    }
+    if (input.consumer.kind === 'action_operation') {
+        if (!input.actionAdmission) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
+        const declaration = await admitTeamCredentialActionDeclarationInTx(tx, {
+            accountId: input.recipientAccountId, machineId: input.actionAdmission.machineId,
+            rootActionId: input.actionAdmission.rootActionId, pluginVersion: input.consumer.pluginVersion,
+            consumer: input.consumer, source: admitted.sourceBinding,
+            admittedReviewedChildActionId: input.actionAdmission.admittedReviewedChildActionId,
+        });
+        if (!declaration.ok) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
     }
     if (admitted.binding.resourceRevision !== resource.revision) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };
@@ -668,15 +683,17 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             reason: material.reason === "recipient_mode_mismatch" ? "recipient_binding_changed" as const : material.reason,
         };
     }
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (!displayName) return { ok: false as const, outcome: "unavailable" as const, reason: "resource_corrupt" as const };
     await recordTeamCredentialDirectDeliveryActivityInTx(tx, {
         teamId: resource.teamId,
         resourceId: input.resourceId,
         recipientAccountId: input.recipientAccountId,
-        subjectDisplayName: resource.displayName,
+        subjectDisplayName: displayName,
     });
     return {
         ok: true as const,
-        admittedResource: { displayName: resource.displayName, teamId: resource.teamId },
+        admittedResource: { teamId: resource.teamId },
         resourceId: material.resourceId,
         resourceRevision: resource.revision,
         sourceMemberKey: material.sourceMemberKey,

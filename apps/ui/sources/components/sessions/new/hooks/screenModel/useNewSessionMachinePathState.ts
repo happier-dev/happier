@@ -1,3 +1,4 @@
+import { readManagedMachineSelectionReceipt } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import * as React from 'react';
 import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type {
@@ -364,7 +365,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const managedPlacementPreset = effectivePlacement?.kind === 'preset' && !matchingReviewedPreset
         ? effectivePlacement : null;
     const controllerSnapshot = useServerScopedLaunchMachine(params.serverId,
-        liveInventory ? managedMachineSelectionState?.receipt.controller?.machineId ?? '' : '');
+        liveInventory ? readManagedMachineSelectionReceipt(managedMachineSelectionState)?.controller?.machineId ?? '' : '');
     const resolveArchiveChoiceAvailability = React.useCallback((draft: ManagedMachineSelectionDraft) => {
         const pair = draft.receipt.controller;
         return resolveManagedMachineArchiveChoiceAvailability({ draft,
@@ -374,15 +375,9 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const managedMachineArchiveChoiceAvailability = React.useMemo(() => managedMachineSelectionState
         ? resolveArchiveChoiceAvailability(managedMachineSelectionState) : null,
     [controllerSnapshot, managedMachineSelectionState, resolveArchiveChoiceAvailability]);
-    // A foreign controller cannot host this Account's automatic rule. The paid
-    // recipe stays usable and Keep leaves manual power/delete authority intact.
-    const reviewedManagedMachineSelection = effectivePlacement
+    // Shared controllers carry the offered archive effect (110ac0acf7c); no Keep clamp applies.
+    const managedMachineSelection = effectivePlacement
         && placementDecision.source !== 'explicit' && !matchingReviewedPreset ? null : managedMachineSelectionState;
-    const managedMachineSelection = React.useMemo(() => reviewedManagedMachineSelection
-        && reviewedManagedMachineSelection.archiveEffect !== 'keep'
-        && managedMachineArchiveChoiceAvailability?.reason === 'shared_unsupported'
-        ? { ...reviewedManagedMachineSelection, archiveEffect: 'keep' as const } : reviewedManagedMachineSelection,
-    [reviewedManagedMachineSelection, managedMachineArchiveChoiceAvailability]);
     const managedSelectionServerRef = React.useRef(params.serverId);
     const selectedMachineId = executionTarget?.kind === 'machine' ? executionTarget.target.machineId : null;
     // Machine ids, folders and catalogs are Home-scoped. Keep the qualified target while its Home's inputs are unavailable.
@@ -485,7 +480,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const hasUserEditedPathRef = React.useRef(Boolean(params.isBot && normalizePathParam(params.persistedPath)
         && formatPathRelativeToHome(normalizePathParam(params.persistedPath),
             readMachines().find(machine => machine.id === (initialPlacement.machineId
-                ?? managedMachineSelection?.receipt.controller?.machineId))?.metadata?.homeDir) !== '~'));
+                ?? readManagedMachineSelectionReceipt(managedMachineSelection)?.controller?.machineId))?.metadata?.homeDir) !== '~'));
     // A not-yet-resolved default must observe the first history arrival. Once a
     // folder is committed, later history is read only when another is chosen.
     const unresolvedPlacementHistory = useNewSessionPlacementSessions(

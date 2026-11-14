@@ -4,7 +4,9 @@ import tweetnacl from "tweetnacl";
 import { encodeBase64 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { plainPrivateLabel, prepareE2eePrivateLabelForAccount } from "@/testkit/privateLabelFixture";
 import {
     getOrCreateServerIdentityId,
     initializeServerIdentityCache,
@@ -93,7 +95,9 @@ describe("Account Directory same-service Home bootstrap (integration)", () => {
         const serverIdentityId = await getOrCreateServerIdentityId(process.env);
         const signing = accountDirectorySigningKeyMetadata(process.env);
         const account = await db.account.create({
-            data: { publicKey: "same-service-bootstrap-fresh-account" },
+            // A new E2EE Account has no client content key yet. Bootstrap must
+            // remain keyless and leave the user-owned label absent.
+            data: { publicKey: "same-service-bootstrap-fresh-account", encryptionMode: "e2ee" },
             select: { id: true },
         });
 
@@ -110,6 +114,10 @@ describe("Account Directory same-service Home bootstrap (integration)", () => {
         const entry = entries[0]!;
         expect(entry.homeServerIdentityId).toBe(serverIdentityId);
         expect(entry.canonicalServerUrl).toBe("https://cloud.example.test");
+        expect(entry.label).toBe("");
+        await expect(listAccountHomeDirectory(account.id)).resolves.toMatchObject({
+            homes: [expect.objectContaining({ homeServerIdentityId: serverIdentityId, label: null })],
+        });
         const currentDescriptor = await readCurrentHomeDescriptor();
         expect(currentDescriptor).toBeDefined();
         expect(entry.connectionDescriptor).toEqual(currentDescriptor);
@@ -155,13 +163,13 @@ describe("Account Directory same-service Home bootstrap (integration)", () => {
     it("preserves an explicit self-Home label across repeated ensure and a newer descriptor", async () => {
         const serverIdentityId = await getOrCreateServerIdentityId(process.env);
         const account = await db.account.create({
-            data: { publicKey: "same-service-bootstrap-repeat-account" },
+            data: { publicKey: "same-service-bootstrap-repeat-account", encryptionMode: "plain" },
             select: { id: true },
         });
         await upsertAccountHomeDirectoryEntry({
             accountId: account.id,
             homeServerIdentityId: "srv_other_home_account",
-            label: "Other Home",
+            label: plainPrivateLabel("Other Home"),
             connectionDescriptor: {
                 v: 1,
                 homeServerIdentityId: "srv_other_home_account",
@@ -180,7 +188,7 @@ describe("Account Directory same-service Home bootstrap (integration)", () => {
         await upsertAccountHomeDirectoryEntry({
             accountId: account.id,
             homeServerIdentityId: serverIdentityId,
-            label: renamedLabel,
+            label: plainPrivateLabel(renamedLabel),
             connectionDescriptor: selfHome!.connectionDescriptor,
         });
 
@@ -203,10 +211,79 @@ describe("Account Directory same-service Home bootstrap (integration)", () => {
         expect(directory.homes).toHaveLength(2);
         expect(directory.homes.find((home) => home.homeServerIdentityId === serverIdentityId))
             .toMatchObject({
-                label: renamedLabel,
+                label: { content: { t: "plain", v: renamedLabel }, recipientEnvelope: null },
                 connectionDescriptor: { revision: higherRevision },
             });
         expect(await db.accountDirectoryLink.count({ where: { accountId: account.id } })).toBe(1);
+    });
+
+    it("stores structurally valid plain Home labels without reading their client-owned text", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "same-service-home-opaque-plain-label", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const homeServerIdentityId = "srv_opaque_plain_label";
+        // The UI validates a person's label before sealing it. The server only
+        // owns the stored-envelope, persisted-mode, and recipient checks.
+        const label = plainPrivateLabel("   ");
+        await upsertAccountHomeDirectoryEntry({
+            accountId: account.id,
+            homeServerIdentityId,
+            label,
+            connectionDescriptor: {
+                v: 1,
+                homeServerIdentityId,
+                canonicalServerUrl: "https://opaque-plain.example.test",
+                revision: 1,
+                endpoints: [{ kind: "https", url: "https://opaque-plain.example.test" }],
+            },
+        });
+
+        await expect(db.accountHomeDirectoryEntry.findUniqueOrThrow({
+            where: { accountId_homeServerIdentityId: { accountId: account.id, homeServerIdentityId } },
+            select: { label: true },
+        })).resolves.toEqual({ label: JSON.stringify(label) });
+        await expect(listAccountHomeDirectory(account.id)).resolves.toMatchObject({
+            homes: [expect.objectContaining({
+                homeServerIdentityId,
+                label: { content: label.content, recipientEnvelope: null },
+            })],
+        });
+    });
+
+    it("stores an intentional E2EE Home label opaque and returns only this Account's envelope", async () => {
+        const account = await db.account.create({
+            data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const homeServerIdentityId = "srv_e2ee_labeled_home";
+        const label = await prepareE2eePrivateLabelForAccount(account.id, {
+            entity: "account_directory_home",
+            field: "label",
+            id: homeServerIdentityId,
+        }, "Private Home");
+        await upsertAccountHomeDirectoryEntry({
+            accountId: account.id,
+            homeServerIdentityId,
+            label,
+            connectionDescriptor: {
+                v: 1,
+                homeServerIdentityId,
+                canonicalServerUrl: "https://private.example.test",
+                revision: 1,
+                endpoints: [{ kind: "https", url: "https://private.example.test" }],
+            },
+        });
+
+        const stored = await db.accountHomeDirectoryEntry.findUniqueOrThrow({
+            where: { accountId_homeServerIdentityId: { accountId: account.id, homeServerIdentityId } },
+            select: { label: true },
+        });
+        expect(stored.label).not.toContain("Private Home");
+        const home = (await listAccountHomeDirectory(account.id)).homes.find((entry) =>
+            entry.homeServerIdentityId === homeServerIdentityId);
+        expect(home?.label).toMatchObject({ content: { t: "encrypted" }, recipientEnvelope: expect.any(Object) });
+        expect(home?.label).not.toHaveProperty("recipients");
     });
 
     it("creates no trust rows when the server publishes no Home descriptor (Account-Service-only runtime)", async () => {

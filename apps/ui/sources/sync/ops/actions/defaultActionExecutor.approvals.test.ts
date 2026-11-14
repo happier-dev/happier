@@ -1018,10 +1018,12 @@ describe('createDefaultActionExecutor approvals', () => {
     it.each([
         { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' }, currentInventory: 'none' },
         { actionId: 'teams.credentials.externalKeys.create', input: {
-            resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CLI key',
+            resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId: '123e4567-e89b-42d3-a456-426614174000',
+            label: { content: { t: 'plain', v: 'CLI key' }, recipients: [] },
         }, currentInventory: 'current' },
         { actionId: 'teams.credentials.externalKeys.create', input: {
-            resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CLI key',
+            resourceId: 'resource-1', teamMembershipId: 'membership-1', keyId: '123e4567-e89b-42d3-a456-426614174000',
+            label: { content: { t: 'plain', v: 'CLI key' }, recipients: [] },
         }, currentInventory: 'failed-refresh' },
     ] as const)('returns blocking $actionId approval to the live originating daemon ($currentInventory inventory)', async ({ actionId, input, currentInventory }) => {
         const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');

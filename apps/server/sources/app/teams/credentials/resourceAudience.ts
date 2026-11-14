@@ -9,12 +9,13 @@ import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { resolveTeamMembershipContextsInTx } from "../memberships/effectiveMembership";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { publishTeamChangedInTx } from "../teamChanges";
-import { recordTeamCredentialActivityInTx, type TeamCredentialActivityActor } from "./resourceActivity";
+import { recordTeamCredentialResourceActivityInTx, type TeamCredentialActivityActor } from "./resourceActivity";
 import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacementForSaveInTx } from "./brokerPlacementResolver";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { retainEntitledTeamCredentialRecipientMaterialInTx } from "./recipientMaterial";
 import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
 import { advanceBrokerJobRevisionsForMembershipInTx } from './brokerJobWithdrawal';
+import { readTeamCredentialResourceDisplayNameStored } from './privateLabels';
 
 export type TeamCredentialAudienceInput = Readonly<{
     resourceId: string;
@@ -128,12 +129,14 @@ export async function revokeTeamCredentialAudienceForMembershipInTx(
         },
     });
     for (const resource of affectedResources.values()) {
-        await recordTeamCredentialActivityInTx(tx, {
+        const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+        if (displayName === null) continue;
+        await recordTeamCredentialResourceActivityInTx(tx, {
             teamId: input.teamId,
             resourceId: resource.id,
             kind: "audience_changed",
             actor: input.actor,
-            subjectDisplayName: resource.displayName,
+            subjectDisplayName: displayName,
         });
     }
 }
@@ -172,6 +175,8 @@ export async function setTeamCredentialAudienceInTx(
     await recheckAdmission();
     const resource = await tx.teamCredentialResource.findUnique({ where: { id: input.resourceId } });
     if (!resource) return { ok: false, error: "resource_not_found" };
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (displayName === null) return { ok: false, error: 'resource_corrupt' };
     if (resource.custodianAccountId !== resourceIdentity.custodianAccountId) {
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
@@ -283,9 +288,9 @@ export async function setTeamCredentialAudienceInTx(
     // audience edit, so the published source versions are unchanged too and a
     // retained recipient keeps working while the custodian is offline.
     await retainEntitledTeamCredentialRecipientMaterialInTx(tx, { resourceId: resource.id });
-    await recordTeamCredentialActivityInTx(tx, {
+    await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId, resourceId: resource.id, kind: "audience_changed",
-        actor: { kind: "account", accountId: params.actorAccountId }, subjectDisplayName: resource.displayName,
+        actor: { kind: "account", accountId: params.actorAccountId }, subjectDisplayName: displayName,
     });
     await publishTeamChangedInTx(tx, { teamId: resource.teamId, additionalAccountIds: [resource.custodianAccountId] });
     return { ok: true, resourceId: resource.id, revision: resource.revision + 1 };

@@ -297,6 +297,10 @@ function annotateMySqlTeamFields(schemaBody: string): string {
             (model) => model.replace(/^([ \t]*description\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
         )
         .replace(
+            /^model\s+TeamGroup\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model.replace(/^([ \t]*name\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+        )
+        .replace(
             /^model\s+TeamCredentialResource\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model
                 // Resource ids are caller-supplied by the V1 contract up to 256 characters.
@@ -797,7 +801,7 @@ function annotateMySqlQualifiedConnectedAccountFields(schemaBody: string): strin
 function annotateMySqlAccountApiTokenFields(schemaBody: string): string {
     return schemaBody.replace(
         /^model\s+AccountApiToken\s+\{[\s\S]*?^\}\s*$/gm,
-        (model) => model.replace(/^\s*(label\s+String)(?![^\n]*@db\.)/m, "    $1 @db.VarChar(256)"),
+        (model) => model.replace(/^\s*(label\s+String)(?![^\n]*@db\.)/m, "    $1 @db.LongText"),
     );
 }
 
@@ -805,10 +809,9 @@ function annotateMySqlAccountDirectoryFields(schemaBody: string): string {
     return schemaBody
         .replace(
             /^model\s+AccountHomeDirectoryEntry\s+\{[\s\S]*?^\}\s*$/gm,
-            (model) => model.replace(
-                /^(\s*canonicalServerUrl\s+String)(?![^\n]*@db\.)/m,
-                "$1 @db.VarChar(512)",
-            ),
+            (model) => model
+                .replace(/^(\s*canonicalServerUrl\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(512)")
+                .replace(/^(\s*label\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
         )
         .replace(
             /^model\s+AccountDirectoryLink\s+\{[\s\S]*?^\}\s*$/gm,

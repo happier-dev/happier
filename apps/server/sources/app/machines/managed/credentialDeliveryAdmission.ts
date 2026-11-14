@@ -1,3 +1,4 @@
+import { isStoredOpaquePresetMachine } from './managedMachineProjection';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { inTx, type Tx } from '@/storage/inTx';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -41,6 +42,9 @@ export async function readManagedNativeCredentialTargetInTx(tx: Tx, input: Reado
         archivedAt: null, allocation: 'bound', creationState: 'active',
     } });
     if (!machine || !machine.resource || machine.desired === 'delete') return null;
+    // A preset's credential declaration is private content. This server-side
+    // native-delivery owner cannot qualify it without opening that envelope.
+    if (isStoredOpaquePresetMachine(machine)) return null;
     // Native credential apply is a controller daemon effect; an Account-controlled
     // row has no controller and therefore no native delivery target.
     const controller = readManagedController(machine);

@@ -26,7 +26,9 @@ import { retireIrohHomeTransportDiagnostics } from '@/sync/runtime/irohHomeTrans
 import { withHomeMutationAuthority, type HomeMutationAuthority } from '@/sync/domains/server/homeMutationLock';
 import { digest } from '@/platform/digest';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import type { AccountE2eeCustody } from '@happier-dev/sync-client';
+import { Encryption } from '@/sync/encryption/encryption';
+import { admitReportedAccountMode, type AccountE2eeCustody } from '@happier-dev/sync-client';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import {
     readDeviceLocalStorageString,
     removeDeviceLocalStorageString,
@@ -871,6 +873,22 @@ export type AuthCredentials =
     | LegacyAuthCredentials
     | DataKeyAuthCredentials;
 
+/**
+ * The derived Account content-key pair retained by Account Directory custody.
+ * It is distinct from both the Directory bearer and the Home credential shape:
+ * Directory transport remains token-only and Account mode remains server-owned.
+ */
+export type AccountDirectoryRetainedContentKey = Readonly<{
+    publicKey: string;
+    machineKey: string;
+    /** Explicit predecessor material may follow the canonical historical-mode rule. */
+    custody?: 'historical';
+}>;
+
+export type AccountDirectoryCredentialRetention = Readonly<{
+    retainedContentKey?: AccountDirectoryRetainedContentKey;
+}>;
+
 const CredentialStringSchema = z.string().check(z.minLength(1), z.refine((value) => value.trim() === value));
 const AuthCredentialsSchema = z.pipe(z.strictObject({
     token: CredentialStringSchema,
@@ -1160,8 +1178,39 @@ type StoredAccountDirectoryCredentialRecord = Readonly<{
     endpoint: string;
     serverIdentityId: string;
     credentials: TokenOnlyAuthCredentials;
+    retainedContentKey?: AccountDirectoryRetainedContentKey;
     updatedAt: number;
 }>;
+
+function parseAccountDirectoryRetainedContentKey(value: unknown): AccountDirectoryRetainedContentKey | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (!isNonEmptyString(record.publicKey) || !isNonEmptyString(record.machineKey)) return null;
+    if (record.custody !== undefined && record.custody !== 'historical') return null;
+    try {
+        const publicKey = decodeBase64(record.publicKey, 'base64');
+        const machineKey = decodeBase64(record.machineKey, 'base64');
+        if (publicKey.length !== 32 || machineKey.length !== 32) return null;
+        const derivedPublicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+        if (!derivedPublicKey.every((value, index) => value === publicKey[index])) return null;
+        return {
+            publicKey: record.publicKey,
+            machineKey: record.machineKey,
+            ...(record.custody === 'historical' ? { custody: 'historical' as const } : {}),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function parseAccountDirectoryCredentialRetention(value: unknown): AccountDirectoryCredentialRetention | null {
+    if (value === undefined) return {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (!Object.hasOwn(record, 'retainedContentKey')) return {};
+    const retainedContentKey = parseAccountDirectoryRetainedContentKey(record.retainedContentKey);
+    return retainedContentKey ? { retainedContentKey } : null;
+}
 
 function isStoredAccountDirectoryCredentialRecord(
     value: unknown,
@@ -1186,7 +1235,10 @@ function isStoredAccountDirectoryCredentialRecord(
     if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return false;
     // Unknown stored fields are projected away below. Home material is a known
     // conflicting credential shape, not an additive Account-service field.
-    return !Object.hasOwn(credentials, 'secret') && !Object.hasOwn(credentials, 'encryption');
+    return !Object.hasOwn(credentials, 'secret')
+        && !Object.hasOwn(credentials, 'encryption')
+        && (!Object.hasOwn(row, 'retainedContentKey')
+            || parseAccountDirectoryRetainedContentKey(row.retainedContentKey) !== null);
 }
 
 function parseStoredAccountDirectoryCredentialRecords(value: unknown): StoredAccountDirectoryCredentialRecord[] | null {
@@ -1199,10 +1251,15 @@ function parseStoredAccountDirectoryCredentialRecords(value: unknown): StoredAcc
         const identity = normalizeAccountDirectoryIdentity(row.serverIdentityId);
         const credentials = row.credentials as Record<string, unknown>;
         if (!endpoint || !identity || !isNonEmptyString(credentials.token)) return null;
+        const retainedContentKey = Object.hasOwn(row, 'retainedContentKey')
+            ? parseAccountDirectoryRetainedContentKey(row.retainedContentKey)
+            : undefined;
+        if (Object.hasOwn(row, 'retainedContentKey') && !retainedContentKey) return null;
         records.push({
             endpoint,
             serverIdentityId: identity,
             credentials: { token: credentials.token },
+            ...(retainedContentKey ? { retainedContentKey } : {}),
             updatedAt: Number(row.updatedAt),
         });
     }
@@ -1215,6 +1272,24 @@ function accountDirectoryCredentialRecordMatchesTarget(
 ): boolean {
     return record.endpoint === target.endpoint
         && record.serverIdentityId === target.serverIdentityId;
+}
+
+function areAccountDirectoryCredentialCustodyRecordsEqual(
+    left: StoredAccountDirectoryCredentialRecord | undefined | null,
+    right: StoredAccountDirectoryCredentialRecord | undefined | null,
+): boolean {
+    if (!left || !right) return left === right;
+    return left.credentials.token === right.credentials.token
+        && left.retainedContentKey?.publicKey === right.retainedContentKey?.publicKey
+        && left.retainedContentKey?.machineKey === right.retainedContentKey?.machineKey
+        && left.retainedContentKey?.custody === right.retainedContentKey?.custody;
+}
+
+function readAccountDirectoryE2eeCustody(
+    record: StoredAccountDirectoryCredentialRecord | null,
+): AccountE2eeCustody {
+    if (!record?.retainedContentKey) return 'absent';
+    return record.retainedContentKey.custody === 'historical' ? 'historical' : 'active';
 }
 
 type PendingAccountDirectoryAuthStoredRecord = NormalizedPendingAccountDirectoryAuth;
@@ -1877,10 +1952,10 @@ async function writeAccountDirectoryCredentialRecords(
         for (const custody of accountDirectoryCredentialCustodies.values()) {
             if (custody.scope !== scope) continue;
             const before = previous.kind === 'valid'
-                ? previous.value.find((record) => accountDirectoryCredentialRecordMatchesTarget(record, custody.target))?.credentials.token
+                ? previous.value.find((record) => accountDirectoryCredentialRecordMatchesTarget(record, custody.target))
                 : undefined;
-            const after = records.find((record) => accountDirectoryCredentialRecordMatchesTarget(record, custody.target))?.credentials.token;
-            if (before !== after) custody.revision += 1;
+            const after = records.find((record) => accountDirectoryCredentialRecordMatchesTarget(record, custody.target));
+            if (!areAccountDirectoryCredentialCustodyRecordsEqual(before, after)) custody.revision += 1;
         }
         emitAccountDirectoryCredentialMutation();
         return true;
@@ -2276,9 +2351,9 @@ function parseDirectoryTokenCredentials(value: unknown): TokenOnlyAuthCredential
     return parsed && isTokenOnlyAuthCredentials(parsed) ? parsed : null;
 }
 
-async function getAccountDirectoryCredentialsForTarget(
+async function getAccountDirectoryCredentialRecordForTarget(
     target: AccountDirectoryCredentialTarget,
-): Promise<AccountDirectoryStorageReadResult<TokenOnlyAuthCredentials>> {
+): Promise<AccountDirectoryStorageReadResult<StoredAccountDirectoryCredentialRecord>> {
     const normalized = normalizeAccountDirectoryTarget(target);
     if (!normalized) return { kind: 'absent' };
     const read = await readAccountDirectoryCredentialRecords();
@@ -2288,8 +2363,16 @@ async function getAccountDirectoryCredentialsForTarget(
         .sort((left, right) => right.updatedAt - left.updatedAt);
     const record = matches[0];
     return record
-        ? { kind: 'valid', value: { token: record.credentials.token } }
+        ? { kind: 'valid', value: record }
         : { kind: 'absent' };
+}
+
+async function getAccountDirectoryCredentialsForTarget(
+    target: AccountDirectoryCredentialTarget,
+): Promise<AccountDirectoryStorageReadResult<TokenOnlyAuthCredentials>> {
+    const record = await getAccountDirectoryCredentialRecordForTarget(target);
+    if (record.kind === 'valid') return { kind: 'valid', value: { token: record.value.credentials.token } };
+    return record.kind === 'absent' ? record : { kind: record.kind };
 }
 
 async function commitAccountDirectoryOAuthCredentialValue(input: Readonly<{
@@ -2358,10 +2441,12 @@ async function commitAccountDirectoryOAuthCredentialValue(input: Readonly<{
 async function setAccountDirectoryCredentialsForTarget(
     target: AccountDirectoryCredentialTarget,
     credentials: TokenOnlyAuthCredentials,
+    retention?: AccountDirectoryCredentialRetention,
 ): Promise<boolean> {
     const normalized = normalizeAccountDirectoryTarget(target);
     const parsedCredentials = parseDirectoryTokenCredentials(credentials);
-    if (!normalized || !parsedCredentials) return false;
+    const parsedRetention = parseAccountDirectoryCredentialRetention(retention);
+    if (!normalized || !parsedCredentials || !parsedRetention) return false;
 
     return await serializeAccountDirectoryStorageMutation(async () => {
         const read = await readAccountDirectoryCredentialRecords();
@@ -2374,6 +2459,7 @@ async function setAccountDirectoryCredentialsForTarget(
             endpoint: normalized.endpoint,
             serverIdentityId: normalized.serverIdentityId,
             credentials: parsedCredentials,
+            ...(parsedRetention.retainedContentKey ? { retainedContentKey: parsedRetention.retainedContentKey } : {}),
             updatedAt: Date.now(),
         });
         next.sort((left, right) => right.updatedAt - left.updatedAt);
@@ -2514,7 +2600,7 @@ async function clearPendingAccountDirectoryAuthValue(
 async function logoutAccountDirectoryTarget(
     target: AccountDirectoryCredentialTarget,
     isCurrent?: () => boolean,
-    expectedToken?: string | null,
+    expectedRecord?: StoredAccountDirectoryCredentialRecord | null,
 ): Promise<boolean> {
     const normalized = normalizeAccountDirectoryTarget(target);
     if (!normalized) return false;
@@ -2531,11 +2617,11 @@ async function logoutAccountDirectoryTarget(
             || pendingRead.kind === 'unavailable'
         ) return false;
         const credentials = credentialRead.kind === 'valid' ? credentialRead.value : [];
-        if (expectedToken !== undefined) {
-            const currentToken = credentials.find(
+        if (expectedRecord !== undefined) {
+            const currentRecord = credentials.find(
                 (record) => accountDirectoryCredentialRecordMatchesTarget(record, normalized),
-            )?.credentials.token ?? null;
-            if (currentToken !== expectedToken) return false;
+            ) ?? null;
+            if (!areAccountDirectoryCredentialCustodyRecordsEqual(currentRecord, expectedRecord)) return false;
         }
         const pending = pendingRead.kind === 'valid' ? pendingRead.value : [];
         const nextCredentials = credentials.filter(
@@ -2555,9 +2641,10 @@ async function logoutAccountDirectoryTarget(
     });
 }
 
-// The local revision makes same-runtime invalidation immediate; the persisted-token
+// The local revision makes same-runtime invalidation immediate; the persisted-record
 // comparison below extends the same custody contract across browser tabs. This is not
-// an Account identity source: removing or changing the captured bearer invalidates old work.
+// an Account identity source: removing or changing the captured bearer or content key
+// invalidates old work.
 const accountDirectoryCredentialCustodies = new Map<string, {
     scope: string;
     target: AccountDirectoryCredentialTarget;
@@ -2567,13 +2654,19 @@ const accountDirectoryCredentialCustodies = new Map<string, {
 export type AccountDirectoryCredentialCustody = Readonly<{
     isCurrent: () => boolean;
     read: () => Promise<TokenOnlyAuthCredentials | null>;
+    /** The Directory client supplies its captured authenticated `/me` mode reader. */
+    resolveContentEncryptionMode: (
+        readReportedMode: (signal?: AbortSignal) => Promise<'plain' | 'e2ee' | null>,
+        signal?: AbortSignal,
+    ) => Promise<'plain' | 'e2ee' | null>;
+    decryptEncryptionKey?: (encryptedDataKey: string, signal?: AbortSignal) => Promise<Uint8Array | null>;
     issue: <T>(request: () => Promise<T>) => Promise<T>;
     logout: () => Promise<boolean>;
 }>;
 
 function createAccountDirectoryCredentialCustody(
     normalized: AccountDirectoryCredentialTarget,
-    credentialRead: Promise<AccountDirectoryStorageReadResult<TokenOnlyAuthCredentials>>,
+    credentialRead: Promise<AccountDirectoryStorageReadResult<StoredAccountDirectoryCredentialRecord>>,
 ): AccountDirectoryCredentialCustody {
     const scope = getAccountDirectoryStorageKey(ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY);
     const key = JSON.stringify([scope, normalized.endpoint, normalized.serverIdentityId]);
@@ -2586,11 +2679,51 @@ function createAccountDirectoryCredentialCustody(
     const revision = captured.revision;
     const isCurrent = () => captured.revision === revision
         && scope === getAccountDirectoryStorageKey(ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY);
-    const readCapturedCredentials = async (): Promise<TokenOnlyAuthCredentials | null> => {
+    const readCapturedRecord = async (): Promise<StoredAccountDirectoryCredentialRecord | null> => {
         const result = await credentialRead;
         if (result.kind === 'valid') return result.value;
         if (result.kind === 'absent') return null;
         throw new AccountDirectoryStorageReadError(result.kind);
+    };
+    const readCapturedCredentials = async (): Promise<TokenOnlyAuthCredentials | null> => {
+        const record = await readCapturedRecord();
+        return record ? { token: record.credentials.token } : null;
+    };
+    const decryptEncryptionKey = async (
+        encryptedDataKey: string,
+        signal?: AbortSignal,
+    ): Promise<Uint8Array | null> => {
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        const record = await readCapturedRecord();
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        const retainedContentKey = record?.retainedContentKey;
+        if (!retainedContentKey) return null;
+        const encryption = await Encryption.createFromContentKeyPair({
+            publicKey: decodeBase64(retainedContentKey.publicKey, 'base64'),
+            machineKey: decodeBase64(retainedContentKey.machineKey, 'base64'),
+        });
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        return await encryption.decryptEncryptionKey(encryptedDataKey, {
+            signal,
+            shouldContinue: isCurrent,
+        });
+    };
+    const resolveContentEncryptionMode = async (
+        readReportedMode: (signal?: AbortSignal) => Promise<'plain' | 'e2ee' | null>,
+        signal?: AbortSignal,
+    ): Promise<'plain' | 'e2ee' | null> => {
+        throwIfAborted(signal);
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        const record = await readCapturedRecord();
+        throwIfAborted(signal);
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        const reported = await readReportedMode(signal);
+        throwIfAborted(signal);
+        if (!isCurrent()) throw new Error('Account Service credential custody superseded');
+        return reported === null ? null : admitReportedAccountMode({
+            reported,
+            custody: readAccountDirectoryE2eeCustody(record),
+        });
     };
     return {
         isCurrent,
@@ -2601,15 +2734,15 @@ function createAccountDirectoryCredentialCustody(
             return credentials;
         },
         async issue<T>(request: () => Promise<T>): Promise<T> {
-            const capturedCredentials = await readCapturedCredentials();
+            const capturedRecord = await readCapturedRecord();
             const admission = await serializeAccountDirectoryStorageMutation(async () => {
                 if (!isCurrent()) throw new Error('Account Service credential custody superseded');
-                const current = await getAccountDirectoryCredentialsForTarget(normalized);
+                const current = await getAccountDirectoryCredentialRecordForTarget(normalized);
                 if (current.kind === 'corrupt' || current.kind === 'unavailable') {
                     throw new AccountDirectoryStorageReadError(current.kind);
                 }
-                const currentToken = current.kind === 'valid' ? current.value.token : null;
-                if (currentToken !== (capturedCredentials?.token ?? null)) {
+                const currentRecord = current.kind === 'valid' ? current.value : null;
+                if (!areAccountDirectoryCredentialCustodyRecordsEqual(currentRecord, capturedRecord)) {
                     throw new Error('Account Service credential custody superseded');
                 }
                 // Start the transport while the storage lock is still held, but
@@ -2618,10 +2751,12 @@ function createAccountDirectoryCredentialCustody(
             });
             return await admission.issued;
         },
+        resolveContentEncryptionMode,
+        decryptEncryptionKey,
         logout: async () => await logoutAccountDirectoryTarget(
             normalized,
             isCurrent,
-            (await readCapturedCredentials())?.token ?? null,
+            await readCapturedRecord(),
         ),
     };
 }
@@ -2636,7 +2771,7 @@ export function captureAccountDirectoryCredentialCustody(
     return createAccountDirectoryCredentialCustody(
         normalized,
         serializeAccountDirectoryStorageMutation(
-            async () => await getAccountDirectoryCredentialsForTarget(normalized),
+            async () => await getAccountDirectoryCredentialRecordForTarget(normalized),
         ),
     );
 }
@@ -2719,7 +2854,7 @@ async function claimAccountDirectoryOAuthReturnValue(
             return null;
         }
         const [credentialRead, pendingRead] = await Promise.all([
-            getAccountDirectoryCredentialsForTarget(target),
+            getAccountDirectoryCredentialRecordForTarget(target),
             readPendingAccountDirectoryAuthRecords(),
         ]);
         const pending = pendingRead.kind === 'valid' ? pendingRead.value : [];
@@ -2727,7 +2862,7 @@ async function claimAccountDirectoryOAuthReturnValue(
             && pendingRead.kind !== 'corrupt'
             && pendingRead.kind !== 'unavailable'
             && !pending.some((record) => pendingAccountDirectoryAuthMatchesTarget(record, target))
-            && await digestAccountDirectoryCredentialToken(credentialRead.value.token) === returnCustody.credentialTokenDigest;
+            && await digestAccountDirectoryCredentialToken(credentialRead.value.credentials.token) === returnCustody.credentialTokenDigest;
         if (!valid || credentialRead.kind !== 'valid') {
             clearAccountDirectoryOAuthReturnCustody();
             return null;
@@ -2744,7 +2879,11 @@ async function claimAccountDirectoryOAuthReturnValue(
 export interface AccountDirectoryAuthCredentialsFacade {
     read(target: AccountDirectoryCredentialTarget): Promise<AccountDirectoryStorageReadResult<TokenOnlyAuthCredentials>>;
     get(target: AccountDirectoryCredentialTarget): Promise<TokenOnlyAuthCredentials | null>;
-    set(target: AccountDirectoryCredentialTarget, credentials: TokenOnlyAuthCredentials): Promise<boolean>;
+    set(
+        target: AccountDirectoryCredentialTarget,
+        credentials: TokenOnlyAuthCredentials,
+        retention?: AccountDirectoryCredentialRetention,
+    ): Promise<boolean>;
     remove(target: AccountDirectoryCredentialTarget): Promise<boolean>;
     clear(): Promise<boolean>;
     logout(target: AccountDirectoryCredentialTarget): Promise<boolean>;
@@ -2769,10 +2908,12 @@ export const accountDirectoryAuthCredentials: AccountDirectoryAuthCredentialsFac
     async set(
         target: AccountDirectoryCredentialTarget,
         credentials: TokenOnlyAuthCredentials,
+        retention?: AccountDirectoryCredentialRetention,
     ): Promise<boolean> {
         return await setAccountDirectoryCredentialsForTarget(
             target,
             credentials,
+            retention,
         );
     },
 

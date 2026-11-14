@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-    AccountApiTokensCreateActionInputV1Schema,
-} from "@happier-dev/protocol";
-
 import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
 const serverRoot = join(import.meta.dirname, "..");
@@ -751,39 +747,19 @@ model AutomationWorkerClaimReceipt {
         expect(receiptModel).not.toMatch(/^\s*claimResultJson\s+String\s*$/m);
     });
 
-    it("keeps Account API token label storage compatible with the public 256-character contract", () => {
-        const atPublicLimit = "a".repeat(256);
-        const tokenId = "08f82e18-c13d-4aae-a211-ab5907a5c269";
-        for (const length of [191, 192, atPublicLimit.length]) {
-            expect(AccountApiTokensCreateActionInputV1Schema.safeParse({ tokenId, label: "a".repeat(length) }).success).toBe(true);
+    it("uses LongText for encrypted Account and Team labels in generated MySQL schema", () => {
+        const postgres = readFileSync(join(import.meta.dirname, "../prisma/schema.prisma"), "utf8");
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        const model = (name: string) => new RegExp(`^model\\s+${name}\\s+\\{[\\s\\S]*?^\\}\\s*$`, "m")
+            .exec(mysql)?.[0] ?? "";
+
+        for (const [name, field] of [
+            ["AccountApiToken", "label"],
+            ["AccountHomeDirectoryEntry", "label"],
+            ["TeamGroup", "name"],
+        ] as const) {
+            expect(model(name)).toMatch(new RegExp(`^\\s*${field}\\s+String\\s+@db\\.LongText\\s*$`, "m"));
         }
-        expect(AccountApiTokensCreateActionInputV1Schema.safeParse({ tokenId, label: `${atPublicLimit}a` }).success).toBe(false);
-
-        const postgresMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
-            "utf8",
-        );
-        const sqliteMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/sqlite/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
-            "utf8",
-        );
-        const mysqlMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/mysql/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
-            "utf8",
-        );
-        const postgresSchema = readFileSync(join(import.meta.dirname, "../prisma/schema.prisma"), "utf8");
-        const sqliteSchema = readFileSync(join(import.meta.dirname, "../prisma/sqlite/schema.prisma"), "utf8");
-        const mysqlSchema = readFileSync(join(import.meta.dirname, "../prisma/mysql/schema.prisma"), "utf8");
-        const accountApiTokenModel = (schema: string) => /^model\s+AccountApiToken\s+\{[\s\S]*?^\}\s*$/m.exec(schema)?.[0];
-
-        // PostgreSQL and SQLite TEXT have no narrower provider limit; MySQL must
-        // explicitly opt out of Prisma's VARCHAR(191) default at this public boundary.
-        expect(postgresMigration).toContain('"label" TEXT NOT NULL');
-        expect(sqliteMigration).toContain('"label" TEXT NOT NULL');
-        expect(mysqlMigration).toContain("`label` VARCHAR(256) NOT NULL");
-        expect(accountApiTokenModel(postgresSchema)).toMatch(/^\s*label\s+String\s*$/m);
-        expect(accountApiTokenModel(sqliteSchema)).toMatch(/^\s*label\s+String\s*$/m);
-        expect(accountApiTokenModel(mysqlSchema)).toMatch(/^\s*label\s+String\s+@db\.VarChar\(256\)\s*$/m);
     });
 
     it("keeps directory lifecycle and accepted field bounds equivalent on MySQL", () => {

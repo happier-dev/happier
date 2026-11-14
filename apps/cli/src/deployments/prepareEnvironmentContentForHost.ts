@@ -1,8 +1,9 @@
 import axios from '@/api/client/credentialAxios';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
     omitDeploymentEnvironmentPrivateContentPatchV1, applyEnvironmentSecretBindingsPatchV1,
-    EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol';
+    } from '@happier-dev/protocol';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -122,7 +123,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 if (bindingPatch?.set.some(binding => binding.source.kind === 'secret' && binding.source.ref === 'person_selects'))
                     return { ok: false, errorCode: 'client_required', error: 'client_required' };
                 const desiredBindings = bindingPatch ? applyEnvironmentSecretBindingsPatchV1(previous.content.bindings,
-                    { set: bindingPatch.set.map(binding => EnvironmentSecretBindingV1Schema.parse(binding)), remove: bindingPatch.remove })
+                    { set: bindingPatch.set, remove: bindingPatch.remove }, randomUUID)
                     : previous.content.bindings;
                 if (bindingPatch) {
                     if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };

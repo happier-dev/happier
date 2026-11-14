@@ -100,6 +100,8 @@ export const AutomationPluginEventTriggerProjectionSchema = lazyZodSchema(() => 
   ...AutomationPluginEventTriggerSchema.shape,
   sourceStatus: z.nullable(AutomationEventSourceStatusV1Schema),
   sourceCatalogStatus: z.nullable(AutomationEventSourceCatalogStatusSchema),
+  /** Optional list carrier for an observation-only Automation's private display. */
+  triggerDefinitionEnvelope: z.optional(z.string().check(z.minLength(1))),
 })));
 
 export const AutomationSessionLifecycleTriggerStatusSchema = lazyZodSchema(() => z.discriminatedUnion('state', [

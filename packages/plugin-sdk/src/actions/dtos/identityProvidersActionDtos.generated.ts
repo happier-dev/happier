@@ -636,7 +636,25 @@ export type IdentityProvidersActionResultById = {
             };
             mappedGroups: {
                 id: string;
-                name: string;
+                name: {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
             }[];
         };
     };

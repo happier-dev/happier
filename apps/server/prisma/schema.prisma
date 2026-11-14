@@ -635,7 +635,6 @@ model TeamGroup {
     id               String   @id @default(cuid())
     teamId           String
     name             String
-    nameKey          String
     description      String?
     archivedAt       DateTime?
     createdAt        DateTime @default(now())
@@ -648,7 +647,6 @@ model TeamGroup {
     savedSecretGroupGrants SavedSecretGroupGrant[]
 
     @@unique([id, teamId])
-    @@unique([teamId, nameKey])
 }
 
 // Team-owned credential references and consent; source material remains at its existing owner.

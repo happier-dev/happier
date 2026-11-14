@@ -838,7 +838,6 @@ export function registerTeamCredentialResourceRoutes(
                 teamId: selection.teamId,
                 cursor: selection.cursor,
                 limit: selection.limit,
-                search: selection.search,
                 filter: selection.filter,
                 actorAccountId: request.userId,
                 authentication,

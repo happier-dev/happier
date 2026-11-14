@@ -6,6 +6,14 @@ import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/au
 import { listAutomationDefinitions } from '@/api/automations';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { AutomationDefinitionListResponse } from '@happier-dev/protocol';
+import {
+  sameAutomationAccountContentIdentityV1,
+  type AvailableAutomationAccountEncryptionV1,
+} from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import {
+  hasPrivateAutomationDefinitionDisplayCarrierV1,
+  readAutomationDefinitionDisplayV1,
+} from '@happier-dev/protocol/automations/automationDefinitionDisplayReaderV1';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { assertCommandArguments, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
@@ -14,6 +22,7 @@ import { readCredentials, readStoredCredentialsForServerId, type StoredCredentia
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createCliAutomationEncryptionResolver } from '@/session/actions/workflowTriggers';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { fail } from '@happier-dev/cli-common/output';
 
@@ -27,6 +36,8 @@ type AutomationCommandDeps = Readonly<{
   createExecutorFn: (params: Parameters<typeof createCliActionExecutorFromCredentials>[0]) =>
     Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'> |
     Promise<Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>>;
+  /** The existing credential/currentness owner; tests may substitute its HTTP boundary. */
+  resolveAutomationEncryptionFn?: (credentials: StoredCredentials) => Promise<AvailableAutomationAccountEncryptionV1>;
 }>;
 
 const DEFAULT_DEPS: AutomationCommandDeps = {
@@ -34,6 +45,7 @@ const DEFAULT_DEPS: AutomationCommandDeps = {
   listAutomationDefinitionsFn: listAutomationDefinitions,
   createExecutorFn: async (params) => (await import('@/session/actions/createCliActionExecutorFromCredentials'))
     .createCliActionExecutorFromCredentials(params),
+  resolveAutomationEncryptionFn: credentials => createCliAutomationEncryptionResolver({ credentials })(),
 };
 
 
@@ -90,6 +102,28 @@ function parseRunArgs(args: readonly string[]): Readonly<{
   return { automationId: positionals[0], idempotencyKey };
 }
 
+async function materializeAutomationListDisplays(
+  result: AutomationDefinitionListResponse,
+  resolveEncryption: (credentials: StoredCredentials) => Promise<AvailableAutomationAccountEncryptionV1>,
+  credentials: StoredCredentials,
+): Promise<AutomationDefinitionListResponse> {
+  if (!result.automations.some(hasPrivateAutomationDefinitionDisplayCarrierV1)) return result;
+  const opened = await resolveEncryption(credentials);
+  const automations = result.automations.map(automation => {
+    if (!hasPrivateAutomationDefinitionDisplayCarrierV1(automation)) return automation;
+    const display = readAutomationDefinitionDisplayV1({ definition: automation, encryption: opened });
+    if (display.kind !== 'available') {
+      throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
+    }
+    return { ...automation, name: display.display.name, description: display.display.description };
+  });
+  const current = await resolveEncryption(credentials);
+  if (!sameAutomationAccountContentIdentityV1(opened.witness, current.witness)) {
+    throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
+  }
+  return { ...result, automations };
+}
+
 export async function handleAutomationCommand(
   args: string[],
   deps: AutomationCommandDeps = DEFAULT_DEPS,
@@ -111,10 +145,12 @@ export async function handleAutomationCommand(
       (error as Error & { code?: string }).code = 'not_authenticated';
       throw error;
     }
-    const result = await deps.listAutomationDefinitionsFn({
+    const listed = await deps.listAutomationDefinitionsFn({
       token: credentials.token,
       ...(parsed.cursor !== null ? { cursor: parsed.cursor } : {}),
     });
+    const result = await materializeAutomationListDisplays(listed,
+      deps.resolveAutomationEncryptionFn ?? DEFAULT_DEPS.resolveAutomationEncryptionFn!, credentials);
     if (wantsJson(args)) {
       await printJsonEnvelope({ ok: true, kind: 'automation_list', data: result });
       return;

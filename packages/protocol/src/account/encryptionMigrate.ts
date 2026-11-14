@@ -107,6 +107,8 @@ import {
 } from '../automations/automationTemplateEnvelope.js';
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/accountSettingsStoredContentEnvelope.js';
 import { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema, type AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from './settings/savedSecretResourceActionsV1.js';
+import { AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema, type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 } from '../machines/managed/managedMachinePresetV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -709,6 +711,8 @@ function refineAccountEncryptionMigrateRequest(
     connectedConfigurations?: AccountEncryptionMigrateConnectedConfigurationsDirectiveV1;
     connectedPurposes?: AccountEncryptionMigrateConnectedPurposesDirectiveV1;
     savedSecretResources?: AccountEncryptionMigrateSavedSecretResourcesDirectiveV1;
+    managedMachinePresets?: AccountEncryptionMigrateManagedMachinePresetsDirectiveV1;
+    privateLabels?: AccountEncryptionMigratePrivateLabelsDirectiveV1;
     reviewComments?: {
       action: string;
       items?: Array<{
@@ -807,6 +811,31 @@ function refineAccountEncryptionMigrateRequest(
     request.savedSecretResources?.items.forEach((item, index) => {
       if (item.storedContent.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
         path: ['savedSecretResources', 'items', index, 'storedContent'], message: 'Saved Secret reseal must match the target Account mode' });
+    });
+    request.managedMachinePresets?.presets.forEach((item, index) => {
+      if (item.replacement.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: ['managedMachinePresets', 'presets', index, 'replacement', 'content'], message: 'Managed Preset replacement must match the target Account mode' });
+    });
+    request.managedMachinePresets?.snapshots.forEach((item, index) => {
+      if (item.replacement.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: ['managedMachinePresets', 'snapshots', index, 'replacement', 'content'], message: 'Managed Preset retained snapshot replacement must match the target Account mode' });
+    });
+    const privateLabelSourceEnvelopeKind = targetEnvelopeKind === 'plain' ? 'encrypted' : 'plain';
+    request.privateLabels?.items.forEach((item, index) => {
+      if (item.expectedLabel.content.t !== privateLabelSourceEnvelopeKind) {
+        context.addIssue({
+          code: 'custom',
+          path: ['privateLabels', 'items', index, 'expectedLabel', 'content'],
+          message: 'Private-label source projection must match the source Account mode',
+        });
+      }
+      if (item.label.content.t !== targetEnvelopeKind) {
+        context.addIssue({
+          code: 'custom',
+          path: ['privateLabels', 'items', index, 'label', 'content'],
+          message: 'Private-label replacement must match the target Account mode',
+        });
+      }
     });
     if (request.artifacts?.action === 'migrate' && request.artifacts.items) {
       request.artifacts.items.forEach((item, index) => item.blobs.forEach((blob, blobIndex) => {
@@ -1622,6 +1651,59 @@ export const AccountEncryptionMigrateSettingsHistoryDirectiveSchema = lazyZodSch
 })));
 export type AccountEncryptionMigrateSettingsHistoryDirective = z.infer<typeof AccountEncryptionMigrateSettingsHistoryDirectiveSchema>;
 
+/**
+ * Exact replacement of one Account-owned label during an Account mode
+ * transition. The expected reader projection binds the source row without
+ * disclosing additional recipient envelopes in the signed request.
+ */
+export const AccountEncryptionMigratePrivateLabelItemV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    entity: z.literal('account_api_token'),
+    field: z.literal('label'),
+    id: z.string().check(z.minLength(1), z.trim()),
+    expectedLabel: PrivateLabelReadV1Schema,
+    label: PrivateLabelStoredV1Schema,
+  }),
+  z.strictObject({
+    entity: z.literal('account_directory_home'),
+    field: z.literal('label'),
+    id: z.string().check(z.minLength(1), z.trim()),
+    expectedLabel: PrivateLabelReadV1Schema,
+    label: PrivateLabelStoredV1Schema,
+  }),
+  z.strictObject({
+    entity: z.literal('machine_pool'),
+    field: z.union([z.literal('name'), z.literal('description')]),
+    id: z.string().check(z.minLength(1), z.trim()),
+    expectedLabel: PrivateLabelReadV1Schema,
+    label: PrivateLabelStoredV1Schema,
+  }),
+]));
+export type AccountEncryptionMigratePrivateLabelItemV1 = Readonly<z.infer<
+  typeof AccountEncryptionMigratePrivateLabelItemV1Schema
+>>;
+
+/** Complete Account-private-label conversion inventory for one atomic mode transition. */
+export const AccountEncryptionMigratePrivateLabelsDirectiveV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(AccountEncryptionMigratePrivateLabelItemV1Schema),
+}).check(z.superRefine((value, context) => {
+  const identities = new Set<string>();
+  value.items.forEach((item, index) => {
+    const identity = `${item.entity}:${item.field}:${item.id}`;
+    if (identities.has(identity)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['items', index],
+        message: 'Account migration cannot replace the same private label twice',
+      });
+    }
+    identities.add(identity);
+  });
+})));
+export type AccountEncryptionMigratePrivateLabelsDirectiveV1 = Readonly<z.infer<
+  typeof AccountEncryptionMigratePrivateLabelsDirectiveV1Schema
+>>;
+
 export const AccountEncryptionMigrateSettingsHistoryInventoryPageSchema = lazyZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     version: NonNegativeSafeIntegerSchema,
@@ -1671,6 +1753,8 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   connectedConfigurations: zMini.optional(AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema),
   connectedPurposes: zMini.optional(AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema),
   savedSecretResources: zMini.optional(AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema),
+  managedMachinePresets: zMini.optional(AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema),
+  privateLabels: zMini.optional(AccountEncryptionMigratePrivateLabelsDirectiveV1Schema),
   profileRows: zMini.optional(AccountEncryptionMigrateProfileRowsDirectiveSchema),
   workspaceExecutionConfig: z.optional(AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema),
   projectRows: z.optional(AccountEncryptionMigrateProjectRowsDirectiveSchema),

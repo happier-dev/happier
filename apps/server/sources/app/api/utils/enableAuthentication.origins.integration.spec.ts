@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { auth } from "@/app/auth/auth";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 import { enableAuthentication } from "./enableAuthentication";
 
@@ -40,7 +41,7 @@ describe("API-token HTTP origin admission", () => {
         const input = {
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: "Origin admission",
+            label: await preparePlainAccountApiTokenLabel(account.id, "Origin admission"),
             grant: {
                 v: 1 as const,
                 actions: null,

@@ -5,10 +5,13 @@ import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
 import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { DeploymentDeploySemanticInputV1Schema } from '../deployments/deploymentDeployIntentV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
 
 const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().check(z.iso.datetime({ offset: true }), z.maxLength(64)));
 const AccountApiTokenDisplayPrefixV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^hap_v1_[0-9a-f]{8}$/u)));
+/** The client-owned plaintext input bound before an Account label is sealed. */
+export const AccountApiTokenLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN =
   /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/u;
 export const AccountApiTokenBearerV1Schema = lazyZodSchema(() => z.string().check(z.regex(ACCOUNT_API_TOKEN_BEARER_V1_PATTERN)));
@@ -57,7 +60,7 @@ export type AccountApiTokenCreateEncryptionV1 = z.infer<typeof AccountApiTokenCr
 /** A non-secret, Account-scoped token projection suitable for Settings lists. */
 export const AccountApiTokenSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: AccountApiTokenIdV1Schema,
-  label: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  label: PrivateLabelReadV1Schema,
   displayPrefix: AccountApiTokenDisplayPrefixV1Schema,
   createdAt: AccountApiTokenInstantV1Schema,
   lastUsedAt: z.nullable(AccountApiTokenInstantV1Schema),
@@ -81,7 +84,7 @@ export type AccountApiTokenDeploymentInputV1 = z.infer<typeof AccountApiTokenDep
 /** The Account is derived from verified credential provenance, never this input. */
 export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: ApiTokenUuidV4Schema,
-  label: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  label: PrivateLabelStoredV1Schema,
   expiresAt: z.optional(z.nullable(AccountApiTokenInstantV1Schema)),
   encryption: z.optional(AccountApiTokenCreateEncryptionV1Schema),
   authorizeUnattendedTeamAccess: z.optional(z.boolean()),
@@ -95,7 +98,7 @@ export const AccountApiTokensUpdateActionInputV1Schema = lazyZodSchema(() => z.s
   tokenId: AccountApiTokenIdV1Schema,
   /** Refreshes this token's evidence from the authenticated present person, never input evidence. */
   authorizeUnattendedTeamAccess: z.optional(z.literal(true)),
-  label: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+  label: z.optional(PrivateLabelStoredV1Schema),
   grant: z.optional(ApiTokenGrantV1Schema),
   embedConfig: z.optional(z.nullable(EmbedConfigV1Schema)),
   deployment: z.optional(z.nullable(AccountApiTokenDeploymentInputV1Schema)),
@@ -110,7 +113,7 @@ export type AccountApiTokensUpdateActionOutputV1 = z.infer<typeof AccountApiToke
 
 export const AccountApiTokenChildCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: ApiTokenUuidV4Schema,
-  label: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  label: PrivateLabelStoredV1Schema,
   expiresAt: AccountApiTokenInstantV1Schema,
   grant: ApiTokenGrantV1Schema,
   requireCreatedByChildTokenId: z.optional(AccountApiTokenIdV1Schema),
@@ -253,6 +256,8 @@ export const AccountApiTokensServerErrorV1Schema = lazyZodSchema(() => z.strictO
     'api_token_required', 'api_token_id_conflict',
     'api_token_encryption_unavailable', 'api_token_encryption_stale',
     'api_token_encryption_not_ready',
+    'api_token_label_invalid', 'api_token_label_mode_mismatch',
+    'api_token_label_recipient_envelope_rejected',
     'api_token_child_forbidden', 'api_token_child_invalid',
     'credential_scope_denied', 'credential_origin_denied', 'model_not_granted',
     'credential_authentication_evidence_limit',

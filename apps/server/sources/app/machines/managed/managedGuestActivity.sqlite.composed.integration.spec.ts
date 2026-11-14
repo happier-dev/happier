@@ -36,6 +36,7 @@ import { currentAccountStoredContentCompatibilityHeaders, qualifyCurrentAccountS
 import type { Fastify as ServerFastify } from '@/app/api/types';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { encrypt, decrypt } from '../../../../../cli/src/api/encryption';
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('external after-idle retained guest authority (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -100,7 +101,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             request: { action: actionId, requestId, input: controlInput } } } } });
         const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] },
             targets: { sessions: [], machines: [controller.id] } };
-        const pat = kind === 'pat' ? await auth.createApiToken({ accountId: requester.id, tokenId: randomUUID(), label: 'Managed effect', grant }) : null;
+        const pat = kind === 'pat' ? await auth.createApiToken({ accountId: requester.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(requester.id, 'Managed effect'), grant }) : null;
         const actor = accountExecutor ? owner : requester;
         const signer = accountExecutor === 'guest' ? guest : controller;
         const signerKeys = accountExecutor === 'guest' ? guestKeys : keys;

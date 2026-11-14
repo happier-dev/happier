@@ -11,7 +11,6 @@ import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createPrepareSessionCreationAuthorization, createReviewedSecondOpinionSessionCreationAuthorization } from '@/api/externalActionExecutionAuthorization';
-import type { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { resolveCliPromptStackSystemAppendBlocks } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { AgentStartRefusalV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
@@ -517,9 +516,14 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         return { type: 'error', code: 'target_unavailable', retryable: false };
       }
       if (managedCreation) {
+        // The retained resource is a private preset fact. A public read may
+        // establish placement but cannot prove this Session may use it.
+        if (!params.credentials) {
+          return { type: 'error', code: 'target_unavailable', retryable: false };
+        }
         try {
-          const { readManagedMachine } = await import("@/machines/managed/readManagedMachine");
-          const retained = await readManagedMachine({ credentials: params.credentials,
+          const { readManagedMachineFull } = await import("@/machines/managed/readManagedMachine");
+          const retained = await readManagedMachineFull({ credentials: params.credentials,
             serverHttpBaseUrl: machineReferenceServerUrl, homeId: managedCreation.homeId,
             managedId: managedCreation.managedId, signal,
             ...(context?.externalActionExecutionAuthorization

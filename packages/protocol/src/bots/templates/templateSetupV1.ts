@@ -150,7 +150,8 @@ export function projectBotTemplateSoftwareFactsV1(needs: BotTemplateContentV1['n
       step.packages?.flatMap(pkg => pkg.present && pkg.version ? [pkg.version] : []) ?? []))] };
     if (recipe) return { key: need.key, status: recipe.status === 'drifted' ? 'missing' : 'unknown' };
     const planned = demandedPlan?.recipePlans?.find(entry => {
-      const item = demandedPlan.sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
+      const source = demandedPlan.sources[entry.sourceIndex];
+      const item = source && source.kind !== 'accountPresetOpaque' ? source.setup.items?.[entry.itemIndex] : undefined;
       return item?.kind === 'softwareRecipe' && sameStrictJsonValue(item.selection.ref, need.recipe);
     });
     if (!planned || !planned.plan.nativeFacts.length) return { key: need.key, status: 'unknown' };

@@ -10,6 +10,7 @@ import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { sessionPendingRoutes } from "./pendingRoutes";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 function createApp() {
     const app = Fastify({ logger: false });
@@ -176,8 +177,8 @@ describe("Pending HTTP credential authority (integration)", () => {
             actions: { families: [], ids: ["session.message.send", "session.transcript.get"] },
             targets: { sessions: [fixture.sessionId], machines: [] },
         });
-        const allowedPat = await auth.createApiToken({ accountId: fixture.accountId, tokenId: randomUUID(), label: "Pending input", grant });
-        const deniedPat = await auth.createApiToken({ accountId: fixture.accountId, tokenId: randomUUID(), label: "Read only",
+        const allowedPat = await auth.createApiToken({ accountId: fixture.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.accountId, "Pending input"), grant });
+        const deniedPat = await auth.createApiToken({ accountId: fixture.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.accountId, "Read only"),
             grant: { ...grant, actions: { families: [], ids: ["session.transcript.get"] } } });
         const app = createApp();
         const localId = randomUUID();

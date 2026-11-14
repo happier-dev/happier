@@ -20,6 +20,7 @@ import { deleteDeploymentEnvironmentInTx } from '@/app/deployments/deploymentDis
 import { readDeploymentEnvironmentInTx, listDeploymentEnvironmentsInTx, readDeploymentReceiptInTx, listDeploymentReceiptsInTx } from '@/app/deployments/deploymentReadService';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 
 const repository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
     repository: { nameWithOwner: 'acme/repo', cloneUrl: 'https://github.com/acme/repo.git', visibility: 'private' }, protocol: 'https' };
@@ -231,7 +232,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 role: member === 99 ? 'admin' as const : member === 1 ? 'guest' as const : 'member' as const,
                 status: member === 2 ? 'suspended' as const : 'active' as const }));
             await db.teamMembership.createMany({ data: memberships });
-            const groups = Array.from({ length: 8 }, (_, group) => ({ id: randomUUID(), teamId: team.id, name: `Group ${group}`, nameKey: `group-${group}` }));
+            const groups = Array.from({ length: 8 }, (_, group) => ({ id: randomUUID(), teamId: team.id, name: storedPlainPrivateLabel(`Group ${group}`) }));
             await db.teamGroup.createMany({ data: groups });
             await db.teamGroupMembership.createMany({ data: groups.flatMap(group => memberships.slice(0, 4).map(membership => ({
                 teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,

@@ -16,12 +16,15 @@ describe('installed Machine grant custody', () => {
             { kind: 'deploymentFact', fact: 'domainUrl', domainId: 'domain' },
         ];
         for (const source of definitions) {
-            const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'FACT', source });
+            const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'FACT',
+                grantRef: '00000000-0000-4000-8000-000000000001', source });
             if (binding.source.kind === 'secret') throw new Error('Expected nonsecret fixture source');
-            const content = { kind: 'environmentValues' as const, definition: binding.source };
+            const content = { kind: 'environmentValues' as const,
+                binding: { purpose: binding.purpose, phase: binding.phase, name: binding.name, grantRef: binding.grantRef },
+                definition: binding.source };
             const grant = custody.sealMachineSecretGrant({
                 subject: { v: 1, kind: 'environmentValues', machineId: 'machine', installationId: 'installation',
-                    environmentId: 'environment', binding: { purpose: binding.purpose, phase: binding.phase, name: binding.name } },
+                    environmentId: 'environment', binding: { purpose: binding.purpose, phase: binding.phase, grantRef: binding.grantRef } },
                 installationPublicKey: ed25519.getPublicKey(seed), content,
             });
             const identity = { machineId: 'machine', installationId: 'installation', installationPrivateSeed: seed };
@@ -31,7 +34,7 @@ describe('installed Machine grant custody', () => {
         }
     });
 
-    it('authenticates exact resource and installation without binding names or phases in the seal', async () => {
+    it('authenticates exact resource and installation with variable names sealed to the installation', async () => {
         const custody = await import('./machineSecretGrant.js').catch(() => null);
         expect(custody, 'installed-key grant custody must exist').not.toBeNull();
         if (!custody) return;
@@ -83,15 +86,20 @@ describe('installed Machine grant custody', () => {
         const seed = new Uint8Array(randomBytes(32));
         const values = custody.sealMachineSecretGrant({
             subject: { v: 1, kind: 'environmentValues', machineId: 'machine', installationId: 'installation',
-                environmentId: 'environment', binding: { purpose: 'variable', phase: 'runtime', name: 'PORT' } },
+                environmentId: 'environment', binding: { purpose: 'variable', phase: 'runtime',
+                    grantRef: '00000000-0000-4000-8000-000000000002' } },
             installationPublicKey: ed25519.getPublicKey(seed),
-            content: { kind: 'environmentValues', definition: { kind: 'value', value: '3000' } },
+            content: { kind: 'environmentValues', binding: { purpose: 'variable', phase: 'runtime', name: 'PORT',
+                grantRef: '00000000-0000-4000-8000-000000000002' }, definition: { kind: 'value', value: '3000' } },
         });
         if (values.kind !== 'environmentValues') throw new Error('Expected an Environment values grant');
         const identity = { machineId: 'machine', installationId: 'installation', installationPrivateSeed: seed };
-        expect(custody.openMachineSecretGrant({ ...identity, grant: values })).toEqual({ kind: 'environmentValues', definition: { kind: 'value', value: '3000' } });
+        expect(JSON.stringify(values)).not.toContain('PORT');
+        expect(custody.openMachineSecretGrant({ ...identity, grant: values })).toEqual({ kind: 'environmentValues',
+            binding: { purpose: 'variable', phase: 'runtime', name: 'PORT', grantRef: '00000000-0000-4000-8000-000000000002' },
+            definition: { kind: 'value', value: '3000' } });
         expect(custody.openMachineSecretGrant({ ...identity, grant: { ...values,
-            binding: { purpose: 'variable', phase: 'build', name: 'PORT' } } })).toBeNull();
+            binding: { purpose: 'variable', phase: 'build', grantRef: '00000000-0000-4000-8000-000000000002' } } })).toBeNull();
         const connector = custody.sealMachineSecretGrant({
             subject: { v: 1, kind: 'connectorToken', machineId: 'machine', installationId: 'installation',
                 provider: { pluginId: 'example.tunnel', localId: 'tunnel' }, connectorId: 'connector' },

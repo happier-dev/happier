@@ -185,9 +185,43 @@ export async function buildAccountEncryptionMigrationAutomations(params: Readonl
         }) },
     );
     const convert = (serialized: string | null, kind: AccountScopedBlobKind) => serialized === null ? null : seal(open(serialized, kind), kind);
+    const convertCurrentDefinition = (templateCiphertext: string): string | null => {
+        const serializeJson = (value: unknown): string => {
+            const serialized = JSON.stringify(value);
+            if (serialized === undefined) throw new Error('automation_stored_content_unavailable');
+            return serialized;
+        };
+        const convertTemplateEnvelope = (envelope: unknown) => {
+            const converted = convert(serializeJson(envelope), 'automation_template_payload');
+            if (converted === null) throw new Error('automation_stored_content_unavailable');
+            return JSON.parse(converted);
+        };
+        const replaceRecipeEnvelope = (field: 'template' | 'workflow'): string => {
+            let raw: unknown;
+            try {
+                raw = JSON.parse(templateCiphertext);
+            } catch {
+                throw new Error('automation_stored_content_unavailable');
+            }
+            if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+                throw new Error('automation_stored_content_unavailable');
+            }
+            const recipe = raw as Record<string, unknown>;
+            return serializeJson({ ...recipe, [field]: convertTemplateEnvelope(recipe[field]) });
+        };
+        const action = parseAutomationStoredDefinitionExecutionRecipeV1(templateCiphertext);
+        if (action.kind === 'available') {
+            return replaceRecipeEnvelope('template');
+        }
+        const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(templateCiphertext);
+        if (workflow.kind === 'available') {
+            return replaceRecipeEnvelope('workflow');
+        }
+        return null;
+    };
     const templates = await Promise.all(params.inventory.templates.map(async row => ({
         automationId: row.automationId, expectedTemplateVersion: row.expectedTemplateVersion,
-        templateCiphertext: await convertAccountEncryptionMigrationTemplate({ id: row.automationId,
+        templateCiphertext: convertCurrentDefinition(row.templateCiphertext) ?? await convertAccountEncryptionMigrationTemplate({ id: row.automationId,
             templateCiphertext: row.templateCiphertext, toMode: params.toMode,
             decryptRaw: sourceMaterial ? async ciphertext => openAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
                 material: sourceMaterial.material, ciphertext })?.value ?? null : undefined,

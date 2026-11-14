@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { act, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
@@ -28,7 +29,12 @@ vi.mock('@legendapp/list/react-native', async () => {
 const review = vi.hoisted(() => ({ confirm: undefined as undefined | ((value: boolean) => void) }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ spies: { confirm: async () => new Promise<boolean>(resolve => { review.confirm = resolve; }) } }).module;
+    return createModalModuleMock({ spies: { show: config => {
+        if (config.chrome?.testID === 'actions.confirmation-review.modal' && typeof config.props?.onAnswer === 'function') {
+            review.confirm = config.props.onAnswer;
+        }
+        return 'machine-review';
+    } } }).module;
 });
 
 const { createRequire } = getVitestNodeBuiltin<typeof import('node:module')>('node:module');
@@ -60,7 +66,10 @@ describe('Machine sharing save result through the real route and SQLite', () => 
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
             if (kind === 'group') {
-                const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'QA Group', nameKey: 'qa-group' } });
+                const group = await db.teamGroup.create({ data: {
+                    teamId: team.id,
+                    name: serializePrivateLabelStoredV1({ content: { t: 'plain', v: 'QA Group' }, recipients: [] }),
+                } });
                 principal = { kind: 'group', teamId: team.id, groupId: group.id };
                 await db.machineGroupGrant.create({ data: { machineId: machine.id, teamGroupId: group.id,
                     accessLevel: 'view', createdByAccountId: owner.id } });

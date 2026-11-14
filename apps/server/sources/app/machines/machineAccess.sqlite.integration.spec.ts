@@ -30,6 +30,7 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
+import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -1266,7 +1267,7 @@ describe('Machine current access (real SQLite)', () => {
         const f = await fixture(); const recipient = await account();
         const team = await db.team.create({ data: { name: 'Team' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: f.owner.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Group', nameKey: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Group') } });
         await inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' }));
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBeNull();
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member', sessionAccessStartsAt: new Date('2099-01-01') } });
@@ -1284,6 +1285,34 @@ describe('Machine current access (real SQLite)', () => {
         expect(await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id, principal: { kind: 'account', accountId: recipient.id }, leave: true }))).toEqual({ kind: 'inherited_access_remains', role: 'use' });
         await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBeNull();
+    });
+
+    it('projects a Group grant label only through the recipient-safe private-label field', async () => {
+        const f = await fixture();
+        const team = await db.team.create({ data: { name: 'Team' } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: f.owner.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: {
+            teamId: team.id,
+            name: storedPlainPrivateLabel('Operator rotation'),
+        } });
+        await db.teamGroupMembership.create({ data: {
+            teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
+        } });
+        await inTx(tx => access.setMachineAccessGrantInTx(tx, {
+            actorAccountId: f.owner.id, machineId: f.machine.id,
+            principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view',
+        }));
+
+        const listed = await inTx(tx => access.listMachineAccessGrantsInTx(tx, {
+            actorAccountId: f.owner.id, machineId: f.machine.id,
+        }));
+        if ('kind' in listed) throw new Error(listed.code);
+        expect(listed.grants).toMatchObject([{
+            principal: { kind: 'group', teamId: team.id, groupId: group.id },
+            display: { name: null, groupName: { kind: 'available', label: {
+                content: { t: 'plain', v: 'Operator rotation' }, recipientEnvelope: null,
+            } } },
+        }]);
     });
 
     it('E2EE refuses Plain, derives pending until current tuple and rejects stale holder, owner and recipient bindings atomically', async () => {

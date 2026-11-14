@@ -11,6 +11,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
+import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
 import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { MachineWorkSummaryReader } from './MachineWorkSummaryReader';
@@ -72,6 +73,17 @@ export function MachineDeleteAudience(
   }, [machineId, scope.serverId, scope.accountId]);
 
   const grants = read.kind === 'ready' ? read.response.grants : [];
+  const groupLabelInputs = React.useMemo(
+    () => grants.flatMap((grant) =>
+      grant.principal.kind === 'group' && grant.display.groupName !== undefined
+        ? [{ id: grant.principal.groupId, name: grant.display.groupName }]
+        : []),
+    [grants],
+  );
+  const groupDisplayNames = useTeamGroupNameProjectionDisplayNames({
+    scope,
+    groups: groupLabelInputs,
+  });
   return (
     <>
       <ItemGroup
@@ -105,7 +117,9 @@ export function MachineDeleteAudience(
           grants.map((grant) => {
             const principal = presentSharePrincipal({
               ref: grant.principal,
-              name: grant.display.name,
+              name: grant.principal.kind === 'group' && grant.display.groupName !== undefined
+                ? groupDisplayNames.get(grant.principal.groupId) ?? null
+                : grant.display.name,
               viewerAccountId: scope.accountId,
             });
             return (

@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -125,7 +126,7 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         const team = await db.team.create({ data: { name: 'Recipient fact Team' } });
         const teamMember = await db.teamMembership.create({ data: { teamId: team.id, accountId: teamRecipient.id, role: 'member' } });
         const groupMember = await db.teamMembership.create({ data: { teamId: team.id, accountId: groupRecipient.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Recipient fact Group', nameKey: 'recipient-fact' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Recipient fact Group') } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: groupMember.id, nativeContribution: true } });
         await db.machineGrant.create({ data: { principalKind: 'group', machineId, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
         await db.machineGrant.create({ data: { principalKind: 'team', machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: f.owner.id } });

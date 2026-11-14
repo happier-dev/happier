@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -26,7 +27,7 @@ describe("Team membership context resolution (SQLite integration)", () => {
         const membership = await db.teamMembership.create({
             data: { teamId: team.id, accountId: member.id, role: "member", sessionAccessStartsAt: teamHorizon },
         });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Developers", nameKey: "developers" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Developers") } });
         const groupHorizon = new Date("2026-05-01T00:00:00.000Z");
         await db.teamGroupMembership.create({
             data: {

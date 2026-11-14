@@ -1,8 +1,10 @@
 import type { ProviderObservationV1, SupportedNativeIntent } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
+type ManagedNativeLifecycleObservation = Pick<ProviderObservationV1, 'observedAt' | 'availability' | 'power'>;
+
 /** Fresh native truth settles custody, without claiming the old intent succeeded. */
 export function doesManagedNativeObservationSettleIntent(intent: SupportedNativeIntent,
-    observation: ProviderObservationV1 | undefined, previousObservation?: ProviderObservationV1,
+    observation: ManagedNativeLifecycleObservation | undefined, previousObservation?: ManagedNativeLifecycleObservation,
     retryDelete = false): boolean {
     if (!observation || intent === 'rebuild'
         || previousObservation && observation.observedAt <= previousObservation.observedAt) return false;

@@ -6,13 +6,43 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 export type ManagedProvisionerDiscoveryAction = 'machines.provisioners.list' | 'machines.provisioners.check' | 'machines.provisioners.options';
 export type ManagedProvisionerDiscoveryEntry = MachineProvisionersListResultV1['provisioners'][number];
 export type ManagedProvisionerSelectionRead = (pluginId: string) => Promise<readonly ManagedProvisionerDiscoveryEntry[] | null>;
+export type ManagedOpaquePresetProvisionerCandidateV1 = Pick<ManagedProvisionerDiscoveryEntry, 'contribution' | 'descriptor'>;
+
+export function readManagedOpaquePresetProvisionerV1(params: Readonly<{
+    launch: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion'>;
+    provisioners: readonly ManagedOpaquePresetProvisionerCandidateV1[];
+}>): MachineProvisionerContributionV1 | null {
+    return params.provisioners.find(entry => entry.contribution.pluginId === params.launch.provider.pluginId
+        && entry.contribution.localId === params.launch.provider.localId
+        && entry.descriptor.schemaVersion === params.launch.schemaVersion)?.descriptor ?? null;
+}
+
+/**
+ * One keyholding-host qualification for an opened opaque preset launch.
+ * Callers supply their installed declaration view; this helper neither reads
+ * a newer preset nor decides credentials or child authority.
+ */
+export function qualifyManagedOpaquePresetProvisionerV1(params: Readonly<{
+    launch: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion' | 'choices'>;
+    provisioners: readonly ManagedOpaquePresetProvisionerCandidateV1[];
+}>): MachineProvisionerContributionV1 | null {
+    const selected = readManagedOpaquePresetProvisionerV1(params);
+    if (!selected?.actions.acquire) return null;
+    try {
+        return compilePluginJsonSchema(selected.launchSchema)(params.launch.choices) ? selected : null;
+    } catch {
+        return null;
+    }
+}
 
 export function readMachineProvisionerHostAvailability(input: Readonly<{
     host: 'browser' | 'native'; provisioner: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
@@ -51,8 +81,9 @@ export async function prepareManagedAcquireProvisionerAdmissionV1(
     readSelected: ManagedProvisionerSelectionRead,
 ): Promise<ActionExecuteFailure | null> {
     if (request.actionId !== 'machines.managed.acquire'
-        || resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), request.input) !== 'account') return null;
-    const facts = (request.input as ManagedAcquireInputV1).reviewedFacts;
+        || resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), request.input, request.context.actionCaller, request.context.surface ?? 'ui') !== 'account') return null;
+    const acquisition = request.input as ManagedAcquireInputV1;
+    const facts = 'reviewedFacts' in acquisition ? acquisition.reviewedFacts : undefined;
     if (!facts?.provisioner) return null;
     return await matchesSelectedProvisioner(facts.launch.provider, facts.provisioner, readSelected) ? null
         : { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
@@ -66,7 +97,7 @@ async function matchesSelectedProvisioner(provider: ManagedProvisionerDiscoveryE
 }
 
 /** Review facts name roles only; a denied read leaves control permission to Home admission. */
-export async function prepareManagedPowerProvisionerAdmissionV1(machine: ManagedMachineV1 | ActionExecuteFailure,
+export async function prepareManagedPowerProvisionerAdmissionV1(machine: ManagedMachineFullV1 | ActionExecuteFailure,
     readSelected: ManagedProvisionerSelectionRead,
     actionId: 'machines.managed.power.set' | 'machines.managed.inspect' | 'machines.managed.bootstrap.retry'
         | 'machines.managed.delete' | 'machines.managed.cancel' | 'machines.managed.resize' = 'machines.managed.power.set',

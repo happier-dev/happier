@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { SavedSecretResourceMaterialsResponseV1Schema } from "@happier-dev/protocol";
@@ -177,7 +178,7 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
         const member = await db.account.create({ data: { encryptionMode: "plain" } });
         const memberMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
         const group = await db.teamGroup.create({
-            data: { teamId: team.id, name: "Explicit guests", nameKey: "explicit-guests" },
+            data: { teamId: team.id, name: storedPlainPrivateLabel("Explicit guests") },
             select: { id: true },
         });
         await db.teamGroupMembership.createMany({
@@ -277,7 +278,7 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
             db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: "guest" } }),
             db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } }),
         ]);
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Explicit audience", nameKey: "explicit-audience" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Explicit audience") } });
         await db.teamGroupMembership.createMany({ data: memberships.map(membership => ({
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
         })) });

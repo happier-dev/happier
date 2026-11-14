@@ -4,7 +4,7 @@ export { NOTIFICATION_NOTIFY_ME_ACTION_ID, SAVED_HEALTH_ALERT_TEST_ACTION_ID,
     WEBHOOK_NOTIFICATION_TEST_ACTION_ID } from './notificationTest.js';
 export type { ActionExecutionOptions } from './service.js';
 export type { AccountCreationConfiguration } from './dtos/pluginActionDtoSupport.generated.js';
-export type { MachineSetupSourceV1, MachineSetupSourceEntryV1 } from './dtos/pluginActionDtoSupport.generated.js';
+export type { MachineSetupSourceV1, MachineSetupSourceEntryV1 } from './machineSetupSources.js';
 export type { ActionConfirmationInputField } from './service.js';
 export type { PluginActionInvocationBindingV1 } from './service.js';
 export type { FilesystemTreeNode } from './actionTypeMap.generated.js';

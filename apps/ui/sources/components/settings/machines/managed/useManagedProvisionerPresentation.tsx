@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -60,12 +60,10 @@ export function describeManagedProvisionerFailure(code: string): string {
         ?? t('managedMachines.providers.unavailable');
 }
 /** Public descriptor only; a preset projection never carries credential options or a native catalog occurrence. */
-export function projectManagedPresetProvisioner(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controller' | 'delegatedAcquire'> | null | undefined,
+export function projectManagedPresetProvisioner(preset: Pick<OpenedManagedMachinePresetV1, 'launch' | 'controller' | 'teamAcquireDelegated'> | null | undefined,
     savedDescriptor?: Provisioner['descriptor']): Provisioner | undefined {
-    if (!hasManagedMachinePresetCreationV1(preset) || !preset.delegatedAcquire) return undefined;
-    // An unavailable use-time review still has a saved launch to present. This declaration grants no execution availability.
-    const descriptor = preset.delegatedAcquire.kind === 'ready' ? preset.delegatedAcquire.provisioner : savedDescriptor;
-    return descriptor ? { contribution: preset.launch.provider, occurrenceId: 'preset', descriptor, credentialPurposes: [] } : undefined;
+    if (!hasOpenedManagedMachinePresetCreationV1(preset) || !preset.teamAcquireDelegated) return undefined;
+    return savedDescriptor ? { contribution: preset.launch.provider, occurrenceId: 'preset', descriptor: savedDescriptor, credentialPurposes: [] } : undefined;
 }
 // Identity, translations, credential titles and repair/option Actions are the
 // presented question. Other Agent, tool and workflow inventories are unrelated.
@@ -247,9 +245,9 @@ export function useManagedProvisionerPresentation(input: Readonly<{
 }
 
 /** A Preset as its mark reads it: creation (launch + controller) is optional; setup-only Presets have none. */
-export type ManagedPresetMarkSource = Pick<ManagedMachinePresetV1, 'delegatedAcquire'> & Readonly<{
-    launch?: ManagedMachinePresetV1['launch'] | null;
-    controller?: ManagedMachinePresetV1['controller'] | null;
+export type ManagedPresetMarkSource = Pick<OpenedManagedMachinePresetV1, 'teamAcquireDelegated'> & Readonly<{
+    launch?: OpenedManagedMachinePresetV1['launch'] | null;
+    controller?: OpenedManagedMachinePresetV1['controller'] | null;
 }>;
 
 /**
@@ -264,10 +262,9 @@ export function ManagedPresetMark(props: Readonly<{
     size: number;
 }>) {
     const { theme } = useUnistyles();
-    const creation = hasManagedMachinePresetCreationV1(props.preset) ? props.preset : null;
+    const creation = hasOpenedManagedMachinePresetCreationV1(props.preset) ? props.preset : null;
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, accountScope: props.accountScope,
-        controller: creation && !creation.delegatedAcquire ? creation.controller : undefined,
-        provisioner: projectManagedPresetProvisioner(creation),
+        controller: creation && !creation.teamAcquireDelegated ? creation.controller : undefined,
         provider: creation?.launch.provider, schemaVersion: creation?.launch.schemaVersion, purpose: 'mark' });
     return creation ? presentation.markAt(props.size)
         : <Icon name={MACHINE_SETUP_PRESET_GLYPH} size={props.size} color={theme.colors.text.secondary} />;

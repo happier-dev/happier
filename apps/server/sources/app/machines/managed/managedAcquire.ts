@@ -1,20 +1,21 @@
-import { ManagedAdmissionInputV1Schema, resolveManagedAcquireReviewV1, type ManagedAdmissionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isStoredOpaquePresetMachine } from './managedMachineProjection';
+import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
-    ManagedMachineError, invalidateManagedMachineInTx, managedPresetMachineName, projectManagedMachine,
-    requireManagedControllerInTx, resolveManagedDeclarationInTx, sameManagedInput,
+    ManagedMachineError, invalidateManagedMachineInTx, projectManagedMachine,
+    requireManagedControllerInTx, requireManagedHomeInTx, sameManagedInput,
     type ManagedDeclaration,
     createManagedMachineDeclaredSchema,
-    readManagedLaunchSnapshot,
     readManagedAcquisitionIdentity,
     readManagedEnrollmentAccountId,
     readManagedAdmissionState,
+    readManagedOpaquePresetContent,
+    storeOpaquePresetLaunch,
     inManagedMachinePublicationTx,
 } from "./managedRows";
 import { resolveMachinePresetForAcquireInTx, validateManagedLaunchInTx } from "./machinePresetService";
@@ -27,6 +28,11 @@ export class ExternalActionAdmissionUnexpectedError extends Error {
         super('Unexpected Action admission failure');
     }
 }
+
+type OpaquePresetContent = ManagedAdmissionPresetContentV1;
+
+/** Keep acquire aligned with the opaque admission carrier and its retained sealed name override. */
+type ManagedAcquireAdmissionResult = ManagedAdmissionOutputV1;
 
 /** Explicit reviewed policy still receives the sole resolver's native qualification. */
 export function qualifyManagedAcquisitionPolicy(input: Pick<ReturnType<typeof resolveManagedAcquireReviewV1>, "retention" | "wakeOnAcceptedMessage">, declaration: Pick<ManagedDeclaration, "billing" | "retention">, selectedCapabilities?: RetentionCapabilitiesV1) {
@@ -44,7 +50,7 @@ export async function admitManagedAcquire(params: Readonly<{
     authentication?: TeamOperationAuthenticationContext;
     requestEnvelopeDigest: string;
     input: ManagedAdmissionInputV1;
-}>): Promise<{ machine: ManagedMachineV1; replayed: boolean }> {
+}>): Promise<ManagedAcquireAdmissionResult> {
     let transactionStarted = false;
     try {
         const request = ManagedAdmissionInputV1Schema.parse(params.input);
@@ -52,7 +58,17 @@ export async function admitManagedAcquire(params: Readonly<{
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
         // Dedupe includes the private continuation without retaining its prompt,
         // attachments, or startup instructions in a Home-visible resource row.
-        const admittedInputIdentity = { computeInput: request.input, continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null };
+        const persistedComputeInput = request.input.selection.kind === 'preset'
+            ? (() => {
+                // The optional replacement is carried by admittedInput, not
+                // the request identity. A replay returns the first retained
+                // ciphertext even if a caller retries with another one.
+                const { presetContentOverride: _override, ...computeInput } = request.input;
+                return computeInput;
+            })()
+            : request.input;
+        const admittedInputIdentity = { computeInput: persistedComputeInput,
+            continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null };
         const existingAdmission = async (tx: Tx) => {
             const existing = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId: review.homeId, admittedActionRequestId: request.requestId } } });
             if (!existing) return null;
@@ -63,6 +79,14 @@ export async function admitManagedAcquire(params: Readonly<{
             const retainedAdmission = readManagedAdmissionState(existing.admittedInput);
             const retainedDigest = retainedAdmission.requestEnvelopeDigest ?? retainedAdmission.machineSetup?.requestEnvelopeDigest;
             if (retainedDigest && retainedDigest !== params.requestEnvelopeDigest) throw new ManagedMachineError("request_conflict");
+            if (isStoredOpaquePresetMachine(existing)) {
+                const presetContent = readManagedOpaquePresetContent(existing);
+                const machine = projectManagedMachine(existing);
+                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                return { machine, presetContent,
+                    ...(retainedAdmission.presetContentOverride ? { presetContentOverride: retainedAdmission.presetContentOverride } : {}),
+                    replayed: true };
+            }
             return { machine: projectManagedMachine(existing), replayed: true };
         };
         // Home may already have retained custody before dispatching to the controller.
@@ -70,7 +94,7 @@ export async function admitManagedAcquire(params: Readonly<{
         // controller from accepting an operation for that durable allocation.
         const retained = await db.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId: review.homeId, admittedActionRequestId: request.requestId } }, select: { id: true } });
         const replay = () => inReadSnapshot(async tx => {
-            await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
+            await requireManagedHomeInTx(tx, review.homeId);
             const existing = await existingAdmission(tx);
             if (!existing) throw new ManagedMachineError("managed_not_found");
             return existing;
@@ -83,40 +107,66 @@ export async function admitManagedAcquire(params: Readonly<{
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
             const existing = await existingAdmission(tx);
             if (existing) return existing;
-            let launch: ValidatedLaunchSnapshotV1;
-            let preset: { id: string; revision: number } | undefined;
-            let setup: MachineSetupV1 | undefined;
-            let declaration: ManagedDeclaration;
-            let delegatedPolicy: ReturnType<typeof resolveMachineRetentionPolicyV1> | undefined;
-            if (request.input.selection.kind === "one-off") {
-                launch = request.input.selection.launch;
-                const validated = await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
-                    { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts);
-                if (!validated.declaration) throw new ManagedMachineError('invalid_request');
-                declaration = validated.declaration;
-            } else {
+            if (request.input.selection.kind !== "one-off") {
                 const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
-                    ...request.input.selection, reviewedFacts: request.input.reviewedFacts, boundController: review.controller });
+                    ...request.input.selection, boundController: review.controller });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
                 if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
-                // A preset is reused for many Machines: each takes its own name, or the provider's default (as a one-off Create does), never the preset's.
-                launch = { ...selected.preset.launch, name: managedPresetMachineName(selected.declaration.provisioner, request.input.selection.name) };
-                preset = { id: selected.preset.id, revision: selected.preset.revision };
-                setup = selected.preset.setup;
-                declaration = selected.declaration;
-                if (selected.delegated) {
-                    if (declaration.resourceKind === 'devcontainer' && request.input.reviewedFacts?.reviewedEffectDigest !== undefined) {
-                        throw new ManagedMachineError('invalid_request');
-                    }
-                    delegatedPolicy = resolveMachineRetentionPolicyV1({ billing: declaration.billing,
-                        nativeCapabilities: declaration.retention, presetOverride: selected.preset });
-                    if (!sameManagedInput(review.retention, delegatedPolicy.retention)
-                        || review.wakeOnAcceptedMessage !== delegatedPolicy.wakeOnAcceptedMessage) {
-                        throw new ManagedMachineError('permission_denied');
-                    }
+                if (selected.delegated && ((selected.preset.retention !== undefined && review.retention !== undefined
+                    && !sameManagedInput(review.retention, selected.preset.retention))
+                    || (selected.preset.wakeOnAcceptedMessage !== undefined && review.wakeOnAcceptedMessage !== undefined
+                        && review.wakeOnAcceptedMessage !== selected.preset.wakeOnAcceptedMessage))) {
+                    throw new ManagedMachineError('permission_denied');
                 }
+                const preset = { id: selected.preset.id, revision: selected.preset.revision } as const;
+                const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);
+                const presetContentOverride = request.input.presetContentOverride;
+                if (presetContentOverride && presetContentOverride.content.t !== presetContent.content.t) {
+                    throw new ManagedMachineError('account_mode_mismatch');
+                }
+                const controller = selected.preset.controller;
+                const retention = selected.preset.retention ?? review.retention ?? request.presetPolicy?.retention;
+                const wakeOnAcceptedMessage = selected.preset.wakeOnAcceptedMessage ?? review.wakeOnAcceptedMessage ?? request.presetPolicy?.wakeOnAcceptedMessage;
+                if (retention === undefined || wakeOnAcceptedMessage === undefined) throw new ManagedMachineError('invalid_request');
+                if (request.presetPolicy && (!sameManagedInput(request.presetPolicy.retention, retention)
+                    || request.presetPolicy.wakeOnAcceptedMessage !== wakeOnAcceptedMessage)) throw new ManagedMachineError('permission_denied');
+                const scopeChoice = request.input.creationScopeRetention;
+                const creationScopeRetention = scopeChoice ? { ...scopeChoice } : undefined;
+                const admittedInput = { ...admittedInputIdentity,
+                    enrollmentAccountId: params.requesterAccountId,
+                    ...(creationScopeRetention ? { creationScopeRetention } : {}),
+                    requestEnvelopeDigest: params.requestEnvelopeDigest,
+                    ...(presetContentOverride ? { presetContentOverride } : {}),
+                };
+                const row = await tx.managedMachine.create({ data: {
+                    homeId: review.homeId, custodianAccountId: selected.custodianAccountId,
+                    controllerMachineId: controller?.machineId ?? null, controllerInstallationId: controller?.installationId ?? null,
+                    admittedActionRequestId: request.requestId, admittedInput,
+                    presetId: preset.id, presetRevision: preset.revision,
+                    // The historical column is non-null; its value is an
+                    // opaque envelope, never a launch snapshot.
+                    launch: storeOpaquePresetLaunch({
+                        contentEncryptionMode: selected.preset.contentEncryptionMode,
+                        ...presetContent,
+                        ...(selected.preset.controllerPoolId ? { controllerPoolId: selected.preset.controllerPoolId } : {}),
+                    }),
+                    retention, wakeOnAcceptedMessage,
+                } });
+                await invalidateManagedMachineInTx(tx, row);
+                const machine = projectManagedMachine(row);
+                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                return { machine, presetContent,
+                    ...(presetContentOverride ? { presetContentOverride } : {}),
+                    replayed: false };
             }
+            let launch: ValidatedLaunchSnapshotV1;
+            let declaration: ManagedDeclaration;
+            launch = request.input.selection.launch;
+            const validated = await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
+                { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts);
+            if (!validated.declaration) throw new ManagedMachineError('invalid_request');
+            declaration = validated.declaration;
             if (!review.controller && request.input.reviewedFacts?.provisioner?.id !== launch.provider.localId) throw new ManagedMachineError('invalid_request');
             const parsedFacts = request.input.reviewedFacts === undefined ? undefined
                 : createManagedConfigurationFactsV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse(request.input.reviewedFacts);
@@ -124,32 +174,30 @@ export async function admitManagedAcquire(params: Readonly<{
             // Retained native authority comes from admission's declaration, not requester presentation facts.
             const reviewedFacts = parsedFacts?.success ? { ...parsedFacts.data, provisioner: declaration.provisioner,
                 ...(review.controller ? { retentionCapabilities: declaration.retention, billing: declaration.billing } : {}) } : undefined;
-            const policy = delegatedPolicy ?? qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
+            const policy = qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
             const scopeChoice = request.input.creationScopeRetention;
             if (scopeChoice && !resolveMachineRetentionNativeIntentV1(scopeChoice.effect, declaration.retention.supportedIntents)) {
                 throw new ManagedMachineError('invalid_request');
             }
             const creationScopeRetention = scopeChoice ? { ...scopeChoice,
                 ...(policy.retention.kind === 'unused' && policy.retention.afterMs > 0 ? { afterMs: policy.retention.afterMs } : {}) } : undefined;
-            const { credentials: _credentials, ...publicLaunch } = launch;
-            if (reviewedFacts && (!sameManagedInput(reviewedFacts.launch, delegatedPolicy ? publicLaunch : launch)
+            if (reviewedFacts && (!sameManagedInput(reviewedFacts.launch, launch)
                 || !sameManagedInput(reviewedFacts.controller, review.controller)
                 || !sameManagedInput(reviewedFacts.retention, policy.retention)
                 || reviewedFacts.wakeOnAcceptedMessage !== policy.wakeOnAcceptedMessage
-                || !sameManagedInput(reviewedFacts.preset ? { id: reviewedFacts.preset.id, revision: reviewedFacts.preset.revision } : undefined, preset))) {
+                || reviewedFacts.preset !== undefined)) {
                 throw new ManagedMachineError("invalid_request");
             }
             const candidate = {
                 id: "admission", homeId: review.homeId, custodianAccountId: params.custodianAccountId,
                 enrollmentAccountId: params.requesterAccountId,
-                launch, ...(preset ? { preset } : {}), controller: review.controller,
+                launch, controller: review.controller,
                 enrollmentIdentity: request.input.enrollmentIdentity,
                 allocation: "unsubmitted", creationState: "active", desired: "start", desiredWhen: "now", intentRevision: 0,
                 retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage,
                 ...(reviewedFacts ? { reviewedFacts } : {}),
-                ...(setup ? { machineSetup: { setup, state: "pending" } } : {}),
             };
-            const canonical = ManagedMachineV1Schema.parse(createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema).parse(candidate));
+            const canonical = ManagedMachineFullV1Schema.parse(createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema).parse(candidate));
             const row = await tx.managedMachine.create({ data: {
                 homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
                 controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
@@ -157,8 +205,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     enrollmentAccountId: params.requesterAccountId,
                     ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,
-                    ...(setup ? { machineSetup: { requestEnvelopeDigest: params.requestEnvelopeDigest } } : {}) },
-                ...(preset ? { presetId: preset.id, presetRevision: preset.revision } : {}),
+                    },
                 launch: canonical.launch, retention: canonical.retention, wakeOnAcceptedMessage: canonical.wakeOnAcceptedMessage,
                 ...(canonical.reviewedFacts ? { reviewedFacts: canonical.reviewedFacts } : {}),
                 ...(canonical.machineSetup ? { machineSetup: canonical.machineSetup } : {}),

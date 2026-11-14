@@ -1,5 +1,8 @@
 export * from './controllerErrors.js';
 export * from './presetOrigination.js';
+export * from './presetAcquire.js';
+export * from './opaquePresetReviewedChild.js';
+export * from './provisioners.js';
 export * from './bootstrapCredential.js';
 export * from './bootstrapCredentialLease.js';
 export * from './reconcile.js';
@@ -12,5 +15,7 @@ export * from './power.js';
 export * from './resize.js';
 export * from './destroy.js';
 export * from './setupApply.js';
+export * from './setupSources.js';
+export * from './presetSavedSecretPromotion.js';
 export * from './enrollmentIsolation.js';
 export { waitForChangeOrDeadline, type WaitForChangeOutcome } from '../../lifecycle/waitForChangeOrDeadline.js';

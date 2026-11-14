@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { KEYSET_CURSOR_MAX_LENGTH_V1 } from '../../pagination/keysetCursorV1.js';
@@ -172,6 +173,8 @@ export const TeamCredentialUsageCoverageV1Schema = lazyZodSchema(() => z.strictO
 
 export const TeamCredentialUsageQueryResultV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
+  /** Recipient-only label for a single resource query; aggregate subjects have none. */
+  resourceDisplayName: z.optional(PrivateLabelReadV1Schema),
   totals: TeamCredentialUsageTotalsV1Schema,
   coverage: TeamCredentialUsageCoverageV1Schema,
   series: z.array(z.strictObject({
@@ -182,6 +185,8 @@ export const TeamCredentialUsageQueryResultV1Schema = lazyZodSchema(() => z.stri
   breakdown: z.optional(z.array(z.strictObject({
     key: z.string().check(z.minLength(1)),
     label: z.optional(z.string().check(z.minLength(1))),
+    /** Present only for recipient-projected external API-key labels. */
+    privateLabel: z.optional(PrivateLabelReadV1Schema),
     totals: TeamCredentialUsageTotalsV1Schema,
   }))),
   nextCursor: z.nullable(z.string().check(z.minLength(1), z.maxLength(KEYSET_CURSOR_MAX_LENGTH_V1))),

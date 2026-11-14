@@ -52,7 +52,11 @@ export function createManagedPolicyCensusProofV1(input: Readonly<{ homeId: strin
   return signMachineInstallationProof({ payload: { version: 1, machineId: input.controller.machineId, installationId: input.controller.installationId,
     accountId: input.custodianAccountId, managedPolicyCensus: { homeId: input.homeId } }, privateKey: input.privateKey });
 }
-export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerContextOutputV1Schema, { replayed: z.boolean() })));
+/** Policy admission is a controller context and preserves opaque preset delivery on restart. */
+export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => z.intersection(
+  ManagedControllerContextOutputV1Schema,
+  z.strictObject({ replayed: z.boolean() }),
+));
 export const ManagedPolicyProofV1Schema: z.ZodMiniObject<{
   payload: typeof MachineInstallationProofPayloadV1Schema;
   purpose: typeof ManagedPolicyPurposeV1Schema;

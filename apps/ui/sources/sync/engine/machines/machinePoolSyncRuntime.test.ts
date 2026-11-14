@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -22,13 +22,15 @@ const boundary = {
     pendingResponses: [] as Array<(response: Response) => void>,
 };
 
-const poolView = (name: string, revision: number) => ({
+const poolWire = (name: string, revision: number) => ({
     pool: {
-        id: '00000000-0000-4000-8000-000000000001', name, description: null,
+        id: '00000000-0000-4000-8000-000000000001',
+        name: { kind: 'available' as const, label: { content: { t: 'plain' as const, v: name }, recipientEnvelope: null } },
+        description: null,
         revision, createdAt: 1, updatedAt: revision, members: [],
     },
     availability: { state: 'known' as const, connectedCount: 0, enabledCount: 0 },
-}) satisfies MachinePoolViewV1;
+}) satisfies MachinePoolPrivateViewV1;
 
 async function enableMachinePoolsFeature(serverId: string): Promise<void> {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
@@ -75,7 +77,7 @@ describe('machinePoolSyncRuntime', () => {
         const release = observeMachinePoolProjection(boundary.serverId);
         try {
             await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
-            boundary.pendingResponses[0]?.(Response.json({ pools: [poolView('Initial', 1)] }));
+            boundary.pendingResponses[0]?.(Response.json({ pools: [poolWire('Initial', 1)] }));
             await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
             const initialPools = getStorage().getState().machinePoolListByServerId[boundary.serverId];
 
@@ -100,20 +102,20 @@ describe('machinePoolSyncRuntime', () => {
 
             const changed = applyPage('machinePool', 21);
             await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(2));
-            boundary.pendingResponses[1]?.(Response.json({ pools: [poolView('Changed', 2)] }));
+            boundary.pendingResponses[1]?.(Response.json({ pools: [poolWire('Changed', 2)] }));
             expect(await changed).toMatchObject({ status: 'complete', safeAdvanceCursor: '21' });
             expect(boundary.listRequests).toBe(2);
             expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Changed');
 
             publishHomeAccountChange(boundary.serverId);
             await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(3));
-            boundary.pendingResponses[2]?.(Response.json({ pools: [poolView('Reconnected', 3)] }));
+            boundary.pendingResponses[2]?.(Response.json({ pools: [poolWire('Reconnected', 3)] }));
             await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
             expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Reconnected');
 
             publishHomeAccountChange(boundary.serverId, ['self']);
             await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(4));
-            boundary.pendingResponses[3]?.(Response.json({ pools: [poolView('Account changed', 4)] }));
+            boundary.pendingResponses[3]?.(Response.json({ pools: [poolWire('Account changed', 4)] }));
             await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
             expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Account changed');
         } finally {
@@ -125,7 +127,7 @@ describe('machinePoolSyncRuntime', () => {
         const release = observeMachinePoolProjection(boundary.serverId);
         try {
             await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
-            boundary.pendingResponses[0]?.(Response.json({ pools: [poolView('Team builders', 1)] }));
+            boundary.pendingResponses[0]?.(Response.json({ pools: [poolWire('Team builders', 1)] }));
             await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
             for (let i = 0; i < 20; i += 1) publishHomeAccountChange(boundary.serverId, ['unrelated-session']);
             expect(boundary.listRequests).toBe(1);
@@ -143,9 +145,9 @@ describe('machinePoolSyncRuntime', () => {
         expect(boundary.listRequests).toBe(1);
         const second = invalidateMachinePoolProjection(boundary.serverId);
 
-        boundary.pendingResponses[0]?.(Response.json({ pools: [poolView('Stale', 1)] }));
+        boundary.pendingResponses[0]?.(Response.json({ pools: [poolWire('Stale', 1)] }));
         await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(2));
-        boundary.pendingResponses[1]?.(Response.json({ pools: [poolView('Fresh', 2)] }));
+        boundary.pendingResponses[1]?.(Response.json({ pools: [poolWire('Fresh', 2)] }));
 
         await Promise.all([first, second]);
         expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Fresh');

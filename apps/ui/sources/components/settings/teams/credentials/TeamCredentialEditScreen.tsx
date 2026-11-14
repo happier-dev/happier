@@ -7,6 +7,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { updateTeamCredentialResource } from '@/sync/ops/teams/teamCredentialOperations';
+import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
 import {
     useTeamCredentialRequestPolicySupport,
     useTeamCredentialSourceCandidates,
@@ -27,6 +29,7 @@ import {
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
+import { useOpenedTeamCredentialBrokerPoolNames } from './teamCredentialPrivateLabels';
 import {
     EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
     TeamCredentialBrokerPlacementSection,
@@ -91,6 +94,11 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
         address: context.address,
         enabled: resource?.source != null,
         providerSourceOffers: providerSources.offers,
+    });
+    const brokerPoolDisplayNames = useOpenedTeamCredentialBrokerPoolNames({
+        scope: context.scope,
+        brokerPresentation: resource?.brokerPresentation ?? sourceCandidates.brokerPresentation,
+        enabled: resource?.source != null && resource.capabilities.updateBrokerPlacement === true,
     });
 
     /**
@@ -165,11 +173,11 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     // The Home's answer seeds the draft once. Re-seeding on every refresh would
     // reset the fields under someone who is typing in them.
     React.useEffect(() => {
-        if (!resource || basis !== null) return;
+        if (!resource || basis !== null || view.displayName === null) return;
         if (resource.capabilities.manageLimits && limits.status !== 'ready') return;
-        resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, limits.rows));
+        resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, view.displayName, limits.rows));
         setBasis(resource.revision);
-    }, [resource, basis, limits.rows, limits.status]);
+    }, [resource, basis, limits.rows, limits.status, view.displayName]);
 
     const trimmed = name.trim();
     const nameValid = trimmed.length > 0 && trimmed.length <= NAME_MAX_LENGTH;
@@ -177,9 +185,10 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const draftChanged = isDirty;
     const discardDraft = React.useCallback(() => {
         if (resource === null) return;
-        resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, limits.rows));
+        if (view.displayName === null) return;
+        resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, view.displayName, limits.rows));
         setNotice(null);
-    }, [limits.rows, resource, resourceDraft]);
+    }, [limits.rows, resource, resourceDraft, view.displayName]);
     const { allowSavedNavigation } = useUnsavedDraftNavigationGuard({
         navigation,
         isDirty,
@@ -359,6 +368,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     brokerPresentation={resource.brokerPresentation}
                     savedPlacement={resource.brokerPlacement}
                     placement={brokerPlacement}
+                    poolDisplayNames={brokerPoolDisplayNames}
                     disabled={busy}
                     onChange={(next) => patchResourceDraft({ brokerPlacement: next }, true)}
                 />
@@ -513,6 +523,17 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         setSaving(true);
                         setNotice(null);
                         try {
+                            const sealedDisplayName = resource.capabilities.managePolicy
+                                ? await createPrivateLabelClient(context.scope).seal({
+                                    owner: { kind: 'team', teamId: context.address.teamId },
+                                    binding: teamCredentialDisplayNameBinding(resourceId),
+                                    value: trimmed,
+                                })
+                                : undefined;
+                            if (sealedDisplayName === null) {
+                                setNotice(t('teams.errors.generic'));
+                                return;
+                            }
                             const outcome = await updateTeamCredentialResource({
                                 scope: context.scope,
                                 address: context.address,
@@ -520,9 +541,9 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                                 expectedRevision: basis,
                                 ...(resourceDraft.disclosureReviewCompleted ? { confirmedByPresentUser: true } : {}),
                                 replacement: {
-                                    ...(resource.capabilities.managePolicy ? {
+                                    ...(sealedDisplayName ? {
                                         enabled: resource.enabled,
-                                        displayName: trimmed,
+                                        displayName: sealedDisplayName,
                                         sessionUsePolicy: usePolicy,
                                         requestPolicy,
                                     } : {}),
@@ -584,7 +605,8 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         onPress={() => {
                             // Adopting the Home's current values is an explicit
                             // choice, never something a refresh does silently.
-                            resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, limits.rows));
+                            if (view.displayName === null) return;
+                            resourceDraft.reset(teamCredentialResourceDraftFromSummary(resource, view.displayName, limits.rows));
                             setBasis(resource.revision);
                             setNotice(null);
                         }}

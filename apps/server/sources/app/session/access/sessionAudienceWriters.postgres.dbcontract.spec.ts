@@ -1,3 +1,4 @@
+import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db, initDbPostgres } from "@/storage/db";
@@ -302,7 +303,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
                     status: transition === "team_reactivation" ? "suspended" : "active",
                 } });
                 const group = await db.teamGroup.create({ data: {
-                    teamId: team.id, name: prefix, nameKey: prefix, archivedAt: new Date(),
+                    teamId: team.id, name: storedPlainPrivateLabel(prefix), archivedAt: new Date(),
                 } });
                 await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id } });
                 if (transition === "team_reactivation") {
