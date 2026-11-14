@@ -13,6 +13,7 @@ import type { RegisterActionSpecRpcHandlersParams } from './registerActionSpecRp
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isManagedControllerCodecRootV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
@@ -59,7 +60,8 @@ export function createDaemonHostResourceRead(input: Readonly<{
         const requester = readRequesterAccountActionContext(authorization);
         const original = readRetainedVerifiedExternalActionRequester(authorization);
         const admission = context?.machineAdmission;
-        if (authorization && original && requester && context?.localActionContext?.externalActionExecutionAuthorization === authorization
+        if (authorization && original && (requester || isManagedControllerCodecRootV1(authorization.binding))
+            && context?.localActionContext?.externalActionExecutionAuthorization === authorization
             && authorization.binding.actionId === actionId
             && authorization.binding.target.kind === 'machine'
             && authorization.binding.target.machineId === authorization.binding.machineId
@@ -67,7 +69,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
                 && authorization.binding.installationId === admission.installationId
                 && authorization.binding.accountId === admission.actorAccountId
                 && authorization.binding.custodianAccountId === admission.custodianAccountId)) {
-            if (!await original.isCurrent() || !await requester.isCurrent()) refuse('expired_resource');
+            if (!await original.isCurrent() || (requester && !await requester.isCurrent())) refuse('expired_resource');
             return authorization.binding.accountId;
         }
         if (!authorization || authorization.binding.actionId !== actionId

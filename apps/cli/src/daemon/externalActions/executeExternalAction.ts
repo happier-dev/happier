@@ -505,9 +505,9 @@ async function executeExternalActionRequest(input: Readonly<{
     hasProtectedLogsOperands = envelope.data.resourceContinuation !== undefined || envelope.data.machineServiceLogsGeneration !== undefined;
   }
 
-  // The private Resource producer must retain this exact admitted invocation.
-  // Unsupported embeddings still refuse before native IO, never drop operands.
-  if (hasProtectedLogsOperands && (!requesterContext
+  // Native inventory retains its admitted invocation codec without Account
+  // credentials. Credential-consuming Resources still need requester custody.
+  if (hasProtectedLogsOperands && ((!requesterContext && !managedControllerCodec)
     || !executionAuthorization?.success || logsOperands.resourceContinuation && !input.invokeResource
     || !sameMachineServiceLogsResourceInput(decodedInput, logsOperands, input.currentMachineId, actionId.data))) return { kind: 'invalid_request',
     errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
