@@ -350,7 +350,9 @@ export function createAcpMcpPolicyFixture(params: Readonly<{
           // synchronous handler return. Automatic policy decisions publish no request.
           queueMicrotask(() => { void Promise.resolve(rpc.handlers.get('permission')!({ id, approved: true,
             ...(pending.turnId ? { turnId: pending.turnId } : {}),
-            ...(scope === 'session' ? { allowedTools: [pending.tool] } : {}) })).then(result => {
+            // A native offer takes the plain Session decision; tool rules exist only without one.
+            ...(scope !== 'session' ? {} : pending.nativeChoices
+              ? { decision: 'approved_for_session' } : { allowedTools: [pending.tool] }) })).then(result => {
               assert.equal(result, undefined, `Fixture response rejected: ${JSON.stringify(result)}`);
             }); });
         }

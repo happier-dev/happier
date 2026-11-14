@@ -57,7 +57,7 @@ import type {
 import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, resolveAgentRequestKind, resolveStructuredQuestionRequestMetadata } from './requestKind';
 import { admitManagerQuestionAnswer, resolveInitialQuestionHandler } from './sessionQuestionManager';
 import { normalizeStructuredQuestionPermissionAnswers } from './structuredQuestionAnswers';
-import { nativePermissionResult, resolveMediatedNativePermissionChoice, resolveNativePermissionChoice } from './nativePermissionChoice';
+import { nativePermissionResult, resolveMediatedNativePermissionChoice, resolveNativePermissionChoice, resolvePlainNativePermissionChoice } from './nativePermissionChoice';
 import { AgentStateRequestStore } from './agentStateRequestStore';
 import type {
     AgentStateRequestResponseTarget,
@@ -3572,7 +3572,8 @@ export abstract class BasePermissionHandler {
         let selected = response;
         let nativeScope: NativePermissionChoicesV1['choices'][number]['scope'] | undefined;
         if (context.nativeChoices !== undefined) {
-            const native = resolveNativePermissionChoice(context.nativeChoices, response.nativeChoice);
+            const native = resolveNativePermissionChoice(context.nativeChoices, response.nativeChoice
+                ?? resolvePlainNativePermissionChoice(context.nativeChoices ?? undefined, response));
             if (!native) return null;
             const { choice } = native;
             nativeScope = choice.scope;

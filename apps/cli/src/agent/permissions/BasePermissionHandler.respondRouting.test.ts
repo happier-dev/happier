@@ -715,6 +715,40 @@ describe('native offered permission ingress', () => {
       await expect(native).resolves.toMatchObject({ nativeChoice: { choiceId: 'opaque-once' } });
     } finally { await handler.reset(); }
   });
+  it.each([
+    { answer: { approved: true }, choiceId: 'opaque-once' },
+    { answer: { approved: true, decision: 'approved_for_session' }, choiceId: 'opaque-session' },
+    { answer: { approved: false, decision: 'denied' }, choiceId: 'opaque-stop' },
+    { answer: { approved: false, decision: 'abort' }, choiceId: 'opaque-stop' },
+  ] as const)('answers a native offer with the plain Action decision $answer through its one matching offered choice', async ({ answer, choiceId }) => {
+    // `session.permission.respond` advertises Allow/Deny to CLI, Agent, MCP and voice callers.
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native plain]' });
+    const native = handler.requestNative();
+    void native.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests['native-pending']).toBeDefined());
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'native-pending', ...answer }))
+        .resolves.toBeUndefined();
+      await expect(native).resolves.toMatchObject({ nativeChoice: { requirementId: 'native-requirement', choiceId } });
+      expect(Object.keys(session.agentState.completedRequests)).toEqual(['native-pending']);
+    } finally { await handler.reset(); }
+  });
+
+  it('refuses a plain Action decision that matches more than one offered native choice', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native plain]' });
+    const native = handler.requestNative(undefined, { ...nativeChoicesFixture, choices: [...nativeChoicesFixture.choices,
+      { id: 'opaque-once-2', label: 'Run with sandbox', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } }] });
+    void native.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests['native-pending']).toBeDefined());
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'native-pending', approved: true }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+      expect(Object.keys(session.agentState.completedRequests)).toEqual([]);
+    } finally { await handler.reset(); }
+  });
+
   it.each(['permission', 'session.permission.respond'])('requires a current offered answer on %s and keeps refusals pending', async (route) => {
     const session = new FakeSession();
     session.agentState.requests.pending = { tool: 'NativeTool', arguments: {}, createdAt: 1, nativeChoices: nativeChoicesFixture };
@@ -723,7 +757,8 @@ describe('native offered permission ingress', () => {
     for (const nativeChoice of [undefined,
       { requirementId: 'old-requirement', choiceId: 'opaque-once' },
       { requirementId: 'native-requirement', choiceId: 'unoffered' }]) {
-      await expect(rpc({ id: 'pending', ...(nativeChoice ? { nativeChoice } : { approved: true }) }))
+      // A plain grant that native choices cannot carry (a tool rule) is unoffered.
+      await expect(rpc({ id: 'pending', ...(nativeChoice ? { nativeChoice } : { approved: true, allowedTools: ['NativeTool'] }) }))
         .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
       expect(session.agentState.requests.pending).toBeDefined();
       expect(session.agentState.completedRequests.pending).toBeUndefined();
