@@ -4,7 +4,7 @@ import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protoco
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
 import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1, ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
-import { createManagedComputerDriver, type ComputerDriverInputResult } from './driver/managedComputerDriver';
+import { ComputerDriverError, createManagedComputerDriver, type ComputerDriverInputResult } from './driver/managedComputerDriver';
 import { createSurfaceInputControl, type SurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
 import type { MachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
@@ -12,6 +12,23 @@ import type { MachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/c
 export const computerTargetKey = computerTargetKeyV1;
 
 export type ComputerCaptureSource = ReturnType<typeof createComputerCaptureSource>;
+
+// Native refusal codes are open strings; publish only content-free capture causes.
+function captureFailureReason(error: unknown): string {
+  if (error instanceof ComputerDriverError) {
+    switch (error.code) {
+      case 'capture_permission_denied':
+      case 'capture_permission_unknown':
+      case 'target_mismatch':
+      case 'target_not_found':
+      case 'capture_unavailable':
+      case 'driver_unavailable':
+      case 'driver_result_invalid':
+        return error.code;
+    }
+  }
+  return 'capture_source_unavailable';
+}
 
 /** One native producer per exact source owner/provider/target, retained by the capture registry. */
 export function createComputerCaptureSource({ previousInputControl, ...input }: Readonly<({
@@ -104,8 +121,9 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
     const delay = Math.min(...active.map(viewer => Math.max(0, viewer.nextFrameAt - viewer.nowMs())));
     // Uncapped frames advance on capture completion and viewer acknowledgement, never a polling timer.
     if (delay === 0) {
-      framePending = observeFrame().then(() => undefined, () => {
-          for (const viewer of viewers) viewer.fail('capture_source_unavailable');
+      framePending = observeFrame().then(() => undefined, error => {
+          const reason = captureFailureReason(error);
+          for (const viewer of viewers) viewer.fail(reason);
           viewers.clear();
         }).finally(() => { framePending = null; schedule(); });
     } else {
@@ -170,7 +188,7 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
             }, fail };
           viewer = activeViewer;
           viewers.add(activeViewer);
-          try { await observeFrame(); } catch { viewers.delete(activeViewer); throw { reasonCode: 'capture_source_unavailable' }; }
+          try { await observeFrame(); } catch (error) { viewers.delete(activeViewer); throw { reasonCode: captureFailureReason(error) }; }
           activeViewer.emitStatus(JSON.stringify(status()));
           schedule();
           return {

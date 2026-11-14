@@ -214,15 +214,19 @@ describe('native computer route authority', () => {
         { ...agentContext, surface: 'mcp' });
       await waiting;
       approve();
-      expect(await pending).toMatchObject(access === 'see'
+      const replay = await pending;
+      // Successful clipboard results remain in live-only custody; approval
+      // permits the native effect without disclosing its result to automation.
+      expect(replay, JSON.stringify(replay)).toMatchObject(access === 'see'
         ? { ok: false, errorCode: 'computer_access_read_only' }
-        : { ok: true, result: { ok: true } });
+        : { ok: false, errorCode: 'approval_result_held' });
       expect(requests[0]).toMatchObject({ executionOriginV1: { target: { kind: 'machine', machineId: 'machine' } } });
       if (access === 'see') expect(native.tools).toEqual([]);
       else {
         expect(native.tools).toContainEqual({ name: 'clipboard_write', arguments: { text: 'COMPUTER-FIX-1107-canary' } });
         expect(controllersAtWrite).toEqual(['agent']);
-        expect(source.status()).toMatchObject({ controller: 'idle' });
+        expect(source.status()).toMatchObject({ controller: 'idle', stopping: false, uncertain: false });
+        expect(requests[0]).toMatchObject({ status: 'executed', execution: { ok: true } });
       }
     } finally {
       await routes.dispose();

@@ -18,6 +18,40 @@ function deferred<T>() {
 }
 
 describe.skipIf(process.platform !== 'linux')('computer source status projection', () => {
+  it.each(['first', 'subsequent'] as const)('preserves safe native capture refusals and hides unknown errors on the %s frame', async phase => {
+    for (const failure of ['capture_permission_denied', 'capture_permission_unknown', 'target_mismatch', 'target_not_found', 'capture_unavailable', 'driver_unavailable', 'driver_result_invalid', 'unknown-code', 'exception']) {
+      let failCapture = phase === 'first';
+      native.call.mockImplementation(async ({ name }) => {
+        if (name !== 'get_window_state') return { structuredContent: { x11: true, xsend_event: true } };
+        if (!failCapture) return observation();
+        if (failure === 'exception') throw new Error('private native exception');
+        return { isError: true, structuredContent: { code: failure, detail: 'private native detail' } };
+      });
+      const source = createComputerCaptureSource({ sessionId: 'capture-refusal', target, executablePath: '/managed/cua-driver' });
+      const receipt = deferred<string>();
+      // The real stdio codec classifies a lost native reply as driver_unavailable.
+      const expected = failure === 'unknown-code' ? 'capture_source_unavailable'
+        : failure === 'exception' ? 'driver_unavailable' : failure;
+      const stream = await source.adapter.start({ streamId: 'capture-refusal', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+        startRequest: { v: 1, streamId: 'capture-refusal', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+          routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+        startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }),
+        emitReceipt(value) { if (value.reasonCode) receipt.resolve(value.reasonCode); } });
+      try {
+        if (phase === 'first') expect(stream).toMatchObject({ ok: false, reasonCode: expected });
+        else {
+          if (!stream.ok) throw new Error(stream.reasonCode);
+          failCapture = true;
+          stream.session.applySidebandControl?.({ v: 1, streamId: 'capture-refusal', sourceId: source.sourceId,
+            eventId: 'next-frame', kind: 'request_keyframe' });
+          expect(await receipt.promise).toBe(expected);
+        }
+      } finally {
+        if (stream.ok) await stream.session.stop();
+        await source.close();
+      }
+    }
+  });
   it.each(['native', 'transport'] as const)('retains a native text refusal cause only when available for an interrupted agent action: %s', async failure => {
     native.call.mockImplementation(async ({ name }) => {
       if (name === 'get_window_state') return observation();
