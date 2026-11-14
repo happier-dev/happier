@@ -215,7 +215,8 @@ function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summ
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectProviderInputObservation, projectObservationOutput: projectProviderObservation,
-    approvalPresentation: { referenceForField: providerApprovalReference, summary: () => summary, projectInput: input => projectProviderApprovalInput(id, input) },
+    approvalPresentation: { referenceForField: providerApprovalReference, summary: () => summary,
+      projectInput: input => projectProviderApprovalInput(id, input), retainInputOnSettlement: true },
     inputHints, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   } satisfies ProviderActionSpec<Id>;
 }

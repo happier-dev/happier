@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition, settleApprovalRequestReplayInputs } from '../approvals/approvalRequestTransition.js';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { createProviderActionExecuteV1 } from '../providers/executeProviderActionV1.js';
@@ -59,15 +60,24 @@ describe('an approval review reads values by meaning, from the real approval an 
     { target: poolTarget, reference: { kind: 'connectedAccount', id: poolTarget.groupId, service: 'happier.agent.codex/openai-codex', pool: true } },
   ])('reviews an experimental model source as its declared reference kind ($reference.kind)', async ({ target, reference }) => {
     const connectionId = target ? 'connected-source:catalog-identity' : 'saved-provider';
-    const { rows } = await readReview('providers.models.experimental.confirm', {
+    const request = await createApproval('providers.models.experimental.confirm', {
       action: 'confirmExperimental', connectionId, connectedAccountTarget: target,
       catalogSourceKey: 's'.repeat(43), expectedConnectionRevision: 0, agentTargetKey: codex,
       modelId: 'experimental-model', compatibilityFingerprint: 'compatibility:v1:experimental',
     });
-    expect(rows).toContainEqual(expect.objectContaining({ path: 'connectionId', reference: expect.objectContaining(reference) }));
-    if (target) {
-      expect(rows).toContainEqual(expect.objectContaining({ path: 'connectedAccountTarget', reference: expect.objectContaining(reference) }));
-      expect(rows.filter(row => row.kind === 'value' && row.reference?.kind === 'providerConnection')).toEqual([]);
+    // Exercise the real settlement writer projection, then the serialized history reader.
+    const declined = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify({
+      ...settleApprovalRequestReplayInputs(request), status: 'rejected', updatedAtMs: request.updatedAtMs + 1,
+      decision: { kind: 'reject', decidedAtMs: request.updatedAtMs + 1 },
+    })));
+    expect(decideApprovalRequestTransition(request, declined)).toEqual({ ok: true, changed: true });
+    for (const review of [request, declined]) {
+      const { rows } = describeApprovalActionFields(review);
+      expect(rows).toContainEqual(expect.objectContaining({ path: 'connectionId', reference: expect.objectContaining(reference) }));
+      if (target) {
+        expect(rows).toContainEqual(expect.objectContaining({ path: 'connectedAccountTarget', reference: expect.objectContaining(reference) }));
+        expect(rows.filter(row => row.kind === 'value' && row.reference?.kind === 'providerConnection')).toEqual([]);
+      }
     }
   });
 
