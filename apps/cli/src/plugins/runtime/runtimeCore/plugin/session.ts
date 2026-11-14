@@ -57,6 +57,10 @@ import type {
 import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { logger } from '@/ui/logger';
+import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import {
     resolveReleasedCodexStartupOverridesCacheV1Compatibility,
 } from '@/agent/runtime/startup/releasedStartupOverridesCacheV1';
@@ -715,6 +719,26 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                         }
                     }
                 }
+            } catch (error) {
+                if (nextSessionOpenIntent) {
+                    try {
+                        await replacementLifecycle?.onReplacementFailed?.();
+                    } catch {
+                        // Preserve the replacement failure; the lifecycle owner reports restoration errors.
+                    }
+                }
+                if (nextSessionOpenIntent && !isAbortLikeError(error) && !isPluginError(error)
+                    && !readSessionRuntimeFailureCause(error)) {
+                    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error,
+                        startupPhase: 'client_start' });
+                    if (issue.code === 'agent_session_error') {
+                        throw new PluginError({ code: 'agent_startup_failed',
+                            message: issue.failureCause?.providerErrorMessage ?? 'Agent replacement failed',
+                            retryable: false, details: { failureCause: { ...issue.failureCause,
+                                code: 'agent_startup_failed', phase: 'client_start' } } });
+                    }
+                }
+                throw error;
             } finally {
                 if (goalControlReplacement === replacement) goalControlReplacement = null;
                 releaseGoalControls?.();

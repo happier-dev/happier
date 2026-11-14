@@ -4173,9 +4173,13 @@ export function createNativeAgentSessionOperations(
                 }
             });
             const failures: unknown[] = [];
+            const disposingNativeSession = disposePromise;
             try {
-                await disposePromise;
+                await disposingNativeSession;
             } catch (error) {
+                // A later explicit reset must retry failed native cleanup before
+                // a successor can open, as runtime-scope cleanup already does.
+                if (disposePromise === disposingNativeSession) disposePromise = null;
                 failures.push(error);
             }
             if (!disposeRuntimeScopePromise) {

@@ -341,6 +341,20 @@ describe('engineRegistry (pi runtimeCore)', () => {
               expect.objectContaining({ provider: 'anthropic', modelId: 'claude-opus-5' }),
               expect.objectContaining({ provider: 'anthropic', modelId: 'claude-sonnet-5' }),
             ]);
+            // A model/settings transition replaces the native runtime inside
+            // the existing plan rather than composing a new cold-resume plan.
+            await created.operations.resetOrDisposeRuntime('mode_change', {
+              kind: 'resume', providerSessionId: 'provider-pi-native-1', importHistory: false,
+            });
+            await created.operations.sendTurnPrompt('wait for stop', { localId: 'pi-reopened-stop-input', userMessageSeq: 3 });
+            await created.operations.cancelTurn();
+            await created.operations.waitForTurnCompletion({ timeoutMs: 5_000 });
+            const reopened = JSON.parse(await readFileEventually(capturePath, { timeoutMs: 5_000 })) as {
+              pid: number; args: string[]; commands: string[];
+            };
+            expect(reopened.pid).not.toBe(initialCapture.pid);
+            expect(reopened.args).toEqual(expect.arrayContaining(['--session', 'provider-pi-native-1']));
+            expect(reopened.commands).toEqual(expect.arrayContaining(['prompt', 'abort']));
           } finally {
             unsubscribe();
             stopTranscript();

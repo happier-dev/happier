@@ -9,7 +9,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/prot
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowAuthoredInputV1Schema, WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowAcceptedSnapshotV1, WorkflowRunSummaryV1, WorkflowRunInvocationIndexV1, WorkflowProgressEnvelopeV1, WorkflowRunEncryptionV1, ValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol';
 import type { WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
-import { readSessionFollowWakeInvalidationGeneration, waitForSessionFollowWakeInvalidation } from '../follow/sessionFollowWakeSignal';
+import { readSessionFollowWakeInvalidationGeneration, waitForSessionFollowWakeInvalidation, type SessionFollowWakeSignal } from '../follow/sessionFollowWakeSignal';
 import type { HostContextOnlyInputPort, PreparedWorkerContextItem } from './hostContextOnlyInput';
 
 export type WorkflowOriginInputOptions = Readonly<{
@@ -21,6 +21,8 @@ export type WorkflowOriginInputOptions = Readonly<{
   readDispatchFact: (localInputId: string, signal: AbortSignal) => Promise<'dispatched' | 'not_dispatched'>;
   onDispatchedInput: (input: Readonly<{ localInputId: string }>) => void;
   onError: (error: unknown) => void;
+  /** The origin Session's wake; defaults to process-wide invalidations only. */
+  followWake?: Pick<SessionFollowWakeSignal, 'readGeneration' | 'waitForChange'>;
 }>;
 
 type OpenRow = Readonly<{ index: WorkflowRunInvocationIndexV1; progress: WorkflowProgressEnvelopeV1 }>;
@@ -35,7 +37,9 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 export function createWorkflowOriginContextInputPort(options: WorkflowOriginInputOptions): HostContextOnlyInputPort {
   const offers = new Map<string, Offer>();
   const pendingAcks = new Map<string, number>();
-  let observedWake = readSessionFollowWakeInvalidationGeneration();
+  const followWake = options.followWake
+    ?? { readGeneration: readSessionFollowWakeInvalidationGeneration, waitForChange: waitForSessionFollowWakeInvalidation };
+  let observedWake = followWake.readGeneration();
   const execute = async (operation: WorkflowRunStorageOperation, signal?: AbortSignal) =>
     record(await options.storage.execute(operation, signal ? { signal } : {}));
   const requireEncryption = async (runId: string, signal: AbortSignal): Promise<WorkflowRunEncryptionV1> => {
@@ -226,7 +230,7 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
   };
   return {
     take: async (signal) => {
-      observedWake = readSessionFollowWakeInvalidationGeneration();
+      observedWake = followWake.readGeneration();
       const pulled = await readUpdates(signal);
       const step = pulled.steps[0];
       if (!step) {
@@ -247,7 +251,7 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
         workDepth: step.accepted.workDepth, acknowledgeAccepted: () => undefined,
       };
     },
-    waitForChange: async (signal) => await waitForSessionFollowWakeInvalidation(observedWake, signal),
+    waitForChange: async (signal) => await followWake.waitForChange(observedWake, signal),
     isWorkflowStepDeliverable: async ({ localInputId }) => {
       if (!offers.has(localInputId)) return false;
       const signal = new AbortController().signal;

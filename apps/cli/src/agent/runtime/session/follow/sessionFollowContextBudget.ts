@@ -53,6 +53,16 @@ export function resolveSessionFollowContextUtf8AllowanceV1(input: Readonly<{
   return { maxUtf8Bytes, basis: 'authoritative_remaining' };
 }
 
+/** Whether two usage snapshots resolve the same allowance (the only usage facts it reads). */
+export function sameSessionFollowContextAllowanceUsage(
+  a: SessionContextUsageSnapshotV1 | null,
+  b: SessionContextUsageSnapshotV1 | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (a.source === 'derived_estimate') === (b.source === 'derived_estimate')
+    && a.modelId === b.modelId && a.windowTokens === b.windowTokens && a.usedTokens === b.usedTokens;
+}
+
 export type SessionFollowBudgetEnvelopeV1 = Readonly<{
   sourceSessionId: string;
   /** Local packing address when multiple admitted originals share one source. */

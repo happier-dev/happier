@@ -1229,10 +1229,10 @@ export async function runPermissionModePromptLoop(opts: {
     };
     let promptFailurePhase = 'runtime_start';
     try {
-      if (runtimeNeedsTeamBindingRecovery) {
-        // The refused generation still owns its old signed broker job. Reopen
-        // only for new input, so restoration gets fresh admission without
-        // retrying the refused input or renewing withdrawn authority.
+      if (runtimeNeedsTeamBindingRecovery || opts.runtime.getRuntimeLifetimeSignal?.()?.aborted === true) {
+        // A failed replacement can leave the previous native lifetime closed.
+        // Reopen only for new input, also giving a refused Team binding fresh
+        // admission without retrying the failed input or renewing withdrawn authority.
         const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
         const intent: RuntimeTurnSessionOpenIntent = providerSessionId
           ? { kind: 'resume', providerSessionId, importHistory: false }
@@ -1320,7 +1320,9 @@ export async function runPermissionModePromptLoop(opts: {
               })
             ).status;
           },
-          { required: runtimeRestartRequired, run: async () => {
+          { required: runtimeRestartRequired,
+            getRuntimeLifetimeSignal: () => opts.runtime.getRuntimeLifetimeSignal?.(),
+            run: async () => {
             const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
             const shouldResume = !runtimeRestartRequired
               || opts.runtime.shouldResumeAfterPermissionModeChange?.() !== false;

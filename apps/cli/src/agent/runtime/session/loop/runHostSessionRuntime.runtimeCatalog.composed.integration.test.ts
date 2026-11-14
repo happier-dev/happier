@@ -51,7 +51,9 @@ import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages
 import * as daemonControl from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
-import { createExternalContributionFixtures } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { createExternalContributionFixtures, createNativeAgentRuntimeSessionPlanFixture, createLease as createReplacementLease, createSessionHostServiceOwners as createReplacementHostOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice } from '../../../../../../ui/sources/components/sessions/capabilities/sessionCapabilityApplyNotice';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -201,7 +203,7 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } 
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { AgentPermissionIntentV1Schema } from '@happier-dev/protocol/runtime/permissionIntentV1';
-import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
+import { publishSessionFollowWakeInvalidation, readSessionFollowWakeInvalidationGeneration, waitForSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import type { HostProviderInputOutcomeEvidence } from '@/agent/runtime/session/input/providerInputOutcome';
 import type { RuntimeConfigUpdateOutcomeV1, RuntimeTurnConfigUpdate, RuntimeTurnSessionOpenIntent } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -10884,6 +10886,84 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
+  it('admits a new input after native replacement fails and recovers before dispatch through the real host gate', async () => {
+    const harness = createHarness();
+    const abort = new AbortController();
+    const agentId = 'acme-host-replacement-recovery';
+    const contributions = createExternalContributionFixtures(agentId);
+    let opens = 0;
+    let failures = 0;
+    const completed: string[] = [];
+    const plan = await createNativeAgentRuntimeSessionPlanFixture({
+      backend: contributions.backend, agent: contributions.agent, lease: createReplacementLease(agentId),
+      createSessionHostServiceOwners: () => createReplacementHostOwners(),
+      sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false,
+        startupInstructions: { versions: [1], revisionChanges: 'resume' } },
+      // External Agent runtime boundary; native replacement, host admission,
+      // and input consumption remain the actual production owners.
+      runtime: { sessions: { open: async (_request, context) => {
+        if (++opens === 2) throw new Error('Native successor open failed');
+        let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+        let sequence = 0;
+        return {
+          async send(input) {
+            completed.push(input.inputIds[0]!);
+            const emit = (event: Record<string, unknown>) => listener?.({ sessionId: context.session.id,
+              emittedAtMs: ++sequence, sequence, ...event } as AgentSessionRuntimeEvent);
+            emit({ kind: 'provider-session-id', providerSessionId: 'retained-host-conversation' });
+            emit({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+            emit({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+            emit({ kind: 'turn-complete', turnId: input.delivery.turnId });
+            return { status: 'admitted' as const };
+          },
+          watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
+          async dispose() {},
+        };
+      } } },
+      sessionInput: buildPluginSessionBindingInput({
+        credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+        directory: '/tmp/host-replacement-recovery',
+      }),
+    });
+    harness.config.createSessionRuntime = plan.config.createSessionRuntime;
+    harness.deps.createPermissionModeQueueStateFn = createPermissionModeQueueState;
+    harness.deps.createProviderEnforcedPermissionHandlerFn = () => new ProviderEnforcedPermissionHandler(
+      harness.session, { logPrefix: '[HostReplacementRecovery]' });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const initialPlan = params.runtime.readSessionStartupInstructions?.()?.instructions ?? '';
+      let requestedPlan = initialPlan;
+      let ready = 0;
+      params.messageQueue.push({ text: 'first', localId: 'first' }, { permissionMode: 'default' });
+      try {
+        await runPermissionModePromptLoop({ ...params,
+          shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
+          resolveFreshSessionSystemPrompt: async () => requestedPlan,
+          readSessionPromptPlanDeliveryState: () => ({ startupInstructionsSupported: true, revisionChanges: 'resume' }),
+          onPromptFailure: async error => {
+            failures++;
+            expect(error).toMatchObject({ code: 'agent_startup_failed' });
+          },
+          sendReady: async () => {
+            if (++ready === 1) {
+              requestedPlan = 'CHANGED_HOST_PLAN';
+              params.messageQueue.push({ text: 'failed', localId: 'failed' }, { permissionMode: 'default' });
+            } else if (ready === 2) {
+              expect(failures).toBe(1);
+              expect(opens).toBe(2);
+              expect(params.inputConsumer!.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+              requestedPlan = initialPlan;
+              params.messageQueue.push({ text: 'later', localId: 'later' }, { permissionMode: 'default' });
+            } else abort.abort();
+          },
+        });
+      } finally { abort.abort(); }
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(completed).toEqual(['first', 'later']);
+    expect(opens).toBe(3);
+    expect(failures).toBe(1);
+  });
+
   it('delivers a reply after dispatch-initiated replacement through the public host owner', async () => {
     const harness = createHarness();
     harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
@@ -14051,6 +14131,69 @@ describe('runHostSessionRuntime', () => {
       expect(after?.contextOnlyWorkerDisposition).toBe('deferred');
     };
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('wakes only its own Session, and only when allowance inputs change, on authoritative context usage', async () => {
+    // A session host runs many Sessions. Usage is a fact of exactly one Session:
+    // waking every hosted Session (and its Workflow origin port) costs N Home reads per usage.
+    const harness = createHarness();
+    harness.opts.modelSelection = {
+      v: 1, updatedAt: 1,
+      ref: { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'budget-model' },
+    };
+    let observations = 0;
+    harness.session.observePendingSessionFollow = vi.fn(async () => {
+      observations += 1;
+      return { ok: true as const, publisherGeneration: 1, currentSourceSessionIds: [], observations: [] };
+    });
+    harness.session.hasPendingProviderInput = vi.fn(() => false);
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(mode => mode.permissionMode,
+      { batcher: combinePermissionModeQueuedPrompts });
+    harness.deps.createPermissionModeQueueStateFn = () => ({ messageQueue: queue, rebindSession: () => undefined,
+      getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => undefined,
+      getCurrentPermissionModeUpdatedAt: () => 0, setCurrentPermissionModeUpdatedAt: () => undefined });
+    const controller = new AbortController();
+    // Stands in for every other hosted Session's process-wide Follow wait.
+    let otherSessionWakes = 0;
+    const otherSession = (async () => {
+      let generation = readSessionFollowWakeInvalidationGeneration();
+      while (await waitForSessionFollowWakeInvalidation(generation, controller.signal)) {
+        otherSessionWakes += 1;
+        generation = readSessionFollowWakeInvalidationGeneration();
+      }
+    })();
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const loop = runPermissionModePromptLoop({ ...params, getAbortSignal: () => controller.signal,
+        shouldExit: () => controller.signal.aborted });
+      try {
+        await vi.waitFor(() => expect(observations).toBe(1));
+        const modelId = params.readActiveModelSelection?.().modelId ?? null;
+        const emitUsage = (sequence: number, usedTokens: number) => harness.runtime.emitRuntimeMessage({
+          kind: 'usage-observed', sequence, sessionId: 'session-1', emittedAtMs: sequence,
+          observationId: `context-usage-${sequence}`, source: 'provider', scope: 'session_cumulative', modelId,
+          context: {
+            v: 1, modelId, usedTokens, windowTokens: 100_000,
+            totalProcessedTokens: null, baselineTokens: null, isAutoCompactEnabled: null,
+            categories: null, observedAtMs: sequence, source: 'provider_live',
+          },
+        });
+        emitUsage(1, 10);
+        await vi.waitFor(() => expect(observations).toBe(2));
+        expect(otherSessionWakes).toBe(0);
+        // Same allowance inputs, only a newer observation: not a change.
+        emitUsage(2, 10);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        expect(observations).toBe(2);
+        emitUsage(3, 20);
+        await vi.waitFor(() => expect(observations).toBe(3));
+        expect(otherSessionWakes).toBe(0);
+      } finally {
+        controller.abort();
+        await loop;
+      }
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    await otherSession;
   });
 
   it('composes the canonical Follow reconciler into a real host prompt and ACKs the exact observed frontier only after provider acceptance', async () => {

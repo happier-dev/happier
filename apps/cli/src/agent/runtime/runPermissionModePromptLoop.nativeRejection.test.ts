@@ -5,8 +5,9 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageQueue2 } from './modeMessageQueue';
-import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from './permissions/queuedPrompt';
+import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from './permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import { createRuntimeOverrideSynchronizers, createRuntimeOverrideTarget } from './createRuntimeOverrideSynchronizers';
 import { createNativeAgentSessionOperations } from './registry/engineRegistry/nativeAgentSession';
 import { createNativeAgentSessionEffectBoundaryError } from './registry/engineRegistry/nativeAgentSessionBoundaryError';
 import type { PermissionMode } from '@/api/types';
@@ -17,8 +18,290 @@ import { createNativeAgentRuntimeSessionPlanFixture, createExternalContributionF
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { SessionTurnPublicationRejectedError } from '@/api/session/client/transport/mutations/deliverSessionTurnMutation';
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { createSessionModelTransitionAuthorizer } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
+import { createSessionModelTransitionCoordinator, mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult,
+    type AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
+import { createSessionProviderInputConsumer } from './session/input/sessionProviderInputConsumer';
+import { createSessionProviderInputConsumerSessionAdapter } from './waitForNextPermissionModeMessage';
 
 describe('native prompt loop non-admission recovery', () => {
+    it.each(['typed_open', 'uncoded_open', 'dispose'] as const)('settles a failed native replacement and reopens only when the next input arrives (%s)', async failure => {
+        const abort = new AbortController();
+        const agentId = 'acme-replacement-recovery';
+        const contributions = createExternalContributionFixtures(agentId);
+        const queue = new MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>(mode => mode.permissionMode,
+            { batcher: combinePermissionModeQueuedPrompts });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'replacement-recovery',
+            metadata: createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }), overrides: {
+                enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
+                enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
+            } });
+        const permissionHandler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[ReplacementRecovery]' });
+        const completed: string[] = [];
+        const failures: unknown[] = [];
+        let opens = 0;
+        let disposeFailed = false;
+        const plan = await createNativeAgentRuntimeSessionPlanFixture({
+            backend: contributions.backend, agent: contributions.agent, lease: createLease(agentId),
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false,
+                startupInstructions: { versions: [1], revisionChanges: 'resume' } },
+            // External native Agent boundary. The replacement's first open
+            // refuses; no prompt or host lifecycle owner is substituted.
+            runtime: { sessions: { open: async (_request, context) => {
+                if (++opens === 2 && failure !== 'dispose') {
+                    if (failure === 'uncoded_open') throw new Error('Native replacement open failed');
+                    throw new PluginError({ code: 'agent_startup_failed', retryable: false,
+                        details: { failureCause: { phase: 'client_start', providerErrorCode: 'native_reopen_refused' } },
+                    });
+                }
+                let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+                let sequence = 0;
+                return {
+                    async send(input) {
+                        completed.push(input.inputIds[0]!);
+                        const emit = (event: Record<string, unknown>) => listener?.({ sessionId: context.session.id,
+                            emittedAtMs: ++sequence, sequence, ...event } as AgentSessionRuntimeEvent);
+                        emit({ kind: 'provider-session-id', providerSessionId: 'retained-native-conversation' });
+                        emit({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+                        emit({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+                        emit({ kind: 'turn-complete', turnId: input.delivery.turnId });
+                        return { status: 'admitted' as const };
+                    },
+                    watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
+                    dispose: async () => {
+                        if (failure === 'dispose' && !disposeFailed) {
+                            disposeFailed = true;
+                            throw new Error('Native replacement disposal failed');
+                        }
+                    },
+                };
+            } } },
+            sessionInput: buildPluginSessionBindingInput({
+                credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+                directory: '/tmp/replacement-recovery',
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('Missing factory');
+        const created = await plan.config.createSessionRuntime({ directory: '/tmp/replacement-recovery', metadata: {}, machineId: 'machine',
+            session, transcriptSession: session, messageBuffer: {}, mcpServers: {}, permissionHandler, getPermissionMode: () => 'default',
+            setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
+            resolveFreshSessionSystemPrompt: async () => 'INITIAL_PLAN',
+        } as never);
+        const initialPlan = created.operations.readSessionStartupInstructions?.()?.instructions;
+        expect(initialPlan).toBeTruthy();
+        let requestedPlan = initialPlan;
+        let ready = 0;
+        queue.push({ text: 'first', localId: 'first' }, { permissionMode: 'default' });
+        try {
+            await runPermissionModePromptLoop({ providerName: 'Test', agentMessageType: 'codex', explicitPermissionMode: undefined,
+                session, messageQueue: queue, permissionHandler, runtime: created.operations,
+                createOverrideSynchronizer: isStarted => createRuntimeOverrideSynchronizers({
+                    agentTargetKey: `agent:test/${agentId}`, session, isStarted,
+                    runtime: createRuntimeOverrideTarget({ runtime: created.operations,
+                        transitionModelSelection: async () => {
+                            throw new Error('This startup-plan scenario has no model selection');
+                        },
+                    }),
+                }),
+                messageBuffer: new MessageBuffer(), shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
+                keepAlive() {}, setThinking() {}, sendReady() {
+                    if (++ready === 1) {
+                        requestedPlan = 'CHANGED_PLAN';
+                        queue.push({ text: 'failed', localId: 'failed' }, { permissionMode: 'default' });
+                    } else if (ready === 2) {
+                        // The original input has settled visibly. No automatic
+                        // retry occurs before this independently submitted input.
+                        expect(opens).toBe(failure === 'dispose' ? 1 : 2);
+                        expect(failures).toHaveLength(1);
+                        requestedPlan = initialPlan;
+                        queue.push({ text: 'later', localId: 'later' }, { permissionMode: 'default' });
+                    } else abort.abort();
+                },
+                currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+                formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
+                resolveFreshSessionSystemPrompt: async () => requestedPlan,
+                readSessionPromptPlanDeliveryState: () => ({ startupInstructionsSupported: true, revisionChanges: 'resume' }),
+                onPromptFailure: async error => { failures.push(error); },
+            });
+            expect(completed).toEqual(['first', 'later']);
+            expect(failures).toEqual([expect.objectContaining({ code: 'agent_startup_failed',
+                details: expect.objectContaining({ failureCause: expect.objectContaining({
+                    phase: 'client_start', ...(failure === 'typed_open'
+                        ? { providerErrorCode: 'native_reopen_refused' } : { code: 'agent_startup_failed' }),
+                }) }) })]);
+            expect(opens).toBe(failure === 'dispose' ? 2 : 3);
+        } finally { abort.abort(); await created.operations.resetOrDisposeRuntime(); }
+    });
+
+    it.each([
+        { selection: 'armed', failure: 'open', proofPublication: 'available' },
+        { selection: 'explicit', failure: 'open', proofPublication: 'available' },
+        { selection: 'explicit', failure: 'dispose', proofPublication: 'available' },
+        { selection: 'explicit', failure: 'open', proofPublication: 'unavailable' },
+    ] as const)('releases model admission after a closed replacement so later input can reopen ($selection, $failure, proof $proofPublication)', async scenario => {
+        const abort = new AbortController();
+        const agentId = 'acme-model-replacement-recovery';
+        const agentTargetKey = `backend:${agentId}`;
+        const oldSelection: ProviderBoundModelRef = { agentTargetKey, providerConnectionId: null, modelId: 'old' };
+        const nextSelection: ProviderBoundModelRef = { ...oldSelection, modelId: 'next' };
+        const scope = { serverId: 'home', accountId: 'account', sessionId: 'model-replacement-recovery' };
+        const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+            mode => `${mode.permissionMode}:${mode.modelSelection?.modelId ?? ''}`, { batcher: combinePermissionModeQueuedPrompts });
+        const session = createMutableApiSessionClientFixture({ sessionId: scope.sessionId,
+            metadata: createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0,
+                modelSelectionIntentV1: { v: 1, updatedAt: 1, selection: oldSelection } }), overrides: {
+                // Home transport is the boundary; queue, metadata CAS, model
+                // authorization, coordinator and native replacement stay real.
+                enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
+                enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
+            } });
+        const permissionHandler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[ModelReplacementRecovery]' });
+        const contributions = createExternalContributionFixtures(agentId);
+        const completed: string[] = [];
+        const failures: unknown[] = [];
+        const publishedActive: string[] = [];
+        const revokedActive: string[] = [];
+        let opens = 0;
+        let disposeFailed = false;
+        const plan = await createNativeAgentRuntimeSessionPlanFixture({
+            backend: contributions.backend, agent: contributions.agent, lease: createLease(agentId),
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+            runtime: { sessions: { open: async (_request, context) => {
+                if (++opens === 2 && scenario.failure === 'open') throw new Error('Native replacement open failed');
+                const modelBinding = context.session.services.models.bind({
+                    read: () => ({ models: null, currentModelId: 'old' }),
+                    subscribe: () => ({ dispose() {} }),
+                });
+                let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+                let sequence = 0;
+                return {
+                    async send(input) {
+                        completed.push(input.inputIds[0]!);
+                        const emit = (event: Record<string, unknown>) => listener?.({ sessionId: context.session.id,
+                            emittedAtMs: ++sequence, sequence, ...event } as AgentSessionRuntimeEvent);
+                        emit({ kind: 'provider-session-id', providerSessionId: 'retained-model-conversation' });
+                        emit({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+                        emit({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+                        emit({ kind: 'turn-complete', turnId: input.delivery.turnId });
+                        return { status: 'admitted' as const };
+                    },
+                    watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
+                    async dispose() {
+                        modelBinding.dispose();
+                        if (scenario.failure === 'dispose' && !disposeFailed) {
+                            disposeFailed = true;
+                            throw new Error('Native replacement disposal failed');
+                        }
+                    },
+                };
+            } } },
+            sessionInput: buildPluginSessionBindingInput({
+                credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+                directory: '/tmp/model-replacement-recovery', backendTarget: { kind: 'backend', backendId: agentId },
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('Missing factory');
+        const created = await plan.config.createSessionRuntime({ directory: '/tmp/model-replacement-recovery', metadata: {}, machineId: 'machine',
+            session, transcriptSession: session, messageBuffer: {}, mcpServers: {}, permissionHandler, getPermissionMode: () => 'default',
+            setThinking: () => undefined, memoryRecallGuidanceEnabled: false } as never);
+        const inputConsumer = createSessionProviderInputConsumer({ messageQueue: queue,
+            session: createSessionProviderInputConsumerSessionAdapter(session), reconcileWhenEmpty: 'skip', refreshBeforeQueuedBatch: false });
+        const initialTarget: AuthorizedSessionModelTransitionTarget = { selection: oldSelection, policy: 'restart_session',
+            providerBinding: null, sessionBindingMetadata: null, runtimeBindingBasis: null, revalidateBeforeEffect: async () => true };
+        let readActiveTarget = () => initialTarget;
+        const authorize = createSessionModelTransitionAuthorizer({ sessionId: scope.sessionId, machineId: 'machine', agentId,
+            agentTargetKey, nativeModelApplyPolicy: 'restart_session', readActiveTarget: () => readActiveTarget() });
+        let intentOrder = 1;
+        const coordinator = createSessionModelTransitionCoordinator({ runId: 'model-replacement-run', agentTargetKey,
+            ownerScope: scope, initialActiveTarget: initialTarget, initialActiveTargetConfirmed: true,
+            readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(session.getMetadataSnapshot()),
+            isCurrentRun: () => !abort.signal.aborted, checkCurrentPublisherAuthority: async () => !abort.signal.aborted,
+            authorize,
+            publishIntent: async (selection, expected) => {
+                const candidate = createModelIntentMetadataCasCandidate({ selection, ownerScope: scope, nowMs: () => ++intentOrder,
+                    ...(expected ? { expected: { owner: 'inactive', scope, ...expected } } : {}) });
+                session.updateMetadata(current => candidate.update(current ?? createTestMetadata()));
+                const state = candidate.readState();
+                return { accepted: state.accepted, updatedAt: state.updatedAt ?? 0 };
+            },
+            applyRuntime: async target => mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult(
+                await created.operations.updateSessionRuntimeConfig({ modelId: target.selection.modelId })),
+            publishActive: async target => { publishedActive.push(target.selection.modelId); },
+            revokeActiveSelectionProof: async selection => {
+                if (scenario.proofPublication === 'unavailable') throw new Error('Home proof publication unavailable');
+                revokedActive.push(selection.modelId);
+            },
+            fencePromptAdmission: async epochId => { await inputConsumer.enforceProviderInputAdmission({ kind: 'action_required',
+                reason: 'generation_pending', serviceId: 'host-runtime', groupId: 'model-transition', epochId }); },
+            clearPromptAdmission: async epochId => {
+                const result = await inputConsumer.clearProviderInputAdmission({ serviceId: 'host-runtime', groupId: 'model-transition', epochId });
+                if (result.status !== 'cleared') throw new Error('Exact model admission was not cleared');
+            },
+            transferPromptAdmission: (epochId, options) => inputConsumer.runProviderInputDispatchFromAdmission({ ...options,
+                admission: { kind: 'action_required', reason: 'generation_pending', serviceId: 'host-runtime', groupId: 'model-transition', epochId } }),
+            readRuntimeModelId: () => created.operations.models?.read().currentModelId ?? null,
+            subscribeRuntimeModelChanges: handler => {
+                const subscription = created.operations.models?.subscribe(snapshot => handler(snapshot.currentModelId));
+                return () => subscription?.dispose();
+            },
+        });
+        readActiveTarget = coordinator.readActiveTarget;
+        let ready = 0;
+        queue.push({ text: 'first', localId: 'first' }, { permissionMode: 'default' });
+        try {
+            await runPermissionModePromptLoop({ providerName: 'Test', agentMessageType: 'codex', explicitPermissionMode: undefined,
+                session, messageQueue: queue, inputConsumer, permissionHandler, runtime: created.operations,
+                createOverrideSynchronizer: isStarted => createRuntimeOverrideSynchronizers({ agentTargetKey, session, isStarted,
+                    runtime: createRuntimeOverrideTarget({ runtime: created.operations,
+                        transitionModelSelection: (selection, source) => coordinator.submit(selection, { source }) }) }),
+                transitionModelSelectionBeforePrompt: (selection, runWithActiveSelection, restartRuntime) => coordinator.submit(selection,
+                    { source: 'prompt', runWithActiveSelection, restartRuntime }),
+                readArmedModelSelection: coordinator.readArmedSelection,
+                readActiveModelSelection: () => coordinator.readActiveTarget().selection,
+                messageBuffer: new MessageBuffer(), shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
+                keepAlive() {}, setThinking() {}, async sendReady() {
+                    if (++ready === 1) {
+                        if (scenario.selection === 'armed') await coordinator.submit(nextSelection, { source: 'command', applyTiming: 'next_prompt' });
+                        queue.push({ text: 'failed', localId: 'failed' }, { permissionMode: 'default',
+                            ...(scenario.selection === 'explicit' ? { modelSelection: nextSelection } : {}) });
+                    } else if (ready === 2) {
+                        expect(failures).toHaveLength(1);
+                        expect(opens).toBe(scenario.failure === 'open' ? 2 : 1);
+                        if (scenario.proofPublication === 'unavailable') {
+                            expect(inputConsumer.readProviderInputAdmission()).toMatchObject({ kind: 'action_required', groupId: 'model-transition' });
+                            expect(await coordinator.readAppliedTarget()).toEqual({ status: 'unavailable', reason: 'reconciliation_required' });
+                            expect(publishedActive).not.toContain('next');
+                            abort.abort();
+                            return;
+                        }
+                        expect(revokedActive).toEqual(['old']);
+                        expect(inputConsumer.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+                        expect(await coordinator.readAppliedTarget()).toEqual({ status: 'unavailable', reason: 'runtime_model_unconfirmed' });
+                        expect(coordinator.readArmedSelection()).toBeNull();
+                        expect(session.getMetadataSnapshot()?.modelSelectionIntentV1?.selection).toEqual(oldSelection);
+                        expect(publishedActive).not.toContain('next');
+                        queue.push({ text: 'later', localId: 'later' }, { permissionMode: 'default' });
+                    } else abort.abort();
+                },
+                currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+                formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
+                onPromptFailure: async error => { failures.push(error); },
+            });
+            expect(completed).toEqual(scenario.proofPublication === 'unavailable' ? ['first'] : ['first', 'later']);
+            expect(opens).toBe(scenario.proofPublication === 'unavailable' ? 2 : scenario.failure === 'open' ? 3 : 2);
+            expect(failures).toEqual([expect.objectContaining({ name: 'PreTurnPromptFailure', diagnostic: expect.objectContaining({
+                details: expect.objectContaining({ failureCause: expect.objectContaining({ code: 'agent_startup_failed', phase: 'client_start' }) }),
+            }) })]);
+            expect(publishedActive).not.toContain('next');
+        } finally { abort.abort(); await created.operations.resetOrDisposeRuntime(); await coordinator.dispose(); }
+    });
+
     it.each(['rejected', 'unavailable', 'cancelled', 'slow_cleanup'] as const)(
         'processes the next prompt after the first is %s before a turn starts',
         async (failure) => {

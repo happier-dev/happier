@@ -203,9 +203,7 @@ import { createSessionProviderInputConsumer } from '@/agent/runtime/session/inpu
 import { createSessionIdleCompactionScheduler } from '@/agent/runtime/session/createSessionIdleCompactionScheduler';
 import { resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
 import {
-  publishSessionFollowWakeInvalidation,
-  readSessionFollowWakeInvalidationGeneration,
-  waitForSessionFollowWakeInvalidation,
+  createSessionFollowWakeSignal,
 } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/session/input/_types';
 import {
@@ -305,7 +303,7 @@ import {
   createSessionFollowSourceHydrator,
 } from '@/agent/runtime/session/follow/sessionFollowSourceHydrator';
 import type { SessionFollowSourceMaterialController } from '@/agent/runtime/session/follow/sessionFollowSourceMaterialResolver';
-import { measureSessionFollowUtf8Bytes, resolveSessionFollowContextUtf8AllowanceV1 } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
+import { measureSessionFollowUtf8Bytes, resolveSessionFollowContextUtf8AllowanceV1, sameSessionFollowContextAllowanceUsage } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
 
 type TransformSessionInputBeforeCommit = NonNullable<
   ApiSessionClientOptions['transformSessionInputBeforeCommit']
@@ -506,6 +504,7 @@ export type HostRuntimeReplacementLifecycle = Readonly<{
   ) => Promise<void>;
   onSuccessorBound(): void | Promise<void>;
   onSuccessorUsable(): Promise<void>;
+  onReplacementFailed?(): Promise<void>;
 }>;
 
 export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Readonly<{
@@ -1319,6 +1318,8 @@ async function runHostedSessionRuntime(
   let modelTransitionOwnerCurrent = true;
   let modelTransitionAdmissionFenced = false;
   let latestSessionContextUsage: SessionContextUsageSnapshotV1 | null = null;
+  // This Session's Follow wake; hosted siblings are not woken by its own facts.
+  const sessionFollowWake = createSessionFollowWakeSignal();
   let ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
   const runtimeState = { thinking: false };
   let reconnectionHandle: { cancel: () => void } | null = null;
@@ -2126,6 +2127,7 @@ async function runHostedSessionRuntime(
         onError: (error) => logger.debug(`${config.uiLogPrefix} Workflow origin context unavailable`, {
           error: error instanceof Error ? error.message : 'unknown_error',
         }),
+        followWake: sessionFollowWake,
       }) };
     }
     return currentWorkflowInput.port;
@@ -2525,7 +2527,7 @@ async function runHostedSessionRuntime(
         ?? null,
   );
   const pendingQueueDeliveryTiming = readPendingQueueDeliveryTiming();
-  let observedSessionFollowWakeGeneration = readSessionFollowWakeInvalidationGeneration() - 1;
+  let observedSessionFollowWakeGeneration = sessionFollowWake.readGeneration() - 1;
   const workflowStepWithdrawal = createWorkflowStepWithdrawal({
     reportWithdrawn: async (input) => { await readWorkflowInputPort()?.reportWorkflowStepWithdrawn(input); },
   });
@@ -2550,8 +2552,8 @@ async function runHostedSessionRuntime(
       try {
         return await Promise.race([
           // Retain a change between passes until taken; a refused host has no context to take.
-          waitForSessionFollowWakeInvalidation(startupInputRefusal
-            ? readSessionFollowWakeInvalidationGeneration() : observedSessionFollowWakeGeneration, controller.signal),
+          sessionFollowWake.waitForChange(startupInputRefusal
+            ? sessionFollowWake.readGeneration() : observedSessionFollowWakeGeneration, controller.signal),
           ...(!startupInputRefusal && currentLifecycleSession.waitForExecutionRunWorkerUpdateChange
             ? [currentLifecycleSession.waitForExecutionRunWorkerUpdateChange(controller.signal)] : []),
           ...(!startupInputRefusal && readWorkflowInputPort() ? [readWorkflowInputPort()!.waitForChange(controller.signal)] : []),
@@ -2592,7 +2594,7 @@ async function runHostedSessionRuntime(
           mode, isolate: true, hash: localId,
         };
       }
-      const currentGeneration = readSessionFollowWakeInvalidationGeneration();
+      const currentGeneration = sessionFollowWake.readGeneration();
       if (currentGeneration === observedSessionFollowWakeGeneration) return null;
       observedSessionFollowWakeGeneration = currentGeneration;
       const prepared = await effectivePrepareHostContext({
@@ -3784,6 +3786,15 @@ async function runHostedSessionRuntime(
 
   let runtimeReplacementEpoch = 0;
   let activeRuntimeReplacementEpoch: string | null = null;
+  const clearRuntimeReplacementAdmission = async (epochId: string) => {
+    const result = await inputConsumer.clearProviderInputAdmission({
+      serviceId: 'host-runtime', groupId: 'primary-runtime', epochId,
+    });
+    if (result.status === 'cleared' && activeRuntimeReplacementEpoch === epochId) {
+      activeRuntimeReplacementEpoch = null;
+    }
+    return result;
+  };
   const admitSuccessorProviderBindingHandoff = async (
     handoff: ProviderBindingLaunchHandoffV1,
   ): Promise<void> => {
@@ -3827,11 +3838,7 @@ async function runHostedSessionRuntime(
         if (runtimeActivityApplicability === 'supported') {
           bindAgentRuntimeActivityProducer(session.sessionId);
         }
-        const clearResult = await inputConsumer.clearProviderInputAdmission({
-          serviceId: 'host-runtime',
-          groupId: 'primary-runtime',
-          epochId,
-        }).catch(() => {
+        await clearRuntimeReplacementAdmission(epochId).catch(() => {
           logger.debug(
             `${config.uiLogPrefix} Runtime replacement admission restore failed after Activity publication rejection`,
             {
@@ -3840,9 +3847,6 @@ async function runHostedSessionRuntime(
           );
           return null;
         });
-        if (clearResult?.status === 'cleared' && activeRuntimeReplacementEpoch === epochId) {
-          activeRuntimeReplacementEpoch = null;
-        }
         throw error;
       }
     },
@@ -3855,15 +3859,27 @@ async function runHostedSessionRuntime(
       const epochId = activeRuntimeReplacementEpoch;
       if (!epochId) return;
       await runtimeActivityProjection?.reofferCurrentSnapshot();
-      const result = await inputConsumer.clearProviderInputAdmission({
-        serviceId: 'host-runtime',
-        groupId: 'primary-runtime',
-        epochId,
-      });
+      const result = await clearRuntimeReplacementAdmission(epochId);
       if (result.status !== 'cleared') {
         throw new Error('Runtime replacement input admission could not be reopened for the exact successor epoch');
       }
-      activeRuntimeReplacementEpoch = null;
+    },
+    onReplacementFailed: async () => {
+      const epochId = activeRuntimeReplacementEpoch;
+      if (!epochId) return;
+      // Release this replacement's gate so new input can enter the loop's
+      // native-lifetime recovery. Activity remains unknown until a successor binds.
+      try {
+        const result = await clearRuntimeReplacementAdmission(epochId);
+        if (result.status !== 'cleared') {
+          throw new Error('Runtime replacement input admission could not be reopened after failure');
+        }
+      } catch (error) {
+        logger.infoFile('[HostSessionRuntime] Failed replacement admission could not be released', {
+          code: 'runtime_replacement_admission_restore_failed',
+        });
+        throw error;
+      }
     },
   });
   runtimeForSessionRollback = nativeRuntime;
@@ -4109,8 +4125,10 @@ async function runHostedSessionRuntime(
           }
           if (event.kind === 'usage-observed') idleCompactionScheduler?.observeUsage(event);
           if (event.kind === 'usage-observed' && event.context) {
+            const allowanceChanged = !sameSessionFollowContextAllowanceUsage(latestSessionContextUsage, event.context);
             latestSessionContextUsage = event.context;
-            publishSessionFollowWakeInvalidation();
+            // A changed allowance can admit deferred optional context for this Session only.
+            if (allowanceChanged) sessionFollowWake.publish();
           }
           config.publishHostRuntimeEvent?.(event);
         },

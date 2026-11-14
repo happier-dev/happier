@@ -58,6 +58,8 @@ export type SessionModelTransitionApplyResult =
 export type SessionModelTransitionRestart = Readonly<{
   required: boolean;
   run: () => Promise<void>;
+  /** The current native owner exposes whether replacement left any deliverable runtime. */
+  getRuntimeLifetimeSignal?: () => AbortSignal | null | undefined;
 }>;
 
 /**
@@ -1244,6 +1246,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
 
     if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
     let forwardEffectObservationRevision = runtimeObservationRevision;
+    let replacementLifetimeEnded = false;
     const permittedApply = await runWithCurrentPublisherPermit(async () => {
       // This immediate invocation is the runtime-effect boundary. From this
       // synchronous point onward, the operation must reconcile the effect it
@@ -1262,11 +1265,27 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           target = runtimeReplacementTarget;
           applied = await safelyApply(target);
         } catch (error) {
-          applied = { status: 'unproven', readbackAfterCompletion: true,
+          const lifetimeEnded = restart.getRuntimeLifetimeSignal?.()?.aborted === true;
+          applied = { status: 'unproven', readbackAfterCompletion: !lifetimeEnded,
             reason: projectSessionModelTransitionReason(error instanceof Error ? error.message : null, 'runtime_apply_failed'),
             failureCause: classifyPrimarySessionRuntimeIssue({
               cause: 'session_error', error, startupPhase: 'turn_start',
             }).failureCause };
+          if (lifetimeEnded) {
+            observedAppliedTarget = null;
+            awaitingRuntimeConfirmation = null;
+            try {
+              await params.revokeActiveSelectionProof(activeTarget.selection);
+              // Evidence from the retired runtime cannot prove a live apply or
+              // keep later input behind reconciliation. It must reopen first.
+              replacementLifetimeEnded = true;
+              runtimeObservedDriftModelId = null;
+              applied = { ...applied, status: 'failed' };
+            } catch {
+              // Keep the model fence when withdrawing old active proof fails;
+              // retain the original replacement cause for the failed prompt.
+            }
+          }
         } finally {
           runtimeReplacementTarget = null;
         }
@@ -1293,7 +1312,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     if (
-      applied.status !== 'applied'
+      !replacementLifetimeEnded
+      && applied.status !== 'applied'
       && applied.status !== 'deferred'
       && applied.status !== 'unproven'
       && runtimeObservationRevision !== forwardEffectObservationRevision
@@ -1342,10 +1362,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       let failureCause = applied.failureCause;
       if (applied.status === 'failed' && proposal.source === 'prompt'
         && proposal.committedIntentUpdatedAt !== undefined
-        && armedSelection && sameSelection(armedSelection, proposal.selection)) {
+        && (replacementLifetimeEnded || (armedSelection && sameSelection(armedSelection, proposal.selection)))) {
         try {
-          // This prompt consumed its refused choice. Restore the applied intent
-          // only while this proposal still owns the durable selection.
+          // This prompt consumed its failed choice. Restore the prior configured
+          // intent only while this proposal still owns the durable selection.
           const restored = await params.publishIntent(activeTarget.selection, {
             selection: proposal.selection, updatedAt: proposal.committedIntentUpdatedAt,
           });
