@@ -22041,6 +22041,7 @@ const enProjects = {
         editCheck: "Edit check",
         uptime: ({ percent }: { percent: string }) => `${percent} up over 30 days`,
         sizeAbout: ({ size }: { size: string }) => `about ${size}`,
+        sizeLabel: "Size",
         growth: ({ amount }: { amount: string }) => `${amount} since the last check`,
       },
       allOtherProject: "Projects not opened on this device",

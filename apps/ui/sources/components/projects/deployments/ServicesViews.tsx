@@ -16,7 +16,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
-import { databaseEngineTitle } from './databasePresentation';
+import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import { DeploymentDomainRow } from './DeploymentDomainRow';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import {
@@ -78,22 +78,6 @@ export function ServicesViewTabs(
 }
 
 const NO_ITEMS: readonly never[] = Object.freeze([]);
-
-/** The size the owner measured, or why it has none: never a guessed figure. */
-function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size']): string {
-  if (size.status === 'available') {
-    const parts = formatHappierDataBytesParts(size.bytes, { kind: 'storage' });
-    const text = `${parts.value} ${parts.unit}`;
-    return size.measurement === 'table_bytes_estimate'
-      ? t('projects.deployments.services.sizeAbout', { size: text })
-      : text;
-  }
-  if (size.reason === 'unsupported_engine')
-    return t('projects.deployments.services.sizeUnsupported');
-  if (size.reason === 'active_deployment_required')
-    return t('projects.deployments.services.sizeAfterDeploy');
-  return t('projects.deployments.services.sizeUnavailable');
-}
 
 function describeDatabaseGrowth(
   growth: DeploymentDatabaseSizeV1['growth'],
