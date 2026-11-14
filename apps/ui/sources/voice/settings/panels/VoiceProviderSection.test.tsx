@@ -79,6 +79,15 @@ async function renderScreen(...input: Parameters<typeof renderTestScreen>) {
     return renderTestScreen(input[0], { ...input[1], wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider> });
 }
 
+
+/** Exercise the Action owner's real review instead of bypassing its confirmation. */
+async function confirmConnectedServicesSelection(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    await waitForTestEvent(screen.subscribe,
+        () => screen.findByTestId('actions.confirmation-review.decision-approve'), button => button !== null);
+    expect(accountFixture.writes).toEqual([]);
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+}
+
 beforeEach(async () => {
     descriptorAvailable = false;
     voiceProjectionEntries = {};
@@ -420,19 +429,18 @@ describe('VoiceProviderSection', () => {
         { online: true, retire: false },
         { online: false, retire: false },
         { online: true, retire: true },
-    ])('retries a failed selected Machine through a fresh Home read and Machine request (online=$online, retired=$retire)', async ({ online, retire }) => {
+    ])('opens Machine selection while retaining a failed selected Machine (online=$online, retired=$retire)', async ({ online, retire }) => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { useVoiceExecutionMachinePresentation } = await import('@/voice/credentials/useExecutionMachinePresentation');
-        const { recordMachineRequestFailed, recordMachineRequestSucceeded } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
         const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
-        passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: true };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: online };
         const defaults = readLocalConversationVoiceSettings(accountFixture.settings.voice);
         accountFixture.replaceVoice(writeLocalConversationVoiceSettings({ ...accountFixture.settings.voice,
             providerId: 'local_conversation', executionMachine: { mode: 'fixed', machineId: 'machine-1' },
         }, { ...defaults, stt: { ...defaults.stt, provider: 'local_neural',
             localNeural: { ...defaults.stt.localNeural, execution: 'daemon' } } }));
         const voice = accountFixture.settings.voice;
-        expect(voice.executionMachine).toEqual({ mode: 'fixed', machineId: 'machine-1' });
         const setVoice = vi.fn();
         const navigate = vi.fn();
         let selectionKind = '';
@@ -446,62 +454,22 @@ describe('VoiceProviderSection', () => {
                     runtimeState: 'unknown', pcmCapture: 'available' } }} />;
         }
         const screen = await renderScreen(<MountedPresenceReadiness />);
-        const response = createDeferred<Response>();
-        const request = accountFixture.request.getMockImplementation()!;
-        const freshMachine = (id: string) => ({
-            ...createPlainMachineRowFixture({ id, accountId: accountFixture.scope.accountId }),
-            active: online, activeAt: Date.now(), daemonStateVersion: 1,
-        });
-        let freshRead = false;
-        const freshReadEntered = createDeferred<void>();
-        accountFixture.request.mockImplementation((url, init) => {
-            const path = new URL(String(url)).pathname;
-            if (path === '/v1/machines') {
-                freshRead = true;
-                freshReadEntered.resolve();
-                return response.promise;
-            }
-            // Adjacent exact reads must observe the same Home fact as its census.
-            if (freshRead && path === '/v1/machines/read-batch' && init?.method === 'POST') {
-                return Promise.resolve(createMachineReadBatchResponseFixture(init.body, freshMachine));
-            }
-            if (freshRead && path === '/v1/machines/machine-1') {
-                return Promise.resolve(Response.json({ machine: freshMachine('machine-1') }));
-            }
-            return request(url, init);
-        });
         await act(async () => { recordMachineRequestFailed({ ...accountFixture.scope, machineId: 'machine-1' }); });
-        expect(selectionKind, JSON.stringify({ current: storage.getState().settings.voice.executionMachine,
-            persisted: accountFixture.persistedSettings.voice.executionMachine, initial: voice.executionMachine })).toBe('selected_unreachable');
+        expect(selectionKind).toBe('selected_unreachable');
         expect(screen.getTextContent()).toContain(tLoose('voice.readiness.execution_machine_incompatible'));
-        expect(screen.getTextContent()).toContain(t('common.retry'));
-        passiveSetupBoundary.refresh.mockClear();
-        capabilityState = online ? { status: 'idle' } : { status: 'error' };
-        const retry = findAllHostTestInstances(screen.tree.root, node => typeof node.props.testID === 'string'
+        if (retire) await act(async () => { retireActiveServerAccountScopeLifetime(); });
+        const recovery = findAllHostTestInstances(screen.tree.root, node => typeof node.props.testID === 'string'
             && node.props.testID.startsWith('settings.voice.conversations.pipeline')
             && node.props.testID.endsWith('.recover') && typeof node.props.onPress === 'function')[0];
-        expect(retry).toBeDefined();
-        await act(async () => { retry!.props.onPress(); });
-        await freshReadEntered.promise;
-        expect(freshRead).toBe(true);
-        await act(async () => {
-            const otherScope = { ...accountFixture.scope, accountId: 'another-account' };
-            recordMachineRequestSucceeded({ ...otherScope, machineId: 'machine-1' });
-        });
+        expect(recovery).toBeDefined();
+        await pressTestInstanceAsync(recovery!);
+        expect(navigate).toHaveBeenCalledExactlyOnceWith('select_execution_machine');
         expect(selectionKind).toBe('selected_unreachable');
-        if (retire) retireActiveServerAccountScopeLifetime();
-        await act(async () => { response.resolve(Response.json([freshMachine('machine-1')])); });
-        await waitForTestEvent(screen.subscribe, () => selectionKind,
-            kind => kind === (online && !retire ? 'resolved' : 'selected_unreachable'));
-        expect(selectionKind).toBe(online && !retire ? 'resolved' : 'selected_unreachable');
-        expect(passiveSetupBoundary.refresh.mock.calls.filter(([request]) => request.requests.length === 0))
-            .toEqual(retire ? [] : [[{ requests: [], bypassCache: true }]]);
-        if (!online) expect(screen.getTextContent()).toContain(tLoose('voice.readiness.execution_machine_incompatible'));
-        expect(navigate).not.toHaveBeenCalled();
         expect(setVoice).not.toHaveBeenCalled();
         expect(storage.getState().settings.voice).toBe(voice);
+        expect(accountFixture.persistedSettings.voice.executionMachine).toEqual({ mode: 'fixed', machineId: 'machine-1' });
         await screen.unmount();
-    }, 120_000);
+    });
 
     it('retains normalized Voice input identity while propagating Machine and settings changes', async () => {
         const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
@@ -652,27 +620,26 @@ describe('VoiceProviderSection', () => {
         await screen.update(React.createElement(SettingsConsumers));
         await waitForTestEvent(screen.subscribe, currentAccount, accountId => accountId === 'account-navigation-other-home');
         expect(currentAccount()).toBe('account-navigation-other-home');
-        // Remounting re-observes catalogs after a gap; their owners withdraw
-        // mutation authority and revalidate before the consumers become idle.
-        const { beginSavedSecretCatalogLoad, getSavedSecretCatalogSnapshot, subscribeSavedSecretCatalogSnapshots } =
+        // Readiness observes its purposes catalog, but an unbound Saved Secret
+        // reader has no catalog demand and must not wait for a publication.
+        const { beginSavedSecretCatalogLoad, getSavedSecretCatalogSnapshot } =
             await import('@/sync/store/settings/savedSecretCatalogSnapshot');
         const { getConnectedAccountCatalogValue, subscribeConnectedAccountCatalogSnapshots } =
             await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
         // Settlement is the catalog owners' publication, not a consumer commit:
         // readers that do not present catalog lifecycle correctly stay idle.
-        const catalogPublications = (notify: () => void) => {
-            const unsubscribeSavedSecrets = subscribeSavedSecretCatalogSnapshots(notify);
-            const unsubscribeConnectedAccounts = subscribeConnectedAccountCatalogSnapshots(notify);
-            return () => { unsubscribeSavedSecrets(); unsubscribeConnectedAccounts(); };
-        };
-        await waitForTestEvent(catalogPublications, () => {
+        await waitForTestEvent(subscribeConnectedAccountCatalogSnapshots, () => {
             const scope = storage.getState().settingsScope;
             if (!scope) return false;
-            const savedSecrets = getSavedSecretCatalogSnapshot(scope);
             const purposes = getConnectedAccountCatalogValue(scope, 'purposes');
-            return savedSecrets?.status === 'ready' && !savedSecrets.stale
-                && purposes.status === 'ready' && !purposes.stale;
+            return purposes.status === 'ready' && !purposes.stale;
         }, settled => settled);
+        expect(getSavedSecretCatalogSnapshot(storage.getState().settingsScope)?.data ?? null).toBeNull();
+        expect(accountFixture.request.mock.calls.filter(([url]) => {
+            const requestUrl = new URL(String(url));
+            return requestUrl.origin === 'https://voice-navigation-other.example.test'
+                && requestUrl.pathname.startsWith('/v1/account/saved-secrets/');
+        })).toEqual([]);
         const settledRenders = observedAccounts.length;
         await act(async () => {});
         await act(async () => {});
@@ -681,7 +648,7 @@ describe('VoiceProviderSection', () => {
         // A Saved Secret lifecycle publication no row reads must not re-render the readiness consumer.
         const idleRenders = observedAccounts.length;
         await act(async () => { beginSavedSecretCatalogLoad(storage.getState().settingsScope!); });
-        expect(getSavedSecretCatalogSnapshot(storage.getState().settingsScope)?.status).toBe('refreshing');
+        expect(getSavedSecretCatalogSnapshot(storage.getState().settingsScope)?.status).toBe('loading');
         expect(observedAccounts.length - idleRenders).toBe(0);
     });
 
@@ -3970,7 +3937,8 @@ describe('VoiceProviderSection', () => {
         const version = storage.getState().settingsVersion;
         expect(version).not.toBeNull();
         await act(async () => field?.props.onChange(binding, version));
-        await waitForTestEvent(screen.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
+        await confirmConnectedServicesSelection(screen);
+        await waitForTestEvent(accountFixture.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
             providerId,
             providers: {
                 [providerId]: {
@@ -4022,7 +3990,8 @@ describe('VoiceProviderSection', () => {
         const version = storage.getState().settingsVersion;
         expect(version).not.toBeNull();
         await act(async () => fields[0]?.props.onChange(binding, version));
-        await waitForTestEvent(screen.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
+        await confirmConnectedServicesSelection(screen);
+        await waitForTestEvent(accountFixture.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
             providerId: CODEX_PROVIDER_ID,
             providers: {
                 [CODEX_PROVIDER_ID]: {

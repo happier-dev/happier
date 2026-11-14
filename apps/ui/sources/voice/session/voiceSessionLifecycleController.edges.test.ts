@@ -747,7 +747,7 @@ describe('voice session lifecycle edge contracts', () => {
                 status: 'error',
                 mode: 'idle',
                 canStop: false,
-                errorCode: 'service_temporarily_unavailable',
+                errorCode: reachable ? 'service_temporarily_unavailable' : 'execution_machine_unavailable',
                 errorMessage: reachable ? 'voice_provider_adapter_not_registered' : readiness.code,
                 errorRecoveryAction: reachable ? 'retry' : readiness.recoveryAction,
                 errorPresentation: 'error',
@@ -757,7 +757,9 @@ describe('voice session lifecycle edge contracts', () => {
                 const snapshot = controller.getSnapshot();
                 expect(snapshot.errorMessage).toBe('execution_machine_incompatible');
                 expect(resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', snapshot.errorMessage)).toBe(readiness.reasonKey);
-                expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)?.labelKey).toBe('common.retry');
+                expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)).toMatchObject({
+                    kind: 'select_execution_machine', labelKey: 'voice.readiness.actions.select_execution_machine',
+                });
             }
             expect(published).toHaveBeenCalledTimes(1);
 
@@ -774,6 +776,10 @@ describe('voice session lifecycle edge contracts', () => {
                 const rpc = machineRpcWithServerScope.getMockImplementation()!;
                 machineRpcWithServerScope.mockImplementation(async request => request.method === RPC_METHODS.CAPABILITIES_DETECT
                     ? { protocolVersion: 1, results: {} } : rpc(request));
+                // A successful Machine request owns reachability recovery; retry consumes
+                // its successful request instead of repairing a known offline target.
+                const { machineCapabilitiesDetect } = await import('@/sync/ops/capabilities');
+                await machineCapabilitiesDetect('machine-1', { requests: [], bypassCache: true }, lifetime.scope);
                 await controller.retry('session-1');
                 expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState()).kind).toBe('resolved');
                 expect(controller.getSnapshot()).toMatchObject({ errorMessage: 'voice_provider_adapter_not_registered' });
