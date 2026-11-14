@@ -9,6 +9,7 @@ import { useActivePluginAccountAvailabilityReleaseClassifier } from '@/sync/doma
 import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { createPluginUiProjectedActionResolver, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionSupplies } from '@/sync/domains/plugins/ui/projectionUnion';
+import { pluginUiSections } from '@/sync/domains/plugins/ui/projectionSections';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginContextualTarget } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolvePluginUiProjectionContributionId } from '@/sync/domains/plugins/ui/projectionRefs';
@@ -203,7 +204,8 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     React.useLayoutEffect(() => {
         mountedDemand.current = demandTarget ? { accountLifetime, choiceKey, target: demandTarget } : null;
     }, [accountLifetime, choiceKey, demandTarget]);
-    const projectionDemand = usePluginExecutionOriginProjectionDemand(demandTarget);
+    // Only this plugin's slices: a mounted surface never loads the Machine's whole catalogue.
+    const projectionDemand = usePluginExecutionOriginProjectionDemand(demandTarget, { sections: pluginUiSections(params.pluginId) });
     // Fresh invocation authority can withdraw before the descriptive selection
     // publication catches up. Do not erase the same establishing presentation
     // in that intermediate turn; the unavailable/refusal guard above still

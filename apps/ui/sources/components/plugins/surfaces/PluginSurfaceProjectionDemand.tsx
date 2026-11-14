@@ -4,7 +4,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
-import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { PLUGIN_UI_SECTIONS, pluginUiSections } from '@/sync/domains/plugins/ui/projectionSections';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { normalizeCredentialScopeServerId, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
@@ -55,8 +55,10 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const homeIds = React.useMemo(() => hosted.map(([, target]) => target.serverIdentityId), [hosted]);
     const bindings = useServerCredentialAccountScopeBindings(homeIds);
     // A surface render (an Availability publication) does not redraw its unchanged Machine demands.
-    const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={PLUGIN_UI_SECTIONS}
-        accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted]);
+    // A plugin's surface presents that plugin only: its slices, never the Machine's whole catalogue.
+    const sections = props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS;
+    const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={sections}
+        accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted, sections]);
     return <>
         {sourceDemands}
         {hostedSelection.map(([key, pluginId]) => <SelectedOriginDemand key={key} pluginId={pluginId} />)}

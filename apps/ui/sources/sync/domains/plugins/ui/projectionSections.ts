@@ -27,6 +27,26 @@ function sessionSlices(sections: readonly string[]): readonly string[] {
 export function pluginSliceSections(pluginId: string): readonly string[] {
     return DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS.map(section => daemonProjectionPluginSectionId(section, pluginId));
 }
+/** A demand's selectable sections narrowed to one plugin's slices; other sections are kept whole. */
+export function slicePluginSections(sections: readonly string[], pluginId: string): readonly string[] {
+    const selectable = new Set<string>(DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS);
+    return Object.freeze(sections.map(section => selectable.has(section)
+        ? daemonProjectionPluginSectionId(section as (typeof DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS)[number], pluginId)
+        : section));
+}
+const pluginUiSectionsByPluginId = new Map<string, readonly string[]>();
+/**
+ * One mounted plugin surface's UI demand: its plugin's Action, Resource and UI slices plus the
+ * shared UI families. AppShell presents that plugin from it; other plugins stay not loaded.
+ */
+export function pluginUiSections(pluginId: string): readonly string[] {
+    let sections = pluginUiSectionsByPluginId.get(pluginId);
+    if (!sections) {
+        sections = slicePluginSections(PLUGIN_UI_SECTIONS, pluginId);
+        pluginUiSectionsByPluginId.set(pluginId, sections);
+    }
+    return sections;
+}
 /** Session-tree plugin surfaces (header, panes, runtime, message Actions): the UI demand, Session plugins only. */
 export const SESSION_PLUGIN_UI_SECTIONS = sessionSlices(PLUGIN_UI_SECTIONS);
 // Message Actions resolve their Actions, UI entries and Resources for the Session's plugins.

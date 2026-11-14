@@ -149,7 +149,21 @@ export type PluginUiProjectionUnionMember = Readonly<{
     materializationsByPluginId?: Readonly<Record<string, PluginMachineMaterializationV1>>;
     /** Exact choices admitted by Administration; omitted means not reported yet. */
     selectableExecutionOrigins?: readonly PluginMachineExecutionOriginV1[];
+    /**
+     * Plugins this establishing Machine already presents from their read UI slices (a mounted
+     * surface's or the Session's). Their entries are current and interactive; every other plugin
+     * of the member stays establishing (not loaded, never absent).
+     */
+    currentPluginIds?: ReadonlySet<string>;
 }>;
+
+/** One plugin's phase on a Machine: its read slices make it current before the whole catalogue. */
+function readMemberPluginPhase(member: PluginUiProjectionUnionMember, pluginId: string): PluginUiProjectionPhase {
+    return member.currentPluginIds?.has(pluginId) ? 'current' : member.phase;
+}
+function isMemberPluginInteractive(member: PluginUiProjectionUnionMember, pluginId: string): boolean {
+    return member.currentPluginIds?.has(pluginId) === true || member.interactionEnabled;
+}
 
 /** Installed release slots bind the graph omitted by portable manifest-only declarations. */
 function matchesInstalledArtifactSlot(
@@ -472,7 +486,8 @@ function memberHasSelectableDeclaration(
     pluginId: string,
     projection = member.projection,
 ): boolean {
-    if (!projection || member.phase !== 'current' || !member.interactionEnabled || !member.selectableExecutionOrigins?.length) return false;
+    if (!projection || readMemberPluginPhase(member, pluginId) !== 'current' || !isMemberPluginInteractive(member, pluginId)
+        || !member.selectableExecutionOrigins?.length) return false;
     const selectableByPluginId = readSelectableOriginsByPluginId(member.selectableExecutionOrigins);
     const currentMember = { ...member, projection };
     return declarationMaps(projection).some(map => Object.values(map).some(entry => {
@@ -1471,8 +1486,10 @@ function sameCandidateMembers(left: readonly PluginUiProjectionUnionMember[], ri
         const other = right[index]!;
         if (member === other) return true;
         return member.machineId === other.machineId && member.serverId === other.serverId
-            && member.serverIdentityId === other.serverIdentityId && member.phase === other.phase
-            && member.unavailableReasonCode === other.unavailableReasonCode && member.interactionEnabled === other.interactionEnabled
+            && member.serverIdentityId === other.serverIdentityId
+            && readMemberPluginPhase(member, pluginId) === readMemberPluginPhase(other, pluginId)
+            && member.unavailableReasonCode === other.unavailableReasonCode
+            && isMemberPluginInteractive(member, pluginId) === isMemberPluginInteractive(other, pluginId)
             && (member.projection?.generation == null) === (other.projection?.generation == null)
             && member.projection?.installedPackagesById[pluginId] === other.projection?.installedPackagesById[pluginId]
             && samePluginUiMaterializationFacts(member.materializationsByPluginId?.[pluginId], other.materializationsByPluginId?.[pluginId])
@@ -1592,7 +1609,7 @@ function resolveMemberEntryExecutionOrigin(
 }
 
 function memberHasActivationRefusal(member: PluginUiProjectionUnionMember, pluginId: string): boolean {
-    return member.phase === 'current' && member.projection?.diagnostics?.some(diagnostic =>
+    return readMemberPluginPhase(member, pluginId) === 'current' && member.projection?.diagnostics?.some(diagnostic =>
         diagnostic.plugin.id === pluginId && diagnostic.host === 'daemon' && diagnostic.resolution.state === 'current'
         && diagnostic.data.code === 'plugin_activation_failed' && diagnostic.data.severity === 'error') === true;
 }
@@ -1610,9 +1627,9 @@ function resolveMemberContributionOrigin(
     return Object.freeze({ machineId: member.machineId, serverId: member.serverId,
         ...(member.serverIdentityId ? { serverIdentityId: member.serverIdentityId } : {}),
         ...(unavailableReasonCode ? { unavailableReasonCode } : {}),
-        phase: member.phase,
+        phase: readMemberPluginPhase(member, pluginId),
         executionOrigin: resolveMemberEntryExecutionOrigin(member, entry, packageOriginsByPluginId),
-        interactionEnabled: member.interactionEnabled && member.projection.generation !== null
+        interactionEnabled: isMemberPluginInteractive(member, pluginId) && member.projection.generation !== null
             && member.projection.installedPackagesById[pluginId]?.enabled !== false
             && (!observedInstallation || (observedInstallation.enabled && observedInstallation.trustState === 'trusted'))
             && (readString(entry.occurrenceId) !== null || readPluginUiProjectionEntryExecutionOrigin(entry) !== null) });
@@ -1657,6 +1674,7 @@ function samePluginUiProjectionUnionMemberInputs(member: PluginUiProjectionUnion
                         arePluginMachineExecutionOriginsEqual(origin, other.selectableExecutionOrigins![originIndex]!)
                     ))))
             && member.phase === other.phase
+            && member.currentPluginIds === other.currentPluginIds
             && member.unavailableReasonCode === other.unavailableReasonCode
             && member.interactionEnabled === other.interactionEnabled);
 }
@@ -1697,7 +1715,7 @@ function readMemberEstablishingTargets(member: PluginUiProjectionUnionMember): r
     let targets = memberEstablishingTargets.get(member);
     if (!targets) {
         targets = Object.freeze(Object.entries(member.materializationsByPluginId ?? {}).flatMap(([pluginId, installation]) => (
-            !installation.enabled || installation.trustState !== 'trusted' || installation.machineId !== member.machineId
+            member.currentPluginIds?.has(pluginId) || !installation.enabled || installation.trustState !== 'trusted' || installation.machineId !== member.machineId
                 || installation.serverIdentityId !== member.serverIdentityId ? []
                 : [[pluginId, Object.freeze({ serverIdentityId: installation.serverIdentityId, machineId: installation.machineId })] as const])));
         memberEstablishingTargets.set(member, targets);
@@ -2053,7 +2071,7 @@ function derivePluginUiProjectionUnion(
             // Coverage belongs to the selected publication, even when another
             // selectable replica supplies different declarations.
             if (installedPackage?.resourceDeclarationsComplete
-                && (member.phase !== 'current' || (conflictedPluginIds.has(pluginId) && selectedMember !== member))) {
+                && (readMemberPluginPhase(member, pluginId) !== 'current' || (conflictedPluginIds.has(pluginId) && selectedMember !== member))) {
                 const { resourceDeclarationsComplete: _coverage, ...retainedPackage } = installedPackage;
                 installedPackage = Object.freeze(retainedPackage);
             }

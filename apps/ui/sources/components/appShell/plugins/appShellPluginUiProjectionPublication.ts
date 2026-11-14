@@ -389,8 +389,9 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         let pluginIds = previous.executionOriginPluginIds;
         if (nextModelBasis.length !== modelBasis.length || nextModelBasis.some((value, index) => value !== modelBasis[index])) {
             const nextIds = [...new Set([...materializations.map(value => value.pluginId),
-                ...[...currentness.values()].flatMap(value => Object.keys(value.pluginUiProjection?.installedPackagesById
-                    ?? value.installedPackagesProjection?.installedPackagesById ?? {})),
+                // An establishing Machine's held packages are current facts beside its unread presentation.
+                ...[...currentness.values()].flatMap(value => [...Object.keys(value.pluginUiProjection?.installedPackagesById ?? {}),
+                    ...Object.keys(value.installedPackagesProjection?.installedPackagesById ?? {})]),
                 ...[...installedByMachineId.values()].flatMap(value => value.models.flatMap(model => Object.keys(model.installedPackagesById)))])]
                 .sort((left, right) => left.localeCompare(right));
             if (nextIds.length !== pluginIds.length || nextIds.some((id, index) => id !== pluginIds[index])) pluginIds = Object.freeze(nextIds);
@@ -454,13 +455,19 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const declaration = installedByMachineId.get(target.machineId);
             let merge = machineMerges.get(target.machineId);
             if (!merge) { merge = createInstalledPluginUiProjectionPublication(); machineMerges.set(target.machineId, merge); }
+            // Held plugin slices (a mounted surface's, the Session's) present those plugins
+            // while the Machine's catalogue stays establishing: others are not loaded, never absent.
+            const presentedPluginIds = current?.phase === 'establishing' && current.installedPackagesProjection
+                ? current.presentedPluginIds ?? null : null;
             const member: PluginUiProjectionUnionMember = {
                 machineId: target.machineId, serverId: target.serverId,
                 serverIdentityId: declaration?.serverIdentityId ?? activeServerIdentity,
                 materializationsByPluginId: declaration?.materializationsByPluginId,
                 selectableExecutionOrigins: selectableByMachine.get(target.machineId)?.origins,
-                projection: merge.publish(declaration?.models ?? NO_MODELS, current?.pluginUiProjection ?? null,
+                projection: merge.publish(declaration?.models ?? NO_MODELS,
+                    (presentedPluginIds ? current?.installedPackagesProjection : current?.pluginUiProjection) ?? null,
                     declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds),
+                ...(presentedPluginIds ? { currentPluginIds: presentedPluginIds } : {}),
                 phase: current?.phase === 'unavailable' || current?.phase === 'retainedOffline' ? current.phase
                     : current?.pluginUiProjection?.generation == null && declaration?.hasUnprovenDeclarations ? 'establishing' : current?.phase ?? 'establishing',
                 unavailableReasonCode: current?.unavailableReasonCode, interactionEnabled: current?.interactionEnabled ?? false,
@@ -568,7 +575,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && (current?.currentness.phase ?? 'establishing') === currentness.phase
                 && current?.currentness.unavailableReasonCode === currentness.unavailableReasonCode
                 && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled
-                && (current?.currentness.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)) {
+                && (current?.currentness.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
+                && (current?.currentness.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)) {
                 // Missing reports already contribute null/establishing/noninteractive
                 // inputs. Their first matching answer, like Browser and descriptor
                 // arrivals, changes the raw report without changing the catalog.

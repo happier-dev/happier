@@ -30,10 +30,11 @@ import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
 } from '@/agents/registry/agentUiBehaviorProjection';
-import { daemonProjectionSectionsCover, demandedDaemonProjectionSections, readDaemonProjectionSectionPlugins,
+import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, daemonProjectionSectionsCover, demandedDaemonProjectionSections, readDaemonProjectionSectionPlugins,
     type DaemonProjectionDeferredSectionsResponse, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getPreferredLanguage } from '@/text';
+import { slicePluginSections } from '@/sync/domains/plugins/ui/projectionSections';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { mergeProjectionSections } from './mergeProjectionSections';
 import { entryIsFresh, matchesProjectionCurrentness } from './projectionCurrentness';
@@ -118,6 +119,24 @@ export function daemonProjectionSectionList(demand: DaemonProjectionSectionDeman
 export function daemonProjectionHasSections(entry: Readonly<{ deferredProjection?: DeferredDaemonProjection }>, sections?: readonly string[]): boolean {
     const deferred = entry.deferredProjection;
     return !deferred || daemonProjectionSectionsCover(deferred.manifest, deferred.loadedSections, sections);
+}
+const NO_PLUGINS: ReadonlySet<string> = Object.freeze(new Set<string>());
+/**
+ * Plugins whose slices of `sections` this held answer covers, for an answer that holds slices
+ * rather than the whole sections: those plugins are presented; every other plugin is not loaded.
+ */
+export function readDaemonProjectionCoveredPlugins(entry: Readonly<{ deferredProjection?: DeferredDaemonProjection }>,
+    sections: readonly string[]): ReadonlySet<string> {
+    const deferred = entry.deferredProjection;
+    if (!deferred) return NO_PLUGINS;
+    const sliced = new Set<string>();
+    for (const section of DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS) {
+        const plugins = readDaemonProjectionSectionPlugins(deferred.loadedSections, section);
+        if (plugins instanceof Set) for (const pluginId of plugins) sliced.add(pluginId);
+    }
+    const covered = [...sliced].filter(pluginId => daemonProjectionSectionsCover(deferred.manifest, deferred.loadedSections,
+        slicePluginSections(sections, pluginId)));
+    return covered.length ? new Set(covered.sort()) : NO_PLUGINS;
 }
 function discardEmptySectionPool(pool: ProjectionSectionPool): void {
     if (pool.pending === 0) {

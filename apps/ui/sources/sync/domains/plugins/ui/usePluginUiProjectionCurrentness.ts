@@ -26,7 +26,7 @@ import {
     type MachineContributionRegistryProjectionFailureReason,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { getMachineContributionRegistryProjectionAuthorityRevision } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { daemonProjectionHasSections, loadDaemonMergedProjectionCacheEntry, readDaemonMergedProjectionRetryDelayMs,
+import { daemonProjectionHasSections, loadDaemonMergedProjectionCacheEntry, readDaemonProjectionCoveredPlugins, readDaemonMergedProjectionRetryDelayMs,
     readObservedDaemonMergedProjectionCacheEntry, subscribeDaemonMergedProjectionSummary } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
     useEndpointLastConnectedAt,
@@ -107,7 +107,9 @@ type LoadedProjectionState = Readonly<{
      * The answer for this authority covered only the always-loaded installed-package sections.
      * Presentation sections are unread, not empty: `phase` stays establishing for them.
      */
-    installedPackages?: Readonly<{ authorityKey: string; projection: PluginUiProjectionModel }>;
+    installedPackages?: Readonly<{ authorityKey: string; projection: PluginUiProjectionModel;
+        /** Plugins whose UI slices this answer holds: their entries in `projection` are current. */
+        presentedPluginIds?: ReadonlySet<string> }>;
 }>;
 
 export type PluginUiProjectionCurrentness = Readonly<{
@@ -130,6 +132,11 @@ export type PluginUiProjectionCurrentness = Readonly<{
      * unread, never an empty catalog. Null once presentation is current (it then carries them).
      */
     installedPackagesProjection?: PluginUiProjectionModel | null;
+    /**
+     * Plugins whose presentation `installedPackagesProjection` carries current (their UI slices
+     * were read). Other plugins in it are not loaded. Null when none, or once presentation is current.
+     */
+    presentedPluginIds?: ReadonlySet<string> | null;
 }>;
 
 /**
@@ -488,10 +495,17 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 // of UI sections nobody has requested. It grants no UI authority.
                 // Installed packages always load first; they are current facts for
                 // origin candidates, kept apart from the unread presentation.
+                // A held answer of plugin slices presents exactly those plugins (a mounted
+                // surface's or the Session's); every other plugin is not loaded, never absent.
                 if (!presentationReady) {
-                    const installedPackages = previous.installedPackages?.authorityKey === authorityKey
-                        && previous.installedPackages.projection === entry.inputs.pluginUiProjection
-                        ? previous.installedPackages : { authorityKey, projection: entry.inputs.pluginUiProjection };
+                    const covered = sections ? readDaemonProjectionCoveredPlugins(entry, sections) : null;
+                    const held = previous.installedPackages;
+                    const presentedPluginIds = held?.presentedPluginIds && covered
+                        && held.presentedPluginIds.size === covered.size && [...covered].every(id => held.presentedPluginIds!.has(id))
+                        ? held.presentedPluginIds : covered?.size ? covered : undefined;
+                    const installedPackages = held?.authorityKey === authorityKey
+                        && held.projection === entry.inputs.pluginUiProjection && held.presentedPluginIds === presentedPluginIds
+                        ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds };
                     return previous.connectedAccountProjection === connectedAccountProjection
                         && previous.installedPackages === installedPackages
                         ? previous : { ...previous, connectedAccountProjection, installedPackages };
@@ -597,6 +611,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const installedPackagesProjection = hasLoadedCurrentScope && authorityKey !== null && phase !== 'current'
         && loadedProjection.installedPackages?.authorityKey === authorityKey
         ? loadedProjection.installedPackages.projection : null;
+    const presentedPluginIds = installedPackagesProjection ? loadedProjection.installedPackages?.presentedPluginIds ?? null : null;
     currentPluginUiProjectionRef.current = currentPluginUiProjection;
     const reactNativeRuntimeProjectionSourceRef = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
 
@@ -637,8 +652,10 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         accountLifetime,
         connectedAccountProjection,
         installedPackagesProjection,
+        presentedPluginIds,
     }), [
         installedPackagesProjection,
+        presentedPluginIds,
         interactionEnabled,
         connectedAccountProjection,
         machineId,
