@@ -12,6 +12,7 @@ import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
+import { notifySqliteCommittedWrite } from './sqliteCommittedWrites';
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
 export type PrismaClientType = PrismaClientInstance;
@@ -187,6 +188,43 @@ function withSharedQaSchemaDiagnostics(client: PrismaClientType): PrismaClientTy
     });
 }
 
+const SQLITE_READ_OPERATIONS: ReadonlySet<string> = new Set([
+    "findUnique",
+    "findUniqueOrThrow",
+    "findFirst",
+    "findFirstOrThrow",
+    "findMany",
+    "count",
+    "aggregate",
+    "groupBy",
+]);
+
+/**
+ * Reports every completed non-read operation of the light server's primary SQLite
+ * client to the committed-write edge. Raw SQL counts as a write: it can mutate, and
+ * an extra checkpoint after a raw read is harmless while a missed write is not.
+ * A write inside an interactive transaction reports before COMMIT; the consumer
+ * (WAL maintenance) acts an interval later, never synchronously.
+ */
+function withSqliteCommittedWriteSignal(client: PrismaClientType): PrismaClientType {
+    const extended = client.$extends({
+        query: {
+            async $allOperations({ args, query, operation }) {
+                const result = await query(args);
+                if (!SQLITE_READ_OPERATIONS.has(operation)) notifySqliteCommittedWrite();
+                return result;
+            },
+        },
+    });
+    // Same contract-preserving forwarding as the query diagnostics wrapper above.
+    return new Proxy(client, {
+        get(_target, property) {
+            const value = Reflect.get(extended, property, extended);
+            return typeof value === "function" ? value.bind(extended) : value;
+        },
+    });
+}
+
 let _db: ReturnType<typeof withSharedQaSchemaDiagnostics> | null = null;
 let _pglite: PGlite | null = null;
 let _pgliteServer: FramedPgliteSocketServer | null = null;
@@ -269,7 +307,9 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
     }
     _provider = provider;
     const generated = await createGeneratedPrismaClient(provider);
-    _db = withSharedQaSchemaDiagnostics(generated.client);
+    _db = withSharedQaSchemaDiagnostics(
+        provider === "sqlite" ? withSqliteCommittedWriteSignal(generated.client) : generated.client,
+    );
     activePrismaRuntime = generated.prisma;
     initializeConnectionPool(provider);
 }

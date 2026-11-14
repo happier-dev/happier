@@ -19,6 +19,11 @@ import { retentionSweepLockTtlMs } from './retentionSweepLockTtl';
 export function startRetentionWorker(params: Readonly<{
     /** The Home-effective configuration for one sweep (startup passes the Home overlay over `process.env`). */
     readEnv: () => Promise<ServerConfigEnv>;
+    /**
+     * Storage space reclamation after each sweep's deletions (the light server's SQLite
+     * incremental vacuum). It rides this hourly pass instead of owning a timer.
+     */
+    reclaimStorage?: () => Promise<void>;
 }>): { stop: () => void } {
     const readEnv = params.readEnv;
     let stopped = false;
@@ -48,6 +53,7 @@ export function startRetentionWorker(params: Readonly<{
                         details: result.details,
                         dryRun: policy.dryRun,
                     });
+                    await params.reclaimStorage?.();
                 },
             });
         } catch (error) {

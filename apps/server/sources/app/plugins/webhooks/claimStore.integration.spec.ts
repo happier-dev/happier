@@ -21,6 +21,8 @@ import {
 import { retargetPluginWebhookEndpointV1 } from "./endpointStore";
 import { purgeExpiredPluginWebhookDeliveriesV1 } from "./retention";
 import { readPluginWebhookAccountStatusV1 } from "./statusStore";
+import { runRetentionSweep } from "@/app/retention/runtime/runRetentionSweep";
+import { readRetentionPolicyFromEnv } from "@/app/retention/config/readRetentionPolicyFromEnv";
 
 const SERVER_IDENTITY_ID = "srv_webhookClaimStore1";
 const NOW = new Date("2026-08-10T00:00:00.000Z");
@@ -859,6 +861,60 @@ describe("plugin webhook claim/lease settlement", () => {
         expect(deadLetteredChange.cursor).toBeGreaterThan(requeuedChange.cursor);
         await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
             .resolves.toMatchObject({ state: "dead_letter", lastErrorCode: "lease_expired", payloadBytes: 256n });
+    });
+
+    it("redelivers its own expired lease at the next claim without any recovery sweep", async () => {
+        await seedDelivery({
+            state: "claimed",
+            leaseExpiresAt: new Date(NOW.getTime() - 1),
+            executionStartedAt: null,
+        });
+
+        const claimed = await claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now: NOW,
+            randomBytes: () => new Uint8Array(16).fill(9),
+        });
+
+        expect(claimed).toMatchObject({ kind: "delivery", deliveryId: "delivery-claim", attempt: 1 });
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
+            .resolves.toMatchObject({ state: "claimed", attemptCount: 0 });
+    });
+
+    it("reads an overdue queued delivery as dead-lettered without a sweep and never claims it", async () => {
+        await seedDelivery();
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: { metadataDeleteAt: new Date(NOW.getTime() - 1) },
+        });
+
+        await expect(claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now: NOW,
+            randomBytes: () => new Uint8Array(16).fill(10),
+        })).resolves.toMatchObject({ kind: "none" });
+
+        const status = await readPluginWebhookAccountStatusV1({
+            accountId: "account-claim",
+            input: { pageSize: 100, deadLetterPageSize: 100 },
+        });
+        expect(status.endpoints[0]?.queue).toMatchObject({ queued: 0, claimed: 0, deadLetter: 1 });
+        expect(status.deadLetters).toMatchObject([{ deliveryId: "delivery-claim", errorCode: "retention_expired" }]);
+    });
+
+    it("folds stranded-lease recovery and overdue aging into the hourly retention sweep", async () => {
+        await seedDelivery({
+            state: "claimed",
+            leaseExpiresAt: new Date(NOW.getTime() - 1),
+            executionStartedAt: null,
+        });
+
+        await runRetentionSweep({ policy: readRetentionPolicyFromEnv({}), now: NOW });
+
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
+            .resolves.toMatchObject({ state: "queued", leaseId: null });
     });
 
     it("leaves ordinary backlog alone and ages only a target already proven offline", async () => {

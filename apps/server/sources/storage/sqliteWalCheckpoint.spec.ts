@@ -11,14 +11,14 @@ import type { PrismaClientType } from "@/storage/prisma";
 import {
     checkpointSqliteWal,
     incrementalVacuumSqlite,
-    resolveSqliteIncrementalVacuumIntervalMsFromEnv,
+    reclaimSqliteFreePages,
     resolveSqliteIncrementalVacuumPagesFromEnv,
     resolveSqliteWalCheckpointBusyTimeoutMsFromEnv,
     resolveSqliteWalCheckpointIntervalMsFromEnv,
-    startSqliteIncrementalVacuumWorker,
     startSqliteWalCheckpointWorker,
     type SqliteWalCheckpointResult,
 } from "@/storage/sqliteWalCheckpoint";
+import { notifySqliteCommittedWrite } from "@/storage/sqliteCommittedWrites";
 
 // The worker only forwards this to the injected runCheckpoint, so a sentinel is enough.
 const client = {} as unknown as PrismaClientType;
@@ -98,11 +98,7 @@ describe("resolveSqliteWalCheckpointBusyTimeoutMsFromEnv", () => {
 });
 
 describe("SQLite incremental vacuum configuration", () => {
-    it("uses a bounded low-frequency default and supports disabling the worker", () => {
-        expect(resolveSqliteIncrementalVacuumIntervalMsFromEnv({})).toBe(6 * 60 * 60 * 1000);
-        expect(resolveSqliteIncrementalVacuumIntervalMsFromEnv({
-            HAPPIER_SQLITE_INCREMENTAL_VACUUM_INTERVAL_MS: "0",
-        })).toBe(0);
+    it("uses a bounded default page batch", () => {
         expect(resolveSqliteIncrementalVacuumPagesFromEnv({})).toBe(1_000);
     });
 
@@ -165,12 +161,12 @@ describe("startSqliteWalCheckpointWorker", () => {
         expect(startSqliteWalCheckpointWorker({ client, intervalMs: 0, runCheckpoint: async () => ok })).toBeNull();
     });
 
-    it("checkpoints once per interval and stops after stop()", async () => {
+    it("runs nothing while idle and checkpoints once after committed writes", async () => {
         vi.useFakeTimers();
         let calls = 0;
         const handle = startSqliteWalCheckpointWorker({
             client,
-            intervalMs: 1000,
+            intervalMs: 60_000,
             runCheckpoint: async () => {
                 calls += 1;
                 return ok;
@@ -178,14 +174,21 @@ describe("startSqliteWalCheckpointWorker", () => {
         });
         expect(handle).not.toBeNull();
 
-        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(calls).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+
+        notifySqliteCommittedWrite();
+        notifySqliteCommittedWrite();
+        await vi.advanceTimersByTimeAsync(60_000);
         expect(calls).toBe(1);
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(calls).toBe(2);
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(calls).toBe(1);
 
         await handle!.stop();
-        await vi.advanceTimersByTimeAsync(5000);
-        expect(calls).toBe(2);
+        notifySqliteCommittedWrite();
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(calls).toBe(1);
     });
 
     it("defaults to non-blocking PASSIVE maintenance when every WAL frame is checkpointed", async () => {
@@ -193,6 +196,7 @@ describe("startSqliteWalCheckpointWorker", () => {
         const queryRawUnsafe = vi.fn(async () => [{ busy: 0, log: 12, checkpointed: 12 }]);
         const fakeClient = { $queryRawUnsafe: queryRawUnsafe } as unknown as PrismaClientType;
         const handle = startSqliteWalCheckpointWorker({ client: fakeClient, intervalMs: 1000 });
+        notifySqliteCommittedWrite();
 
         await vi.advanceTimersByTimeAsync(1000);
 
@@ -212,6 +216,7 @@ describe("startSqliteWalCheckpointWorker", () => {
             .mockResolvedValueOnce([{ busy: 1, log: 12, checkpointed: 9 }]);
         const fakeClient = { $queryRawUnsafe: queryRawUnsafe } as unknown as PrismaClientType;
         const handle = startSqliteWalCheckpointWorker({ client: fakeClient, intervalMs: 1000 });
+        notifySqliteCommittedWrite();
 
         await vi.advanceTimersByTimeAsync(1000);
 
@@ -233,6 +238,7 @@ describe("startSqliteWalCheckpointWorker", () => {
             intervalMs: 1000,
             runCheckpoint: async () => results.shift() ?? ok,
         });
+        notifySqliteCommittedWrite();
 
         await vi.advanceTimersByTimeAsync(1000);
         expect(loggingMocks.log).toHaveBeenLastCalledWith(
@@ -271,6 +277,7 @@ describe("startSqliteWalCheckpointWorker", () => {
         );
 
         await vi.advanceTimersByTimeAsync(1000);
+        notifySqliteCommittedWrite();
         await vi.advanceTimersByTimeAsync(1000);
         expect(loggingMocks.log).toHaveBeenLastCalledWith(
             expect.objectContaining({
@@ -301,9 +308,11 @@ describe("startSqliteWalCheckpointWorker", () => {
                 return ok;
             },
         });
+        notifySqliteCommittedWrite();
 
         await vi.advanceTimersByTimeAsync(1000);
         expect(started).toBe(1);
+        notifySqliteCommittedWrite();
         await vi.advanceTimersByTimeAsync(1000);
         expect(started).toBe(1);
 
@@ -331,6 +340,7 @@ describe("startSqliteWalCheckpointWorker", () => {
                 return ok;
             },
         });
+        notifySqliteCommittedWrite();
 
         await vi.advanceTimersByTimeAsync(1000);
         let stopResolved = false;
@@ -347,53 +357,32 @@ describe("startSqliteWalCheckpointWorker", () => {
     });
 });
 
-describe("startSqliteIncrementalVacuumWorker", () => {
+describe("reclaimSqliteFreePages", () => {
     afterEach(() => {
+        loggingMocks.log.mockReset();
         monitoringMocks.observe.mockReset();
-        vi.useRealTimers();
     });
 
-    it("does not overlap vacuum batches", async () => {
-        vi.useFakeTimers();
-        let started = 0;
-        const releases: Array<() => void> = [];
-        const handle = startSqliteIncrementalVacuumWorker({
-            client,
-            intervalMs: 1000,
-            pages: 100,
-            runVacuum: async () => {
-                started += 1;
-                await new Promise<void>((resolve) => releases.push(resolve));
-            },
-        });
+    it("records maintenance duration through the canonical metrics registry", async () => {
+        const fakeClient = { $executeRawUnsafe: vi.fn(async () => 0) } as unknown as PrismaClientType;
 
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(started).toBe(1);
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(started).toBe(1);
-        releases[0]?.();
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(started).toBe(2);
+        await reclaimSqliteFreePages(fakeClient, 100);
 
-        releases.forEach((release) => release());
-        await handle?.stop();
-    });
-
-    it("records successful maintenance duration through the canonical metrics registry", async () => {
-        vi.useFakeTimers();
-        const handle = startSqliteIncrementalVacuumWorker({
-            client,
-            intervalMs: 1000,
-            pages: 100,
-            runVacuum: async () => undefined,
-        });
-
-        await vi.advanceTimersByTimeAsync(1000);
-
+        expect(fakeClient.$executeRawUnsafe).toHaveBeenCalledWith("PRAGMA incremental_vacuum(100);");
         expect(monitoringMocks.observe).toHaveBeenCalledWith(
             { operation: "incremental_vacuum", outcome: "ok" },
-            0,
+            expect.any(Number),
         );
-        await handle!.stop();
+    });
+
+    it("logs a failed batch instead of failing the retention sweep", async () => {
+        const fakeClient = { $executeRawUnsafe: vi.fn(async () => { throw new Error("busy"); }) } as unknown as PrismaClientType;
+
+        await expect(reclaimSqliteFreePages(fakeClient, 100)).resolves.toBeUndefined();
+
+        expect(loggingMocks.log).toHaveBeenCalledWith(
+            expect.objectContaining({ event: "sqlite-incremental-vacuum-failed" }),
+            expect.any(String),
+        );
     });
 });

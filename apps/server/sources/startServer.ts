@@ -2,7 +2,7 @@ import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import { startApi } from '@/app/api/api';
 import { startMetricsServer } from '@/app/monitoring/metrics';
-import { startDatabaseMetricsUpdater, setSocketAdapterModeInfo } from '@/app/monitoring/metrics/index';
+import { enableDatabaseRecordCountsOnScrape, setSocketAdapterModeInfo } from '@/app/monitoring/metrics/index';
 import { auth } from '@/app/auth/auth';
 import { activityCache } from '@/app/presence/sessionCache';
 import { preparePresenceTimeouts } from '@/app/presence/timeout';
@@ -28,11 +28,11 @@ import {
 } from '@/app/home/governance/claimHomeOwnerCommand';
 import { initializeSessionSystemRecordsProtocolV1Activation } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 import {
-    resolveSqliteIncrementalVacuumIntervalMsFromEnv,
+    isSqliteIncrementalVacuumEnabledFromEnv,
+    reclaimSqliteFreePages,
     resolveSqliteIncrementalVacuumPagesFromEnv,
     resolveSqliteWalCheckpointBusyTimeoutMsFromEnv,
     resolveSqliteWalCheckpointIntervalMsFromEnv,
-    startSqliteIncrementalVacuumWorker,
     startSqliteWalCheckpointWorker,
 } from '@/storage/sqliteWalCheckpoint';
 import { initializeServerLogging, log } from '@/utils/logging/log';
@@ -63,7 +63,6 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveInferredPublicServerAccess } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
-import { startPluginWebhookCredentialRetirementWorker } from '@/app/plugins/webhooks/credentialRetirementWorker';
 import { startVoiceProviderIdentityBackfillWorker } from '@/app/voice/providerIdentityBackfill/worker';
 import { startEnterpriseIdentitySyncWorker } from '@/app/teams/directory/runtime/worker';
 import {
@@ -244,26 +243,20 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
     const sqliteWalCheckpointIntervalMs = dbProvider === 'sqlite'
         ? resolveSqliteWalCheckpointIntervalMsFromEnv(process.env)
         : null;
-    const sqliteIncrementalVacuumIntervalMs = dbProvider === 'sqlite'
-        ? resolveSqliteIncrementalVacuumIntervalMsFromEnv(process.env)
-        : null;
-    const shouldStartSqliteWalCheckpointWorker =
-        sqliteWalCheckpointIntervalMs !== null && sqliteWalCheckpointIntervalMs > 0;
-    const shouldStartSqliteIncrementalVacuumWorker =
-        sqliteIncrementalVacuumIntervalMs !== null && sqliteIncrementalVacuumIntervalMs > 0;
-    const shouldStartSqliteMaintenanceClient =
-        shouldStartSqliteWalCheckpointWorker || shouldStartSqliteIncrementalVacuumWorker;
+    // The SQLite maintenance connection serves write-armed WAL maintenance and the
+    // retention sweep's free-page reclamation.
+    const shouldStartSqliteMaintenanceClient = dbProvider === 'sqlite';
     const sqliteWalCheckpointBusyTimeoutMs = shouldStartSqliteMaintenanceClient
         ? resolveSqliteWalCheckpointBusyTimeoutMsFromEnv(process.env)
         : null;
-    const sqliteIncrementalVacuumPages = shouldStartSqliteIncrementalVacuumWorker
+    const sqliteIncrementalVacuumPages = shouldStartSqliteMaintenanceClient
+        && isSqliteIncrementalVacuumEnabledFromEnv(process.env)
         ? resolveSqliteIncrementalVacuumPagesFromEnv(process.env)
         : null;
 
     let dbConnected = false;
     let sqliteWalCheckpointClient: typeof db | null = null;
     let sqliteWalCheckpointWorker: ReturnType<typeof startSqliteWalCheckpointWorker> = null;
-    let sqliteIncrementalVacuumWorker: ReturnType<typeof startSqliteIncrementalVacuumWorker> = null;
     let sqliteLifecycleCleanedUp = false;
     const cleanupSqliteLifecycle = async (): Promise<void> => {
         if (sqliteLifecycleCleanedUp) return;
@@ -276,14 +269,6 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             firstError ??= error;
         } finally {
             sqliteWalCheckpointWorker = null;
-        }
-
-        try {
-            await sqliteIncrementalVacuumWorker?.stop();
-        } catch (error) {
-            firstError ??= error;
-        } finally {
-            sqliteIncrementalVacuumWorker = null;
         }
 
         try {
@@ -364,24 +349,13 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             });
         }
 
-        // Actively checkpoint the SQLite WAL so it cannot be starved by long-lived
-        // readers and grow without bound, which slows queries until they hit the
-        // Prisma timeout.
-        if (sqliteWalCheckpointClient && sqliteWalCheckpointIntervalMs !== null) {
+        // Actively checkpoint the SQLite WAL after committed writes so it cannot be
+        // starved by long-lived readers and grow without bound, which slows queries
+        // until they hit the Prisma timeout. An idle database schedules nothing.
+        if (sqliteWalCheckpointClient && sqliteWalCheckpointIntervalMs !== null && sqliteWalCheckpointIntervalMs > 0) {
             sqliteWalCheckpointWorker = startSqliteWalCheckpointWorker({
                 client: sqliteWalCheckpointClient,
                 intervalMs: sqliteWalCheckpointIntervalMs,
-            });
-        }
-        if (
-            sqliteWalCheckpointClient
-            && sqliteIncrementalVacuumIntervalMs !== null
-            && sqliteIncrementalVacuumPages !== null
-        ) {
-            sqliteIncrementalVacuumWorker = startSqliteIncrementalVacuumWorker({
-                client: sqliteWalCheckpointClient,
-                intervalMs: sqliteIncrementalVacuumIntervalMs,
-                pages: sqliteIncrementalVacuumPages,
             });
         }
 
@@ -501,23 +475,24 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
                     await voiceProviderIdentityBackfillWorker.stop();
                 });
             }
-            const retentionWorker = startRetentionWorker({ readEnv: () => readHomeConfigEnv(process.env) });
+            const sqliteReclaimClient = sqliteWalCheckpointClient;
+            const retentionWorker = startRetentionWorker({
+                readEnv: () => readHomeConfigEnv(process.env),
+                // Free pages appear only when rows are deleted, which the sweep does.
+                ...(sqliteReclaimClient && sqliteIncrementalVacuumPages !== null
+                    ? { reclaimStorage: () => reclaimSqliteFreePages(sqliteReclaimClient, sqliteIncrementalVacuumPages) }
+                    : {}),
+            });
             if (retentionWorker) {
                 onShutdown('retention-worker', async () => {
                     retentionWorker.stop();
-                });
-            }
-            const webhookCredentialRetirementWorker = startPluginWebhookCredentialRetirementWorker();
-            if (webhookCredentialRetirementWorker) {
-                onShutdown('plugin-webhook-credential-retirement-worker', async () => {
-                    webhookCredentialRetirementWorker.stop();
                 });
             }
             // Exact record counts can monopolize the intentionally single-connection
             // SQLite runtime. They are operational metrics, so only collect them when
             // the metrics endpoint is enabled and the database can serve concurrent work.
             if (metricsServerStarted && dbProvider !== 'sqlite') {
-                startDatabaseMetricsUpdater();
+                enableDatabaseRecordCountsOnScrape();
             }
         }
 

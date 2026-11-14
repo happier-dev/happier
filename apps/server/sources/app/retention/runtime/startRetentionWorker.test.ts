@@ -118,6 +118,21 @@ describe('startRetentionWorker', () => {
         worker?.stop();
     });
 
+    it('reclaims SQLite free pages inside each retention sweep instead of on its own timer', async () => {
+        readRetentionPolicyFromEnv.mockReturnValue(createPolicy(60 * 60 * 1000));
+        const reclaimStorage = vi.fn(async () => {});
+
+        const { startRetentionWorker } = await import('./startRetentionWorker');
+        const worker = startRetentionWorker({ readEnv, reclaimStorage });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reclaimStorage).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+        expect(reclaimStorage).toHaveBeenCalledTimes(2);
+        expect(runRetentionSweep).toHaveBeenCalledTimes(2);
+        worker?.stop();
+    });
+
     it('starts the Automation retention sweep when global retention is disabled', async () => {
         const policy = { ...createPolicy(15_000), enabled: false };
         readRetentionPolicyFromEnv.mockReturnValue(policy);

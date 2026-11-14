@@ -5,7 +5,7 @@ import { readRetentionDomainDefinitions } from '@/app/retention/config/retention
 import { createRetentionRuleRegistry } from './retentionRuleRegistry';
 
 describe('retention/createRetentionRuleRegistry', () => {
-    it('registers one rule per supported v1 retention domain', () => {
+    it('registers one rule per supported v1 retention domain, then the intrinsic expiry passes', () => {
         const registry = createRetentionRuleRegistry();
 
         expect(registry.map((rule) => rule.id)).toEqual([
@@ -26,6 +26,11 @@ describe('retention/createRetentionRuleRegistry', () => {
             'automationRuns',
             'automationRunEvents',
             'homeAdministrationEvents',
+            'pluginWebhookClaimRecovery',
+            'pluginWebhookDeliveryAging',
+            'pluginWebhookCredentialRetirement',
+            'pluginWebhookDeliveryPurge',
+            'accountEncryptionTransitionExpiry',
         ]);
     });
 

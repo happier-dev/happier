@@ -1,20 +1,21 @@
 import type { PrismaClientType } from "@/storage/prisma";
 import { sqliteMaintenanceDurationHistogram } from "@/app/monitoring/metrics/databaseMetrics";
 import { log } from "@/utils/logging/log";
+import { onSqliteCommittedWrite } from "@/storage/sqliteCommittedWrites";
 
-// Active WAL checkpoint cadence for the light/sqlite server.
+// Active WAL maintenance for the light/sqlite server, armed by committed writes.
 //
 // Passive autocheckpoint can be starved indefinitely by long-lived / overlapping
 // read transactions (e.g. session-message subscriptions). When that happens the
 // WAL grows without bound, every read slows down as it scans WAL frames, and writes
 // can eventually exceed Prisma's query timeout and surface as `Socket timeout`
-// errors. The maintenance loop first advances the WAL with a non-blocking PASSIVE
-// checkpoint. It requests a bounded TRUNCATE wait only when PASSIVE leaves a real
-// uncheckpointed backlog; a reset-only wait can otherwise block the sole primary
-// SQLite connection without making any additional frame progress.
+// errors. A committed write arms one maintenance pass an interval later; it first
+// advances the WAL with a non-blocking PASSIVE checkpoint and requests a bounded
+// TRUNCATE wait only when PASSIVE leaves a real uncheckpointed backlog (a reset-only
+// wait can otherwise block the sole primary SQLite connection without making any
+// additional frame progress). An idle database grows no WAL, so it runs nothing.
 const DEFAULT_WAL_CHECKPOINT_INTERVAL_MS = 60_000;
 const DEFAULT_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 5_000;
-const DEFAULT_INCREMENTAL_VACUUM_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_INCREMENTAL_VACUUM_PAGES = 1_000;
 
 // `setInterval` stores its delay in a 32-bit signed int. A larger value is silently
@@ -63,7 +64,8 @@ export type SqliteWalCheckpointResult = Readonly<{
 }>;
 
 /**
- * Resolve the interval (ms) between active WAL checkpoints.
+ * Resolve the delay (ms) between a committed write and the WAL maintenance it arms
+ * (also the retry delay while the database stays busy).
  *
  * Env: `HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS` / `HAPPY_SQLITE_WAL_CHECKPOINT_INTERVAL_MS`
  *  - unset            -> default (60s)
@@ -100,15 +102,20 @@ export function resolveSqliteWalCheckpointBusyTimeoutMsFromEnv(env: NodeJS.Proce
     });
 }
 
-export function resolveSqliteIncrementalVacuumIntervalMsFromEnv(env: NodeJS.ProcessEnv): number {
+/**
+ * Whether the retention sweep reclaims SQLite free pages. Env:
+ * `HAPPIER_SQLITE_INCREMENTAL_VACUUM_INTERVAL_MS` — "0" turns reclamation off; any other
+ * valid value keeps it on (it runs with each retention sweep, so the value sets no cadence).
+ */
+export function isSqliteIncrementalVacuumEnabledFromEnv(env: NodeJS.ProcessEnv): boolean {
     return parseUnsignedIntegerEnv({
         env,
         primaryKey: "HAPPIER_SQLITE_INCREMENTAL_VACUUM_INTERVAL_MS",
         legacyKey: "HAPPY_SQLITE_INCREMENTAL_VACUUM_INTERVAL_MS",
-        defaultValue: DEFAULT_INCREMENTAL_VACUUM_INTERVAL_MS,
+        defaultValue: 1,
         maxValue: MAX_TIMER_INTERVAL_MS,
         allowZero: true,
-    });
+    }) > 0;
 }
 
 export function resolveSqliteIncrementalVacuumPagesFromEnv(env: NodeJS.ProcessEnv): number {
@@ -164,7 +171,6 @@ export async function maintainSqliteWal(client: PrismaClientType): Promise<Sqlit
 }
 
 export type SqliteWalCheckpointWorkerHandle = Readonly<{ stop: () => Promise<void> }>;
-export type SqliteIncrementalVacuumWorkerHandle = Readonly<{ stop: () => Promise<void> }>;
 
 export type StartSqliteWalCheckpointWorkerOptions = Readonly<{
     client: PrismaClientType;
@@ -174,10 +180,12 @@ export type StartSqliteWalCheckpointWorkerOptions = Readonly<{
 }>;
 
 /**
- * Start a background worker that periodically runs PASSIVE-first WAL maintenance.
+ * Start WAL maintenance armed by committed writes (`sqliteCommittedWrites`): the first
+ * write after a pass arms one PASSIVE-first pass `intervalMs` later; a busy result arms
+ * a retry after the same delay. With no writes nothing is scheduled.
  *
  * Returns `null` when checkpointing is disabled (`intervalMs <= 0`). The returned
- * handle's `stop()` clears the timer and awaits any in-flight checkpoint.
+ * handle's `stop()` disarms and awaits any in-flight checkpoint.
  */
 export function startSqliteWalCheckpointWorker(
     options: StartSqliteWalCheckpointWorkerOptions,
@@ -188,18 +196,32 @@ export function startSqliteWalCheckpointWorker(
     const runCheckpoint = options.runCheckpoint ?? maintainSqliteWal;
 
     let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     let inFlight: Promise<void> | null = null;
+    let writtenDuringPass = false;
     let consecutiveBusyCount = 0;
+
+    const arm = (): void => {
+        if (stopped || timer) return;
+        timer = setTimeout(() => {
+            timer = null;
+            void run();
+        }, options.intervalMs);
+        timer.unref?.();
+    };
 
     const run = async (): Promise<void> => {
         if (stopped || inFlight) return;
+        writtenDuringPass = false;
         inFlight = (async () => {
             const startedAtMs = Date.now();
             let outcome = "error";
+            let retry = false;
             try {
                 const result = await runCheckpoint(options.client);
                 if (result.busy !== 0) {
                     consecutiveBusyCount += 1;
+                    retry = true;
                     outcome = result.logFrames > 0 && result.logFrames === result.checkpointedFrames
                         ? "wal-reset-deferred"
                         : "checkpoint-incomplete";
@@ -235,19 +257,25 @@ export function startSqliteWalCheckpointWorker(
                     (Date.now() - startedAtMs) / 1_000,
                 );
                 inFlight = null;
+                if (retry || writtenDuringPass) arm();
             }
         })();
     };
 
-    const timer = setInterval(() => {
-        void run();
-    }, options.intervalMs);
-    timer.unref?.();
+    const unsubscribe = onSqliteCommittedWrite(() => {
+        if (inFlight) {
+            writtenDuringPass = true;
+            return;
+        }
+        arm();
+    });
 
     return {
         stop: async () => {
             stopped = true;
-            clearInterval(timer);
+            unsubscribe();
+            if (timer) clearTimeout(timer);
+            timer = null;
             if (inFlight) {
                 await inFlight;
             }
@@ -266,49 +294,26 @@ export async function incrementalVacuumSqlite(client: PrismaClientType, pages: n
     await client.$executeRawUnsafe(`PRAGMA incremental_vacuum(${normalizedPages});`);
 }
 
-export function startSqliteIncrementalVacuumWorker(options: Readonly<{
-    client: PrismaClientType;
-    intervalMs: number;
-    pages: number;
-    runVacuum?: (client: PrismaClientType, pages: number) => Promise<void>;
-}>): SqliteIncrementalVacuumWorkerHandle | null {
-    if (options.intervalMs <= 0) return null;
-    const runVacuum = options.runVacuum ?? incrementalVacuumSqlite;
-    let stopped = false;
-    let inFlight: Promise<void> | null = null;
-
-    const run = async (): Promise<void> => {
-        if (stopped || inFlight) return;
-        inFlight = (async () => {
-            const startedAtMs = Date.now();
-            let outcome = "error";
-            try {
-                await runVacuum(options.client, options.pages);
-                outcome = "ok";
-            } catch (error) {
-                log(
-                    { module: "storage", event: "sqlite-incremental-vacuum-failed", error },
-                    "SQLite incremental vacuum failed",
-                );
-            } finally {
-                sqliteMaintenanceDurationHistogram.observe(
-                    { operation: "incremental_vacuum", outcome },
-                    (Date.now() - startedAtMs) / 1_000,
-                );
-                inFlight = null;
-            }
-        })();
-    };
-    const timer = setInterval(() => {
-        void run();
-    }, options.intervalMs);
-    timer.unref?.();
-
-    return {
-        stop: async () => {
-            stopped = true;
-            clearInterval(timer);
-            if (inFlight) await inFlight;
-        },
-    };
+/**
+ * One bounded incremental-vacuum batch, run by the hourly retention sweep after it
+ * deletes rows (the only time free pages appear). Failures are logged and observed;
+ * the next sweep tries again.
+ */
+export async function reclaimSqliteFreePages(client: PrismaClientType, pages: number): Promise<void> {
+    const startedAtMs = Date.now();
+    let outcome = "error";
+    try {
+        await incrementalVacuumSqlite(client, pages);
+        outcome = "ok";
+    } catch (error) {
+        log(
+            { module: "storage", event: "sqlite-incremental-vacuum-failed", error },
+            "SQLite incremental vacuum failed",
+        );
+    } finally {
+        sqliteMaintenanceDurationHistogram.observe(
+            { operation: "incremental_vacuum", outcome },
+            (Date.now() - startedAtMs) / 1_000,
+        );
+    }
 }

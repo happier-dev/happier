@@ -247,7 +247,8 @@ describe("plugin webhook Account status projection", () => {
                         },
                     } : {}),
                     deadLetteredAt: delivery.state === "dead_letter" ? NOW : null,
-                    metadataDeleteAt: new Date(NOW.getTime() + 90 * 24 * 60 * 60 * 1_000),
+                    // Far ahead of the wall clock: status reads now age overdue queued work.
+                    metadataDeleteAt: new Date(NOW.getTime() + 10 * 365 * 24 * 60 * 60 * 1_000),
                     receivedAt: NOW,
                 },
             });
@@ -290,6 +291,7 @@ describe("plugin webhook Account status projection", () => {
         const result = await readPluginWebhookAccountStatusV1({
             accountId: ACCOUNT_ID,
             input: { pageSize: 50, deadLetterPageSize: 50 },
+            now: NOW,
         });
 
         expect(result).toMatchObject({
@@ -338,6 +340,25 @@ describe("plugin webhook Account status projection", () => {
         expect(JSON.stringify(result)).not.toContain("providerDeliveryId");
     });
 
+    // I4 (p03redesign): the deleted 60 s worker used to settle these two deadlines; the status read now decides them
+    // itself, so a lapsed lease and an expired previous credential never show as live for up to an hour.
+    it("reads a lapsed lease as recovered and an expired previous credential as gone without a background pass", async () => {
+        await seedFixture({ providerConfirmedAt: NOW });
+        const later = new Date(NOW.getTime() + 120_000);
+
+        const result = await readPluginWebhookAccountStatusV1({
+            accountId: ACCOUNT_ID,
+            input: { pageSize: 50, deadLetterPageSize: 50 },
+            now: later,
+        });
+
+        const endpoint = result.endpoints[0]!;
+        expect(endpoint.queue.claimed).toBe(0);
+        expect(endpoint.queue.queued + endpoint.queue.retrying + endpoint.queue.deadLetter).toBe(4);
+        expect(endpoint).not.toHaveProperty("credentialRotation");
+        expect(await db.pluginWebhookDelivery.count({ where: { state: "claimed" } })).toBe(0);
+    });
+
     it("counts every movable delivery frozen away from the current target, not only the immediately prior one", async () => {
         await seedFixture({ providerConfirmedAt: NOW });
         // Admitted two endpoint moves ago. It is exactly as unclaimable as the
@@ -368,7 +389,8 @@ describe("plugin webhook Account status projection", () => {
                 state: "queued",
                 attemptCount: 0,
                 nextAttemptAt: NOW,
-                metadataDeleteAt: new Date(NOW.getTime() + 90 * 24 * 60 * 60 * 1_000),
+                // Far ahead of the wall clock: status reads now age overdue queued work.
+                metadataDeleteAt: new Date(NOW.getTime() + 10 * 365 * 24 * 60 * 60 * 1_000),
                 receivedAt: NOW,
             },
         });

@@ -22,6 +22,7 @@ import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventR
 import { createProviderAccountUsageHistoryRetentionRule } from '@/app/retention/rules/providerAccountUsageHistoryRetentionRule';
 import { createUserFeedItemRetentionRule } from '@/app/retention/rules/userFeedItemRetentionRule';
 import { createVoiceSessionLeaseRetentionRule } from '@/app/retention/rules/voiceSessionLeaseRetentionRule';
+import { createIntrinsicExpiryRetentionRules } from '@/app/retention/rules/intrinsicExpiryRetentionRules';
 
 export type RetentionRuleResult = Readonly<{
     id: string;
@@ -120,6 +121,14 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
     homeAdministrationEvents: createHomeAdministrationEventRetentionRule,
 } satisfies Record<RetentionDomainId, () => RetentionRule>);
 
+/**
+ * The hourly sweep's rules: one per operator retention domain, then the intrinsic
+ * expiry passes records carry themselves (webhook leases/credentials/deliveries,
+ * Account encryption transitions), which no operator policy switches off.
+ */
 export function createRetentionRuleRegistry(): readonly RetentionRule[] {
-    return Object.freeze(readRetentionDomainDefinitions().map((definition) => RETENTION_RULE_FACTORIES[definition.id]()));
+    return Object.freeze([
+        ...readRetentionDomainDefinitions().map((definition) => RETENTION_RULE_FACTORIES[definition.id]()),
+        ...createIntrinsicExpiryRetentionRules(),
+    ]);
 }

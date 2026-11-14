@@ -6,17 +6,32 @@ import { resolveConfiguredPublicServerUrl } from "@/app/serverUrls/effectiveServ
 import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { inTx } from "@/storage/inTx";
 
+import { ageOverduePluginWebhookDeliveriesV1, recoverExpiredPluginWebhookClaimsV1 } from "./claimStore";
 import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { formatPluginWebhookEndpointPublicUrlV1 } from "./endpointStore";
 
 export async function readPluginWebhookAccountStatusV1(params: Readonly<{
     accountId: string;
     input: PluginWebhookAccountStatusRequestV1;
+    now?: Date;
 }>): Promise<PluginWebhookAccountStatusResultV1> {
     const input = params.input;
+    const now = params.now ?? new Date();
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
     const publicBaseUrl = resolveConfiguredPublicServerUrl(await readHomeConfigEnv());
     if (!publicBaseUrl) throw new Error("Plugin webhook public URL is unavailable");
+    // Deadlines are decided at read time: this Account's lapsed leases get the one
+    // lapsed-lease transition and its past-deadline queued work is dead-lettered before
+    // anything is counted, so no background pass has to run first.
+    const batchSize = 500;
+    for (;;) {
+        const recovered = await recoverExpiredPluginWebhookClaimsV1({ accountId: params.accountId, batchSize, now });
+        if (recovered.requeued + recovered.deadLettered < batchSize) break;
+    }
+    for (;;) {
+        const aged = await ageOverduePluginWebhookDeliveriesV1({ accountId: params.accountId, batchSize, now });
+        if (aged.deadLettered < batchSize) break;
+    }
     return await inTx(async (tx) => {
         const rows = await tx.pluginWebhookEndpoint.findMany({
             where: {
@@ -161,7 +176,10 @@ export async function readPluginWebhookAccountStatusV1(params: Readonly<{
                 ...(eligibleTransferCount > 0 ? {
                     pendingTargetTransfer: { eligibleDeliveryCount: eligibleTransferCount },
                 } : {}),
-                ...(row.routingKind === "accountEndpoint" && row.route.previousCredential?.acceptUntil ? {
+                // `acceptUntil` is authoritative at verification; a lapsed previous credential is
+                // shown as gone even before the hourly retention pass retires its row.
+                ...(row.routingKind === "accountEndpoint" && row.route.previousCredential?.acceptUntil
+                    && row.route.previousCredential.acceptUntil.getTime() > now.getTime() ? {
                     credentialRotation: {
                         previousCredentialVersionId: row.route.previousCredential.credentialVersionId,
                         previousAcceptUntilMs: row.route.previousCredential.acceptUntil.getTime(),

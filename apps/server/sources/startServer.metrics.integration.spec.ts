@@ -67,7 +67,7 @@ describe('startServer database metrics wiring', () => {
 
         await startServer('light');
 
-        expect(metricsIndexModule.startDatabaseMetricsUpdater).not.toHaveBeenCalled();
+        expect(metricsIndexModule.enableDatabaseRecordCountsOnScrape).not.toHaveBeenCalled();
     });
 
     it('does not run exact table-count metrics on the single-connection SQLite runtime', async () => {
@@ -79,7 +79,7 @@ describe('startServer database metrics wiring', () => {
 
         await startServer('light');
 
-        expect(metricsIndexModule.startDatabaseMetricsUpdater).not.toHaveBeenCalled();
+        expect(metricsIndexModule.enableDatabaseRecordCountsOnScrape).not.toHaveBeenCalled();
     });
 
     it('retains database record metrics for an enabled non-SQLite runtime', async () => {
@@ -91,6 +91,6 @@ describe('startServer database metrics wiring', () => {
 
         await startServer('full');
 
-        expect(metricsIndexModule.startDatabaseMetricsUpdater).toHaveBeenCalledOnce();
+        expect(metricsIndexModule.enableDatabaseRecordCountsOnScrape).toHaveBeenCalledOnce();
     });
 });

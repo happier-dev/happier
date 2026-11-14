@@ -1,17 +1,26 @@
 import { Counter, Gauge, Histogram } from "prom-client";
 
 import { db } from "@/storage/db";
-import { delay } from "@/utils/runtime/delay";
-import { shutdownSignal } from "@/utils/process/shutdown";
-import { forever } from "@/utils/runtime/forever";
 
 import { getOrCreateMetric, register } from "./registry";
+
+/** Exact counts are taken only when enabled (metrics endpoint on, concurrent database). */
+let databaseRecordCountsEnabled = false;
 
 export const databaseRecordCountGauge = getOrCreateMetric("database_records_total", () => new Gauge({
     name: "database_records_total",
     help: "Total number of records in database tables",
     labelNames: ["table"] as const,
     registers: [register],
+    // Counted when scraped, so an unscraped server issues no COUNT(*) statements.
+    async collect() {
+        if (!databaseRecordCountsEnabled) return;
+        try {
+            await updateDatabaseMetrics();
+        } catch {
+            databaseMetricsUpdateFailuresCounter.inc();
+        }
+    },
 }));
 
 export const databaseMetricsUpdateFailuresCounter = getOrCreateMetric("database_metrics_update_failures_total", () => new Counter({
@@ -57,14 +66,6 @@ export async function updateDatabaseMetrics(): Promise<void> {
     databaseRecordCountGauge.set({ table: "machines" }, machineCount);
 }
 
-export function startDatabaseMetricsUpdater(): void {
-    void forever("database-metrics-updater", async () => {
-        try {
-            await updateDatabaseMetrics();
-        } catch {
-            databaseMetricsUpdateFailuresCounter.inc();
-        }
-
-        await delay(60 * 1000, shutdownSignal);
-    });
+export function enableDatabaseRecordCountsOnScrape(): void {
+    databaseRecordCountsEnabled = true;
 }

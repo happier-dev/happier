@@ -8,9 +8,6 @@ export const startVoiceProviderIdentityBackfillWorkerMock = vi.fn((_params: unkn
 export const startEnterpriseIdentitySyncWorkerMock = vi.fn(
   (_params: unknown): Readonly<{ stop: () => Promise<void>; nudge: () => void }> | null => null,
 )
-export const startPluginWebhookCredentialRetirementWorkerMock = vi.fn(
-  (_params: unknown): Readonly<{ stop: () => void }> | null => null,
-)
 
 export function installStartServerCommonWiringMocks(): void {
   // startApi returns the listening Fastify instance; the managed Home Iroh
@@ -24,7 +21,7 @@ export function installStartServerCommonWiringMocks(): void {
   vi.mock('@/app/monitoring/metrics', () => ({ startMetricsServer: vi.fn(async () => true) }))
   vi.mock('@/app/monitoring/metrics/index', async () => ({
     ...await vi.importActual<typeof import('@/app/monitoring/metrics/index')>('@/app/monitoring/metrics/index'),
-    startDatabaseMetricsUpdater: vi.fn(() => {}),
+    enableDatabaseRecordCountsOnScrape: vi.fn(() => {}),
     setSocketAdapterModeInfo: vi.fn(() => {}),
   }))
   vi.mock('@/app/auth/auth', () => ({ auth: { init: vi.fn(async () => {}), verifyToken: vi.fn() } }))
@@ -50,11 +47,6 @@ export function installStartServerCommonWiringMocks(): void {
   }))
   vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
     startRetentionWorker: vi.fn(() => null),
-  }))
-  vi.mock('@/app/plugins/webhooks/credentialRetirementWorker', () => ({
-    startPluginWebhookCredentialRetirementWorker: (params: unknown) => (
-      startPluginWebhookCredentialRetirementWorkerMock(params)
-    ),
   }))
   vi.mock('@/app/voice/providerIdentityBackfill/worker', () => ({
     startVoiceProviderIdentityBackfillWorker: (params: unknown) => startVoiceProviderIdentityBackfillWorkerMock(params),

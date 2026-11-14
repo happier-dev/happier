@@ -164,6 +164,8 @@ type ClaimCandidateRowV1 = PluginWebhookPreEffectRowV1 & {
     targetPluginId: string;
     targetPluginVersion: string;
     offlineSinceAt: Date | null;
+    state: string;
+    executionStartedAt: Date | null;
 };
 
 type EligibleClaimTargetV1 = Readonly<{
@@ -248,9 +250,20 @@ async function readServerSelectedClaimCandidateTx(params: Readonly<{
             accountId: params.accountId,
             targetMachineId: params.machine.machineId,
             targetMachineInstallationId: params.machine.machineInstallationId,
-            state: "queued",
             payloadBytes: { gt: 0n },
-            nextAttemptAt: { lte: params.now },
+            AND: [{
+                OR: [
+                    // Due work. A queued row past its custody deadline is overdue: it
+                    // reads as dead-lettered (statusStore) and is never offered.
+                    {
+                        state: "queued",
+                        nextAttemptAt: { lte: params.now },
+                        metadataDeleteAt: { gt: params.now },
+                    },
+                    // This installation's own lapsed lease; the claim recovers it first.
+                    { state: "claimed", leaseExpiresAt: { lte: params.now } },
+                ],
+            }],
             endpoint: {
                 enabled: true,
                 revokedAt: null,
@@ -299,6 +312,8 @@ async function readServerSelectedClaimCandidateTx(params: Readonly<{
             targetPluginId: true,
             targetPluginVersion: true,
             offlineSinceAt: true,
+            state: true,
+            executionStartedAt: true,
             endpoint: {
                 select: {
                     id: true,
@@ -366,12 +381,28 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
             targets: eligibleTargets,
         });
         const eligiblePathKeys = new Set(eligiblePaths.map(eligibleClaimPathKeyV1));
-        const head = await readServerSelectedClaimCandidateTx({
-            tx,
-            accountId: params.accountId,
-            machine: params.machine,
-            now,
-        });
+        // A lapsed lease of this installation is recovered here, at its claimant's next
+        // claim, by the same transition the hourly retention pass applies to leases
+        // whose installation never returns. Each recovery changes the row's state, so
+        // the loop ends once the due head is queued work (or nothing).
+        const readDueHead = async (eligible?: readonly EligibleClaimPathV1[]) => {
+            for (;;) {
+                const due = await readServerSelectedClaimCandidateTx({
+                    tx,
+                    accountId: params.accountId,
+                    machine: params.machine,
+                    now,
+                    ...(eligible === undefined ? {} : { eligiblePaths: eligible }),
+                });
+                if (due === null || due.candidate.state !== "claimed") return due;
+                const recovered = await recoverExpiredPluginWebhookClaimTxV1(tx, {
+                    ...due.candidate,
+                    accountId: params.accountId,
+                }, now);
+                if (recovered === "raced") return null;
+            }
+        };
+        const head = await readDueHead();
         if (head === null) return none(5_000);
         const deferUnavailableCandidate = async (candidate: ClaimCandidateRowV1): Promise<boolean> => {
             const offlineSinceAt = candidate.offlineSinceAt ?? now;
@@ -403,13 +434,7 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
         let selected = head;
         if (!eligiblePathKeys.has(candidateClaimPathKeyV1(head.candidate))) {
             if (!(await deferUnavailableCandidate(head.candidate))) return none(250);
-            const eligible = await readServerSelectedClaimCandidateTx({
-                tx,
-                accountId: params.accountId,
-                machine: params.machine,
-                now,
-                eligiblePaths,
-            });
+            const eligible = await readDueHead(eligiblePaths);
             if (eligible === null) return none(5_000);
             selected = eligible;
         }
@@ -949,6 +974,7 @@ export async function failPluginWebhookDeliveryV1(params: Readonly<{
 export async function recoverExpiredPluginWebhookClaimsV1(params: Readonly<{
     now?: Date;
     batchSize?: number;
+    accountId?: string;
 }> = {}): Promise<Readonly<{ requeued: number; deadLettered: number }>> {
     const now = params.now ?? new Date();
     const batchSize = params.batchSize ?? DEFAULT_RECOVERY_BATCH_SIZE_V1;
@@ -956,7 +982,11 @@ export async function recoverExpiredPluginWebhookClaimsV1(params: Readonly<{
         throw new TypeError("Plugin webhook claim recovery batch size must be an integer from 1 through 500");
     }
     const candidates = await db.pluginWebhookDelivery.findMany({
-        where: { state: "claimed", leaseExpiresAt: { lte: now } },
+        where: {
+            state: "claimed",
+            leaseExpiresAt: { lte: now },
+            ...(params.accountId === undefined ? {} : { accountId: params.accountId }),
+        },
         orderBy: [{ leaseExpiresAt: "asc" }, { id: "asc" }],
         take: batchSize,
         select: { id: true, accountId: true, targetPluginId: true, revision: true, attemptCount: true, executionStartedAt: true },
@@ -964,48 +994,74 @@ export async function recoverExpiredPluginWebhookClaimsV1(params: Readonly<{
     let requeued = 0;
     let deadLettered = 0;
     for (const candidate of candidates) {
-        const deadLetter = candidate.executionStartedAt !== null
-            && candidate.attemptCount >= PLUGIN_WEBHOOK_MAX_ATTEMPTS_V1;
-        const transitioned = await inTx(async (tx) => {
-            const updated = await tx.pluginWebhookDelivery.updateMany({
-                where: {
-                    id: candidate.id,
-                    revision: candidate.revision,
-                    state: "claimed",
-                    leaseExpiresAt: { lte: now },
-                },
-                data: deadLetter
-                    ? deadLetterMutation(now, "lease_expired")
-                    : {
-                        state: "queued",
-                        ...clearLeaseFields(),
-                        lastErrorCode: candidate.executionStartedAt ? "lease_expired" : null,
-                        automationAdmissionUnresolved: getActivePrismaRuntime().DbNull,
-                        nextAttemptAt: candidate.executionStartedAt === null
-                            ? now
-                            : new Date(now.getTime() + resolvePluginWebhookRetryDelayMsV1({
-                                attempt: candidate.attemptCount,
-                            })),
-                        revision: { increment: 1 },
-                    },
-            });
-            if (updated.count !== 1) return false;
-            await markPluginWebhookAccountChangedInTxV1(tx, {
-                accountId: candidate.accountId,
-                pluginId: candidate.targetPluginId,
-            });
-            return true;
-        });
-        if (!transitioned) continue;
-        if (deadLetter) deadLettered += 1;
-        else requeued += 1;
+        const outcome = await inTx(async (tx) => await recoverExpiredPluginWebhookClaimTxV1(tx, candidate, now));
+        if (outcome === "deadLettered") deadLettered += 1;
+        else if (outcome === "requeued") requeued += 1;
     }
     return { requeued, deadLettered };
 }
 
+/**
+ * The one lapsed-lease transition: work that never started is offered again at once
+ * without charging an attempt; started work retries after its backoff or, once
+ * attempts are exhausted, dead-letters. Callers: the claimant's next claim and the
+ * hourly retention pass.
+ */
+async function recoverExpiredPluginWebhookClaimTxV1(
+    tx: Tx,
+    candidate: Readonly<{
+        id: string;
+        accountId: string;
+        targetPluginId: string;
+        revision: number;
+        attemptCount: number;
+        executionStartedAt: Date | null;
+    }>,
+    now: Date,
+): Promise<"requeued" | "deadLettered" | "raced"> {
+    const deadLetter = candidate.executionStartedAt !== null
+        && candidate.attemptCount >= PLUGIN_WEBHOOK_MAX_ATTEMPTS_V1;
+    const updated = await tx.pluginWebhookDelivery.updateMany({
+        where: {
+            id: candidate.id,
+            revision: candidate.revision,
+            state: "claimed",
+            leaseExpiresAt: { lte: now },
+        },
+        data: deadLetter
+            ? deadLetterMutation(now, "lease_expired")
+            : {
+                state: "queued",
+                ...clearLeaseFields(),
+                lastErrorCode: candidate.executionStartedAt ? "lease_expired" : null,
+                automationAdmissionUnresolved: getActivePrismaRuntime().DbNull,
+                nextAttemptAt: candidate.executionStartedAt === null
+                    ? now
+                    : new Date(now.getTime() + resolvePluginWebhookRetryDelayMsV1({
+                        attempt: candidate.attemptCount,
+                    })),
+                revision: { increment: 1 },
+            },
+    });
+    if (updated.count !== 1) return "raced";
+    await markPluginWebhookAccountChangedInTxV1(tx, {
+        accountId: candidate.accountId,
+        pluginId: candidate.targetPluginId,
+    });
+    return deadLetter ? "deadLettered" : "requeued";
+}
+
+/**
+ * Persists the dead-letter of queued work whose deadline has passed: custody expiry
+ * (`metadataDeleteAt`) or a target proven offline for the maximum queued age. Claims
+ * never offer such work, so persisting it is a projection step: the Account status
+ * read runs it for its Account before reading, and the hourly retention pass runs it
+ * for everyone else.
+ */
 export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
     now?: Date;
     batchSize?: number;
+    accountId?: string;
 }> = {}): Promise<Readonly<{ deadLettered: number }>> {
     const now = params.now ?? new Date();
     const batchSize = params.batchSize ?? DEFAULT_RECOVERY_BATCH_SIZE_V1;
@@ -1015,6 +1071,7 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
     const offlineDeadline = new Date(now.getTime() - PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1);
     const candidates = await db.pluginWebhookDelivery.findMany({
         where: {
+            ...(params.accountId === undefined ? {} : { accountId: params.accountId }),
             state: "queued",
             payloadBytes: { gt: 0n },
             OR: [
