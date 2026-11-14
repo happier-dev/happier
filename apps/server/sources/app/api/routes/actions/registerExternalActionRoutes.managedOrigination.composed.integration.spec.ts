@@ -796,7 +796,6 @@ describe('composed CLI managed Action origination', () => {
         });
         const previousExitCode = process.exitCode;
         try {
-            console.error('approval-diagnostic', policy, 'invoke-start');
             await handleActionsCommand(['invoke', 'machines.managed.acquire', '--machine-id', selected.controller.machineId,
                 '--request-id', selected.requestId, '--input-json', JSON.stringify(selected.input), '--json'], {
                 readCredentialsFn: async () => credentials,
@@ -804,7 +803,6 @@ describe('composed CLI managed Action origination', () => {
                 createExecutorFn: options => createCliActionExecutorFromCredentials({ ...options,
                     serverId: homeId, serverIdentityId: homeId, serverApiUrl: 'http://managed-seam.test' }),
             });
-            console.error('approval-diagnostic', policy, 'invoke-settled', output.length);
             if (deliveryFailure) throw deliveryFailure;
             phases.push({ phase: 'cli-create-to-ask', elapsedMs: performance.now() - began });
             expect(JSON.parse(output), output).toMatchObject(policy === 'invalid'
@@ -838,12 +836,8 @@ describe('composed CLI managed Action origination', () => {
                     .toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent', intentRevision: 1 });
             }
         } finally {
-            console.error('approval-diagnostic', policy, 'cleanup-start');
             stdout.mockRestore(); process.exitCode = previousExitCode;
-            await sockets.close();
-            console.error('approval-diagnostic', policy, 'sockets-closed');
-            restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
-            console.error('approval-diagnostic', policy, 'http-closed');
+            await sockets.close(); restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
             if (policy === 'qb56') console.info('qb58-replay-phases', JSON.stringify(phases));
         }
     });
