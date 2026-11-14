@@ -220,8 +220,10 @@ export function buildProjectsTreeRows(input: Readonly<{
     const isOpen = (key: string, holdsOpen: boolean) => (
         input.collapsedKeys?.has(key) === true ? false : input.expandedKeys.has(key) || holdsOpen
     );
+    // While one of a Project's Environments is open, that Environment is selected, not the checkout its page sits on.
+    let onEnvironment = false;
     const leaf = (checkout: ProjectsTreeCheckout, level: number, key: string, underMachine: boolean): ProjectsTreeRow => {
-        const selected = checkout.refId === input.openRefId;
+        const selected = checkout.refId === input.openRefId && !onEnvironment;
         return {
             key,
             level,
@@ -245,13 +247,15 @@ export function buildProjectsTreeRows(input: Readonly<{
         const checkouts = project.checkouts;
         if (checkouts.length === 0) continue;
         const environments = project.environments ?? [];
-        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || holdsEnvironment(project, input.openEnvironmentId);
+        onEnvironment = holdsEnvironment(project, input.openEnvironmentId);
+        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || onEnvironment;
         const machines = groupByMachine(checkouts);
 
         if (checkouts.length === 1) {
-            // One checkout is the Project row itself; its Environments, if any, are what it discloses.
+            // One checkout is the Project row itself; its Environments, if any, are what it discloses. On one of
+            // them, that Environment is what is selected, not the checkout its page sits on.
             const only = checkouts[0]!;
-            const selected = only.refId === input.openRefId;
+            const selected = only.refId === input.openRefId && !onEnvironment;
             const open = environments.length > 0 && isOpen(project.key, holdsOpen);
             rows.push({
                 key: project.key,
@@ -554,7 +558,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             count: single || !expanded ? null : checkouts.length,
             attention: expanded ? (single ? single.attention : null) : mostUrgent([...checkouts, ...environments]),
             offline: single?.offline,
-            selected: single?.refId === input.openRefId,
+            selected: single?.refId === input.openRefId && !holdsEnvironment(project, input.openEnvironmentId),
             newFromSession: project.newFromSession === true,
         });
         if (!expanded) continue;

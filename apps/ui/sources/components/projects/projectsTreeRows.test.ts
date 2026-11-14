@@ -235,10 +235,15 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         const onEnvironment = buildProjectsTreeRows({ projects: [billing], openRefId: null, openEnvironmentId: 'stg', expandedKeys: new Set() });
         expect(shape(onEnvironment)).toEqual(['billing-api v', '  Production', '  Staging']);
         expect(onEnvironment.map(row => row.selected)).toEqual([false, false, true]);
+        // On its Project's page the Environment, not the Project's checkout, is what is selected.
+        expect(buildProjectsTreeRows({ projects: [billing], openRefId: 'b1', openEnvironmentId: 'stg', expandedKeys: new Set() })
+            .map(row => row.selected)).toEqual([false, false, true]);
         // Several checkouts: the Environments follow them, at the same level.
         const many: ProjectsTreeProject = { ...project('happier', [checkout('h1', 'devbox', 'main'), checkout('h2', 'devbox', 'v0.3')]), environments: [environment('prod', 'Production')] };
         expect(shape(buildProjectsTreeRows({ projects: [many], openRefId: 'h1', expandedKeys: new Set() })))
             .toEqual(['happier (devbox) v', '  main', '  v0.3', '  Production']);
+        expect(buildProjectsTreeRows({ projects: [many], openRefId: 'h1', openEnvironmentId: 'prod', expandedKeys: new Set() })
+            .map(row => row.selected)).toEqual([false, false, false, true]);
         // The phone tree lists the same Environments after the checkouts.
         const phone = buildProjectsPhoneTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']),
             describe: { checkoutCount: String, machineCount: String, offlineCount: String } });
