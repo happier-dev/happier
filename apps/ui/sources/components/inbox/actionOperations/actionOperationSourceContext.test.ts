@@ -6,6 +6,7 @@ import { createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
 
@@ -41,6 +42,7 @@ const HOME_B: ServerProfile = {
 function project(params: Readonly<{
     homeObservation: SessionListHomeObservation | null;
     session?: ReturnType<typeof createSessionListRenderableSessionFixture> | null;
+    audience?: SessionAudiencePresentation | null;
 }>) {
     return projectActionOperationSourceContext({
         serverId: 'home-b',
@@ -51,6 +53,7 @@ function project(params: Readonly<{
         machine: null,
         serverProfile: HOME_B,
         homeObservation: params.homeObservation,
+        audience: params.audience,
         nowMs: NOW_MS,
     });
 }
@@ -63,8 +66,9 @@ describe('projectActionOperationSourceContext home observation', () => {
             storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'home-b': ['private'] } });
             storage.getState().setSessionTagAssignmentsOptimistic('home-b', 'session-1', ['private']);
             setScreenSharingPrivacyActive(true);
-            const context = project({ homeObservation: null });
+            const context = project({ homeObservation: null, audience: { kind: 'group', label: 'Private audience' } });
             expect(context.contextLine).not.toContain('~/project');
+            expect(context.contextLine).not.toContain('Private audience');
             expect(context.address).toEqual({ serverId: 'home-b', sessionId: 'session-1' });
         } finally { storage.setState(original, true); }
     });
@@ -100,6 +104,7 @@ describe('projectActionOperationSourceContext home observation', () => {
     it('retains safe Home and freshness context for locked content while withholding the title', () => {
         const context = project({
             homeObservation: { phase: 'offline', lastSuccessAt: 1_000 },
+            audience: { kind: 'group', label: 'Developers' },
             session: createSessionListRenderableSessionFixture({
                 id: 'session-1',
                 encryptionMode: 'e2ee',
@@ -108,7 +113,7 @@ describe('projectActionOperationSourceContext home observation', () => {
         });
 
         expect(context.sessionTitle).toBeNull();
-        expect(context.contextLine).toBe('Home B · Offline · Last updated 18m ago · Encrypted access pending');
+        expect(context.contextLine).toBe('Home B · Offline · Last updated 18m ago · Developers · Encrypted access pending');
     });
 
     it('leaves currentness unknown rather than assumed when the Home has no observation', () => {

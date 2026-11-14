@@ -107,14 +107,15 @@ function resolveAudience(params: Readonly<{
     address: SessionAddress;
     audienceContext?: SessionEffectiveAccessV1['audienceContext'];
     audienceScope?: ServerAccountScope | null;
+    audienceLabel?: string | null;
 }>): SessionAudiencePresentation | null {
     const context = params.audienceContext;
     const scope = params.audienceScope;
     if (!context || !scope || scope.serverId !== params.address.serverId) return null;
     const address = { serverId: scope.serverId, teamId: context.teamId };
     if (context.kind === 'group') {
-        const label = normalizeLabel(readTeamGroup(scope, address, context.groupId)?.name);
-        return label ? { kind: 'group', label } : null;
+        if (!readTeamGroup(scope, address, context.groupId)) return null;
+        return { kind: 'group', label: normalizeLabel(params.audienceLabel) ?? t('common.unavailable') };
     }
     let team = getTeamSnapshot(scope, address)?.data ?? null;
     for (const archived of ['active', 'archived'] as const) {
@@ -194,20 +195,26 @@ function resolveResponsibility(
  * projection, and this viewer's own projection. Missing collaboration and crypto evidence stays
  * unknown instead of being reinterpreted as Personal or content-ready.
  *
- * Callers supply raw facts, never formatted context: the workspace label, responsibility wording,
+ * Audience comes from its recipient-safe presentation owner; workspace, responsibility wording,
  * and availability copy are resolved here so no surface can grow its own mapping.
  */
 export function buildSessionContextFacts(params: Readonly<{
     address: SessionAddress;
     serverProfile?: ServerProfile | null;
+    /** Current Home in the caller's source snapshot, when distinct from the global selection. */
+    currentServerId?: string;
     homeName?: string | null;
     /** The canonical projection, already privacy-filtered by its owner. */
     awareness?: SessionAwarenessProjectionV1 | null;
     viewer?: SessionViewerProjectionV1 | null;
+    /** Complete recipient-safe result from the Session audience owner, independent of content hydration. */
+    audience?: SessionAudiencePresentation | null;
     /** Safe server-selected identity; never derive it from sources or directory membership. */
     audienceContext?: SessionEffectiveAccessV1['audienceContext'];
     /** Credential-bound viewer identity for this exact Home. */
     audienceScope?: ServerAccountScope | null;
+    /** Recipient-opened Group name used by the audience owner while building its complete result. */
+    audienceLabel?: string | null;
     /**
      * The workspace display title from the canonical Session workspace-display owner, for surfaces
      * that resolve one. That owner reads only metadata this device actually decrypted, so a locked
@@ -232,7 +239,7 @@ export function buildSessionContextFacts(params: Readonly<{
     nowMs?: number;
 }>): SessionContextFacts {
     const homeName = params.serverProfile
-        ? resolveHomeDisplayLabel(params.serverProfile, params.address.serverId)
+        ? resolveHomeDisplayLabel(params.serverProfile, params.address.serverId, params.currentServerId)
         : normalizeLabel(params.homeName);
     const encryption = params.awareness?.encryption ?? null;
     // Both workspace inputs are already filtered by their canonical owners: Lane 09A omits
@@ -258,7 +265,7 @@ export function buildSessionContextFacts(params: Readonly<{
                 serverUrl: normalizeLabel(params.serverProfile?.serverUrl),
             }
             : null,
-        audience: resolveAudience(params),
+        audience: params.audience === undefined ? resolveAudience(params) : params.audience,
         responsibility: resolveResponsibility(params.viewer),
         contentAvailability: encryption,
         workspace: workspaceLabel ? { label: workspaceLabel } : null,

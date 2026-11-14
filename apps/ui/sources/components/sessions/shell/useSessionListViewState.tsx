@@ -2162,9 +2162,8 @@ export function useSessionListViewStateFromPaneState(
         });
         return (
             <SessionListSessionRowWithFacts
-                audienceScope={item.serverId ? renderModels.audience.scopes.get(item.serverId) : undefined}
                 homeObservation={item.serverId ? homeObservations[item.serverId] ?? null : null}
-                audienceLabel={item.serverId ? renderModels.audience.labelsBySessionKey.get(audienceSessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId })) : null}
+                audience={item.serverId ? renderModels.audience.presentationsBySessionKey.get(audienceSessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId })) : null}
                 item={item}
                 unscopedSelectionIsUnique={selectedSessionId === item.sessionId && unscopedSelectionIsUnique}
                 rowHeight={densityViewState.rowHeight}

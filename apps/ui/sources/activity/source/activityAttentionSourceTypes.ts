@@ -1,4 +1,5 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/sessionListQueryController';
 import type { SessionListHomeObservationByServerId } from '@/sync/domains/session/listing/sessionListHomeObservation';
@@ -17,6 +18,7 @@ export type ActivityReceiverRuleEvaluationByServerId = Readonly<Record<string, S
 export type ActivityAttentionSource = Readonly<{
     audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
     audienceLabelsVersion?: string;
+    audiencePresentationsBySessionKey?: ReadonlyMap<string, SessionAudiencePresentation | null>;
     isDataReady: boolean;
     personalFollowRulesByServerId?: Readonly<Record<string, SessionFollowRulesSnapshot>>;
     receiverRuleEvaluationByServerId?: ActivityReceiverRuleEvaluationByServerId;

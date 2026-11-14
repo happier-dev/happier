@@ -28,8 +28,8 @@ import {
     actionOperationAddress,
     actionOperationAddressKey,
 } from '@/sync/domains/actionOperations/qualifiedActionOperation';
-import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areSessionAddressesEqual, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
@@ -63,7 +63,7 @@ function translateSection(section: ActionOperationSection): string {
 const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonly<{
     operation: ActionOperationProjection;
     presentation?: 'activity' | 'inbox';
-    audienceScopes: ReadonlyMap<string, ServerAccountScope>;
+    audience: SessionAudiencePresentation | null | undefined;
     onOpenOperation: (operation: ActionOperationProjection) => void;
     onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
@@ -92,7 +92,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         machine,
         managedMachineName,
         serverProfile: serverId ? getServerProfileById(serverId) : null,
-        audienceScope: serverId ? props.audienceScopes.get(serverId) : null,
+        audience: props.audience,
         homeObservation: serverId ? homeObservations[serverId] ?? null : null,
     });
     const sourceTitle = sourceContext.sessionTitle ?? sourceContext.machineTitle ?? snapshot.actionId;
@@ -245,7 +245,11 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
                 <ActionOperationRow
                     operation={operation}
                     presentation={props.presentation}
-                    audienceScopes={audienceContext.scopes}
+                    audience={operation.serverId && operation.snapshot.scope.sessionId
+                        ? audienceContext.presentationsBySessionKey.get(sessionAddressKey({
+                            serverId: operation.serverId,
+                            sessionId: operation.snapshot.scope.sessionId,
+                        })) : null}
                     onOpenOperation={props.onOpenOperation}
                     onCancelOperation={props.onCancelOperation}
                     onDismissOperation={props.onDismissOperation}
@@ -321,7 +325,11 @@ export const ActionOperationLedgerView = React.memo(function ActionOperationLedg
                                 operation.snapshot.operationId,
                             ))}
                             operation={operation}
-                            audienceScopes={audienceContext.scopes}
+                            audience={operation.serverId && operation.snapshot.scope.sessionId
+                                ? audienceContext.presentationsBySessionKey.get(sessionAddressKey({
+                                    serverId: operation.serverId,
+                                    sessionId: operation.snapshot.scope.sessionId,
+                                })) : null}
                             onOpenOperation={props.onOpenOperation}
                             onCancelOperation={props.onCancelOperation}
                             onDismissOperation={props.onDismissOperation}

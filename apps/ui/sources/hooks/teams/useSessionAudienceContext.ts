@@ -1,16 +1,19 @@
 import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import * as React from 'react';
 import type { SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams';
 
 import { storage } from '@/sync/domains/state/storageStore';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import { buildSessionContextFacts } from '@/sync/domains/session/presentation/sessionContextPresentation';
+import { buildSessionContextFacts, type SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver, getServerProfilesGeneration } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { observeTeam, observeTeamGroup } from '@/sync/engine/teams/teamsDirectoryEngine';
-import { subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { readTeamGroup, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { teamGroupDisplayNameKey, useScopedTeamGroupNameProjectionDisplayNames } from './useTeamGroupDisplayNames';
 
 type AudienceTarget = Readonly<{
     address: SessionAddress;
@@ -91,16 +94,59 @@ export function useSessionAudienceContext(addresses: readonly SessionAddress[]) 
         // Exact observer identity; a row streaming without changing audience keeps its observers.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [observedKey]);
-    const readLabels = React.useCallback(() => JSON.stringify(targets.map(({ address, audience }) => [
-        sessionAddressKey(address),
-        buildSessionContextFacts({ address, audienceContext: audience, audienceScope: scopes.get(address.serverId) }).audience?.label ?? null,
-    ])), [scopes, targets]);
-    const labelsVersion = React.useSyncExternalStore(subscribeTeamsSnapshots, readLabels, readLabels);
+    const readAudienceSnapshots = React.useMemo(() => {
+        let previous: readonly (AudienceTarget & Readonly<{
+            scope: ServerAccountScope | undefined;
+            groupName: TeamGroupNameProjectionV1 | null;
+            label: string | null;
+        }>)[] = [];
+        return () => {
+            const next = targets.map(({ address, audience }) => {
+                const scope = scopes.get(address.serverId);
+                const groupName = scope && audience.kind === 'group'
+                    ? readTeamGroup(scope, { serverId: address.serverId, teamId: audience.teamId }, audience.groupId)?.name ?? null
+                    : null;
+                return { address, audience, scope, groupName,
+                    label: buildSessionContextFacts({ address, audienceContext: audience, audienceScope: scope }).audience?.label ?? null };
+            });
+            if (next.length === previous.length && next.every((row, index) =>
+                row.groupName === previous[index]!.groupName && row.label === previous[index]!.label)) return previous;
+            previous = next;
+            return next;
+        };
+    }, [scopes, targets]);
+    const snapshots = React.useSyncExternalStore(subscribeTeamsSnapshots, readAudienceSnapshots, readAudienceSnapshots);
+    const groups = React.useMemo(() => [...new Map(snapshots.flatMap(({ audience, scope, groupName }) =>
+        scope && audience.kind === 'group' && groupName
+            ? [[teamGroupDisplayNameKey(scope, audience.groupId), { scope, id: audience.groupId, name: groupName }] as const]
+            : [])).values()], [snapshots]);
+    const groupDisplayNames = useScopedTeamGroupNameProjectionDisplayNames(groups);
+    const presentationsRef = React.useRef<ReadonlyMap<string, SessionAudiencePresentation | null>>(new Map());
+    const presentationsBySessionKey = React.useMemo(() => {
+        const previous = presentationsRef.current;
+        const next = new Map<string, SessionAudiencePresentation | null>();
+        for (const { address, audience, scope } of snapshots) {
+            const key = sessionAddressKey(address);
+            const value = buildSessionContextFacts({ address, audienceContext: audience, audienceScope: scope,
+                audienceLabel: scope && audience.kind === 'group'
+                    ? groupDisplayNames.get(teamGroupDisplayNameKey(scope, audience.groupId))
+                    : null,
+            }).audience;
+            next.set(key, retainIfEqual(previous.get(key), value));
+        }
+        const result = next.size === previous.size && [...next].every(([key, value]) => previous.get(key) === value)
+            ? previous : next;
+        presentationsRef.current = result;
+        return result;
+    }, [groupDisplayNames, snapshots]);
+    const labelsVersion = React.useMemo(() => JSON.stringify([...presentationsBySessionKey]
+        .map(([key, audience]) => [key, audience?.label ?? null])), [presentationsBySessionKey]);
     const labelsBySessionKey = React.useMemo(() => new Map<string, string | null>(JSON.parse(labelsVersion)), [labelsVersion]);
     return React.useMemo(() => ({
         credentialBindingsByServerId,
         scopes,
         labelsVersion,
         labelsBySessionKey,
-    }), [credentialBindingsByServerId, scopes, labelsVersion, labelsBySessionKey]);
+        presentationsBySessionKey,
+    }), [credentialBindingsByServerId, scopes, labelsVersion, labelsBySessionKey, presentationsBySessionKey]);
 }

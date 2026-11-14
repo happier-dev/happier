@@ -7,7 +7,8 @@ import {
     type SessionViewerProjectionV1,
 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NO_TEAM_GROUP_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
+import { teamGroupFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { t } from '@/text';
 import { applyTeamGroupProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 
@@ -91,6 +92,7 @@ describe('sessionContextPresentation', () => {
     it('uses the canonical Home label rather than a relay-derived profile or caller name', () => {
         const host = 'happier-agent-qa-orc.localhost:3017';
         const facts = buildSessionContextFacts({ address: { serverId: 'home-a', sessionId: 'session-1' }, homeName: host,
+            currentServerId: 'home-a',
             serverProfile: { id: 'home-a', name: host, serverUrl: `http://${host}`, createdAt: 1, updatedAt: 1, lastUsedAt: 1, source: 'manual' } });
         expect(facts.home?.name).toBe('This Home');
     });
@@ -103,13 +105,13 @@ describe('sessionContextPresentation', () => {
         ]) {
             applyTeamGroupProjection({
                 scope: { serverId, accountId }, address: { serverId, teamId: 'team' }, observedAt: 1,
-                group: { v: 1, id: 'group', teamId: 'team', name, description: null, archivedAt: null,
-                    memberCount: 1, management: { kind: 'native' }, capabilities: NO_TEAM_GROUP_CAPABILITIES_V1 },
+                group: teamGroupFixture({ id: 'group', teamId: 'team', name }),
             });
         }
         const facts = buildSessionContextFacts({
             address: { serverId: 'home-b', sessionId: 'same-session' }, audienceContext,
             audienceScope: { serverId: 'home-b', accountId: 'viewer' },
+            audienceLabel: 'B group',
             awareness: makeAwareness({ content: { mode: 'e2ee', keyState: 'access_pending' } }),
         });
         expect(facts.audience).toEqual({ kind: 'group', label: 'B group' });
@@ -121,6 +123,21 @@ describe('sessionContextPresentation', () => {
         expect(buildSessionContextFacts({
             address: facts.address, audienceScope: { serverId: 'home-b', accountId: 'viewer' },
         }).audience).toBeNull();
+    });
+
+    it('uses the Group unavailable wording when a private audience label cannot be opened', () => {
+        const scope = { serverId: 'home', accountId: 'viewer' };
+        applyTeamGroupProjection({
+            scope, address: { serverId: scope.serverId, teamId: 'team' }, observedAt: 1,
+            group: teamGroupFixture({ id: 'group', teamId: 'team', name: { kind: 'available', label: {
+                content: { t: 'encrypted', c: 'opaque-private-group-ciphertext' }, recipientEnvelope: null,
+            } } }),
+        });
+        const facts = buildSessionContextFacts({
+            address: { serverId: scope.serverId, sessionId: 'session' }, audienceScope: scope,
+            audienceContext: { kind: 'group', teamId: 'team', groupId: 'group' }, audienceLabel: null,
+        });
+        expect(facts.audience).toEqual({ kind: 'group', label: t('common.unavailable') });
     });
 
     it('keeps missing audience, responsibility and content availability unknown while retaining structural workspace context', () => {
@@ -267,8 +284,7 @@ describe('sessionContextPresentation', () => {
         const scope = { serverId: 'home-b', accountId: 'viewer' };
         applyTeamGroupProjection({
             scope, address: { serverId: 'home-b', teamId: 'team' }, observedAt: 1,
-            group: { v: 1, id: 'group', teamId: 'team', name: 'Developers', description: null, archivedAt: null,
-                memberCount: 2, management: { kind: 'native' }, capabilities: NO_TEAM_GROUP_CAPABILITIES_V1 },
+            group: teamGroupFixture({ id: 'group', teamId: 'team', name: 'Developers', memberCount: 2 }),
         });
 
         const locked = projectSessionContextPresentation(buildSessionContextFacts({
@@ -278,6 +294,7 @@ describe('sessionContextPresentation', () => {
             viewer: VIEWER_RESPONSIBLE,
             audienceContext,
             audienceScope: scope,
+            audienceLabel: 'Developers',
             // Supplied by the incumbent Session workspace-display owner from metadata this device
             // decrypted; a locked transcript does not make the Session's location secret.
             workspaceLabel: '~/project',

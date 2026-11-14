@@ -11,6 +11,14 @@ export type TeamGroupNameProjectionInput = Readonly<{
     name: TeamGroupNameProjectionV1;
 }>;
 
+export type ScopedTeamGroupNameProjectionInput = TeamGroupNameProjectionInput & Readonly<{
+    scope: ServerAccountScope;
+}>;
+
+export function teamGroupDisplayNameKey(scope: ServerAccountScope, groupId: string): string {
+    return JSON.stringify([scope.serverId, scope.accountId, groupId]);
+}
+
 export type GroupLabelGrant = Readonly<{
     principal: PrincipalRefV1;
     groupName?: TeamGroupNameProjectionV1;
@@ -57,7 +65,20 @@ export function useTeamGroupNameProjectionDisplayNames(params: Readonly<{
     scope: ServerAccountScope | null;
     groups: readonly TeamGroupNameProjectionInput[];
 }>): ReadonlyMap<string, string | null> {
-    const { scope, groups } = params;
+    const scopedGroups = React.useMemo(() => {
+        const scope = params.scope;
+        return scope ? params.groups.map((group) => ({ ...group, scope })) : [];
+    }, [params.groups, params.scope?.serverId, params.scope?.accountId]);
+    const opened = useScopedTeamGroupNameProjectionDisplayNames(scopedGroups);
+    return React.useMemo(() => new Map(params.groups.map((group) => [group.id, params.scope
+        ? opened.get(teamGroupDisplayNameKey(params.scope, group.id)) ?? null
+        : null])), [opened, params.groups, params.scope?.serverId, params.scope?.accountId]);
+}
+
+/** One recipient-label owner for collections spanning several credential-bound Homes. */
+export function useScopedTeamGroupNameProjectionDisplayNames(
+    groups: readonly ScopedTeamGroupNameProjectionInput[],
+): ReadonlyMap<string, string | null> {
     const [opened, setOpened] = React.useState<ReadonlyMap<string, OpenedTeamGroupName>>(NO_OPENED_NAMES);
     const openedRef = React.useRef(opened);
 
@@ -66,7 +87,7 @@ export function useTeamGroupNameProjectionDisplayNames(params: Readonly<{
     }, [opened]);
 
     React.useEffect(() => {
-        const currentIds = new Set(groups.map((group) => group.id));
+        const currentIds = new Set(groups.map((group) => teamGroupDisplayNameKey(group.scope, group.id)));
         const prune = (previous: ReadonlyMap<string, OpenedTeamGroupName>) => {
             let changed = false;
             const next = new Map<string, OpenedTeamGroupName>();
@@ -77,56 +98,54 @@ export function useTeamGroupNameProjectionDisplayNames(params: Readonly<{
             return changed ? next : previous;
         };
 
-        if (!scope) {
-            setOpened((previous) => previous.size === 0 ? previous : NO_OPENED_NAMES);
-            return;
-        }
-
         const candidates = groups.filter((group) => group.name.kind === 'available'
-            && openedRef.current.get(group.id)?.projection !== group.name);
+            && openedRef.current.get(teamGroupDisplayNameKey(group.scope, group.id))?.projection !== group.name);
         if (candidates.length === 0) {
             setOpened(prune);
             return;
         }
 
         const controller = new AbortController();
-        const client = createPrivateLabelClient(scope);
-        void Promise.all(candidates.map(async (group) => ({
-            group,
-            // One missing key or cancelled label must not suppress sibling rows.
-            // Each ordinary failed reader stays explicitly unavailable while the
-            // loaded structural list remains intact. Account lifecycle failures
-            // withdraw the whole captured reader and must not publish siblings.
-            value: await openTeamGroupNameProjection({ client, groupId: group.id, name: group.name, signal: controller.signal })
-                .catch((error: unknown) => {
-                    if (isPrivateLabelLifecycleFailureV1(error, controller.signal)) throw error;
-                    return null;
-                }),
-        }))).then((resolved) => {
-            if (controller.signal.aborted) return;
-            setOpened((previous) => {
-                const retained = prune(previous);
-                const next = retained === previous
-                    ? new Map<string, OpenedTeamGroupName>(previous)
-                    : retained;
-                for (const { group, value } of resolved) {
-                    next.set(group.id, { projection: group.name, value });
-                }
-                return next;
+        const byScope = new Map<string, ScopedTeamGroupNameProjectionInput[]>();
+        for (const group of candidates) {
+            const scopeKey = JSON.stringify([group.scope.serverId, group.scope.accountId]);
+            const batch = byScope.get(scopeKey) ?? [];
+            batch.push(group);
+            byScope.set(scopeKey, batch);
+        }
+        for (const batch of byScope.values()) {
+            const client = createPrivateLabelClient(batch[0]!.scope);
+            void Promise.all(batch.map(async (group) => ({
+                group,
+                // Ordinary label failures stay local to the row. An Account
+                // lifecycle refusal withdraws this Home's captured batch.
+                value: await openTeamGroupNameProjection({ client, groupId: group.id, name: group.name, signal: controller.signal })
+                    .catch((error: unknown) => {
+                        if (isPrivateLabelLifecycleFailureV1(error, controller.signal)) throw error;
+                        return null;
+                    }),
+            }))).then((resolved) => {
+                if (controller.signal.aborted) return;
+                setOpened((previous) => {
+                    const next = new Map(prune(previous));
+                    for (const { group, value } of resolved) {
+                        next.set(teamGroupDisplayNameKey(group.scope, group.id), { projection: group.name, value });
+                    }
+                    return next;
+                });
+            }, () => {
+                // Other Homes retain their independently opened labels.
             });
-        }, () => {
-            // Lifecycle refusal cancels this captured reader batch. Ordinary
-            // label failures were handled per item above, so no sibling value is
-            // published from a withdrawn Account context.
-        });
+        }
         return () => controller.abort();
-    }, [scope?.serverId, scope?.accountId, groups]);
+    }, [groups]);
 
     return React.useMemo(() => {
         const names = new Map<string, string | null>();
         for (const group of groups) {
-            const current = opened.get(group.id);
-            names.set(group.id, current?.projection === group.name ? current.value : null);
+            const key = teamGroupDisplayNameKey(group.scope, group.id);
+            const current = opened.get(key);
+            names.set(key, current?.projection === group.name ? current.value : null);
         }
         return names;
     }, [groups, opened]);

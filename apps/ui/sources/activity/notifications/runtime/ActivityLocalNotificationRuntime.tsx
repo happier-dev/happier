@@ -344,8 +344,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                     // delivered context can never describe content this device could not open.
                     awareness,
                     viewer,
-                    audienceContext: session.access?.audienceContext,
-                    audienceScope: audienceSource.audienceScopes?.get(event.address.serverId),
+                    audience: audienceSource.audiencePresentationsBySessionKey?.get(sessionAddressKey(event.address)),
                     // Same Home-directory input Session rows use, so a delivered notification
                     // never prints an absolute workspace path.
                     homeDir: readSessionOwnerMetadataView(session)?.homeDir ?? null,
@@ -414,6 +413,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
         reconcilePresentedRequests,
         resolveAccountSettings,
         audienceSource.audienceScopes,
+        audienceSource.audiencePresentationsBySessionKey,
         audienceSource.sessionListHomeObservationByServerId,
     ]);
 

@@ -1,4 +1,5 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { useSessionListRowViewportFact, type SessionListRowViewport } from './sessionListRowViewport';
 import { resolveSessionListRowStoreScopeKey } from './row/sessionListVisibleRowStoreScopes';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
@@ -52,8 +53,7 @@ import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organi
 
 const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
 export type SessionListRowViewModelBoundaryProps = Readonly<{
-    audienceScope?: ServerAccountScope;
-    audienceLabel?: string | null;
+    audience?: SessionAudiencePresentation | null;
     /** This row's exact-Home list currentness, from the canonical per-Home observation owner. */
     homeObservation?: SessionListHomeObservation | null;
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive' | null;
@@ -171,7 +171,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         : undefined), [draftScope, hasDraft, sessionId]);
     const rowViewModel = React.useMemo<SessionListRowViewModel>(() => buildSessionListRowViewModel({
         appearanceColor,
-        audienceScopes: props.audienceScope ? new Map([[props.audienceScope.serverId, props.audienceScope]]) : undefined,
+        audiencePresentationsBySessionKey: rowKey && props.audience !== undefined
+            ? new Map([[rowKey, props.audience]])
+            : undefined,
         homeObservations: props.item.serverId && props.homeObservation
             ? { [props.item.serverId]: props.homeObservation }
             : undefined,
@@ -221,7 +223,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.rowContextProjectFaviconMachineId,
         props.rowContextProjectFaviconWorkspacePath,
         props.rowContextStatusWords,
-        props.audienceScope,
+        props.audience,
         props.homeObservation,
         props.activeColorMode,
         props.attentionStandingEnabled,
@@ -238,6 +240,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.showPinnedServerBadge,
         props.showServerBadge,
         relativeNowMs,
+        rowKey,
         rowRenderableByKey,
         runtimeNowMs,
         props.unscopedSelectionIsUnique,

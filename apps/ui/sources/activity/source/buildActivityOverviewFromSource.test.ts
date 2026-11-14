@@ -2,6 +2,7 @@ import { buildStableActivityOverviewFingerprint } from '@/activity/attention/bui
 import { describe, expect, it } from 'vitest';
 
 import { createSessionFixture, createSessionAccessFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildLiveActivitySnapshots } from '@/activity/adapters/ios/liveActivities/buildLiveActivitySnapshots';
@@ -9,7 +10,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/sessionListQueryController';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 
-import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
+import { activityInstanceKey, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { ACTIVITY_PERSONAL_SESSION_QUERY } from './activityPersonalSessionMembership';
 
 import {
@@ -1803,6 +1804,44 @@ describe('buildActivityOverviewFromSource', () => {
                 .sessionsNeedingAttention[0]?.pendingPermissions[0]?.id).toBe('request_1');
         });
         expect(visited).toBe(1);
+    });
+
+    it('uses the current Group audience while retaining same-tuple hydrated content from its earlier Group', () => {
+        const scope = { serverId: 'server-a', accountId: 'activity-viewer' };
+        const address = { serverId: scope.serverId, sessionId: 'activity-group-context' };
+        const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId,
+            pendingPermissionRequestCount: 1, agentState: pendingAgentState('permission'),
+            viewer: createSessionViewerFixture({ follow: { follows: true, notificationLevel: null } }),
+            access: { ...createSessionAccessFixture('view'), audienceContext: {
+                kind: 'group', teamId: 'activity-team', groupId: 'previous-group',
+            } } });
+        const initialSource = createSource({ sessions: [session] });
+        const currentRow = { ...initialSource.sessionListRowsByServerId[scope.serverId][session.id]!,
+            access: { ...session.access!, audienceContext: {
+                kind: 'group' as const, teamId: 'activity-team', groupId: 'current-group',
+            } } };
+        const source = { ...initialSource,
+            sessionListRowsByServerId: { [scope.serverId]: { [session.id]: currentRow } },
+            audienceScopes: new Map([[scope.serverId, scope]]),
+            audiencePresentationsBySessionKey: new Map<string, SessionAudiencePresentation | null>([
+                [sessionAddressKey(address), { kind: 'group', label: 'Developers' }],
+            ]) };
+        const before = buildActivityOverviewFromSource({ source, nowMs: 1_000 });
+        expect(before.candidates[0]?.context?.contextLine).toContain('Developers');
+        expect(before.candidates[0]?.context?.segments).toContainEqual({ kind: 'audience', label: 'Developers' });
+        expect(before.candidates[0]?.session).toBe(session);
+        expect(before.candidates[0]?.session.access?.audienceContext).toMatchObject({ kind: 'group', groupId: 'previous-group' });
+        const renamed = buildActivityOverviewFromSource({ source: { ...source,
+            audiencePresentationsBySessionKey: new Map<string, SessionAudiencePresentation | null>([
+                [sessionAddressKey(address), { kind: 'group', label: 'Platform engineers' }],
+            ]),
+        }, nowMs: 1_000 });
+        expect(renamed.candidates[0]?.context?.contextLine).toContain('Platform engineers');
+        expect(renamed.candidates[0]?.session).toBe(before.candidates[0]?.session);
+        const removed = buildActivityOverviewFromSource({ source: { ...source,
+            audiencePresentationsBySessionKey: new Map([[sessionAddressKey(address), null]]),
+        }, nowMs: 1_000 });
+        expect(removed.candidates[0]?.context?.segments.filter(segment => segment.kind === 'audience')).toEqual([]);
     });
 
     it('projects the same canonical failed-query freshness as the Session row', () => {

@@ -559,7 +559,7 @@ export function useSessionListRenderModels(input: Readonly<{
                 selectable: input.selectedSessionId ? 1 : 0,
             }),
             () => buildSessionListRowViewModels({
-                audienceScopes: audience.scopes,
+                audiencePresentationsBySessionKey: audience.presentationsBySessionKey,
                 listItems,
                 reachableSessionDisplayById: sessionReachabilitySummary.displayById,
                 reachableSessionDisplayByKey: sessionReachabilitySummary.displayByKey,
@@ -610,7 +610,7 @@ export function useSessionListRenderModels(input: Readonly<{
         }
         if (selectionScopeListItems.length === 0) return [] as ReadonlyArray<SessionListRowViewModel | null>;
         return buildSessionListRowViewModels({
-            audienceScopes: audience.scopes,
+            audiencePresentationsBySessionKey: audience.presentationsBySessionKey,
             listItems: selectionScopeListItems,
             reachableSessionDisplayById: sessionReachabilitySummary.displayById,
             reachableSessionDisplayByKey: sessionReachabilitySummary.displayByKey,

@@ -1,4 +1,3 @@
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import type { SessionListHomeObservation, SessionListHomeObservationByServerId } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import type {
@@ -19,6 +18,7 @@ import {
     buildSessionContextFacts,
     projectSessionContextPresentation,
     readSessionHomeLastUpdatedRefreshAtMs,
+    type SessionAudiencePresentation,
 } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import {
     resolveSessionAttentionStanding,
@@ -235,7 +235,7 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     reachableSessionDisplayById?: ReadonlyMap<string, SessionReachableDisplay>;
     reachableSessionDisplayByKey?: ReadonlyMap<string, SessionReachableDisplay>;
     rowRenderableByKey?: ReadonlyMap<string, SessionListRenderableSession>;
-    audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
+    audiencePresentationsBySessionKey?: ReadonlyMap<string, SessionAudiencePresentation | null>;
     /** Exact-Home list currentness from the canonical per-Home observation owner. */
     homeObservations?: SessionListHomeObservationByServerId;
     relativeNowMs?: number;
@@ -399,8 +399,7 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
             address: { serverId, sessionId },
             awareness: sessionStatus?.awareness ?? null,
             viewer: session?.viewer,
-            audienceContext: session?.access?.audienceContext,
-            audienceScope: input.audienceScopes?.get(serverId),
+            audience: rowKey ? input.audiencePresentationsBySessionKey?.get(rowKey) : null,
             workspaceLabel,
             homeObservation: input.homeObservations?.[serverId] ?? null,
             nowMs: relativeNowMs,
@@ -543,7 +542,7 @@ export function buildSessionListRowViewModels(input: Readonly<{
     reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
     reachableSessionDisplayByKey?: ReadonlyMap<string, SessionReachableDisplay>;
     rowRenderableByKey?: ReadonlyMap<string, SessionListRenderableSession>;
-    audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
+    audiencePresentationsBySessionKey?: ReadonlyMap<string, SessionAudiencePresentation | null>;
     /** Exact-Home list currentness from the canonical per-Home observation owner. */
     homeObservations?: SessionListHomeObservationByServerId;
     relativeNowMs?: number;

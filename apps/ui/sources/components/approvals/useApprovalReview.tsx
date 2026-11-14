@@ -74,6 +74,8 @@ import {
 import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { useRetargetNavigationFocusReturnIntent } from '@/keyboard/focusReturn';
 import { useApprovalSessionReading } from './useApprovalSessionReading';
+import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
@@ -323,6 +325,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const proposalLabels = proposal ? resolveResourceProposalLabels(proposal) : null;
   const { resolution: approvalScopeResolution, binding: approvalAccountLifetime } = useServerCredentialAccountScopeBinding(approvalServerId);
   const { session, name: requesterName, status: requesterStatus, homeObservation } = useApprovalSessionReading(approvalServerId, sessionId, approvalScopeResolution, { exactRead: true, homeUnavailable: approvalRouteUnavailable });
+  const audienceAddresses = React.useMemo(() => approvalServerId && sessionId
+    ? [{ serverId: approvalServerId, sessionId }] : [], [approvalServerId, sessionId]);
+  const audience = useSessionAudienceContext(audienceAddresses);
+  const audiencePresentation = audienceAddresses[0]
+    ? audience.presentationsBySessionKey.get(sessionAddressKey(audienceAddresses[0])) : null;
   const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
   const machineId = readDisplayMachineIdForSession({
     sessionId: null,
@@ -332,19 +339,17 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const machineLabel = useServerScopedMachineLabel(approvalServerId, approvalServerId ? machineId : '');
   // Context currentness is source-owned. Its relative age subscribes only at the context-line leaf.
   const contextServerProfile = approvalServerId ? getServerProfileById(approvalServerId) : null;
-  const contextAudienceScope = approvalScopeResolution.kind === 'bound' ? approvalScopeResolution.scope : null;
   const sessionContextFacts = React.useMemo(() => approvalServerId && session
     ? buildSessionContextFacts({
         address: { serverId: approvalServerId, sessionId },
         serverProfile: contextServerProfile,
         awareness: projectUiSessionAwareness(session, Date.now()),
         viewer: session.viewer,
-        audienceContext: session.access?.audienceContext,
-        audienceScope: contextAudienceScope,
+        audience: audiencePresentation,
         homeDir: ownerMetadata?.homeDir ?? null,
         homeObservation: homeObservation ?? null,
       })
-    : null, [approvalServerId, contextAudienceScope, contextServerProfile, homeObservation, ownerMetadata?.homeDir, session, sessionId]);
+    : null, [approvalServerId, audiencePresentation, contextServerProfile, homeObservation, ownerMetadata?.homeDir, session, sessionId]);
   const sessionContext = React.useMemo(() => sessionContextFacts ? projectSessionContextPresentation(sessionContextFacts) : null, [sessionContextFacts]);
   const computerChoice = useComputerApprovalChoice({
     artifactId: artifact?.id ?? props.artifactId,

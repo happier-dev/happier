@@ -30,6 +30,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useSessionListHomeObservations } from '@/sync/store/hooks';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
@@ -261,8 +262,8 @@ export const ActionOperationDetailModal = React.memo(
       serverProfile: operation.serverId
         ? getServerProfileById(operation.serverId)
         : null,
-      audienceScope: operation.serverId
-        ? audienceContext.scopes.get(operation.serverId)
+      audience: operation.serverId && sessionId
+        ? audienceContext.presentationsBySessionKey.get(sessionAddressKey({ serverId: operation.serverId, sessionId }))
         : null,
       homeObservation: operation.serverId
         ? (homeObservations[operation.serverId] ?? null)

@@ -1,6 +1,5 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
@@ -8,6 +7,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import {
     buildSessionContextFacts,
     projectSessionContextPresentation,
+    type SessionAudiencePresentation,
 } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -44,7 +44,7 @@ export function projectActionOperationSourceContext(params: Readonly<{
      */
     managedMachineName?: string | null;
     serverProfile: ServerProfile | null;
-    audienceScope?: ServerAccountScope | null;
+    audience?: SessionAudiencePresentation | null;
     /**
      * The exact Home's raw list observation from the canonical per-Home list/currentness owner.
      * An Action operation retained from a secondary Home reads the same Offline/last-updated fact
@@ -86,8 +86,7 @@ export function projectActionOperationSourceContext(params: Readonly<{
         serverProfile: params.serverProfile,
         awareness: session ? projectUiSessionAwareness(session, nowMs) : null,
         viewer: session?.viewer,
-        audienceContext: session?.access?.audienceContext,
-        audienceScope: params.audienceScope,
+        audience: session ? params.audience : null,
         homeDir: ownerMetadata?.homeDir ?? null,
         homeObservation: params.homeObservation ?? null,
         nowMs,

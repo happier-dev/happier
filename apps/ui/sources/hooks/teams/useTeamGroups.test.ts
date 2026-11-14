@@ -2,7 +2,9 @@ import { act } from 'react-test-renderer';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NO_TEAM_GROUP_CAPABILITIES_V1, type TeamGroupV1 } from '@happier-dev/protocol/teams';
+import { type TeamGroupV1 } from '@happier-dev/protocol/teams';
+import { teamGroupFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { t } from '@/text';
 
 import { renderHook } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -13,6 +15,7 @@ const runtimeFetchMock = vi.fn<(request: { url: string; init: RequestInit | unde
 const { storage } = await import('@/sync/domains/state/storage');
 const { sessionAddressKey } = await import('@/sync/domains/session/sessionAddress');
 const { useSessionAudienceContext } = await import('./useSessionAudienceContext');
+const { buildSessionContextFacts } = await import('@/sync/domains/session/presentation/sessionContextPresentation');
 const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
 const { createTeamAddress } = await import('@/sync/domains/teams/teamAddress');
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
@@ -37,17 +40,7 @@ async function addHome(serverUrl: string, name: string, accountId = 'account'): 
 }
 
 function group(id: string, name = `Group ${id}`): TeamGroupV1 {
-    return {
-        v: 1,
-        id,
-        teamId: 'team-1',
-        name,
-        description: null,
-        archivedAt: null,
-        memberCount: 0,
-        management: { kind: 'native' },
-        capabilities: NO_TEAM_GROUP_CAPABILITIES_V1,
-    };
+    return teamGroupFixture({ id, name, memberCount: 0 });
 }
 
 function page(items: TeamGroupV1[], nextCursor: string | null): Response {
@@ -85,12 +78,12 @@ describe('useTeamGroups', () => {
         }));
 
         await waitForHomeGovernance(() => expect(harness.getCurrent().status).toBe('ready'));
-        expect(harness.getCurrent().rows.map((row) => row.name)).toEqual(['Platform']);
+        expect(harness.getCurrent().rows.map((row) => row.name)).toEqual([group('g1', 'Platform').name]);
 
         // The same rows are readable synchronously, without this hook, by a
         // surface that only needs the Group's label.
-        expect(readTeamGroups(scope, address, 'active')?.map((row) => row.name)).toEqual(['Platform']);
-        expect(readTeamGroup(scope, address, 'g1')?.name).toBe('Platform');
+        expect(readTeamGroups(scope, address, 'active')?.map((row) => row.name)).toEqual([group('g1', 'Platform').name]);
+        expect(readTeamGroup(scope, address, 'g1')?.name).toEqual(group('g1', 'Platform').name);
         // And the object the hook rendered is the object the reader returns, so
         // a label consumer and the list never diverge.
         expect(readTeamGroup(scope, address, 'g1')).toBe(harness.getCurrent().rows[0]);
@@ -211,7 +204,7 @@ describe('Session audience surface binding', () => {
             applyTeamGroupProjection({ scope: { serverId, accountId: 'account' }, address: { serverId, teamId: 'team-1' },
                 group: group('g1', 'New audience'), observedAt: Date.now() });
             act(() => storage.setState({ sessionListRowsByServerId: { [serverId]: { ...rows, [session.id]: { ...session, presence: 'online' } } } }));
-            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]!))).toBe('New audience');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]!))).toBe('New audience'));
         } finally {
             await hook.unmount();
             storage.setState(storage.getInitialState(), true);
@@ -230,7 +223,9 @@ describe('Session audience surface binding', () => {
             role: 'recipient', level: 'view', capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'view' }),
             audienceContext: { kind: 'group', teamId: 'team-1', groupId: 'g1' },
         } });
-        storage.setState({ sessionListRowsByServerId: {
+        const hydrated = { ...session, serverId: homeA, access: { ...session.access!,
+            audienceContext: { kind: 'team' as const, teamId: 'older-content-team' } } };
+        storage.setState({ sessions: { [session.id]: hydrated }, sessionListRowsByServerId: {
             [homeA]: { [session.id]: { ...session, presence: 'online' } },
             [homeB]: { [session.id]: { ...session, presence: 'online' } },
         } });
@@ -244,9 +239,21 @@ describe('Session audience surface binding', () => {
                 expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
                 expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe('B group');
             });
+            const audience = hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]));
+            expect(audience).toEqual({ kind: 'group', label: 'A group' });
+            expect(buildSessionContextFacts({ address: addresses[0], audience,
+                audienceContext: hydrated.access.audienceContext, audienceScope: scopes[0],
+            }).audience).toEqual({ kind: 'group', label: 'A group' });
+            expect(storage.getState().sessions[session.id]?.access?.audienceContext).toEqual(hydrated.access.audienceContext);
             act(() => applyTeamGroupProjection({ scope: scopes[1], address: { serverId: homeB, teamId: 'team-1' },
                 group: group('g1', 'Renamed group'), observedAt: Date.now() }));
-            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe('Renamed group');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe('Renamed group'));
+            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
+            act(() => applyTeamGroupProjection({ scope: scopes[1], address: { serverId: homeB, teamId: 'team-1' },
+                group: teamGroupFixture({ id: 'g1', name: { kind: 'available', label: {
+                    content: { t: 'encrypted', c: 'opaque-private-group-ciphertext' }, recipientEnvelope: null,
+                } } }), observedAt: Date.now() }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe(t('common.unavailable')));
             expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
             act(() => clearTeamsSnapshotsForServer(homeB));
             expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBeNull();

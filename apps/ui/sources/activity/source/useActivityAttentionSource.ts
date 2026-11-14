@@ -184,6 +184,7 @@ function useActivityAttentionSourceContext(includeSessionMessages: boolean, deta
         ...summarySource,
         audienceScopes: audience.scopes,
         audienceLabelsVersion: audience.labelsVersion,
+        audiencePresentationsBySessionKey: audience.presentationsBySessionKey,
         serverProfilesById,
-    }), [audience.labelsVersion, audience.scopes, serverProfilesById, summarySource]);
+    }), [audience.presentationsBySessionKey, audience.labelsVersion, audience.scopes, serverProfilesById, summarySource]);
 }

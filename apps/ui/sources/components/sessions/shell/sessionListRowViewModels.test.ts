@@ -1,6 +1,5 @@
-import { NO_TEAM_GROUP_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { applyTeamGroupProjection } from '@/sync/store/teams/teamsSnapshots';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
@@ -191,28 +190,35 @@ describe('buildSessionListRowViewModels', () => {
         expect(first?.tags).toEqual(['alpha\u0001beta', 'gamma\u0002delta']);
         expect(second?.tags).toEqual(['alpha', 'beta\u0001gamma\u0002delta']);
     });
-    it('uses the qualified viewer audience instead of another Account or access-source list', () => {
+    it('uses the bound audience presentation and invalidates only its renamed row', () => {
         const item = { type: 'session', sessionId: 'audience-session', serverId: 'audience-home',
             storageKind: 'persisted', groupKey: 'group', groupKind: 'date' } satisfies SessionListIndexItem;
-        const scope = { serverId: item.serverId, accountId: 'viewer' };
-        const address = { serverId: item.serverId, teamId: 'team' };
-        for (const [accountId, name] of [['viewer', 'Developers'], ['owner', 'Private owner group']]) {
-            applyTeamGroupProjection({ scope: { ...scope, accountId }, address, observedAt: 1,
-                group: { v: 1, id: 'group', teamId: 'team', name, description: null, archivedAt: null,
-                    memberCount: 1, management: { kind: 'native' }, capabilities: NO_TEAM_GROUP_CAPABILITIES_V1 } });
-        }
         const session = { ...createRenderableSession(item.sessionId), access: {
             role: 'recipient' as const, level: 'view' as const,
             capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'view' }), sources: [],
             audienceContext: { kind: 'group' as const, teamId: 'team', groupId: 'group' },
         } };
-        const input = { listItems: [item], reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([[rowKey(item), session]]), 
+        const unrelatedItem = { ...item, sessionId: 'unrelated-audience-session' };
+        const input = { listItems: [item, unrelatedItem], reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), session],
+                [rowKey(unrelatedItem), createRenderableSession(unrelatedItem.sessionId)]]),
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
-            audienceScopes: new Map([[scope.serverId, scope]]) };
-        expect(buildSessionListRowViewModels(input)[0]?.subtitleOverride).toContain('Developers');
-        expect(buildSessionListRowViewModels({ ...input, audienceScopes: new Map() })[0]?.subtitleOverride)
+            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            audiencePresentationsBySessionKey: new Map<string, SessionAudiencePresentation | null>([
+                [rowKey(item), { kind: 'group', label: 'Developers' }],
+            ]) };
+        const before = buildSessionListRowViewModels(input);
+        expect(before[0]?.subtitleOverride).toContain('Developers');
+        const renamed = buildSessionListRowViewModels({ ...input,
+            audiencePresentationsBySessionKey: new Map<string, SessionAudiencePresentation | null>([
+                [rowKey(item), { kind: 'group', label: 'Platform engineers' }],
+            ]) });
+        expect(renamed[0]?.subtitleOverride).toContain('Platform engineers');
+        expect(renamed[0]).not.toBe(before[0]);
+        expect(renamed[1]).toBe(before[1]);
+        expect(buildSessionListRowViewModels({ ...input,
+            audiencePresentationsBySessionKey: new Map([[rowKey(item), null]]) })[0]?.subtitleOverride)
             .not.toContain('Developers');
     });
 

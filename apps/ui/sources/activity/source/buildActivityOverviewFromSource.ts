@@ -14,6 +14,7 @@ import {
     type SessionServerLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import {
@@ -308,7 +309,8 @@ function enrichCandidateWithSourceFacts(params: Readonly<{
     const serverUrl = profile?.serverUrl ?? (
         serverId && (params.source.activeServer?.serverId ?? params.source.activeServerId) === serverId ? params.source.activeServer?.serverUrl ?? null : null
     );
-    const serverName = resolveHomeDisplayLabel(profile, serverId);
+    const currentServerId = params.source.activeServer?.serverId ?? params.source.activeServerId ?? undefined;
+    const serverName = resolveHomeDisplayLabel(profile, serverId, currentServerId);
     const route = createActivitySurfaceSessionRoute(sessionId, serverId);
     const target = createActivitySurfaceSessionTarget(sessionId, serverId);
     const isKnown = Boolean(serverId);
@@ -350,13 +352,13 @@ function enrichCandidateWithSourceFacts(params: Readonly<{
         context: projectSessionContextPresentation(buildSessionContextFacts({
             address: params.address,
             serverProfile: profile,
+            currentServerId,
             homeName: serverName,
             // The candidate's awareness projection is built once by the attention owner; rebuilding
             // it here would let the context line disagree with the row it annotates.
             awareness: params.candidate.awareness,
             viewer: params.candidate.session.viewer,
-            audienceContext: params.candidate.session.access?.audienceContext,
-            audienceScope: params.source.audienceScopes?.get(serverId),
+            audience: params.source.audiencePresentationsBySessionKey?.get(sessionAddressKey(params.address)),
             // Consume the same workspace-display owner and Account facts as Session rows rather
             // than introducing an Activity-local path or label formatter.
             workspaceLabel,
