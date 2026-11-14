@@ -114,3 +114,36 @@ export async function stageProcessCustodyRuntime({
   await ensureFileExists(executablePath);
   return { executablePath };
 }
+
+/** Session execution targets are Linux guests of either architecture; any host can drive them. */
+export const PROCESS_CUSTODY_TARGET_ARCHES = Object.freeze(['x64', 'arm64'] as const);
+
+/** Payload-relative path of the static Linux helper the Session holder bootstrap places in a target. */
+export function resolveProcessCustodyTargetExecutableRelativePath(arch: typeof PROCESS_CUSTODY_TARGET_ARCHES[number]): string {
+  return `tools/unpacked/targets/${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}.linux-${arch}`;
+}
+
+/**
+ * The same Go module, cross-built static (CGO off) for both Linux target
+ * architectures, staged beside the host helper. Shipped by every payload because
+ * the holder in a container calls it for confined workspace operations.
+ */
+export async function stageProcessCustodyTargetRuntimes({ repoRoot, payloadDir, runCommand }: {
+  repoRoot: string;
+  payloadDir: string;
+  runCommand: RunCommand;
+}): Promise<Record<typeof PROCESS_CUSTODY_TARGET_ARCHES[number], string>> {
+  const staged = {} as Record<typeof PROCESS_CUSTODY_TARGET_ARCHES[number], string>;
+  for (const arch of PROCESS_CUSTODY_TARGET_ARCHES) {
+    const executablePath = join(payloadDir, resolveProcessCustodyTargetExecutableRelativePath(arch));
+    await mkdir(join(payloadDir, 'tools', 'unpacked', 'targets'), { recursive: true });
+    await runCommand('go', [...GO_BUILD_FLAGS, '-o', executablePath, '.'], {
+      cwd: join(repoRoot, 'apps', 'cli', 'native', 'processcustody'),
+      env: buildEnvironment({ os: 'linux', arch, exeExt: '', bunTarget: `linux-${arch}` }),
+    });
+    await chmod(executablePath, 0o755);
+    await ensureFileExists(executablePath);
+    staged[arch] = executablePath;
+  }
+  return staged;
+}
