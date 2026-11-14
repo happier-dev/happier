@@ -657,14 +657,15 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
-  it.each(['shared', 'isolated'] as const)('retains FX native v2 writes through %s home rematerialization', async stateMode => {
-    // Read-only nl1 observation: .fx/sessions/v2/<id>/{log.jsonl,blobs},
-    // while the native source ~/.fx/sessions is empty after the replay.
+  it.each(['shared', 'isolated'] as const)('retains loadable FX native directories through %s home rematerialization', async stateMode => {
+    // nl1 FX 0.0.16 refuses ACP load with DurablePathUnsafe when session-files
+    // is linked, even with a valid v2 journal, lock and referenced blobs.
     const root = await mkdtemp(join(tmpdir(), 'happier-fx-retained-native-'));
     const results: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];
     try {
       const native = join(root, 'native');
-      await mkdir(native);
+      await mkdir(join(native, '.fx/session-files'), { recursive: true });
+      await writeFile(join(native, '.fx/session-files/retained-side-file'), 'native companion');
       const record = buildConnectedServiceCredentialRecord({
         now: Date.now(), serviceId: 'openai-codex', profileId: 'fx-connected', kind: 'oauth', expiresAt: Date.now() + 3600_000,
         oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', idToken: null,
@@ -680,9 +681,22 @@ describe('materializeConnectedServicesForSpawn', () => {
       const first = await materializeConnectedServicesForSpawn(params);
       results.push(first);
       const home = first!.env.HOME!;
+      const sideFiles = join(home, '.fx/session-files');
+      if (stateMode === 'shared') {
+        expect((await lstat(sideFiles)).isSymbolicLink()).toBe(false);
+        // Reproduce the retained shared home from r1113m. Replacement must
+        // import companion bytes while removing this old native-unsafe link.
+        await rm(sideFiles, { recursive: true, force: true });
+        await symlink(join(native, '.fx/session-files'), sideFiles, process.platform === 'win32' ? 'junction' : 'dir');
+      } else {
+        // Native FX may create this optional folder during an isolated turn.
+        await mkdir(sideFiles, { recursive: true });
+        await writeFile(join(sideFiles, 'retained-side-file'), 'native companion');
+      }
       const session = join(home, '.fx/sessions/v2/VlwVgOggC_xR');
       await mkdir(join(session, 'blobs'), { recursive: true });
       await writeFile(join(session, 'log.jsonl'), 'native journal after first turn');
+      await writeFile(join(session, 'lock'), '');
       await writeFile(join(session, 'blobs', 'snapshot'), 'native blob');
       await writeFile(join(home, '.fx/sessions/v2/index.jsonl'), 'native index');
       await first!.cleanupOnExit?.();
@@ -693,6 +707,9 @@ describe('materializeConnectedServicesForSpawn', () => {
       expect(await readFile(join(session, 'blobs', 'snapshot'), 'utf8')).toBe('native blob');
       expect(await readFile(join(home, '.fx/sessions/v2/index.jsonl'), 'utf8')).toBe('native index');
       expect((await lstat(join(home, '.fx/sessions'))).isSymbolicLink()).toBe(false);
+      expect((await lstat(sideFiles)).isSymbolicLink()).toBe(false);
+      expect(await readFile(join(sideFiles, 'retained-side-file'), 'utf8')).toBe('native companion');
+      expect(await readFile(join(session, 'lock'), 'utf8')).toBe('');
       expect(await verifyResumeReachableThroughCatalog('fx', { targetMaterializedRoot: home, vendorResumeId: 'VlwVgOggC_xR' }))
         .toMatchObject({ ok: true });
       expect(existsSync(join(native, '.fx/sessions/v2/VlwVgOggC_xR'))).toBe(false);

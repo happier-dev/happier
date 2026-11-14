@@ -268,8 +268,10 @@ rematerialization after expiry; writing a new file does not prove live adoption.
 ACP, detached and terminal launches use the same preparation owner. In 0.3 development,
 connected resume recognizes both the v0.0.14 session layout and the sessions-v2
 layout used by FX revision `481104fdbc24`. V2 continuity retains the selected
-session's log and directory, including its blobs, through the existing native
-state importer.
+session's log, lock and directory, including referenced blobs, through the existing
+native state importer. Both `.fx/sessions` and `.fx/session-files` are materialized
+as real directories: FX 0.0.16 rejects a symlinked companion directory during
+ACP load, even when the v2 journal is present.
 
 In 0.3 development, FX Provider bindings also use a private
 `HOME/.fx/settings.json` to select an `openai-chat-completions` endpoint and model.
