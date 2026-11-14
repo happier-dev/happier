@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { waitForTestEvent } from '@/dev/testkit/hooks/waitForTestEvent';
 import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -17,6 +18,15 @@ let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | null = 
 let syncBridge: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | null = null;
 let runtimeLoaded = false;
 
+async function waitForHomeSocket() {
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
+    let connected = false;
+    await waitForTestEvent(notify => apiSocket.onStatusChange(status => {
+        connected = status === 'connected';
+        notify();
+    }), () => connected, Boolean);
+}
+
 async function arrangePermission() {
     vi.resetModules();
     browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev' });
@@ -28,6 +38,9 @@ async function arrangePermission() {
     runtimeLoaded = true;
     const connection = await import('@/sync/runtime/orchestration/connectionManager');
     await connection.restoreConnectionToActiveServer({ token: home.token });
+    // Restore hydrates the Account and starts its asynchronous transport. These
+    // scenarios begin with an attached Session, not a still-connecting Home.
+    await waitForHomeSocket();
     const { storage } = await import('@/sync/domains/state/storage');
     const session = createSessionFixture({ id: 'permission-session', serverId: home.id, active: true, thinking: true,
         agentState: { requests: { request: { tool: 'Read', arguments: {}, turnId: 'turn-a' } } },
@@ -218,7 +231,9 @@ describe('permission response admission through real Home and Account owners', (
             });
             const { sessionAbort } = await import('./sessions');
             const pending = sessionAbort(session.id);
-            await entered.promise;
+            // A setup refusal must fail here, rather than leave an unhandled
+            // rejection while waiting for an RPC that was never issued.
+            await Promise.race([entered.promise, pending]);
             if (scenario === 'account-replacement') await network.setAccount(home.serverUrl, 'account-b');
             storage.getState().applySessions([createSessionFixture({ ...session })]);
             storage.getState().markSessionOptimisticThinking(session.id);
@@ -230,6 +245,17 @@ describe('permission response admission through real Home and Account owners', (
             ]);
             if (scenario !== 'same-account') expect(storage.getState().sessions[session.id]).toBe(before);
             expect(storage.getState().sessions[session.id]?.thinking).toBe(scenario !== 'same-account');
+            if (scenario === 'account-replacement') {
+                await waitForHomeSocket();
+                await expect(sessionAbort(session.id)).resolves.toBeUndefined();
+                const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+                const replacement = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+                expect(replacement?.token).not.toBe(home.token);
+                expect(network.requests.filter(request => request.method === 'abort')).toMatchObject([
+                    { token: home.token },
+                    { token: replacement!.token },
+                ]);
+            }
         },
     );
     it.each(['before-abort', 'during-abort'] as const)('keeps composed permission Stop in its original Account (%s)', async (stage) => {
