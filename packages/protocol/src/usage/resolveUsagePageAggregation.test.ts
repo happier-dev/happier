@@ -774,7 +774,10 @@ describe('resolveUsagePageAggregation', () => {
     const admitted = projectUsageAccountingSnapshotPrices({ query, value: input, status: 'available' }, undefined, undefined, previous);
     expect(admitted.priceProjection!.value).toBe(previous);
     let reads = 0;
-    expect(admitted.priceProjection!.value.contributions).toBeUndefined();
+    // Private Coach checks consume priced rows; withheld evidence keeps the projection compact.
+    const expectRows = (value: typeof previous) => includeSessionEvidence
+      ? expect(value.contributions).toHaveLength(3600) : expect(value.contributions).toBeUndefined();
+    expectRows(admitted.priceProjection!.value);
     for (const row of admitted.priceProjection!.input.contributions!) {
       const id = row.id;
       Object.defineProperty(row, 'id', { enumerable: true, get() { reads++; return id; } });
@@ -783,7 +786,7 @@ describe('resolveUsagePageAggregation', () => {
       const next = projectUsageAccountingSnapshotPrices(admitted, undefined, undefined, previous);
       expect(next).toBe(admitted);
       expect(next.priceProjection!.value).toBe(previous);
-      expect(next.priceProjection!.value.contributions).toBeUndefined();
+      expectRows(next.priceProjection!.value);
     }
     expect(reads, 'unrelated publications must not inspect already admitted accounting rows').toBe(0);
   });
