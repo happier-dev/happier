@@ -1084,7 +1084,6 @@ export const Item = React.memo<ItemProps>((props) => {
         tabStopIndex: groupItem.tabStopIndex,
         density: requestedDensity,
         hasPrimaryAction: isInteractive,
-        hasSecondaryActions: Boolean(rightElement && rightElementOutsidePressable),
         hasAccessory: Boolean(rightElement),
         accessoryOutsidePressable: rightElementOutsidePressable,
         showNavigationAccessory: showChevron,
@@ -2181,10 +2180,8 @@ export const Item = React.memo<ItemProps>((props) => {
                             isMenuRow && !stackAccessory ? MENU_ROW_TRAILING : null,
                             stackedLabelEdgeStyle,
                         ]}
-                        pointerEvents={sharedItemBehavior.secondaryActionsEnabled ? 'auto' : 'none'}
+                        // Outside controls own their activation, independently of the primary row.
                         {...(isWeb ? { onPointerEnter: () => setIsAccessoryHovered(true), onPointerLeave: () => setIsAccessoryHovered(false) } : {})}
-                        accessibilityElementsHidden={!sharedItemBehavior.secondaryActionsEnabled}
-                        importantForAccessibility={sharedItemBehavior.secondaryActionsEnabled ? 'auto' : 'no-hide-descendants'}
                     >
                         {rightAccessory}
                     </View> : null}

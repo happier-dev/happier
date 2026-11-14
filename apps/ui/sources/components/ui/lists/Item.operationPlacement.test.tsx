@@ -18,6 +18,9 @@ vi.mock('react-native-unistyles', async () => {
   return createUnistylesMock();
 });
 
+// Load the real row graph during collection, outside the interaction deadline.
+await import('./Item');
+
 afterEach(() => {
   standardCleanup();
   vi.resetModules();
