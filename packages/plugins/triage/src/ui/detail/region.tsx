@@ -424,6 +424,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       }
       const startRequest = {
         action,
+        savedAction: executable.action,
         entryRef: request.entryRef,
         display: props.display,
         // The entry attachment's two halves. Identity is the connection this
@@ -756,7 +757,6 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const readFailure = observation === null ? row.observations.flatMap(candidate => (
     candidate.outcome.kind === 'unresolved' ? [candidate.outcome.failure] : []
   ))[0] : undefined;
-  const readRefusal = readFailure === undefined ? null : presentInternalTaskReadFailure(readFailure.code, text);
   const primaryWriteKey = selected === null ? null : deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId);
   const [sourceChanges, setSourceChanges] = React.useState({ key: primaryWriteKey, open: false });
   if (sourceChanges.key !== primaryWriteKey) setSourceChanges({ key: primaryWriteKey, open: false });
@@ -788,6 +788,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     : props.exactReadFailure !== undefined
       ? { kind: 'unreachable' as const, ...props.exactReadFailure, retry: props.completePostMutation }
       : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
+  const readRefusal = presentInternalTaskReadFailure(
+    readFailure?.code ?? (detail?.kind === 'unreachable' ? detail.failure?.code : undefined), text,
+  );
   const linkedSessions = detail?.kind === 'ready' ? detail.linkedSessions : EMPTY_SESSIONS;
   const linkedSessionsHasMore = detail?.kind === 'ready'
     ? detail.linkedSessionsNextCursor !== undefined
@@ -1073,9 +1076,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       ) : detail.kind === 'unreachable' ? (
         <Stack gap="small">
           <ErrorState
-            titleKey="plugins.triage.surface.detail.accountError.title"
-            title="These details could not be read"
-            description={[
+            titleKey={readRefusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
+            title={readRefusal ?? 'These details could not be read'}
+            description={readRefusal === null ? [
               header.lastReadAtMs === null ? null : text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
                 age: formatTriageTimestampV1(context.locale, header.lastReadAtMs, 'relative', Date.now()),
               }),
@@ -1083,7 +1086,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               detail.failure?.retryable === false
                 ? text('plugins.triage.surface.detail.accountError.permanent', "The source refused this entry's details. Details below say why.")
                 : text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available."),
-            ].filter((part): part is string => part !== null).join(' ')}
+            ].filter((part): part is string => part !== null).join(' ') : undefined}
             action={detail.failure?.retryable === false ? undefined : (
               <Button
                 titleKey="plugins.triage.surface.actions.retry"
@@ -1096,6 +1099,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           {detail.failure === undefined ? null : <PullRequestFailureDetails
             codes={[detail.failure.code, ...(detail.failure.diagnostics ?? []).map(diagnostic => diagnostic.code)]}
             requestId={readPluginErrorRequestIdV1(detail.failure)}
+            detail={detail.failure.data.message}
           />}
         </Stack>
       ) : detail.kind === 'refused' ? (

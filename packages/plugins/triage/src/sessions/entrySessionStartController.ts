@@ -127,6 +127,11 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
     launchMode?: 'start' | 'review';
     /** The pressed action, whole. Every member of it decides something below. */
     action: TriageActionV1;
+    /**
+     * The record as saved, when `action` carries this press's launch mode (Start now / Add instructions…). Only the
+     * composer's "Save as this action's default" reads it, so "Next time" shows the saved mode rather than this press.
+     */
+    savedAction?: TriageActionV1;
     /** Final human-edited ORC prompt, not a configured Prompt Library or shipped fallback. */
     orchestrationPrompt?: string;
     requestedTask?: TriageSessionHandoffInputV1['task'];
@@ -1023,7 +1028,7 @@ export function createTriageEntrySessionStartController(
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], promptText, profileId: action.profileId,
-                        actionDefault: triageActionDefaultSeedV1(action),
+                        actionDefault: triageActionDefaultSeedV1(request.savedAction ?? action),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
                         checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,

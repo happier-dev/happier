@@ -29,7 +29,49 @@ afterEach(async () => {
     await clearBrowserRecords();
 });
 
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+/** The configurator is a disclosure: open it when it is closed, then press its Save. */
+async function pressSave(screen: RenderedScreen): Promise<void> {
+    if (!screen.findByTestId('new-session-action-default-save')) await screen.pressByTestIdAsync('new-session-action-default-open');
+    await screen.pressByTestIdAsync('new-session-action-default-save');
+}
+
 describe('NewSessionActionDefaults', () => {
+    it('stays one quiet disclosure until opened and closes after a successful save', async () => {
+        const { NewSessionActionDefaults } = await import('./NewSessionActionDefaults');
+        seedAndOpenNewSession({ seed: { prompt: 'Keep this task', actionDefault }, scope,
+            isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined });
+        const draft = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!draft) throw new Error('Expected the seeded draft');
+        const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId}
+            execute={vi.fn().mockResolvedValue({ v: 1, status: 'applied' })}
+            getCurrentDraft={() => draft} onProfileSaved={() => undefined} />);
+        expect(screen.findByTestId('new-session-action-default-name')).toBeFalsy();
+        await screen.pressByTestIdAsync('new-session-action-default-open');
+        expect(screen.findByTestId('new-session-action-default-name')?.props.value).toBe('Fix check');
+        await screen.pressByTestIdAsync('new-session-action-default-save');
+        expect(screen.findByTestId('new-session-action-default-name')).toBeFalsy();
+        expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
+        await screen.unmount();
+    });
+
+    it.each([
+        { label: 'a draft seeded from a Triage action', seed: { prompt: 'Keep this task', actionDefault }, shown: true },
+        { label: 'a draft not seeded from an action', seed: { prompt: 'Keep this task' }, shown: false },
+        { label: 'a seed naming another plugin', seed: { prompt: 'Keep this task',
+            actionDefault: { ...actionDefault, pluginId: 'happier.other' } }, shown: false },
+    ])('offers the save only for $label', async ({ seed, shown }) => {
+        const { NewSessionActionDefaults } = await import('./NewSessionActionDefaults');
+        seedAndOpenNewSession({ seed, scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined });
+        const draft = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!draft) throw new Error('Expected the seeded draft');
+        const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={vi.fn()}
+            getCurrentDraft={() => draft} onProfileSaved={() => undefined} />);
+        expect(Boolean(screen.findByTestId('new-session-action-default-open'))).toBe(shown);
+        await screen.unmount();
+    });
+
     it.each([
         { label: 'untouched placement', patch: { executionTarget: undefined }, placement: 'automatic' },
         { label: 'explicit question', patch: { executionTarget: null }, placement: 'ask' },
@@ -45,7 +87,7 @@ describe('NewSessionActionDefaults', () => {
         const execute = vi.fn().mockResolvedValue({ v: 1, status: 'applied' });
         const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
             getCurrentDraft={() => ({ ...draft, ...patch })} onProfileSaved={() => undefined} />);
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(execute).toHaveBeenCalledWith('action.invoke', expect.objectContaining({ input: expect.objectContaining({ placement }) }));
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
         await screen.unmount();
@@ -67,7 +109,7 @@ describe('NewSessionActionDefaults', () => {
         const execute = vi.fn();
         const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
             getCurrentDraft={() => ({ ...draft, ...patch })} onProfileSaved={() => undefined} />);
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(execute).not.toHaveBeenCalled();
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.stablePlacementRequired');
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('Keep this task');
@@ -93,6 +135,7 @@ describe('NewSessionActionDefaults', () => {
         const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
             getCurrentDraft={() => currentAuthoring}
             onProfileSaved={(profileId: string | null) => { currentAuthoring = { ...currentAuthoring, selectedProfileId: profileId }; }} />);
+        await screen.pressByTestIdAsync('new-session-action-default-open');
         await act(async () => { screen.findByTestId('new-session-action-default-name')?.props.onChangeText('Repair checks'); });
         await screen.pressByTestIdAsync('new-session-action-default-launch:start');
         writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: { ...prior, selectedProfileId: 'profile-b',
@@ -104,7 +147,7 @@ describe('NewSessionActionDefaults', () => {
         if (!persisted) throw new Error('Expected the retained draft');
         // The model's current builder sees a control edit before its delayed autosave.
         currentAuthoring = { ...persisted, selectedProfileId: 'profile-current', selectedPath: '/current' };
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(calls).toEqual([{ id: 'action.invoke', input: {
             action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'actions/administer-v1' },
             input: { v: 1, kind: 'saveDefaults', actionId: 'fix-check', label: 'Repair checks',
@@ -113,7 +156,7 @@ describe('NewSessionActionDefaults', () => {
                 checkout: 'create_worktree', launchMode: 'start' },
         } }]);
         expect(currentAuthoring.selectedProfileId).toBe('profile-owned');
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(calls[1]).toMatchObject({ input: { input: { profileId: 'profile-owned' } } });
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('The task currently in the composer');
@@ -136,10 +179,10 @@ describe('NewSessionActionDefaults', () => {
         };
         const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
             getCurrentDraft={getCurrentDraft} onProfileSaved={() => undefined} />);
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe(feedback);
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('Keep this task');
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
         await screen.unmount();
     });
@@ -168,10 +211,10 @@ describe('NewSessionActionDefaults', () => {
         };
         const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
             getCurrentDraft={getCurrentDraft} onProfileSaved={() => undefined} />);
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe(feedback);
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('Keep this task');
-        await screen.pressByTestIdAsync('new-session-action-default-save');
+        await pressSave(screen);
         expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
         await screen.unmount();
     });

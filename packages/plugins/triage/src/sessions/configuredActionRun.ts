@@ -221,7 +221,7 @@ export async function runTriageConfiguredHandoffV1(
         const owner = createTriageEntrySessionStartController(executionHost, { mintCreationKey: options.mintCreationKey });
         try {
             if (options.resumeStart?.state.kind === 'single') owner.restore(options.resumeStart.state);
-            owner.getSnapshot().start({ ...primary, action, requestedTask: input.task, resolvedReferences: references,
+            owner.getSnapshot().start({ ...primary, action, savedAction: configured.action, requestedTask: input.task, resolvedReferences: references,
                 ...(forgeEvidence === undefined ? {} : { forgeEvidence }),
                 ...(agent?.status === 'resolved' ? { resolvedAgentTarget: agent.agentTarget } : {}),
                 ...(preferredKey === undefined ? {} : { preferredAgentTargetKey: preferredKey }) });
@@ -346,7 +346,8 @@ export async function runTriageConfiguredHandoffV1(
             || (directSettlement === undefined && action.workspaceMode !== 'pull_request'))) {
             const composed = await requestTriageNewSessionAuthoringV1(host, {
                 entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
-                actionDefault: triageActionDefaultSeedV1(action), checkoutIntent: checkout, signal: options.signal,
+                // The configurator shows the record as saved, not this handoff's delivery or Profile choice.
+                actionDefault: triageActionDefaultSeedV1(configured.action), checkoutIntent: checkout, signal: options.signal,
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
                 placement: execution ?? ((input.context.kind === 'healthAlert' || input.context.kind === 'failure') && input.context.machine
                     ? { executionTarget: input.context.machine } : null), candidates,
@@ -512,6 +513,7 @@ export async function runTriageConfiguredActionV1(
     const intent = request.singleIntent;
     if (intent !== undefined && request.destination !== 'single') return refuse('scopeMismatch');
     let action: TriageActionV1;
+    let savedAction: TriageActionV1 | undefined;
     if (intent?.kind === 'orchestrate' || intent?.kind === 'comparison') {
         action = intent.kind === 'orchestrate' ? {
             actionId: 'orchestrate-issue', label: 'Orchestrate this', enabled: true, appliesTo: ['issue'],
@@ -528,6 +530,7 @@ export async function runTriageConfiguredActionV1(
         const selected = intent === undefined ? resolved.action : applyTriageActionLaunchModeV1(resolved.action, intent.launchMode);
         if (selected === null) return refuse('instructionMissing');
         action = selected;
+        savedAction = resolved.action;
     }
     const selectedEntries = request.selectedEntries ?? request.entries.map((entry) => ({ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }));
     const recovery = request.resumeStart;
@@ -594,7 +597,7 @@ export async function runTriageConfiguredActionV1(
         const owner = createTriageEntrySessionStartController(singleHost, options);
         try {
             if (recovery?.state.kind === 'single') owner.restore(recovery.state);
-            owner.getSnapshot().start({ ...entry, action,
+            owner.getSnapshot().start({ ...entry, action, ...(savedAction === undefined ? {} : { savedAction }),
                 ...(intent?.kind === 'orchestrate' ? { orchestrationPrompt: intent.prompt } : {}),
                 ...(intent?.kind === 'comparison' ? { comparisonDestination: { kind: 'scmReview', comparison: intent.comparison, view: 'walkthrough' } } : {}),
                 ...(intent?.kind === 'configured' && intent.comparisonSource !== undefined ? { comparisonSource: intent.comparisonSource } : {}),

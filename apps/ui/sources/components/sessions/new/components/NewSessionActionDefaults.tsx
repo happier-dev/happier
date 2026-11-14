@@ -5,6 +5,7 @@ import { TriageSaveActionDefaultsInputV1Schema, readTriageSavedActionDefaultProf
 import { projectLaunchProfileAuthoringPreferencesV1 } from '@happier-dev/protocol/profiles/v2/schema';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
@@ -30,6 +31,8 @@ export function NewSessionActionDefaults(props: Readonly<{
     const getSnapshot = React.useCallback(() => getSessionDraftSnapshot(scope, address)?.localSupplement.newSessionLocalState?.actionDefault ?? null, [address, scope]);
     const actionDefault = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const [feedback, setFeedback] = React.useState<string | null>(null);
+    // Saving an action's defaults is occasional, so the composer shows one quiet disclosure until the person asks.
+    const [open, setOpen] = React.useState(false);
     const update = React.useCallback((patch: Partial<Pick<ActionDefault, 'label' | 'launchMode'>>) => {
         const localState = getSessionDraftSnapshot(scope, address)?.localSupplement.newSessionLocalState;
         if (!localState?.actionDefault) return;
@@ -65,6 +68,7 @@ export function NewSessionActionDefaults(props: Readonly<{
             if (result && typeof result === 'object' && 'status' in result && result.status === 'applied') {
                 const savedProfileId = readTriageSavedActionDefaultProfileIdV1(result, actionDefault.configuredActionId);
                 if (savedProfileId !== undefined) onProfileSaved(savedProfileId);
+                setOpen(false);
                 setFeedback(t('newSession.actionDefault.saved'));
             } else {
                 const reason = result && typeof result === 'object' && 'reason' in result && typeof result.reason === 'string' ? result.reason : null;
@@ -79,23 +83,32 @@ export function NewSessionActionDefaults(props: Readonly<{
     if (actionDefault?.pluginId !== TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.pluginId) return null;
     return <ComposerAuxiliaryFrame>
         <View style={styles.content}>
-            <Text variant="meta">{t('newSession.actionDefault.name')}</Text>
-            <FieldTextInput testID="new-session-action-default-name" value={actionDefault.label}
-                accessibilityLabel={t('newSession.actionDefault.name')} onChangeText={label => update({ label })} />
-            <Text variant="meta">{t('newSession.actionDefault.launchMode')}</Text>
-            <SegmentedTabBar<ActionDefault['launchMode']> tabs={[
-                { id: 'review', label: t('newSession.actionDefault.review') },
-                { id: 'start', label: t('newSession.actionDefault.start') },
-            ]} activeTabId={actionDefault.launchMode} onSelectTab={launchMode => update({ launchMode })}
-                testIDPrefix="new-session-action-default-launch" />
-            <RoundButton testID="new-session-action-default-save" title={t('newSession.actionDefault.save')}
-                titleNumberOfLines="complete" size="small" display="secondary" action={save}
-                disabled={!actionDefault.label.trim()} disabledReason={t('newSession.actionDefault.nameRequired')} />
+            <View style={styles.disclosure}>
+                <TextLinkButton testID="new-session-action-default-open" label={t('newSession.actionDefault.open')}
+                    tone="quiet" size="meta" expanded={open} onPress={() => { setOpen(value => !value); setFeedback(null); }} />
+            </View>
+            {open ? <>
+                <Text variant="meta">{t('newSession.actionDefault.name')}</Text>
+                <FieldTextInput testID="new-session-action-default-name" value={actionDefault.label}
+                    accessibilityLabel={t('newSession.actionDefault.name')} onChangeText={label => update({ label })} />
+                <Text variant="meta">{t('newSession.actionDefault.launchMode')}</Text>
+                <SegmentedTabBar<ActionDefault['launchMode']> tabs={[
+                    { id: 'review', label: t('newSession.actionDefault.review') },
+                    { id: 'start', label: t('newSession.actionDefault.start') },
+                ]} activeTabId={actionDefault.launchMode} onSelectTab={launchMode => update({ launchMode })}
+                    testIDPrefix="new-session-action-default-launch" />
+                <View style={styles.disclosure}>
+                    <RoundButton testID="new-session-action-default-save" title={t('common.save')}
+                        size="small" display="secondary" action={save}
+                        disabled={!actionDefault.label.trim()} disabledReason={t('newSession.actionDefault.nameRequired')} />
+                </View>
+            </> : null}
             {feedback ? <Text testID="new-session-action-default-feedback" variant="meta" accessibilityLiveRegion="polite">{feedback}</Text> : null}
         </View>
     </ComposerAuxiliaryFrame>;
 }
 
 const styles = StyleSheet.create(theme => ({
-    content: { gap: theme.space.s8, paddingVertical: theme.space.s8 },
+    content: { gap: theme.space.s8, paddingBottom: theme.space.s8 },
+    disclosure: { alignSelf: 'flex-start' },
 }));

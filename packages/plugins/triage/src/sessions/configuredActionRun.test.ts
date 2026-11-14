@@ -114,6 +114,32 @@ describe('configured action execution through the shared Session owner', () => {
         expect(seeds[0]).toMatchObject({ prompt });
     });
 
+    // PAR1-SAVE-DEFAULT-1114 live: a Start action reaches the composer only through Add instructions…, so the
+    // "Next time" configurator must show the record's saved mode, not this press's Review, or any Save flips it.
+    it('seeds the saved launch mode, not this press, when Add instructions opens a Start action', async () => {
+        const seeds: unknown[] = [];
+        const input = parseEntryExecutionInput({ v: 1, actionId: action.actionId, destination: 'single',
+            entries: [{ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }],
+            singleIntent: { kind: 'configured', launchMode: 'review' },
+        });
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async (seed: unknown) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + id);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Host UI/Action transports are the external boundary.
+        const result = await runTriageConfiguredActionV1(host, { actionId: action.actionId,
+            entries: [entry], destination: 'single', singleIntent: input.singleIntent });
+        expect(result.status).toBe('seeded');
+        expect(seeds).toEqual([expect.objectContaining({
+            actionDefault: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: action.actionId,
+                label: action.label, launchMode: 'start' },
+        })]);
+    });
+
     it('carries Walk through into the incumbent composer when no linked Session can open', async () => {
         const comparison = { kind: 'pullRequest', locator: { providerId: 'forge', repository: 'example/repository', number: 17,
             baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } } as const;
@@ -599,6 +625,36 @@ describe('configured action execution through the shared Session owner', () => {
         expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
         expect(seeds).toHaveLength(1);
         expect('actionDefault' in seeds[0]!).toBe(configurable);
+    });
+
+    it('seeds the saved Start mode when a native failure handoff composes a Start action', async () => {
+        const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'receipt' } as const;
+        const seeds: Array<Record<string, unknown>> = [];
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            openNewSession: async (seed: Record<string, unknown>) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [
+                    { ...action, actionId: 'investigate', target: { ...action.target, delivery: 'send' } },
+                ] };
+                if (id === 'deployments.receipts.get') return { ok: true,
+                    deployment: createDeploymentReceiptHeaderV1({ id: 'receipt', environmentId: 'environment' }) };
+                if (id === 'artifact.get') return { artifact: null };
+                if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: 'chosen', updatedAt: 1, targets: [] };
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error(`Unexpected host Action ${id}`);
+            },
+        };
+        const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'investigate',
+            context: { kind: 'failure', subject, machine: { serverId: 'server-a', machineId: 'chosen' } },
+            evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } });
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [], signal: new AbortController().signal });
+        expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
+        expect(seeds).toEqual([expect.objectContaining({ actionDefault: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+            configuredActionId: 'investigate', label: action.label, launchMode: 'start' } })]);
     });
 
     // Live D1 (AGENT-ACTIONS-UI-1107-LIVE): a working-copy record on a receipt whose controller has no saved folder
