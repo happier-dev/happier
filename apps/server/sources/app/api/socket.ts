@@ -20,7 +20,11 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
 import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
-import { SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES } from "@happier-dev/protocol/socketRpc";
+import {
+    SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES,
+    SOCKET_RPC_PING_INTERVAL_MS,
+    SOCKET_RPC_PING_TIMEOUT_MS,
+} from "@happier-dev/protocol/socketRpc";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -109,8 +113,8 @@ export function startSocket(app: Fastify) {
         },
         ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient()) } : {}),
         transports: ['websocket', 'polling'],
-        pingTimeout: 45000,
-        pingInterval: 15000,
+        pingTimeout: SOCKET_RPC_PING_TIMEOUT_MS,
+        pingInterval: SOCKET_RPC_PING_INTERVAL_MS,
         path: '/v1/updates',
         maxHttpBufferSize: resolveSocketMaxHttpBufferSizeFromEnv(process.env),
         allowUpgrades: true,
