@@ -136,7 +136,12 @@ const configuredEntryResultMembers = {
     unavailableKeys: defineProtocolArray(text).optional(),
 };
 /** Internal controller projection; never accepted as the public Action envelope. */
-const legacyConfiguredActionResultMembers = {
+type LegacyConfiguredActionResultMembers = typeof configuredEntryResultMembers & {
+    v: ReturnType<typeof defineProtocolLiteral<1>>;
+    status: typeof TriageConfiguredEntryExecutionStatusV1Schema;
+    recovery: ReturnType<typeof TriageLegacyConfiguredStartRecoveryV1Schema.optional>;
+};
+const legacyConfiguredActionResultMembers: LegacyConfiguredActionResultMembers = {
     v: defineProtocolLiteral(1), status: TriageConfiguredEntryExecutionStatusV1Schema,
     ...configuredEntryResultMembers, recovery: TriageLegacyConfiguredStartRecoveryV1Schema.optional(),
 };
@@ -145,7 +150,13 @@ interface TriageLegacyRunConfiguredActionResultV1Authored extends ProtocolSchema
 export interface TriageLegacyRunConfiguredActionResultV1 extends ProtocolSchemaOutput<LegacyConfiguredActionResultSchema> {}
 export const TriageLegacyRunConfiguredActionResultV1Schema: ProtocolComposableSchema<Readonly<TriageLegacyRunConfiguredActionResultV1Authored>, Readonly<TriageLegacyRunConfiguredActionResultV1>> =
     defineProtocolObject(legacyConfiguredActionResultMembers, { policy: 'closed' });
-const handoffConfiguredActionResultMembers = {
+type HandoffConfiguredActionResultMembers = typeof configuredEntryResultMembers & {
+    v: ReturnType<typeof defineProtocolLiteral<1>>;
+    handoff: typeof TriageSessionHandoffResultV1Schema;
+    status: ReturnType<typeof TriageConfiguredEntryExecutionStatusV1Schema.optional>;
+    recovery: ReturnType<typeof TriageConfiguredStartRecoveryV1Schema.optional>;
+};
+const handoffConfiguredActionResultMembers: HandoffConfiguredActionResultMembers = {
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffResultV1Schema,
     status: TriageConfiguredEntryExecutionStatusV1Schema.optional(), ...configuredEntryResultMembers,
     recovery: TriageConfiguredStartRecoveryV1Schema.optional(),
