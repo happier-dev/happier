@@ -702,12 +702,22 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let retainedActivationRegistryLeases = [
         ...(params?.retainedActivationRegistryLeases ?? []),
     ];
+    // One scope for every plugin this registry may admit: an incremental
+    // re-resolution keeps retained and serving occurrences, which must load
+    // from the same packaged closure as the plugins it re-resolves.
+    const scopedCandidatePluginIds = params?.pluginIds === undefined
+        ? undefined
+        : new Set([
+            ...params.pluginIds,
+            ...retainedActivationRegistryLeases.flatMap((lease) => [...lease.pluginIds]),
+            ...(params.servingPluginOccurrences?.keys() ?? []),
+        ]);
     const packagedRuntimeRoot = resolveAuthoritativePackagedRuntimeCustody();
     const packagedActivationPaths = packagedRuntimeRoot
         ? resolvePackagedBundledActivationPaths({
             runtimeRoot: packagedRuntimeRoot.root,
             activationTargets: contributes.activationTargets.filter((target) => (
-                params?.pluginIds === undefined || params.pluginIds.includes(target.pluginId)
+                scopedCandidatePluginIds === undefined || scopedCandidatePluginIds.has(target.pluginId)
             )),
             metadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
             locators: BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
@@ -770,8 +780,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? (target) => accountActivationSources.sourcesByPluginId.get(target.pluginId) ?? null
         : resolveInstalledActivationSource;
     const activationTargets = collectActivationTargets(contributes, params?.accountExecution ? 'account' : undefined);
-    const candidatePluginIds = params?.pluginIds === undefined
-        ? new Set([
+    const candidatePluginIds = scopedCandidatePluginIds ?? new Set([
             ...activationTargets.map((target) => target.pluginId),
             ...(contributes.pluginDeclarations ?? []).map((declaration) => declaration.pluginId),
             ...contributes.agents.flatMap((agent) => agent.pluginId ? [agent.pluginId] : []),
@@ -780,11 +789,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(contributes.inputTypes ?? []).map((type) => type.pluginId),
             ...(contributes.dragSources ?? []).map((source) => source.pluginId),
             ...(contributes.dropTargets ?? []).map((target) => target.pluginId),
-        ])
-        : new Set([
-            ...params.pluginIds,
-            ...retainedActivationRegistryLeases.flatMap((lease) => [...lease.pluginIds]),
-            ...(params.servingPluginOccurrences?.keys() ?? []),
         ]);
     const candidateOccurrenceIdsByPluginId = new Map<string, PluginRuntimeOccurrenceId>();
     const admittedPluginSourceCustodiesByPluginId = new Map<string, PluginSourceCustody>();
