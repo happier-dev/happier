@@ -86,7 +86,10 @@ export function AtmosphereDissolve(props: AtmosphereDissolveProps) {
       style={[props.style, { opacity }]}
       onLayout={event => setWidth(event.nativeEvent.layout.width)}
     >
-      <MaskedView style={{ width: '100%', height: props.height }} androidRenderingMode="software" maskElement={<View style={{ width, height: props.height }}>
+      {/* Hardware (the default), never "software": RNCMaskedView re-applies its layer type on every draw,
+          and a software layer invalidates on each re-apply, so the atmosphere redrew ~60 frames/s at rest.
+          The Skia canvases inside are TextureViews, which also cannot draw into a software layer. */}
+      <MaskedView style={{ width: '100%', height: props.height }} maskElement={<View style={{ width, height: props.height }}>
         <View style={{ position: 'absolute', left: 0, top: 0, width, height: props.height, backgroundColor: '#000', opacity: climbing ? 0 : 1 }} />
         {maskUri ? <Reanimated.Image source={{ uri: maskUri }} resizeMode="stretch" onLoad={() => setMaskReady(true)} style={[{ width, height: dissolve.mask.cssHeight }, maskStyle]} /> : null}
       </View>}>
