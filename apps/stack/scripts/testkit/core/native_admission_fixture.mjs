@@ -261,6 +261,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try {
     await copyFile(admissionClientSourcePath, join(proc, 'admission_client.mjs'));
     await copyFile(join(dirname(admissionClientSourcePath), 'admission_socket.mjs'), join(proc, 'admission_socket.mjs'));
+    // This worker's memory is simulated (broker-memory-observation.json). Its
+    // client must not report the test runner's real jobs-scope kernel peak.
+    await writeFile(join(proc, 'admission_memory.mjs'), 'export const readJobScopePeakKiB = () => null;\n');
     await copyFile(join(dirname(admissionClientSourcePath), '../dev_targets/command_resources.mjs'), join(targets, 'command_resources.mjs'));
   } catch (error) {
     // The old launcher remains executable for the pre-replacement RED run.

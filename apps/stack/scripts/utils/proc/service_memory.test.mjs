@@ -241,11 +241,17 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
     { name: 'absent cgroup preserves host capacity', total: 1000, available: 900 },
     { name: 'waiting clients cannot enlarge jobs cgroup headroom', high: '614400', max: '819200', current: '409600', total: 600, available: 200, waitingPages: 300 },
     { name: 'waiting client credit is capped at physical memory', total: 1000, available: 1000, waitingPages: 300 },
+    // nl1 2026-11-14 18:4xZ: 103 admission clients (8,066 MiB PSS) ran inside the jobs slice.
+    // A queued client's own pages inside the slice must not consume the headroom it waits for.
+    { name: 'waiting clients inside the jobs slice return their own charged pages', high: '614400', max: '819200', current: '409600',
+      total: 600, available: 500, waitingPages: 300, waiterInSlice: true },
   ];
   for (const scenario of cases) await t.test(scenario.name, async t => {
     const readFile = fs.readFileSync;
     t.mock.method(fs, 'readFileSync', (path, ...args) => {
       if (path === '/proc/meminfo') return scenario.meminfo ?? 'MemTotal: 1000 kB\nMemAvailable: 900 kB\n';
+      if (path === '/proc/10/cgroup') return scenario.waiterInSlice
+        ? `0::${cgroup.slice('/sys/fs/cgroup'.length)}/happier-jobs-10-1.scope\n` : '0::/user.slice\n';
       if (String(path).startsWith(`${cgroup}/`)) {
         if (String(path).endsWith('/memory.stat')) return scenario.stat ?? 'inactive_file 0\n';
         const value = scenario[String(path).slice(`${cgroup}/memory.`.length)];

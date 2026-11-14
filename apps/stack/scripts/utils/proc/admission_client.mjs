@@ -4,7 +4,7 @@ import { createConnection, createServer } from 'node:net';
 import { constants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { brokerAddress } from './admission_socket.mjs';
 import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 
@@ -128,7 +128,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores, projects,
+  exportMode, exportWorkers, requestedCpuCores, projects, component, entry, readJobPeakKiB,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
   const cancellation = new AbortController();
@@ -210,7 +210,9 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       cpuCost: resolveAdmissionCpuCost(className),
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
-      repoDir, cacheBaseDir, noWait, locks, projects, ...(floorOptions ? { floorOptions } : {}) };
+      repoDir, cacheBaseDir, noWait, locks, projects,
+      ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
+      ...(floorOptions ? { floorOptions } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');
       priorityScope = createWorkspaceBuildResourcePriorityScope({ locks, env, signal: cancellation.signal });
@@ -253,6 +255,9 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               socket.once('close', () => slotConnections.delete(socket));
               socket.on('error', () => socket.destroy());
               if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
+              // A successor broker re-sizes this recovered slot with its identity peak.
+              if (request.entry !== undefined) socket.write(JSON.stringify({ kind: 'slot-identity', className: request.className,
+                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n');
             });
             await new Promise((ready, reject) => {
               slotServer.once('error', reject);
@@ -277,7 +282,18 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
                 acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = String(selectedCpuCores);
               }
             }
-            payload = run(acquiredEnv);
+            // Report the scope's kernel peak on the slot before it closes, so the
+            // broker records this identity's true high-water mark, success or not.
+            payload = run(acquiredEnv).finally(async () => {
+              // Only the outermost admission owns its jobs scope. A client nested in
+              // another admitted payload shares that scope, so its peak is the parent's.
+              if (env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) return;
+              const peakKiB = await (readJobPeakKiB ?? (await import('./admission_memory.mjs')).readJobScopePeakKiB)();
+              if (!Number.isSafeInteger(peakKiB) || peakKiB <= 0) return;
+              const line = JSON.stringify({ kind: 'slot-peak', peakKiB, className: request.className,
+                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n';
+              await Promise.all([...slotConnections].map(socket => new Promise(done => socket.write(line, () => done()))));
+            });
             payload.then(() => control?.destroy(), () => control?.destroy());
           }
           if (payload) return await payload;
@@ -313,15 +329,38 @@ class AdmissionRefusal extends Error {
   }
 }
 
+/** Systemic 20:31Z: identity is the component plus the command's entry (program,
+ * package-manager script, or `--test`), never its argument list, so new file
+ * lists or flags reuse the recorded peak. */
+export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = process.cwd(), command, args = [] }) {
+  const separator = args[0] === '--heavyweight-admitted-exec' ? args.indexOf('--') : -1;
+  const tokens = separator >= 0 ? args.slice(separator + 1) : [command, ...args];
+  const entry = [String(tokens[0] ?? '').split('/').at(-1)];
+  for (const token of tokens.slice(1)) {
+    if (token === '--test') { entry.push(token); break; }
+    if (token.startsWith('-')) continue;
+    entry.push(token);
+    if (!['run', 'exec', 'x', 'dlx'].includes(token)) break;
+  }
+  return { component: relative(repoDir, cwd) || '.', entry: entry.join(' ') };
+}
+
 export async function runAdmissionCommand({ command, args = [], ...options } = {}) {
   let payloadStarted = false;
+  let payloadStartedAt;
   try {
-    return await runAdmittedTask({ ...options,
+    const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
+    const status = await runAdmittedTask({ ...identity, ...options,
       requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
     }, (env, signal) => {
       payloadStarted = true;
+      payloadStartedAt = Date.now();
       return runPayload({ command, args, env, signal });
     });
+    // The dispatcher's wall clock includes queue wait. Report the admitted run
+    // time on this host's clock for its duration projection (overrun p99).
+    if (options.failureId) console.error(`HSTACK_ADMISSION_RUN_MS:${options.failureId}:${Date.now() - payloadStartedAt}`);
+    return status;
   } catch (error) {
     if (error.name === 'AbortError') return 130;
     const env = options.env ?? process.env;

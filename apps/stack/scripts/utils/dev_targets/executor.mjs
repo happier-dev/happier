@@ -339,6 +339,9 @@ export async function runDevTargetCommand(
     if (commandPolicy.generator === '1') {
       throw new Error('[dev-targets] tracked-source writer must execute on the authoritative primary checkout');
     }
+    if (commandPolicy.commandClass === 'source-search') {
+      throw new Error('[dev-targets] source searches must execute on the authoritative primary checkout');
+    }
     throw new Error('[dev-targets] Git/index/worktree commands must execute on the authoritative primary checkout');
   }
   // Runtime-state observations do not consume a fresh source snapshot. Keep
@@ -426,6 +429,7 @@ export async function runDevTargetCommand(
   ];
   const admittedAt = now();
   let admissionDeclined = false;
+  let runMs;
   let child;
   let stopPromise = null;
   const completion = runDevTargetSshProcess({
@@ -447,6 +451,10 @@ export async function runDevTargetCommand(
       if (stream === 'stderr') {
         diagnosticReason ??= classifyDevTargetSshDiagnostic(line);
         if ([`HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`, `HSTACK_ADMISSION_CAPACITY:${executionId}`].includes(line)) admissionDeclined = true;
+        // Wall time below includes the worker queue; the admitted client reports run time.
+        const reportedRunMs = line.startsWith(`HSTACK_ADMISSION_RUN_MS:${executionId}:`)
+          ? Number(line.slice(`HSTACK_ADMISSION_RUN_MS:${executionId}:`.length)) : NaN;
+        if (Number.isSafeInteger(reportedRunMs) && reportedRunMs > 0) runMs = reportedRunMs;
       }
     } });
     const result = await child.completion;
@@ -526,6 +534,7 @@ export async function runDevTargetCommand(
       exitCode: result.code,
       signal: result.signal,
       durationMs: completedAt - admittedAt,
+      ...(runMs === undefined ? {} : { runMs }),
     });
     return admissionMode === 'try' && result.code === 75 && admissionDeclined
       ? { ...result, admissionUnavailable: true }

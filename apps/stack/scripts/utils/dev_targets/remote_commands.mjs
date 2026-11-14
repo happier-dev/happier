@@ -226,7 +226,10 @@ const COMMAND_RULES = [
   { when: { command: ['bun'], entry: ['build'], compile: ['1'] }, set: { requiredTools: 'bun' } },
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
-  { when: { command: ['find', 'grep', 'rg'] }, set: { commandClass: 'source-search' } },
+  // Read-only searches run on the authoritative checkout: it is current by
+  // definition, while a worker replica needs a full-tree flush per call
+  // (nl3 2026-11-14: p50 14 s remote vs 0.76 s local).
+  { when: { command: ['find', 'grep', 'rg'] }, set: { placement: 'primary-only', commandClass: 'source-search' } },
   { when: { command: ['rg'] }, set: { workerTool: 'rg' } },
   { when: { command: ['tsc', 'vitest'] }, set: validation },
   { when: { command: ['hstack-exec'] }, set: { validation: '1', heavyClass: 'validation' } },

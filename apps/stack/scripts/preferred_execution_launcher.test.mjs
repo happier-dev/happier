@@ -785,7 +785,8 @@ appendFileSync(${JSON.stringify(observations)}, JSON.stringify(await requestAdmi
   assert.equal(rows[1].activeCount, 1);
   assert.equal(rows[1].overruns.length, 1, 'the next real launch must retain recorded history through worker admission');
   assert.equal(rows[1].overruns[0].durationClass, completed.commandClass);
-  assert.equal(rows[1].overruns[0].p99DurationMs, completed.durationMs);
+  assert.ok(completed.runMs > 0 && completed.runMs <= completed.durationMs, 'the worker reports admitted run time within dispatch wall time');
+  assert.equal(rows[1].overruns[0].p99DurationMs, completed.runMs, 'p99 uses admitted run time, not queue-inclusive wall time');
   assert.equal(rows[1].durationHistoryUnavailableCount, 0);
   assert.doesNotMatch(withoutHistory.stderr + withHistory.stderr, /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);
   await waitForRuntime(async () => (await worker.brokerStatus()).activeCount === 0, () => 'completed diagnostic payload retained its slot');
@@ -927,6 +928,14 @@ test('Linux local and remote worker allowances use admitted CPU demand and prese
     const explicitEnv = invoke(focused(['vitest', 'run', 'fixture.test.ts']), { VITEST_MAX_THREADS: '3' });
     assert.equal(explicitEnv.status, 0, explicitEnv.stderr);
     assert.match(explicitEnv.stdout, /workers:3 go:3/);
+    // Source searches run on the authoritative checkout only; a pinned
+    // worker refuses them instead of flushing its replica.
+    if (invoke === remote) {
+      const refused = invoke(['rg', 'needle', 'sources']);
+      assert.equal(refused.status, 1);
+      assert.match(refused.stderr, /source searches must execute on the authoritative primary checkout/);
+      continue;
+    }
     // Cold, warm and explicit search all reach the same real worker adapter.
     for (const args of [['rg', 'needle', 'sources'], ['rg', 'needle', 'sources'], ['rg', '--threads=3', 'needle']]) {
       const search = invoke(args);
@@ -2161,7 +2170,7 @@ test('AUTO ranks remote queued class demand behind free capacity for fresh and c
   const preparationDispatches = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n')
     .filter(line => line.startsWith('ssh:') && line.includes('starved-host') && line.includes('remote_execution_custody.sh'));
   assert.equal(preparationDispatches.length, 0, 'no heavyweight preparation or payload may reach the deeply queued worker');
-  const light = spawnSync('/bin/sh', [launcher, '--', 'rg', 'source'], fixture.invocation);
+  const light = spawnSync('/bin/sh', [launcher, '--', 'cat', 'source'], fixture.invocation);
   assert.equal(light.status, 0, light.stderr);
   assert.equal(light.stdout, 'remote:starved\n', 'queued heavyweight demand does not consume lightweight capacity');
 });
@@ -2194,7 +2203,7 @@ test('AUTO remote probe carries real native waiter demand into its cached sample
   const transport = await readFile(ssh, 'utf8');
   await executable(ssh, transport.replace('      *starved-host*) cat "$STARVED_SAMPLE" ;;',
     `      *starved-host*) for arg in "$@"; do remote=$arg; done; PATH=/usr/bin:/bin; export PATH; remote=$(printf "%s" "$remote" | sed 's|${repoRoot}/apps/stack/bin/hstack-exec|${native.launcher}|g'); eval "$remote" ;;`));
-  const light = spawnSync('/bin/sh', [launcher, '--', 'rg', 'source'], fixture.invocation);
+  const light = spawnSync('/bin/sh', [launcher, '--', 'cat', 'source'], fixture.invocation);
   assert.equal(light.status, 0, light.stderr);
   const lightSample = (await readFile(join(fixture.stackDir, 'dev-target-command-load-native/starved.telemetry'), 'utf8')).trim().split(/\s+/);
   assert.equal(lightSample[18], 'unknown', 'a lightweight observation must not shift missing achievable capacity into a numeric field');
@@ -2233,7 +2242,7 @@ test('native launcher ranks reserved memory below the class floor behind a fitti
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, 'remote:roomy\n', 'CPU-idle worker without room for the class must rank behind a fitting worker, including from cache');
   }
-  const light = spawnSync('/bin/sh', [launcher, '--', 'rg', 'source'], fixture.invocation);
+  const light = spawnSync('/bin/sh', [launcher, '--', 'cat', 'source'], fixture.invocation);
   assert.equal(light.status, 0, light.stderr);
   assert.equal(light.stdout, 'remote:starved\n', 'heavy reservations must not exclude lightweight work');
 });
@@ -2422,7 +2431,7 @@ test('automatic disk rejection reroutes only this class and cannot replay a star
   assert.equal(heavy.status, 0, heavy.stderr);
   assert.match(heavy.stderr, /disk budget rejected/);
   assert.match(heavy.stdout, /payload:roomy/);
-  const search = spawnSync('/bin/sh', [launcher, '--', 'rg', 'source'], fixture.invocation);
+  const search = spawnSync('/bin/sh', [launcher, '--', 'cat', 'source'], fixture.invocation);
   assert.equal(search.status, 0, search.stderr);
   assert.match(search.stdout, /payload:starved/, 'build disk rejection must not exclude a source search');
   const failedPayload = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
@@ -7005,11 +7014,6 @@ test(`native launcher keeps ${platform} control commands preferred and adapts wo
     env,
     encoding: 'utf8',
   });
-  const search = spawnSync('/bin/sh', [launcher, '--', 'rg', 'needle', 'sources'], {
-    cwd: repoRoot,
-    env,
-    encoding: 'utf8',
-  });
   const typecheck = spawnSync('/bin/sh', [launcher, '--', 'node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit'], {
     cwd: repoRoot,
     env,
@@ -7085,7 +7089,6 @@ test(`native launcher keeps ${platform} control commands preferred and adapts wo
   for (const [name, result] of Object.entries({
     control,
     vitest,
-    search,
     typecheck,
     sourceExport,
     scriptedVitest,
@@ -7105,14 +7108,13 @@ test(`native launcher keeps ${platform} control commands preferred and adapts wo
   assert.doesNotMatch(control.stdout, /nice -n 10|--maxWorkers|--threads|--singleThreaded/);
   if (platform === 'darwin') {
     assert.match(vitest.stdout, /HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=1.*nice -n 10.*vitest/s);
-    assert.match(search.stdout, /nice -n 10.*rg.*--threads=1/s);
     assert.match(typecheck.stdout, /GOMAXPROCS=1.*nice -n 10.*runTypeScriptCli\.mjs/s);
     assert.match(sourceExport.stdout, /GOMAXPROCS=1.*nice -n 10.*build_source_web_ui\.mjs/s);
     assert.match(scriptedVitest.stdout, /HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=1.*nice -n 10.*pnpm.*run.*--silent.*test:local/s);
     assert.match(scriptedNonVitestTest.stdout, /HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=1.*nice -n 10.*pnpm.*run.*--silent.*test:migration:bundled-plugin-projections/s);
     assert.match(scriptedTypecheck.stdout, /GOMAXPROCS=1.*nice -n 10.*pnpm.*run.*--silent.*typecheck:local/s);
   } else {
-    for (const result of [vitest, search, typecheck, scriptedVitest, scriptedNonVitestTest, scriptedTypecheck]) {
+    for (const result of [vitest, typecheck, scriptedVitest, scriptedNonVitestTest, scriptedTypecheck]) {
       assert.match(result.stdout, /hstack-exec.*--local --/s, 'Linux adapts tools through the actual worker owner');
       assert.doesNotMatch(result.stdout, /HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=1|GOMAXPROCS=1|--threads=1/);
     }
@@ -7150,7 +7152,7 @@ test(`native launcher keeps ${platform} control commands preferred and adapts wo
   assert.doesNotMatch(explicitTypeScriptEnvironment.stdout, /GOMAXPROCS=1/);
   assert.match(explicitTypeScriptEnvironment.stdout, /export HAPPIER_TYPESCRIPT_COMPILER=.*microsoft/s);
   if (platform === 'darwin') {
-    for (const result of [vitest, scriptedVitest, typecheck, search]) {
+    for (const result of [vitest, scriptedVitest, typecheck]) {
       // This shared module's directory name is not a Linux procfs operand.
       const remoteCommand = result.stdout.replaceAll('/apps/stack/scripts/utils/proc/workspace_build_admission.mjs', '/workspace_build_admission.mjs');
       assert.doesNotMatch(remoteCommand, /--heavyweight-admission|systemd-run|\/proc\//);
@@ -7287,8 +7289,7 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
     '  *remote_dependency_bootstrap.mjs*runTypeScriptCli.mjs*) printf "typescript-after-bootstrap:%s\\n" "$*" ;;',
     '  *remote_dependency_bootstrap.mjs*--test*) printf "stack-test-after-bootstrap:%s\\n" "$*" ;;',
     '  *remote_dependency_bootstrap.mjs*) printf "unexpected-bootstrap\\n"; exit 43 ;;',
-    '  *source-only*|*find*) printf "source-only:%s\\n" "$*" ;;',
-    '  *rg*) printf "raw-search:%s\\n" "$*" ;;',
+    '  *source-only*) printf "source-only:%s\\n" "$*" ;;',
     '  *) printf "unexpected:%s\\n" "$*"; exit 44 ;;',
     'esac',
     '',
@@ -7304,7 +7305,7 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
   const sourceOnlyCommands = [
     ['node', '-e', 'console.log("source-only")'],
     ['nodejs', 'source-only.mjs'],
-    ['find', '.', '-name', '*.mjs'],
+    ['cat', 'source-only.txt'],
   ];
   for (const commandArgs of sourceOnlyCommands) {
     const result = spawnSync('/bin/sh', [launcher, '--', ...commandArgs], { cwd: repoRoot, env, encoding: 'utf8' });
@@ -7459,14 +7460,6 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
   assert.match(migrationGovernance.stdout, /migration-governance-after-preparation/);
   assert.match(migrationGovernance.stdout, /--component-relative-dir=apps\/cli/);
 
-  const raw = spawnSync('/bin/sh', [launcher, '--', 'rg', '-n', 'needle'], {
-    cwd: repoRoot,
-    env,
-    encoding: 'utf8',
-  });
-  assert.equal(raw.status, 0, raw.stderr);
-  assert.match(raw.stdout, /raw-search/);
-  assert.doesNotMatch(raw.stdout, /remote_dependency_bootstrap\.mjs/);
 
   for (const flag of ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS']) {
     for (const explicit of [false, true]) {
@@ -7489,7 +7482,7 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
     .filter((entry) => entry.phase === 'admitted')
     .map((entry) => entry.commandClass);
   assert.deepEqual(admittedClasses, [
-    ...sourceOnlyCommands.map((args) => args[0] === 'find' ? 'source-search' : 'unclassified'),
+    ...sourceOnlyCommands.map(() => 'unclassified'),
     ...dependencyCommands.map((args) => args.includes('custom:script') ? 'unclassified'
       : args.some(arg => arg.startsWith('apps/stack/')) ? 'targeted-validation' : 'full-validation'),
     'targeted-validation',
@@ -7503,7 +7496,6 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
     'targeted-validation',
     'targeted-validation',
     'targeted-validation',
-    'source-search',
     ...Array(4).fill('full-validation'),
   ]);
   assert.equal(provenanceLines.filter((entry) => entry.phase === 'completed').length, admittedClasses.length);

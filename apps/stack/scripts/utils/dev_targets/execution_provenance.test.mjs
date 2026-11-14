@@ -51,6 +51,29 @@ test('duration p99 remains available beyond the whole-file string boundary', asy
   }
 });
 
+test('duration lookup reads only one compact projection and never opens audit history', async t => {
+  const { readExecutionDurationP99 } = await import('./execution_provenance.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-duration-cost-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'validation', exitCode: 0, durationMs: 70 });
+  const history = join(root, 'dev-target-command-load-native', 'provenance.jsonl');
+  // A directory fails both streaming and whole-file reads, without allocating a huge log.
+  await rm(history);
+  await mkdir(history);
+  let reads = 0, bytes = 0;
+  const original = fsPromises.readFile;
+  t.mock.method(fsPromises, 'readFile', async (...args) => {
+    assert.notEqual(String(args[0]), history, 'dispatch must never read audit history');
+    const result = await original(...args); reads++; bytes += result.length; return result;
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await readExecutionDurationP99(root, 'validation'), 70);
+    assert.equal(reads, 1);
+    assert.ok(bytes < 1024, 'one observation has a compact projection');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 test('execution provenance preserves existing observations past the former rotation cap without command arguments', async (t) => {
   const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-execution-provenance-'));
   t.after(async () => rm(stackBaseDir, { recursive: true, force: true }));

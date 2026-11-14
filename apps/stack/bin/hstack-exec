@@ -1071,6 +1071,8 @@ if [ "$policy_placement" = primary-only ]; then
       printf '%s\n' '[preferred-execution] bundled-plugin projection writer must execute on the authoritative primary checkout' >&2
     elif [ "$policy_generator" = 1 ]; then
       printf '%s\n' '[preferred-execution] tracked-source writer must execute on the authoritative primary checkout' >&2
+    elif [ "$policy_commandClass" = source-search ]; then
+      printf '%s\n' '[preferred-execution] source searches must execute on the authoritative primary checkout' >&2
     else
       printf '%s\n' '[preferred-execution] Git/index/worktree commands must execute on the authoritative primary checkout' >&2
     fi
@@ -1952,8 +1954,20 @@ record_remote_command_completion() {
   completed_at_seconds=$(date +%s)
   completed_at=$((completed_at_seconds * 1000))
   duration_ms=$((completed_at - admitted_at))
-  printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
-    "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
+  # Wall time includes the worker queue; the admitted client reports run time.
+  run_ms=
+  if [ -n "${admission_error_log-}" ] && [ -f "$admission_error_log" ]; then
+    run_ms=$(awk -v prefix="HSTACK_ADMISSION_RUN_MS:${admission_failure_id-}:" \
+      'index($0, prefix) == 1 { value = substr($0, length(prefix) + 1) } END { if (value ~ /^[0-9]+$/) print value }' "$admission_error_log")
+  fi
+  printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s%s}\n' \
+    "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" \
+    "${run_ms:+,\"runMs\":$run_ms}" >> "$provenance_path"
+  # Fold heavyweight completions into the compact p99 projection dispatch reads.
+  if [ -n "${heavyweight_remote_class-}" ] && [ "$status" = 0 ]; then
+    node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --record-duration "$stack_dir" \
+      "$command_class" "$status" "${run_ms:-$duration_ms}" || true
+  fi
 }
 sync_status=unknown
 sync_successful_cycles=0

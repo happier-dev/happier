@@ -108,11 +108,33 @@ test('current admission clients retain duration metadata across broker successio
   await task;
 });
 
+test('an admitted command reports its run time, excluding its queue wait, once for its dispatcher', linux, async t => {
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const lines = [];
+  t.mock.method(console, 'error', line => { lines.push(String(line)); });
+  const completion = runAdmissionCommand({ root, className: 'native-source-test', floorKiB: 1, failureId: 'dispatch-7',
+    machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {}, command: process.execPath,
+    args: ['-e', 'setTimeout(() => {}, 50)'] });
+  // The dispatcher's wall clock includes this queue wait; run time must not.
+  await new Promise(resolve => setTimeout(resolve, 400));
+  await holder.release();
+  assert.equal(await completion, 0);
+  t.mock.restoreAll();
+  const markers = lines.filter(line => line.startsWith('HSTACK_ADMISSION_RUN_MS:'));
+  assert.equal(markers.length, 1, lines.join('\n'));
+  const [, id, ms] = markers[0].split(':');
+  assert.equal(id, 'dispatch-7');
+  assert.ok(Number(ms) >= 50 && Number(ms) < 400, `run time ${ms} ms must exclude the 400 ms queue wait`);
+});
+
 test('CPU admission grants reach the real payload worker controls', linux, async t => {
   const { root } = await fixture(t, { cpuCores: 2 });
   const resultPath = join(root, 'worker-controls.json');
   for (const env of [{}, { GOMAXPROCS: '', HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '' }]) {
     const status = await runAdmissionCommand({ root, className: 'native-source-test', floorKiB: 1,
+      // KiB-unit fixture: the runner's real cgroup peak must not size the repeat.
+      readJobPeakKiB: () => null,
       machine: 'fixture', repoDir: root, cacheBaseDir: root, env, command: process.execPath,
       args: ['--input-type=module', '-e',
         'import{writeFileSync}from"node:fs";writeFileSync(process.argv[1],JSON.stringify({go:process.env.GOMAXPROCS,vitest:process.env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS}))',
@@ -687,6 +709,101 @@ test('completed slots retain sampled RSS peaks by class without extra process wa
   assert.deepEqual(Object.keys(rows[0]).sort(), ['className', 'completedAt', 'floorKiB', 'maxGapMs', 'method', 'peakRssKiB', 'samples'].sort());
 });
 
+test('identity keys on component and entry, never the argument list; unrecorded identities reserve the class kernel maximum', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    admitDisk: () => ({ admitted: true }) });
+  const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
+  const floorFile = join(root, 'floor.txt');
+  const entryA = join(root, 'entry-a.mjs');
+  const entryB = join(root, 'entry-b.mjs');
+  const record = `import{writeFileSync}from"node:fs";writeFileSync(${JSON.stringify(floorFile)},process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB)`;
+  await writeFile(entryA, record); await writeFile(entryB, record);
+  const run = (entry, files, peakKiB, className = 'compilation') => runAdmissionCommand({ root, className, floorKiB: 38 * gib,
+    machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {}, projects: ['.'], readJobPeakKiB: () => peakKiB,
+    command: process.execPath, args: [entry, ...files] });
+  const admittedFloor = async () => Number(await readFile(floorFile, 'utf8'));
+  assert.equal(await run(entryA, ['alpha.test.mjs'], 1 * gib), 0); await settle();
+  assert.equal(await admittedFloor(), 38 * gib, 'a class without kernel history reserves its floor');
+  assert.equal(await run(entryB, ['beta.test.mjs'], 9 * gib), 0); await settle();
+  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity reserves the class kernel maximum (1 GiB so far), not the floor');
+  assert.equal(await run(entryA, ['gamma.test.mjs', 'delta.test.mjs'], 1 * gib), 0); await settle();
+  assert.equal(await admittedFloor(), 1 * gib, 'new arguments for a recorded entry keep its identity');
+  await writeFile(join(root, 'entry-c.mjs'), record);
+  assert.equal(await run(join(root, 'entry-c.mjs'), ['x.test.mjs'], 1 * gib), 0); await settle();
+  assert.ok(await admittedFloor() >= 9 * gib, 'an unrecorded entry reserves at least the class kernel maximum');
+});
+
+test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {
+  const gib = 1024 * 1024;
+  const readMemory = () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib });
+  const { root, broker, sampleResources } = await fixture(t, { readMemory, admitDisk: () => ({ admitted: true }) });
+  const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
+  const identity = { component: 'apps/ui', entry: 'pnpm run typecheck' };
+  // Record a 9 GiB kernel peak for the identity, then hold one admitted job of it.
+  assert.equal(await runAdmissionCommand({ root, className: 'compilation', floorKiB: 38 * gib, machine: 'fixture', repoDir: root,
+    cacheBaseDir: root, env: {}, projects: ['.'], ...identity, readJobPeakKiB: () => 9 * gib,
+    command: process.execPath, args: ['-e', ''] }), 0);
+  await settle();
+  const anonymous = await (await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation' })).admit();
+  const started = Promise.withResolvers();
+  const finished = Promise.withResolvers();
+  const task = runAdmittedTask({ root, className: 'compilation', floorKiB: 38 * gib, repoDir: root, cacheBaseDir: root,
+    projects: ['.'], ...identity, readJobPeakKiB: () => null, env: {} }, async () => { started.resolve(); return await finished.promise; });
+  t.after(() => finished.resolve());
+  await started.promise;
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
+    readCpuCapacity: () => 128, readRecoveredSlotMemoryKiB: () => Math.round(1.2 * gib) });
+  t.after(() => replacement.close());
+  await replacement.start();
+  await new Promise(resolve => setImmediate(resolve));
+  await requestAdmissionSample(root);
+  assert.equal(replacement.status().reservedMemoryKiB, 1.5 * gib + 9 * gib,
+    'the anonymous recovered slot reserves its 1.2 GiB memory.current; the identified one its 9 GiB identity peak');
+  finished.resolve();
+  await task;
+  await anonymous.release();
+});
+
+test('an identity whose history includes a 38.9 GiB kernel peak never reserves less than 38.9 GiB', linux, async t => {
+  const gib = 1024 * 1024;
+  const peakKiB = Math.round(38.9 * gib);
+  const { root, broker, sampleResources } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    // Event samples see only 1.2 GiB; they are lower bounds and must never size a reservation.
+    readProcesses: () => new Map([[process.pid, { pid: process.pid, parentPid: 1, rssKiB: Math.round(1.2 * gib), pssKiB: 0 }]]),
+    admitDisk: () => ({ admitted: true }),
+  });
+  const identity = { component: 'apps/stack', entry: 'node --test' };
+  const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
+  const run = readJobPeakKiB => runAdmissionCommand({ root, className: 'compilation', floorKiB: 38 * gib, machine: 'fixture',
+    repoDir: root, cacheBaseDir: root, env: {}, projects: ['.'], ...identity, readJobPeakKiB,
+    command: process.execPath, args: ['-e', ''] });
+  for (const observed of [Math.round(6.1 * gib), peakKiB, Math.round(1 * gib)]) {
+    assert.equal(await run(() => observed), 0);
+    await settle();
+  }
+  const probe = async (extra = {}) => {
+    const client = await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation',
+      projects: ['.'], ...identity, noWait: true, ...extra });
+    const reply = await client.next();
+    client.socket.destroy();
+    await settle();
+    return { next: async () => reply };
+  };
+  const reserved = await (await probe()).next();
+  assert.ok(reserved.floorKiB >= peakKiB, `reserved ${reserved.floorKiB} KiB below the recorded ${peakKiB} KiB peak`);
+  const unrecorded = await (await probe({ entry: 'node other.mjs' })).next();
+  assert.ok(unrecorded.floorKiB >= peakKiB, 'an unrecorded identity reserves at least the class kernel maximum');
+  const otherClass = await (await probe({ className: 'compilation-cli', resourceClass: 'compilation-cli' })).next();
+  assert.equal(otherClass.floorKiB, 38 * gib, 'a class without kernel history keeps the requested floor');
+  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission-2.lock'), sampleResources, readCpuCapacity: () => 128 });
+  assert.ok(successor.recordedIdentityFloorKiB({ className: 'compilation', resourceClass: 'compilation', projects: ['.'], ...identity,
+    floorKiB: 38 * gib }) >= peakKiB, 'broker succession keeps the recorded maximum');
+  void broker;
+});
+
 for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
   test(`completed slots attribute ${resourceClass} through the real client beside its disk class`, linux, async t => {
     const { runAdmittedTask } = await import('./admission_client.mjs');
@@ -1160,6 +1277,47 @@ test('the head floor survives a stream of small jobs, with backfill only from sp
   assert.equal(broker.status().reservedMemoryKiB, 90);
   await admittedLarge.release();
   await admittedSmall.release();
+});
+
+test('an aged head lends its pledge only to jobs projected to finish before its own projected start (EASY backfill)', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t);
+  const timed = p99DurationMs => ({ durationClass: 'targeted-validation', p99DurationMs });
+  await (await acquire(root, 40, t, timed(100_000))).admit();
+  const ending = await (await acquire(root, 20, t, timed(1_000))).admit();
+  const pledger = await (await acquire(root, 30, t, timed(100_000))).admit();
+  const head = await acquire(root, 50, t, { arrivedAt: now - headReservationDelayMs });
+  await pledger.release();
+  const pledged = await requestAdmissionSample(root);
+  assert.equal(pledged.head.reservationKiB, 30);
+  assert.equal(pledged.unreservedMemoryKiB, 10);
+  // Head projection: 40 free now (incl. its pledge) + 20 when `ending` reaches its p99 at +1 s >= 50.
+  const long = await acquire(root, 20, t, { ...timed(5_000), noWait: true });
+  assert.equal((await long.next()).reason, 'HSTACK_MEMORY_BUSY', 'a job outliving the head projection must not borrow its pledge');
+  const short = await acquire(root, 20, t, { ...timed(500), noWait: true });
+  const backfilled = await short.admit();
+  const borrowed = await requestAdmissionSample(root);
+  assert.equal(borrowed.activeCount, 3, 'a job ending before the head can start backfills from the pledge');
+  assert.equal(borrowed.head.reservationKiB, 20, 'the pledge lends only the shortfall beyond unpledged free memory');
+  now += 500;
+  await backfilled.release();
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 40, 'the borrowed memory returns to the head');
+  now += 500;
+  await ending.release();
+  await head.admit();
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 0, 'the head starts at its projected time');
+});
+
+test('without projected run times the aged head pledge stays exclusive', linux, async t => {
+  const { root } = await fixture(t);
+  await (await acquire(root, 40, t)).admit();
+  await (await acquire(root, 20, t)).admit();
+  const pledger = await (await acquire(root, 30, t)).admit();
+  await acquire(root, 50, t, { arrivedAt: Date.now() - headReservationDelayMs });
+  await pledger.release();
+  const short = await acquire(root, 20, t, { durationClass: 'targeted-validation', p99DurationMs: 1, noWait: true });
+  assert.equal((await short.next()).reason, 'HSTACK_MEMORY_BUSY', 'unknown holder end times give no head projection to backfill against');
 });
 
 test('late old launchers cannot acquire their existing flock while the broker runs or after its restart', linux, async t => {

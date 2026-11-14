@@ -692,21 +692,20 @@ test('dev-targets status, sync, and exec share the moving mirror with a pre-laun
         '--cwd=apps/cli',
         '--env=CI=1',
         '--',
-        'rg',
+        'cat',
         '--json',
         'needle',
       ],
       root,
       commandEnv,
     );
-    assert.equal(executed.code, 0);
+    assert.equal(executed.code, 0, executed.stderr);
     const executionLog = await readFile(logPath, 'utf8');
     assert.match(executionLog, /mutagen\|.*\/mutagen\/data\|sync list happier-linux/);
     assert.match(executionLog, /sync flush happier-linux/);
     assert.equal(executionLog.match(/sync flush happier-linux/g)?.length, 1);
     assert.ok(executionLog.indexOf('sync flush happier-linux') < executionLog.lastIndexOf('ssh|'));
-    assert.match(executionLog, /ssh\|.*happier-stack-linux.*apps\/cli.*CI.*rg.*--json.*needle/);
-    assert.match(executionLog, /nice -n 10.*rg/);
+    assert.match(executionLog, /ssh\|.*happier-stack-linux.*apps\/cli.*CI.*cat.*--json.*needle/);
     assert.doesNotMatch(executionLog, /remote_dependency_bootstrap\.mjs/);
 
     await writeFile(logPath, '');
@@ -736,12 +735,12 @@ test('dev-targets status, sync, and exec share the moving mirror with a pre-laun
 
     await writeFile(logPath, '');
     const yarnStyleExecution = await runRaw(
-      ['exec', 'linux', '--stack=repo-test', 'rg', '--json', 'needle'],
+      ['exec', 'linux', '--stack=repo-test', 'cat', '--json', 'needle'],
       root,
       commandEnv,
     );
     assert.equal(yarnStyleExecution.code, 0, 'the repo-local Yarn 1 shortcut may consume the -- separator');
-    assert.match(await readFile(logPath, 'utf8'), /ssh\|.*rg.*--json.*needle/);
+    assert.match(await readFile(logPath, 'utf8'), /ssh\|.*cat.*--json.*needle/);
 
     await writeFile(logPath, '');
     const shell = await runRaw(['ssh', 'linux', '--stack=repo-test'], root, commandEnv);
@@ -776,7 +775,7 @@ test('dev-targets status, sync, and exec share the moving mirror with a pre-laun
     assert.equal(failed.code, 7, 'remote command exit status must be preserved');
 
     const flushWait = join(root, 'flush-wait');
-    const cancelling = spawn(process.execPath, [script, 'exec', 'linux', '--stack=repo-test', '--', 'rg', 'cancel-probe'], {
+    const cancelling = spawn(process.execPath, [script, 'exec', 'linux', '--stack=repo-test', '--', 'cat', 'cancel-probe'], {
       env: {
         ...process.env,
         ...commandEnv,

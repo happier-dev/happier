@@ -552,7 +552,11 @@ a free lock, the wait diagnostic identifies that queued owner explicitly.
 In current 0.3 development, the broker's memory sample uses the lower of host
 `MemTotal` and the finite `memory.high`/`memory.max` limits of the launcher's
 `happier-jobs.slice`. Available memory is the lower of host `MemAvailable` and
-cgroup headroom (`limit - memory.current`, clamped to zero). An absent or
+cgroup headroom (`limit - memory.current`, clamped to zero). Queued admission
+clients whose own cgroup is inside that slice (remote dispatch wrappers run there)
+return their PSS to that headroom; clients elsewhere receive only the host credit.
+The provisioned `MemoryHigh=80%` is why broker availability sits below host
+`MemAvailable` (nl1: a 100.2 GiB slice limit on a 125 GiB host). An absent or
 unlimited jobs cgroup retains host sampling. This source feeds capacity refusals,
 achievable memory and reservations; callers do not apply separate limits.
 Existing broker processes load this change only on replacement through the
@@ -592,7 +596,11 @@ and CPU released by this broker's slots remain reusable until the head has waite
 wrapper durations measured on 2026-11-13; those durations include preparation and
 admission, so it is an opportunity window rather than a payload runtime estimate.
 Subsequent releases, including recovered slots, are then pledged up to the head's
-minimum floor. No new timer or tunable is used. The head is offered capacity first
+minimum floor. The pledge is lent (EASY backfill) only to a waiter whose recorded
+run-time p99 ends before the head's projected start: the earliest time admitted
+slots, released at their own p99 (or now when unknown or overrun), free the head's
+minimum floor. Without that projection the pledge stays exclusive. Borrowed memory
+returns to the pledge on release. No new timer or tunable is used. The head is offered capacity first
 as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
 same pledge from unreserved memory and CPU. The sample exposes head age,
@@ -604,7 +612,11 @@ Admission uses no owner/waiter files, PID reaper, separate backfill allowance or
 job-count ceiling. Process and scratch custody retain their separate lifecycle owners.
 
 In current 0.3 development, dispatchers derive each admitted command's nearest-rank
-p99 from its recorded successful, positive completed durations. The broker reports
+p99 from the compact per-class projection `duration-projection.json` (the 200 most
+recent successful run times per class), never from the append-only
+`provenance.jsonl` audit log. Run time is the admitted payload's duration reported
+by the worker's admission client (`HSTACK_ADMISSION_RUN_MS:<id>:<ms>`), so worker
+queue wait is excluded; commands without admission record their wall time. The broker reports
 an `overruns` entry for each slot strictly older than twice that class p99, and
 `durationHistoryUnavailableCount` when a slot lacks usable duration metadata.
 It never kills overrun work or invents a threshold when history is unavailable.
@@ -833,6 +845,22 @@ Development command placement uses the native `apps/stack/bin/hstack-exec` owner
 In current 0.3 development, successful sampled peaks are rounded up to whole GiB without that margin. A single explicitly selected existing Vitest file uses `focused-validation` at 1 GiB after the compiler-suite owner excludes compiler consumers and compiler setup. Directory, missing-file, option-only and whole-suite selections retain their existing class. Invalid Vitest options also retain the broader class; the payload reports their parsing error. Loaded Linux UI/CLI/server/package samples peaked below 1 GiB; repeated entry-loads exceeded 2 GiB and now use their own `entry-loads` class at 3 GiB. Ordinary `validation` remains 2 GiB (the measured deployment-protocol suite fits that envelope). The retained evidence is `.project/tmp/validation-floor-sizing-1104/measurements.json`. `dependency-install` uses 3 GiB (larger of two fresh canonical installs: 2,374,684 KiB); `native-source-test` uses 1 GiB (103,824 KiB); and `native-custody` uses 1 GiB (366,000 KiB, including the cold Go build). These sampled Linux peaks are not certified maxima or cross-platform calibration. Existing larger compilation envelopes remain unchanged.
 
 Admission resource metadata is defined once in `apps/stack/scripts/utils/dev_targets/command_resources.mjs` and re-exported by the command-policy owner, `remote_commands.mjs`. Both its generated native memory policy and the disk owner consume this catalog; every resource class declares its disk shape. The lightweight catalog keeps placement disk checks independent of dependency bootstrap. Controller and worker admission use the same class floor, with no additional controller minimum. Existing queued requests keep the floor supplied when they were created; policy changes do not bypass queue fairness or resize admitted work.
+
+The broker reserves a recorded job identity at its maximum kernel-observed peak,
+rounded up to 0.5 GiB, even when that exceeds the class floor. The identity is the
+resource class, the component (working directory relative to the repository), the
+entry (program plus package-manager script, or `--test`) and the sorted project
+set, never the argument list. When the payload ends, the outermost admission client
+reads its dispatch scope's cgroup `memory.peak` in `happier-jobs.slice` and sends it
+on the slot socket; every payload phase runs inside that scope, so the value is
+never below the payload's true peak (it can include preparation and page cache).
+Event-sampled RSS peaks never size a reservation. An unrecorded identity reserves
+its class's maximum kernel peak; a class without kernel history keeps the client's
+floor, as do dynamic export floors. Maxima live in the broker root's
+`identity-kernel-peaks.json`. At succession each recovered slot reserves
+max(its job scope's `memory.current`, its identity kernel peak) instead of its old
+floor; the identity peak applies when the live client re-advertises its identity on
+the slot socket. Brokers adopt this on succession.
 
 Load policy and broker catalog changes together when adding a class: an already-running broker caches its disk owner and can refuse an unfamiliar class before payload start. Use the identity-checked broker reload owner, which preserves active slots. Changing only a numeric memory floor does not need that reload because each admission request supplies its floor.
 

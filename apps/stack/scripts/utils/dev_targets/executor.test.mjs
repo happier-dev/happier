@@ -365,8 +365,8 @@ test('POSIX dependency-consuming commands prepare inside their SSH operation whi
   for (const commandArgs of [
     ['node', '-e', 'console.log("source-only")'],
     ['nodejs', 'source-script.mjs'],
-    ['rg', '-n', 'needle'],
-    ['find', '.', '-name', '*.mjs'],
+    ['cat', 'package.json'],
+    ['ls', '-la'],
   ]) {
     for (const commandTarget of [target, { ...target, platform: 'windows' }]) {
       calls.length = 0;
@@ -378,6 +378,17 @@ test('POSIX dependency-consuming commands prepare inside their SSH operation whi
       }, dependencies);
       assert.deepEqual(calls.map((call) => call.kind), ['command'], commandArgs.join(' '));
     }
+  }
+
+  // Source searches read the authoritative checkout; a worker replica would
+  // need a full-tree flush per call to be equally current.
+  for (const commandArgs of [['rg', '-n', 'needle'], ['find', '.', '-name', '*.mjs'], ['grep', '-r', 'needle']]) {
+    calls.length = 0;
+    await assert.rejects(
+      () => runDevTargetCommand({ target, stackBaseDir: '/tmp/stack', commandArgs, env: {} }, dependencies),
+      /source searches must execute on the authoritative primary checkout/,
+    );
+    assert.equal(calls.length, 0, commandArgs.join(' '));
   }
 
   for (const commandArgs of [
@@ -477,7 +488,7 @@ test('remote exec flushes the live replica after health inspection and before SS
     {
       target,
       stackBaseDir: '/tmp/stack',
-      commandArgs: ['rg', '-n', 'needle'],
+      commandArgs: ['cat', 'package.json'],
       env: { PATH: '/test/bin' },
     },
     {
@@ -559,6 +570,31 @@ test('explicit remote execution records one schema-safe admitted/completed prove
   assert.equal(JSON.stringify(records).includes('secret'), false);
 });
 
+test('remote completion feeds the duration projection its admitted run time, not queue-inclusive wall time', async t => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { readExecutionDurationP99 } = await import('./execution_provenance.mjs');
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-run-time-'));
+  t.after(() => rm(stackBaseDir, { recursive: true, force: true }));
+  await runDevTargetCommand({
+    target, stackBaseDir, cwd: 'apps/cli', commandArgs: ['corepack', 'yarn', '-s', 'typecheck:local'], env: {},
+  }, {
+    runCaptureResult: async () => readyListResult(),
+    runDependencyBootstrap: async () => ({ code: 0, signal: null }),
+    runWorkspacePreparation: async () => ({ code: 0, signal: null }),
+    spawnProcess: ({ onLine }) => {
+      onLine({ stream: 'stderr', line: '[preferred-execution] waiting for admission (class=validation, floorKiB=1)' });
+      onLine({ stream: 'stderr', line: 'HSTACK_ADMISSION_RUN_MS:exec-12345678:1200' });
+      return { completion: Promise.resolve({ code: 0, signal: null }) };
+    },
+    createExecutionId: () => 'exec-12345678',
+    now: (() => { const values = [1_000, 3_601_000]; return () => values.shift(); })(),
+  });
+  assert.equal(await readExecutionDurationP99(stackBaseDir, 'targeted-validation'), 1200,
+    'an hour in the worker queue must not become the class run-time p99');
+});
+
 test('a POSIX explicit flush leaves post-flush admission to the native owner', async () => {
   const calls = [];
   await runDevTargetCommand(
@@ -601,7 +637,7 @@ test('the Windows adapter inspects fresh post-flush state and blocks a transitio
   let listCalls = 0;
   await assert.rejects(
     () => runDevTargetCommand(
-      { target, stackBaseDir: '/tmp/stack', commandArgs: ['rg', '-n', 'needle'], env: {} },
+      { target, stackBaseDir: '/tmp/stack', commandArgs: ['cat', 'package.json'], env: {} },
       {
         runCaptureResult: async ({ args }) => {
           if (args.includes('list')) {
@@ -625,7 +661,7 @@ test('the Windows adapter inspects fresh post-flush state and blocks a transitio
       let flushes = 0;
       let launched = false;
       const dispatch = () => runDevTargetCommand(
-        { target, stackBaseDir: '/tmp/stack', commandArgs: ['rg', '-n', 'needle'], env: {} },
+        { target, stackBaseDir: '/tmp/stack', commandArgs: ['cat', 'package.json'], env: {} },
         {
           runCaptureResult: async ({ args }) => {
             if (args.includes('flush')) flushes += 1;

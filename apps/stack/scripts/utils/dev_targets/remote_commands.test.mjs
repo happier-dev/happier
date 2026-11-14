@@ -3674,7 +3674,7 @@ test('remote command classification keeps Git/index/worktree operations on the a
     });
   }
   assert.deepEqual(classifyRemoteCommand(['rg', '-n', 'needle']), {
-    placement: 'worker-eligible',
+    placement: 'primary-only',
     commandClass: 'source-search',
     requiresDependencyBootstrap: false,
   });

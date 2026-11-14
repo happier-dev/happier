@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, watch } from 'node:fs';
+import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { availableParallelism } from 'node:os';
@@ -12,13 +12,24 @@ import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
-import { readLinuxAdmissionMemory } from './admission_memory.mjs';
+import { isInAdmissionJobsSlice, readLinuxAdmissionMemory, readProcessJobScopeCurrentKiB } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
 
 // Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations
 // (2026-11-13 provenance census; includes preparation/admission). Give backfills
 // this measured opportunity window, then accumulate releases for the old head.
 const HEAD_RESERVATION_DELAY_MS = 1_344_000;
+
+// Coordination 2026-11-14 18:21Z (Systemic) and the coordinator's follow-up:
+// a recorded job identity reserves its maximum kernel-observed peak (the
+// dispatch scope's cgroup memory.peak), rounded up to 0.5 GiB. Event samples are
+// lower bounds and never size a reservation. Identities without a kernel peak,
+// or requests without a command identity, keep the client's class floor.
+const IDENTITY_FLOOR_ROUNDING_KIB = 512 * 1024;
+const IDENTITY_PEAKS_FILENAME = 'identity-kernel-peaks.json';
+// Systemic 20:31Z: class + component + script/entry + sorted projects, never argv.
+const identityKey = item => typeof item.entry === 'string' && item.entry && typeof item.component === 'string'
+  ? JSON.stringify([item.resourceClass ?? item.className, item.component, item.entry, [...(item.projects ?? [])].sort()]) : null;
 
 const socketGone = error => error.code === 'ECONNREFUSED' || error.code === 'ENOENT';
 const validDuration = value => (value.p99DurationMs === undefined && value.durationClass === undefined)
@@ -61,11 +72,12 @@ async function socketListening(address) {
 /** Physical availability already excludes resident pages. Credit each admitted
  * tree's resident pages once, reserving only the part of its floor still free. */
 export async function readAdmissionMemorySample({ slots = [], waiters = [], readProcesses = readLinuxWorkerProcesses,
-  readMemory = readLinuxAdmissionMemory } = {}) {
+  readMemory = readLinuxAdmissionMemory, inJobsSlice = isInAdmissionJobsSlice } = {}) {
   const processes = slots.length || waiters.length ? await readProcesses() : new Map();
   const roots = new Set(slots.map(slot => slot.pid));
   const waitingPids = new Set(waiters.map(item => item.pid));
   let waitingResidentMemoryKiB = 0;
+  let waitingSliceResidentMemoryKiB = 0;
   const residentByRoot = new Map();
   const slotRssKiB = new Map();
   for (const process of processes.values()) {
@@ -87,12 +99,16 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
       // Credit only the client itself, never its parent or descendants. PSS
       // avoids counting shared Node pages repeatedly across queued clients.
       const resident = process.pssKiB;
-      if (Number.isSafeInteger(resident) && resident >= 0) waitingResidentMemoryKiB += resident;
+      if (Number.isSafeInteger(resident) && resident >= 0) {
+        waitingResidentMemoryKiB += resident;
+        if (inJobsSlice(process.pid)) waitingSliceResidentMemoryKiB += resident;
+      }
     }
   }
-  // Apply this host-only credit before the OS owner clamps to the jobs slice.
+  // Host credit applies before the OS owner clamps to the jobs slice; only
+  // clients inside that slice also return their pages to its headroom.
   // A queued control client must not consume the capacity it is waiting for.
-  const memory = await readMemory({ waitingResidentMemoryKiB });
+  const memory = await readMemory({ waitingResidentMemoryKiB, waitingSliceResidentMemoryKiB });
   if (!Number.isSafeInteger(memory.availableMemoryKiB) || memory.availableMemoryKiB < 0
     || !Number.isSafeInteger(memory.totalMemoryKiB) || memory.totalMemoryKiB < 0) {
     throw Object.assign(new Error('Memory observation unavailable'), { code: 'HSTACK_MEMORY_UNAVAILABLE' });
@@ -111,6 +127,7 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
  * The existing private root's OS permissions are the sole peer boundary. */
 export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyweight-admission-v3/lock',
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
+  readRecoveredSlotMemoryKiB = readProcessJobScopeCurrentKiB,
   admitDisk = request => request.cacheBaseDir
     ? admitWorkerDiskBudget({ ...request, commandClass: request.className }) : { admitted: true } } = {}) {
   const slots = new Map();
@@ -133,6 +150,45 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   let server;
   let started = false;
   let heldOldLockFd = oldLockFd;
+
+  let identityPeaks;
+  function recordedIdentityPeaks() {
+    if (identityPeaks) return identityPeaks;
+    identityPeaks = new Map();
+    try {
+      for (const [key, peak] of Object.entries(JSON.parse(readFileSync(join(root, IDENTITY_PEAKS_FILENAME), 'utf8')))) {
+        if (Number.isSafeInteger(peak) && peak > 0) identityPeaks.set(key, peak);
+      }
+    } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
+    return identityPeaks;
+  }
+  const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
+  function classKernelMaximumKiB(resourceClass) {
+    let maximum;
+    for (const [key, peak] of recordedIdentityPeaks()) {
+      if (JSON.parse(key)[0] === resourceClass) maximum = Math.max(maximum ?? 0, peak);
+    }
+    return maximum;
+  }
+  function recordedIdentityFloorKiB(item) {
+    if (item.floorOptions) return item.floorKiB;
+    const key = identityKey(item);
+    // Never below the identity's observed maximum, even above the class floor.
+    // Unrecorded identities take the class's kernel maximum; no history, the floor.
+    const peak = (key === null ? undefined : recordedIdentityPeaks().get(key))
+      ?? classKernelMaximumKiB(item.resourceClass ?? item.className);
+    return peak === undefined ? item.floorKiB : roundPeak(peak);
+  }
+  function recordIdentityPeak(identity, peakKiB) {
+    const key = identityKey(identity);
+    if (key === null) return;
+    const peaks = recordedIdentityPeaks();
+    if ((peaks.get(key) ?? 0) >= peakKiB) return;
+    peaks.set(key, peakKiB);
+    const target = join(root, IDENTITY_PEAKS_FILENAME);
+    writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(peaks)), { mode: 0o600 });
+    renameSync(`${target}.tmp`, target);
+  }
 
   const compareArrival = (left, right) => left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
 
@@ -454,11 +510,32 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         }) + '\n', { mode: 0o600 });
       } catch (error) { recordFailure(error); }
     }
+    if (slot.kernelPeak) {
+      try { recordIdentityPeak(slot.kernelPeak, slot.kernelPeak.peakKiB); } catch (error) { recordFailure(error); }
+    }
     await releaseDecision();
   }
   async function releaseDecision() {
     await observe();
     await drain();
+  }
+  /** EASY backfill projection: the earliest time the head's minimum floor fits
+   * if admitted slots release at their recorded p99 run time. A slot without a
+   * duration or past its p99 is assumed to release now, which only moves the
+   * projection earlier and so never admits a backfill that could delay the head. */
+  function projectedHeadStartAt(head, now) {
+    let freeKiB = slotResourceBudget().unreservedMemoryKiB;
+    const needKiB = head.floorOptions?.at(-1).floorKiB ?? head.floorKiB;
+    if (freeKiB >= needKiB) return now;
+    const releases = [...slots.values()].map(slot => ({ floorKiB: slot.floorKiB,
+      at: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(now, slot.admittedAt + slot.p99DurationMs) : now }))
+      .sort((left, right) => left.at - right.at);
+    for (const release of releases) {
+      freeKiB += release.floorKiB;
+      if (freeKiB >= needKiB) return release.at;
+    }
+    // Slots alone cannot make room; external memory decides, so lend nothing.
+    return null;
   }
   async function drain() {
     // Capacity already free when a request becomes head remains available to
@@ -467,6 +544,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
     let head;
+    let lendableKiB = 0;
+    let headStartAt;
     const pledgingHead = waiting.find(canReserveHead);
     const reservation = headReservation(pledgingHead);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
@@ -492,6 +571,18 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       }
       const fitting = item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
         && accountedCpuCores(item, option.workers) <= availableCpuCores);
+      // A job projected to finish before the head can start may borrow the
+      // head's pledged memory; its release returns it before it is needed.
+      const borrowKiB = !item.floorOptions && headStartAt !== null && headStartAt !== undefined
+        && item.p99DurationMs > 0 && Date.now() + item.p99DurationMs <= headStartAt
+        && item.floorKiB > availableMemoryKiB && item.floorKiB <= availableMemoryKiB + lendableKiB
+        && accountedCpuCores(item) <= availableCpuCores ? item.floorKiB - availableMemoryKiB : 0;
+      if (borrowKiB > 0) {
+        availableMemoryKiB += borrowKiB;
+        lendableKiB -= borrowKiB;
+        // The counter can exceed the capped reservation; lend from the cap.
+        headPledge.memoryKiB = Math.min(headPledge.memoryKiB, headReservation(head).memoryKiB) - borrowKiB;
+      }
       item.waitingForMemory = minimumFloorKiB > availableMemoryKiB;
       if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB || accountedCpuCores(item) > availableCpuCores) {
         if (item.noWait) refuse(item, item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
@@ -510,8 +601,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
             head = item;
             reserveHead(head);
             const reservation = headReservation(head);
+            lendableKiB = Math.min(reservation.memoryKiB, availableMemoryKiB);
             availableMemoryKiB = Math.max(0, availableMemoryKiB - reservation.memoryKiB);
             availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
+            if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());
           }
         }
         continue;
@@ -559,6 +652,23 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     lines.on('line', line => {
       let metadata;
       try { metadata = JSON.parse(line); } catch { return; }
+      if (metadata.kind === 'slot-peak') {
+        if (!Number.isSafeInteger(metadata.peakKiB) || metadata.peakKiB <= 0 || typeof metadata.className !== 'string'
+          || (metadata.resourceClass !== undefined && typeof metadata.resourceClass !== 'string')
+          || (metadata.projects !== undefined && (!Array.isArray(metadata.projects) || metadata.projects.some(project => typeof project !== 'string')))) return;
+        const { peakKiB, className, resourceClass, projects, component, entry } = metadata;
+        enqueue(() => { if (!slot.kernelPeak || slot.kernelPeak.peakKiB < peakKiB) slot.kernelPeak = { peakKiB, className, resourceClass, projects, component, entry }; });
+        return;
+      }
+      if (metadata.kind === 'slot-identity') {
+        if (typeof metadata.className !== 'string') return;
+        enqueue(() => {
+          const key = slot.recovered ? identityKey(metadata) : null;
+          const peak = key === null ? undefined : recordedIdentityPeaks().get(key);
+          if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
+        });
+        return;
+      }
       if (metadata.kind !== 'slot-duration' || !validDuration(metadata)
         || !Number.isSafeInteger(metadata.admittedAt) || metadata.admittedAt < 0
         || !/^[a-f0-9-]{36}$/.test(metadata.slotId ?? '')
@@ -627,6 +737,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || (request.arrivedAt !== undefined && (!Number.isSafeInteger(request.arrivedAt) || request.arrivedAt < 0))
         || !Number.isSafeInteger(request.pid) || request.pid <= 1 || typeof request.className !== 'string'
         || (request.resourceClass !== undefined && typeof request.resourceClass !== 'string')
+        || (request.component !== undefined && typeof request.component !== 'string')
+        || (request.entry !== undefined && typeof request.entry !== 'string')
         || (request.projects !== undefined && (!Array.isArray(request.projects)
           || request.projects.some(project => typeof project !== 'string')))
         || typeof request.repoDir !== 'string' || (request.cacheBaseDir !== undefined && typeof request.cacheBaseDir !== 'string')
@@ -638,6 +750,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       }
       item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
         arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder };
+      item.floorKiB = recordedIdentityFloorKiB(item);
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.
@@ -675,6 +788,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   return {
     status,
+    recordedIdentityFloorKiB,
     async start() {
       if (process.platform !== 'linux') throw new Error('Admission broker requires Linux');
       // The OS's available logical cores are the fixed resource boundary.
@@ -717,7 +831,16 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
             if (!entry.isSocket()) continue;
             const slot = readSlotAddress(root, entry.name);
             if (!slot) continue;
-            try { await connectSlot(slot); slots.set(slot.address, slot); }
+            slot.recovered = true;
+            try {
+              await connectSlot(slot);
+              // Systemic 20:31Z: a recovered slot reserves max(its scope's
+              // memory.current, its identity kernel peak), not its old floor. The
+              // identity peak applies when the client re-advertises its identity.
+              const currentKiB = readRecoveredSlotMemoryKiB(slot.pid);
+              if (Number.isSafeInteger(currentKiB) && currentKiB > 0) slot.floorKiB = roundPeak(currentKiB);
+              slots.set(slot.address, slot);
+            }
             catch (error) {
               slot.peer.destroy();
               // Only an absent listener proves its floor is gone. Descriptor,

@@ -1,8 +1,11 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { open, readFile, readdir } from 'node:fs/promises';
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
 import { join } from 'node:path';
+import { EXECUTION_PROVENANCE_FILENAME, readExecutionDurationSummaries } from '../dev_targets/execution_provenance.mjs';
 
 const HISTORY_WINDOW_MS = 60 * 60 * 1000;
+// Read granularity for the backward scan, not a retention limit.
+const TAIL_CHUNK_BYTES = 1024 * 1024;
 
 async function readText(path) {
   try {
@@ -93,51 +96,95 @@ async function readTargetSnapshot(cacheDir, targetName, now) {
   };
 }
 
-function parseProvenanceFiles(rawFiles, now) {
-  const admissions = [];
-  for (const raw of rawFiles) {
-    for (const line of String(raw ?? '').split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        const record = JSON.parse(line);
-        if (record?.schemaVersion === 1 && record.phase === 'admitted' && record.target) {
-          admissions.push(record);
-        }
-      } catch {
-        // A concurrently appended final line is incomplete until the next refresh.
-      }
+function parseAdmission(line) {
+  if (!line.trim()) return null;
+  try {
+    const record = JSON.parse(line);
+    return Number.isFinite(record?.timestamp) ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The append-only audit log is unbounded, so the "last 60m" pane keeps a
+ * retained byte offset: the first read scans backward from EOF only until a
+ * record older than the window, later reads parse only appended bytes. A
+ * shrunk or replaced file restarts the scan. */
+function createRecentAdmissionsWindow(path) {
+  let identity = null;
+  let offset = 0;
+  let admissions = [];
+
+  const keep = (record) => record.schemaVersion === 1 && record.phase === 'admitted' && record.target;
+
+  async function scanBackward(handle, size, cutoff) {
+    let position = size;
+    let buffer = Buffer.alloc(0);
+    while (position > 0) {
+      const length = Math.min(TAIL_CHUNK_BYTES, position);
+      position -= length;
+      const chunk = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(chunk, 0, length, position);
+      buffer = Buffer.concat([chunk.subarray(0, bytesRead), buffer]);
+      // The oldest complete line read so far decides whether the window is covered.
+      const start = position > 0 ? buffer.indexOf(10) + 1 : 0;
+      const end = start > 0 || position === 0 ? buffer.indexOf(10, start) : -1;
+      const head = start > 0 || position === 0 ? parseAdmission(buffer.subarray(start, end === -1 ? buffer.length : end).toString('utf8')) : null;
+      if (head && head.timestamp < cutoff) break;
     }
+    // The first partial line belongs to an older record outside the window.
+    return position > 0 ? buffer.subarray(buffer.indexOf(10) + 1) : buffer;
   }
 
-  const summarize = (records) => {
-    const grouped = new Map();
-    for (const record of records) {
-      const target = String(record.target);
-      const current = grouped.get(target) ?? { target, count: 0, loads: [] };
-      current.count += 1;
-      if (Number.isFinite(record.normalizedLoad)) current.loads.push(record.normalizedLoad);
-      grouped.set(target, current);
-    }
-    const total = records.length;
-    return [...grouped.values()].map((entry) => ({
-      target: entry.target,
-      count: entry.count,
-      share: total > 0 ? entry.count / total : 0,
-      averageNormalizedLoad: entry.loads.length > 0
-        ? entry.loads.reduce((sum, value) => sum + value, 0) / entry.loads.length
-        : null,
-    }));
-  };
-
-  const recent = admissions.filter((record) => (
-    Number.isFinite(record.timestamp) && record.timestamp >= now - HISTORY_WINDOW_MS
-  ));
   return {
-    retainedAdmissions: admissions.length,
-    retainedByTarget: summarize(admissions),
-    recentAdmissions: recent.length,
-    recentByTarget: summarize(recent),
+    async read(now) {
+      const cutoff = now - HISTORY_WINDOW_MS;
+      let handle;
+      try {
+        handle = await open(path, 'r');
+      } catch (error) {
+        if (error?.code === 'ENOENT') { identity = null; offset = 0; admissions = []; return admissions; }
+        throw error;
+      }
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) return admissions = [];
+        const current = `${stat.dev}:${stat.ino}`;
+        let bytes;
+        if (current !== identity || stat.size < offset) {
+          identity = current;
+          admissions = [];
+          bytes = await scanBackward(handle, stat.size, cutoff);
+          offset = stat.size - bytes.length;
+        } else {
+          const length = stat.size - offset;
+          bytes = Buffer.alloc(length);
+          const { bytesRead } = length > 0 ? await handle.read(bytes, 0, length, offset) : { bytesRead: 0 };
+          bytes = bytes.subarray(0, bytesRead);
+        }
+        // Retain an incomplete final line for the next read.
+        const complete = bytes.lastIndexOf(10) + 1;
+        offset += complete;
+        for (const line of bytes.subarray(0, complete).toString('utf8').split('\n')) {
+          const record = parseAdmission(line);
+          if (record && keep(record)) admissions.push(record);
+        }
+        admissions = admissions.filter((record) => record.timestamp >= cutoff);
+        return admissions;
+      } finally {
+        await handle.close();
+      }
+    },
   };
+}
+
+function summarizeByTarget(records) {
+  const grouped = new Map();
+  for (const record of records) {
+    const target = String(record.target);
+    grouped.set(target, (grouped.get(target) ?? 0) + 1);
+  }
+  return [...grouped].map(([target, count]) => ({ target, count, share: count / records.length }));
 }
 
 function defaultLocalSample() {
@@ -151,30 +198,27 @@ function defaultLocalSample() {
   };
 }
 
+/** Live load comes from per-target cache files, run time from the compact
+ * per-class duration projection, and recent dispatches from a bounded tail of
+ * the append-only audit log (811 MB on repo-dev, 2026-11-14), never a whole-file read. */
 export function createExecutionFabricSummaryReader({
   stackBaseDir,
   targetNames,
-  historyRefreshMs = 15_000,
   sampleLocal = defaultLocalSample,
+  readDurations = readExecutionDurationSummaries,
 }) {
   const cacheDir = join(stackBaseDir, 'dev-target-command-load-native');
-  let cachedHistory = null;
-  let historySampledAt = 0;
+  const recentAdmissions = createRecentAdmissionsWindow(join(cacheDir, EXECUTION_PROVENANCE_FILENAME));
   return {
     async read({ now = Date.now() } = {}) {
-      const [local, ...targets] = await Promise.all([
+      const [local, durations, recent, ...targets] = await Promise.all([
         Promise.resolve(sampleLocal()),
+        readDurations(stackBaseDir),
+        recentAdmissions.read(now),
         ...targetNames.map((targetName) => readTargetSnapshot(cacheDir, targetName, now)),
       ]);
-      if (!cachedHistory || now - historySampledAt >= historyRefreshMs) {
-        const rawFiles = await Promise.all([
-          readText(join(cacheDir, 'provenance.jsonl.previous')),
-          readText(join(cacheDir, 'provenance.jsonl')),
-        ]);
-        cachedHistory = parseProvenanceFiles(rawFiles, now);
-        historySampledAt = now;
-      }
-      return { live: [local, ...targets], history: cachedHistory };
+      return { live: [local, ...targets], durations: durations ?? [],
+        history: { recentAdmissions: recent.length, recentByTarget: summarizeByTarget(recent) } };
     },
   };
 }
@@ -221,13 +265,14 @@ export function formatExecutionFabricSummaryLines(summary) {
     lines.push(`  ${target.target.padEnd(12)} ${bar(target.share)} ${String(target.count).padStart(4)} ${percent(target.share)}`);
   }
 
-  const retained = summary.history?.retainedByTarget ?? [];
-  lines.push(`retained dispatches: ${summary.history?.retainedAdmissions ?? 0}`);
-  for (const target of retained) {
-    const average = Number.isFinite(target.averageNormalizedLoad)
-      ? ` avg load ${percent(target.averageNormalizedLoad)}`
-      : '';
-    lines.push(`  ${target.target.padEnd(12)} ${bar(target.share)} ${String(target.count).padStart(4)} ${percent(target.share)}${average}`);
+  const durations = summary.durations ?? [];
+  if (durations.length > 0) {
+    lines.push('');
+    lines.push('run time p99 by class:');
+    for (const entry of durations) {
+      const seconds = Number.isFinite(entry.p99DurationMs) ? `${Math.round(entry.p99DurationMs / 1000)}s` : 'n/a';
+      lines.push(`  ${String(entry.commandClass).padEnd(22)} ${seconds.padStart(7)} n=${entry.samples ?? 0}`);
+    }
   }
   return lines;
 }
