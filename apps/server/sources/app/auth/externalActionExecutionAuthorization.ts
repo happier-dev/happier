@@ -1,4 +1,5 @@
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
+import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -21,7 +22,7 @@ import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
 import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
     readAdmittedDeploymentReadScopeInTx, readAdmittedProjectReadinessScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
-import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
+import { readDeploymentReviewedSetupHttpPurpose } from '@/app/deployments/deploymentReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
 import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, readAdmittedDeploymentScopeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
@@ -136,7 +137,7 @@ import { WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protoco
 import { MACHINE_TERMINAL_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1, readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { readDiscussionSecondOpinionModelChildV1, isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
+import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -957,8 +958,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentPreparationSourceRead?: DeploymentPreparationSourceRead;
     /** The target-enable purpose owner consumed this exact signed managed operation. */
     deploymentTargetRetentionAdmission?: DeploymentTargetRetentionHttpPurpose;
-    /** The setup role consumed only the Link's admitted Environment and own Artifact read purpose. */
-    deploymentLinkReviewedSetupRead?: true;
+    /** The setup role consumed only its root's admitted Environment or Link Artifact read purpose. */
+    deploymentReviewedSetupRead?: true;
     reviewedChildAdmission?: ReviewedActionChildHttpProofV1;
     /** Setup catalog target that signed this read; it spends only its paired operands. */
     setupReceiverMachineId?: string;
@@ -1321,8 +1322,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && ('authentication' in binding || evaluateApiTokenGrantV1({
             grant: binding.grant, actionId: effectActionId, target, targetMachineId: binding.machineId,
         }).ok);
-    const linkReviewedSetupRead = proof.deploymentChildExecution ? false
-        : await readDeploymentLinkReviewedSetupHttpPurpose(db, binding, effectActionId, proof,
+    const reviewedSetupRead = proof.deploymentChildExecution ? false
+        : await readDeploymentReviewedSetupHttpPurpose(db, binding, effectActionId, proof,
             actionId => isAccountActionHttpOperation(actionId, proof));
     const sibling = {
         docDecision: isDocDecisionPreparationEffect(binding.actionId, effectActionId),
@@ -1346,7 +1347,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === 'backup.bindings'
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
-        || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
+        || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
@@ -1354,12 +1355,12 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
-        || linkReviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
+        || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
+        reviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -1491,7 +1492,7 @@ async function verifyCommon(
     if (binding.actionId === 'session.pending.resetStart.set' && !binding.pendingResetStartAdmission) return refuse('pending_reset_admission');
     const signedChildPurpose = await readSignedChildPurpose(binding, effectActionId.data, target, proof);
     const { createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild,
-        linkReviewedSetupRead, nativeTransition, domainPurpose } = signedChildPurpose;
+        reviewedSetupRead, nativeTransition, domainPurpose } = signedChildPurpose;
     if (!signedChildPurpose.effectFamilyAdmitted) return refuse('effect_family');
     if (signedChildPurpose.deploymentReferenceRead === false) return refuse('verification_purpose');
     if (binding.serverIdentityId !== await initializeServerIdentityCache()) return refuse('server_identity');
@@ -1747,7 +1748,7 @@ async function verifyCommon(
         ...(actionMaterialAdmission ? { actionMaterialAdmission } : {}),
         ...(actionBrokerAdmission ? { actionBrokerAdmission } : {}),
         ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}),
-        ...(linkReviewedSetupRead ? { deploymentLinkReviewedSetupRead: true as const } : {}),
+        ...(reviewedSetupRead ? { deploymentReviewedSetupRead: true as const } : {}),
     };
 
     // The exact submitted native effect already admitted its requester. Its signed
@@ -3427,7 +3428,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // The signed child owner already bound these actual codec/Session reads.
         // Ordinary Session routes retain their access checks; preparation is not re-decided in P.
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
-        || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
+        || verified.deploymentTargetRetentionAdmission || verified.deploymentReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read || verified.acceptedDeploymentReceipt?.platformMaterial
         || verified.acceptedDeploymentReceipt && (verified.signedChildPurpose.deploymentWorkspaceRead || verified.signedChildPurpose.deploymentReferenceRead)
         || verified.actionMaterialAdmission || verified.actionBrokerAdmission) {
@@ -3860,10 +3861,10 @@ export async function verifyExternalActionDomainExecutionRequest(
             && proof.method.toUpperCase() === 'POST' && path === '/v1/sessions';
         if (!childPurpose) return refuse('verification_purpose');
     }
-    // The qualified setup identity was admitted against the Link's exact read
+    // The qualified setup identity was admitted against its root's exact read
     // purpose above; the built-in credential catalog retains its root ceiling.
     const effect = parseExternalActionEffectAction(verified.binding,
-        verified.deploymentLinkReviewedSetupRead ? verified.binding.actionId : verified.effectActionId);
+        verified.deploymentReviewedSetupRead ? verified.binding.actionId : verified.effectActionId);
     const credentialAction = reviewedMachineSetupChild ? effect
         : verified.signedChildPurpose.usesRootCredential
             || verified.binding.actionId === 'template.instantiate' && verified.reviewedChildAdmission !== undefined
@@ -4427,7 +4428,9 @@ export async function verifyExternalActionMachineRpcExecution(
 
     const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
         effectActionId: execution.effectActionId, method: request.method.slice(separator + 1) });
-    if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
+    const creationEffect = readSessionActionChildCreationRpcEffectV1(request.method.slice(separator + 1), binding,
+        { machineId: request.method.slice(0, separator), installationId: execution.installationId }, execution.reviewedChild);
+    if ((binding.actionId === 'projects.service.relocate' || creationEffect !== null
         || isSessionStopChildRootV1(binding.actionId) || setupPlanChild) && request.originalActionEnvelope) {
         const envelope = ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
         const separator = request.method.indexOf(':');
@@ -4438,7 +4441,7 @@ export async function verifyExternalActionMachineRpcExecution(
             effectActionId: execution.effectActionId, method: request.method.slice(separator + 1), target: execution.target,
             params: request.params, ...(envelope.success && envelope.data.v === 1 ? { rootInput: envelope.data.input } : {}) }) ? 'session.stop' : null
             : setupPlanChild ? 'machines.setup.plan'
-            : opinionChild ? isDiscussionSecondOpinionModelRpcMethodV1(request.method.slice(separator + 1)) ? 'session.spawn_new' : null
+            : creationEffect !== null ? creationEffect
             : readProjectServiceMoveChildEffectV1(request.method.slice(separator + 1));
         if (!envelope.success || separator < 1 || effect !== execution.effectActionId
             || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
@@ -4447,8 +4450,8 @@ export async function verifyExternalActionMachineRpcExecution(
             || execution.installationId !== binding.installationId
             || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId,
                 machineId: binding.machineId, envelope: envelope.data })
-            || !opinionChild && !stopChild && !setupPlanChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
-            || !opinionChild && !stopChild && !setupPlanChild && envelope.data.v === 1 && typeof request.params !== 'string'
+            || creationEffect === null && !stopChild && !setupPlanChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
+            || creationEffect === null && !stopChild && !setupPlanChild && envelope.data.v === 1 && typeof request.params !== 'string'
                 && !isProjectServiceMoveChildInputV1(envelope.data.input, effect, machineId, request.params)) return null;
         if (setupPlanChild && envelope.data.v === 1 && (typeof envelope.data.input !== 'object'
             || envelope.data.input === null || !('homeId' in envelope.data.input)

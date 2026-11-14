@@ -75,6 +75,15 @@ import { executeExternalAction } from '../../../../../../cli/src/daemon/external
 import { createDaemonExternalActionTargetResolver } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutorHarness } from '../../../../../../cli/src/session/actions/createCliActionExecutorHarness';
 import { createSnapshotActionSettingsProvider } from '../../../../../../cli/src/settings/actionsSettingsProvider';
+import { createPreviewEnrollmentForHost } from '../../../../../../cli/src/deployments/previewEnrollment';
+import { readDeploymentEnvironmentForHost } from '../../../../../../cli/src/deployments/readEnvironmentForHost';
+import { normalizePluginManifestV2 } from '../../../../../../cli/src/plugins/manifest/normalize';
+import { projectLoadedPluginContributes } from '../../../../../../cli/src/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '../../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry';
+import { createPluginRuntimeOccurrenceId } from '../../../../../../cli/src/plugins/runtime/runtimeSlots';
+import type { LoadedPlugin } from '../../../../../../cli/src/plugins/discovery/load/installed';
+import { PLUGIN_MANIFEST as githubManifest } from '../../../../../../../packages/plugins/scm-github/src/manifest';
+import { PLUGIN_MANIFEST as machineServicesManifest } from '../../../../../../../packages/plugins/machine-services/src/manifest';
 
 describe('public roots through real reviewed-child packet producers', () => {
     let harness: LightSqliteHarness;
@@ -726,6 +735,99 @@ describe('public roots through real reviewed-child packet producers', () => {
         const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: environment.runtimeTargetLinkId! } });
         return { input, root, environment, link };
     }
+
+    it('keeps Preview receipt Setup reads inside the real private child and admitted Environment', async () => {
+        const f = await deploymentFixture();
+        const restoreHttp = installAxiosFastifyAdapter({ app: f.resourceApp, origin: f.origin });
+        try {
+            // Installed declarations and HTTP are the boundaries; enrollment, private
+            // child preparation, signing, Home admission and Artifact opening are real.
+            const loaded: LoadedPlugin[] = [githubManifest, machineServicesManifest].map(authored => ({
+                pluginId: authored.id, manifest: normalizePluginManifestV2(authored),
+                pluginRootPath: `/plugins/${authored.id}`, manifestPath: `/plugins/${authored.id}/plugin.json`,
+                daemonEntryPath: `/plugins/${authored.id}/daemon.js`, devDaemonEntryPath: null,
+                sourceSpec: { kind: 'package', locator: authored.id, trustPolicy: 'local_trusted', installPolicy: 'copy' },
+            }));
+            const contributes = createResolvedContributionRegistry({ ...projectLoadedPluginContributes({
+                loadResult: { loadedPlugins: loaded, diagnosticsByPluginId: {} }, provenance: 'external',
+            }), occurrenceIdsByPluginId: Object.fromEntries(loaded.map(plugin =>
+                [plugin.pluginId, createPluginRuntimeOccurrenceId(plugin.pluginId)])) });
+            const input = { serverId: f.serverId, environmentId: f.environment.id, expectedRevision: f.environment.revision,
+                contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
+                contentBodyVersion: f.environment.contentBodyVersion,
+                patch: { previewTemplate: { v: 1, enabled: true, forkPreviews: 'off',
+                    repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+                    runtimeTargetLinkId: f.link.id, domain: null, bindingBlueprints: [], data: [] } } } as const;
+            const root = await f.withAccountProjection(await f.root('deployments.environments.update', input));
+            const artifacts = createCredentialedAccountArtifactStore({ token: f.presentUserToken, encryption: null });
+            const storage: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['deploymentAction']> = async (actionId, value) => {
+                if (actionId !== 'deployments.environments.get') throw new Error('Expected Environment metadata transport');
+                const read = DeploymentEnvironmentGetInputV1Schema.parse(value);
+                const path = `/v1/deployments/environments/${read.environmentId}?serverId=${read.serverId}`;
+                const response = await f.resourceApp.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: actionId, method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json();
+            };
+            const enrollment = createPreviewEnrollmentForHost({ machineId: f.machine.id, serverId: f.serverId,
+                acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes }, release: async () => {} }),
+                readEnvironment: request => readDeploymentEnvironmentForHost(request, {
+                    readMetadata: async ({ environmentId }) => {
+                        const result = await storage('deployments.environments.get', { serverId: f.serverId, environmentId }, {});
+                        const parsed = getActionSpec('deployments.environments.get').outputSchema.parse(result);
+                        if (!parsed.ok) throw new Error(parsed.error);
+                        return parsed;
+                    },
+                    open: id => runWithServerHttpBaseUrl(f.origin, () => artifacts.read(id,
+                        { prepareRecipients: false, includeSharedAudience: false })),
+                    assertCurrent: async () => {
+                        expect(await verifyExternalActionExecutionAuthorizationCurrent({ authorization: root,
+                            effectActionId: root.binding.actionId, target: root.binding.target,
+                            privateKey: f.keyPair.secretKey, installationId: f.machine.installationId!,
+                            serverHttpBaseUrl: f.origin })).toBe(true);
+                    },
+                }),
+            });
+            const action = { pluginId: machineServicesManifest.id, localId: 'deployment-receipt-changed/setup' };
+            const effectActionId = formatQualifiedPluginActionId(action);
+            const childInput = { v: 1, serverId: f.serverId, environmentId: f.environment.id, previewChildren: true };
+            const prepare = (child: HostReviewedChildV1,
+                execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) => prepareReviewedChildAuthorization({
+                actionId: 'deployments.environments.update', input, context: f.context(root), child,
+                deps: invoke => ({
+                    deploymentAction: async (actionId, value, context) => actionId === 'deployments.environments.get'
+                        ? storage(actionId, value, context) : await invoke(context),
+                    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
+                    prepareHostReviewedChildren: request => enrollment.prepare(input, request.context),
+                }),
+                execute,
+            });
+            const prepared = await prepare({ action, role: 'preview.setup', input: childInput }, async context => {
+                    for (const [path, status] of [
+                        [`/v1/deployments/environments/${f.environment.id}?serverId=${f.serverId}`, 200],
+                        [`/v1/deployments/environments/${crypto.randomUUID()}?serverId=${f.serverId}`, 401],
+                        [`/v1/artifacts/${f.environment.contentArtifactId}`, 401],
+                    ] as const) {
+                        const response = await f.resourceApp.inject({ method: 'GET', url: path,
+                            headers: await f.headers(context.externalActionExecutionAuthorization!, {
+                                effectActionId, method: 'GET', path }) });
+                        expect(response.statusCode, response.body).toBe(status);
+                    }
+                    return { ok: true, result: null };
+                });
+            expect(prepared.parent, JSON.stringify(prepared.parentExecution)).not.toBeNull();
+            expect(prepared.execution, JSON.stringify(prepared.execution)).toMatchObject({ ok: true });
+            let undeclaredExecuted = false;
+            for (const role of ['preview.enroll', 'undeclared.setup']) {
+                const refused = await prepare({ action, role, input: childInput }, async () => {
+                    undeclaredExecuted = true;
+                    return { ok: true, result: null };
+                });
+                expect(refused.execution).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            }
+            expect(undeclaredExecuted).toBe(false);
+        } finally { restoreHttp(); await f.close(); }
+    });
 
     it('keeps contributed Link Setup reads inside the real private child and admitted Environment', async () => {
         const f = await deploymentFixture();
