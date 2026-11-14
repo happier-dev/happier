@@ -1,77 +1,149 @@
-import { describe, expect, it, vi } from 'vitest';
-import { readFile, utimes } from 'node:fs/promises';
-import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, writeFile, utimes } from 'node:fs/promises';
+import { delimiter, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-// A fake `codex` that appends one line to a counter file for every `--version` call.
-const COUNTING_CLI_SCRIPT = `
-const fs = require('node:fs');
-const counter = process.env.HAPPIER_TEST_CLI_VERSION_COUNTER_FILE;
-if ((process.argv[2] ?? '') === '--version') {
-  if (counter) fs.appendFileSync(counter, 'x\\n', 'utf8');
-  process.stdout.write('codex 1.2.3\\n');
-  process.exit(0);
-}
-process.stdout.write('ok\\n');
-process.exit(0);
-`.trimStart();
+const processBoundary = vi.hoisted(() => ({ calls: 0, version: '1.2.3', wait: Promise.resolve() }));
 
-async function countVersionProbes(counterFile: string): Promise<number> {
-  try {
-    return (await readFile(counterFile, 'utf8')).split('\n').filter(Boolean).length;
-  } catch {
-    return 0;
-  }
-}
-
-describe('detectCliSnapshotOnDaemonPath (version cache)', () => {
-  it('does not re-spawn `--version` for an unchanged binary, and re-probes when the binary changes', async () => {
-    vi.resetModules();
-    vi.doMock('@/backends/catalog', () => ({
-      AGENTS: {
-        codex: { id: 'codex' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cliSnapshot-versionCache');
-    const envScope = createEnvKeyScope(['PATH', 'HAPPIER_CODEX_PATH', 'HAPPIER_TEST_CLI_VERSION_COUNTER_FILE', 'HAPPIER_CLI_VERSION_CACHE']);
-
-    try {
-      delete process.env.HAPPIER_CLI_VERSION_CACHE;
-      const counterFile = join(fixture.dir, 'version-calls.txt');
-      const codexPath = join(fixture.dir, 'codex.cjs');
-      await writeExecutableScript(codexPath, COUNTING_CLI_SCRIPT);
-      envScope.patch({ HAPPIER_TEST_CLI_VERSION_COUNTER_FILE: counterFile, HAPPIER_CODEX_PATH: codexPath });
-
-      const { detectCliSnapshotOnDaemonPath, invalidateCliSnapshots } = await import('./cliSnapshot');
-
-      // bypassCache skips the 30 s snapshot cache, so only the version cache can prevent a re-spawn.
-      const first = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false, bypassCache: true });
-      const second = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false, bypassCache: true });
-      expect(first.clis.codex.version).toBe('1.2.3');
-      expect(second.clis.codex.version).toBe('1.2.3');
-      expect(await countVersionProbes(counterFile)).toBe(1);
-
-      // A changed binary (new mtime) is probed again.
-      const later = new Date(Date.now() + 60_000);
-      await utimes(codexPath, later, later);
-      const third = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false, bypassCache: true });
-      expect(third.clis.codex.version).toBe('1.2.3');
-      expect(await countVersionProbes(counterFile)).toBe(2);
-
-      // Verification after an update always probes.
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false, bypassCache: true, verifyVersion: true });
-      expect(await countVersionProbes(counterFile)).toBe(3);
-
-      // invalidateCliSnapshots() (called after a CLI update) clears cached versions too.
-      invalidateCliSnapshots();
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false, bypassCache: true });
-      expect(await countVersionProbes(counterFile)).toBe(4);
-    } finally {
-      envScope.restore();
-      await fixture.cleanup();
-    }
+// Only OS process execution is replaced; provider catalog, resolution and filesystem stay real.
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  const execFile = Object.assign(vi.fn(), {
+    [promisify.custom]: async (file: string) => {
+      if (file.includes('opencode')) processBoundary.calls++;
+      const version = processBoundary.version;
+      await processBoundary.wait;
+      return { stdout: version ? `opencode ${version}\n` : 'no version\n', stderr: '' };
+    },
   });
+  return { ...actual, execFile };
+});
+
+afterEach(() => { vi.useRealTimers(); });
+
+async function withNativeCli(run: (context: {
+  binary: string;
+  detect: typeof import('./cliSnapshot')['detectCliSnapshotOnDaemonPath'];
+  invalidate: typeof import('./cliSnapshot')['invalidateCliSnapshots'];
+}) => Promise<void>, header = '\x7fELFtest-native-fixture') {
+  vi.resetModules();
+  processBoundary.calls = 0;
+  processBoundary.version = '1.2.3';
+  processBoundary.wait = Promise.resolve();
+  const fixture = await createProbeTempDir('happier-version-cache');
+  const env = createEnvKeyScope(['HOME', 'USERPROFILE', 'PATH', 'HAPPIER_OPENCODE_PATH']);
+  try {
+    const bin = join(fixture.dir, '.opencode', 'bin');
+    await mkdir(bin, { recursive: true });
+    const binary = join(bin, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+    await writeExecutableScript(binary, 'fixture');
+    await writeFile(binary, Buffer.from(header, 'latin1'));
+    env.patch({ HOME: fixture.dir, USERPROFILE: fixture.dir, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` });
+    delete process.env.HAPPIER_OPENCODE_PATH;
+    const { detectCliSnapshotOnDaemonPath: detect, invalidateCliSnapshots: invalidate } = await import('./cliSnapshot');
+    await run({ binary, detect, invalidate });
+  } finally { env.restore(); await fixture.cleanup(); }
+}
+
+const request = { requestedCliNames: ['opencode'] as const };
+
+describe('CLI version reuse', () => {
+  it.each(['\x7fELFtest-native-fixture', 'MZtest-native-fixture', '\xfe\xed\xfa\xcftest-native-fixture'])(
+    'reuses native versions after snapshot expiry and refreshes changed binaries (%s)', async (header) => {
+    await withNativeCli(async ({ binary, detect, invalidate }) => {
+      expect((await detect(request)).clis.opencode.version).toBe('1.2.3');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('1.2.3');
+      expect(processBoundary.calls).toBe(1);
+      processBoundary.version = '2.0.0';
+      const later = new Date(Date.now() + 60_000);
+      await utimes(binary, later, later);
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+      expect(processBoundary.calls).toBe(2);
+      invalidate();
+      await detect(request);
+      expect(processBoundary.calls).toBe(3);
+    }, header);
+  });
+
+  it('explicit refresh and verification probe even an unchanged native executable', async () => {
+    await withNativeCli(async ({ detect }) => {
+      await detect(request);
+      processBoundary.version = '2.0.0';
+      expect((await detect({ ...request, bypassCache: true })).clis.opencode.version).toBe('2.0.0');
+      processBoundary.version = '3.0.0';
+      expect((await detect({ ...request, verifyVersion: true })).clis.opencode.version).toBe('3.0.0');
+      expect(processBoundary.calls).toBe(3);
+    });
+  });
+
+  it('shares ordinary concurrent probes across distinct snapshot keys', async () => {
+    await withNativeCli(async ({ detect }) => {
+      const snapshots = await Promise.all([detect(request), detect({ requestedCliNames: ['opencode', 'codex'] })]);
+      expect(snapshots.map(s => s.clis.opencode.version)).toEqual(['1.2.3', '1.2.3']);
+      expect(processBoundary.calls).toBe(1);
+    });
+  });
+
+  it('fresh recovery supersedes an in-flight ordinary snapshot', async () => {
+    await withNativeCli(async ({ detect }) => {
+      let release!: () => void;
+      processBoundary.wait = new Promise<void>(resolve => { release = resolve; });
+      const older = detect(request);
+      await vi.waitFor(() => expect(processBoundary.calls).toBe(1));
+      processBoundary.wait = Promise.resolve();
+      processBoundary.version = '2.0.0';
+      try {
+        expect((await detect({ ...request, bypassCache: true })).clis.opencode.version).toBe('2.0.0');
+      } finally { release(); await older; }
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+    });
+  });
+
+  it('invalidation prevents pending observations from repopulating the cache', async () => {
+    await withNativeCli(async ({ detect, invalidate }) => {
+      let release!: () => void;
+      processBoundary.wait = new Promise<void>(resolve => { release = resolve; });
+      const older = detect(request);
+      await vi.waitFor(() => expect(processBoundary.calls).toBe(1));
+      invalidate();
+      release();
+      await older;
+      processBoundary.wait = Promise.resolve();
+      processBoundary.version = '2.0.0';
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+    });
+  });
+
+  it('retries an unsuccessful fresh probe instead of retaining the old version', async () => {
+    await withNativeCli(async ({ detect }) => {
+      await detect(request);
+      processBoundary.version = '';
+      expect((await detect({ ...request, bypassCache: true })).clis.opencode.version).toBeUndefined();
+      processBoundary.version = '2.0.0';
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+    });
+  });
+
+  it.each(['#!/bin/sh\nexec other-provider "$@"\n', '@echo off\r\nother-provider %*\r\n', "require('./provider.cjs');\n"])(
+    'does not persist versions for opaque launchers, even in a native installation root (%s)', async (launcher) => {
+      await withNativeCli(async ({ binary, detect }) => {
+        await writeFile(binary, launcher);
+        await detect(request);
+        processBoundary.version = '2.0.0';
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(Date.now() + 31_000);
+        expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+      });
+    },
+  );
 });
