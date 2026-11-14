@@ -105,6 +105,16 @@ describe('AppShell projection source publication', () => {
         } finally { counter.mockRestore(); owner.dispose(); store.clear(); }
     });
 
+    it('is pending until it first publishes, and unavailable only once its sources say so (Deploy an app starters)', () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        // Nothing published yet: a reader must keep waiting, never certify an empty catalog.
+        expect(owner.getSnapshot().projectionUnion.phase).toBe('establishing');
+        owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
+            activeServerId: 'server-none', serverProfilesGeneration: 0, activeInventoryLoaded: true,
+            onlineMachineIds: [], selectableMachineIds: [] });
+        // Published with no Machine to read plugins from: settled, not pending.
+        expect(owner.getSnapshot().projectionUnion.phase).toBe('unavailable');
+    });
     it('settles Account discovery while passive Machine descriptor observers have no answer', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const store = createPluginAccountAvailabilityReaderStore();

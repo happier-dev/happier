@@ -116,6 +116,24 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().items).toBe(held);
     });
+    it('never certifies an empty starter list while a plugin member that may carry it is still establishing (Deploy an app)', async () => {
+        await setupHome('plugin-member-establishing');
+        let shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', hasEstablishingMembers: true, interactionEnabled: true, machineId: null, serverId: null, platform: 'web',
+            accountLifetime: null, reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'starter' }), { wrapper });
+        await waitForHomeGovernance(() => expect(getPromptLibraryCatalogValue(storage.getState().settingsScope!, 'registry-sources').status).toBe('ready'));
+        await flushHookEffects();
+        // One Machine has published; the one that may carry the starter source has not. Still loading, never empty.
+        expect(hook.getCurrent().loading).toBe(true);
+        expect(hook.getCurrent().hasValue).toBe(false);
+        shell = { ...shell, hasEstablishingMembers: false };
+        await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().hasValue).toBe(true);
+        expect(hook.getCurrent().items).toEqual([]);
+    });
     it.each(['current', 'establishing'] as const)('reads a known catalog while other plugin members are still establishing (J51, %s)', async phase => {
         const serverUrl = `https://registry-partial-plugin-members-${phase}.test`;
         const sourceUrl = serverUrl + '/catalog.json';

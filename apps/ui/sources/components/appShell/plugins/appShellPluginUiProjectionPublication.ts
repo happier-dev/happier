@@ -114,7 +114,9 @@ const NO_CURRENTNESS: ReadonlyMap<string, PluginUiProjectionCurrentness> = new M
 const NO_FACTS: ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> = new Map();
 const NO_DESTINATION_PLACEMENTS: ReturnType<typeof selectPluginDestinationSurfacePlacements> = Object.freeze([]);
 const NO_SETTINGS_PAGES: readonly PluginUiProjectionModel['settingsPagesById'][string][] = Object.freeze([]);
-const EMPTY_UNION: PluginUiProjectionUnion = Object.freeze({ pluginUiProjection: null, phase: 'unavailable',
+// Nothing published for this Account and Home yet is pending, not unavailable: a reader keeps waiting instead of
+// certifying an empty catalog. Unavailable comes only from published sources (no Machine, a failed census).
+const EMPTY_UNION: PluginUiProjectionUnion = Object.freeze({ pluginUiProjection: null, phase: 'establishing',
     interactionEnabled: false, hasEstablishingMembers: false, machineId: null, serverId: null });
 export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime: null,
     activeServerId: null,
