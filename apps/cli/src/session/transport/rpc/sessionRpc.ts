@@ -54,15 +54,22 @@ type CallSessionRpcParams = Readonly<{
     installationId: string;
     privateKey: ExternalActionMachineRequestSigningKey;
   }>;
-}> & SessionRpcEncryption;
+}> & (SessionRpcEncryption | DeferredSessionRpcEncryption);
+
+/** Session content material resolved only when the call is issued (one Session record read). */
+export type DeferredSessionRpcEncryption = Readonly<{
+  mode: 'deferred';
+  resolveEncryption: () => Promise<SessionRpcEncryption>;
+}>;
 
 export async function callSessionRpc(params: CallSessionRpcParams): Promise<unknown> {
   const timeoutMs = params.timeoutMs === null ? null
     : typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 20_000;
   const connectTimeoutMs = typeof timeoutMs === 'number' && typeof params.timeoutMs === 'number'
     ? timeoutMs : resolveSessionControlSocketConnectTimeoutMs();
-  const content = resolveSessionRpcContent(params);
   try {
+    const encryption = params.mode === 'deferred' ? await params.resolveEncryption() : params;
+    const content = resolveSessionRpcContent(encryption);
     return await withUserScopedRpcSocket({
       token: params.token, connectTimeoutMs, signal: params.signal,
       ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
@@ -107,7 +114,7 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
           onIssued: () => { params.onIssued?.(); void timeWebLatencyPhase('session.rpc.issued', () => undefined); },
           ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
         })), params.sessionId);
-        return params.mode === 'plain' ? result ?? null : result;
+        return encryption.mode === 'plain' ? result ?? null : result;
       } });
     });
   } catch (error) {
