@@ -24,6 +24,10 @@ export async function coderRuntime(context: PluginInvocationContext) {
       const resource = await client.guest(value.resource);
       return (await transport()).exec({ ...value, resource });
     },
+    async stream(value: ReturnType<typeof ROLE_SCHEMAS.streamInput.parse>) {
+      const resource = await client.guest(value.resource);
+      return (await transport()).stream({ ...value, resource });
+    },
     async putFile(value: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>) {
       const resource = await client.guest(value.resource);
       return (await transport()).putFile({ ...value, resource });

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ExecService, PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService, PluginExecSpawnRequest, PluginProcessHandle, PluginProcessOutput, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCoderTransport } from './transport.js';
 import type { CoderResource } from './schemas.js';
 
@@ -27,7 +27,19 @@ for(const field of (process.env.CODER_SSH_ENV??'').split(',')){const at=field.in
 const child=spawn('sh',['-c','exec '+args.slice(boundary+1).join(' ')],{env,stdio:'inherit'});
 process.on('SIGTERM',()=>{child.kill('SIGTERM');});child.on('exit',(code)=>process.exit(code??255));\n`);
   const requests: PluginExecSpawnRequest[] = [];
-  const exec: Pick<ExecService,'run'> = { run: async (request, options) => {
+  const spawned: Array<{ request: PluginExecSpawnRequest; outputDelivery?: string }> = [];
+  const exec: Pick<ExecService,'run'|'spawn'> = { spawn: async (request, options) => {
+    spawned.push({ request, outputDelivery: options?.outputDelivery });
+    const child=spawn(process.execPath,[fake,...(request.args??[])],{env:{...process.env,...request.env},stdio:['pipe','pipe','pipe']});
+    const listeners=new Set<(chunk: PluginProcessOutput)=>void>();let sequence=0;
+    child.stdout.on('data',(data:Buffer)=>{for(const listener of listeners)listener({sequence:++sequence,stream:'stdout',data});});
+    const exited=new Promise<PluginProcessResult['termination']>(resolve=>child.once('exit',(code,signal)=>resolve({
+      observed:signal?{kind:'signal',signal}:{kind:'exit',exitCode:code??255},requestedBy:{kind:'none'}})));
+    const handle = { write: async (data: Uint8Array) => { child.stdin.write(data); }, closeStdin: async () => { child.stdin.end(); },
+      waitForExit: () => exited, onOutput: (listener: (chunk: PluginProcessOutput)=>void) => { listeners.add(listener); return { [Symbol.dispose]() { listeners.delete(listener); } }; },
+      dispose: async () => { child.kill('SIGTERM'); } };
+    return handle as unknown as PluginProcessHandle;
+  }, run: async (request, options) => {
     requests.push(request);
     return new Promise<PluginProcessResult>((resolve,reject)=>{
       const child=spawn(process.execPath,[fake,...(request.args??[])],{env:{...process.env,...request.env},stdio:['pipe','pipe','pipe']});
@@ -44,7 +56,7 @@ process.on('SIGTERM',()=>{child.kill('SIGTERM');});child.on('exit',(code)=>proce
   const controller=new AbortController();
   const transport=createCoderTransport({exec,executable:{kind:'managedDependency',id:{pluginId:'happier.machine.coder',localId:'coder-cli'}},
     signal:controller.signal,endpoint:'http://coder.test',token});
-  return {transport,requests,directory,controller};
+  return {transport,requests,spawned,directory,controller};
 }
 describe('Coder native bootstrap at a fake executable process boundary',()=>{
   it('preserves shell argv, binary stdin/stdout, separate stderr and nonzero exit without exposing the control token',async()=>{
@@ -80,6 +92,22 @@ describe('Coder native bootstrap at a fake executable process boundary',()=>{
     const configured=await fixture();const start=configured.transport.exec({resource,argv:['true'],processConfig:{environment:{HOME:'/tmp',HAPPIER_HOME_DIR:'/tmp/.happier'},detachedDaemonStartArgv:['sh','-c','exec sleep 30']}});
     const timer2=setTimeout(()=>configured.controller.abort(),100);cleanup.push(async()=>clearTimeout(timer2));
     await expect(start).rejects.toMatchObject({code:'native_boot_unconfirmed'});
+  });
+  it('opens the stream role as one non-PTY coder ssh process: binary stdin in, stdout out, no token in argv',async()=>{
+    const h=await fixture();
+    const channel=await h.transport.stream({resource,argv:['sh','-c','cat']});
+    const received:Buffer[]=[];channel.onOutput(chunk=>{if(chunk.stream==='stdout')received.push(Buffer.from(chunk.data));});
+    const bytes=Buffer.from([0,255,128,13,10,0]);
+    await channel.write(bytes);
+    await expect.poll(()=>Buffer.concat(received)).toEqual(bytes);
+    await channel.closeStdin();
+    expect(await channel.waitForExit()).toEqual({observed:{kind:'exit',exitCode:0},requestedBy:{kind:'none'}});
+    expect(h.spawned).toHaveLength(1);
+    expect(h.spawned[0]?.outputDelivery).toBe('invocation');
+    // A channel never autostarts a stopped workspace: power stays with the reconciler.
+    expect(h.spawned[0]?.request.args?.slice(0,4)).toEqual(['ssh','--disable-autostart','alice/workspace.main','--']);
+    expect(JSON.stringify(h.spawned[0]?.request.args)).not.toContain(token);
+    expect(h.spawned[0]?.request.env?.CODER_SESSION_TOKEN).toBe(token);
   });
   it('removes a reflected control-plane token while leaving unrelated byte output unchanged',async()=>{
     const h=await fixture();const result=await h.transport.exec({resource,argv:['reflect-private']});

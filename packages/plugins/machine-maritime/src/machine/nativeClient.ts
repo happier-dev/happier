@@ -162,11 +162,15 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     }
     requireSuccess(response);
   }
-  async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
-    if (input.allowWake === false) {
-      const native = await read(input.resource);
+  /** `allowWake: false` (diagnostics, a running Session's files): a stopped guest is refused, never woken. */
+  async function awakeUnless(resource: Parameters<typeof awake>[0], allowWake: false | undefined) {
+    if (allowWake === false) {
+      const native = await read(resource);
       if (!native || nativePower(native.status) !== 'running') throw new MaritimeNativeError({ code: 'maritime_guest_unavailable' });
-    } else await awake(input.resource);
+    } else await awake(resource);
+  }
+  async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
+    await awakeUnless(input.resource, input.allowWake);
     if (input.processConfig) {
       const result = await run(input.resource, ['env', ...Object.entries(input.processConfig.environment).map(([key, value]) => key + '=' + value), ...input.processConfig.detachedDaemonStartArgv], input.timeoutMs);
       assertMachineProvisionerGuestCommandSucceeded(result, details => new MaritimeNativeError({ code: 'maritime_process_configuration_failed', details }));
@@ -241,7 +245,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     },
     async putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
       try {
-        await awake(input.resource);
+        await awakeUnless(input.resource, input.allowWake);
         await upload(input.resource, input.guestPath, decodeBase64(input.bytesBase64));
         return (await run(input.resource, ['chmod', (input.mode ?? 0o600).toString(8), '--', input.guestPath])).exitCode === 0
           ? { kind: 'confirmed' } : { kind: 'unknown', code: 'maritime_file_unconfirmed' };

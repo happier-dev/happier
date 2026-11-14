@@ -113,9 +113,11 @@ export function createCrabboxProvider(options: Readonly<{
         const result = await native.destroy(resource, options.signal);
         return { kind: result.cleanup === 'confirmed' ? 'confirmed' : result.cleanup === 'pending' ? 'pending' : 'unknown' };
       } catch (error) {
-        const code = crabboxErrorCode(error);
-        return { kind: code === 'native_identity_mismatch' ? 'refused' as const : 'unknown' as const, code,
-          ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) };
+        return projectMachineProvisionerActionFailure(error, () => {
+          const code = crabboxErrorCode(error);
+          return { kind: code === 'native_identity_mismatch' ? 'refused' as const : 'unknown' as const, code,
+            ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) };
+        });
       }
     },
   };

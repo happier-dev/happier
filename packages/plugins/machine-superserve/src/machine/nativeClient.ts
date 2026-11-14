@@ -111,7 +111,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try {
-      const headers = await guest(parsed.resource), bytes = decodeBase64(parsed.bytesBase64);
+      const headers = await guest(parsed.resource, parsed.allowWake), bytes = decodeBase64(parsed.bytesBase64);
       const result = (await http(GUEST_ORIGIN + '/files?' + new URLSearchParams({ path: parsed.guestPath }), 'POST', undefined, headers, bytes)).value;
       if (result === null || typeof result !== 'object' || !('path' in result) || result.path !== parsed.guestPath || !('size' in result) || result.size !== bytes.length) throw new NativeError('superserve_file_unconfirmed');
       const changed = await execute(headers, ['chmod', (parsed.mode ?? 0o600).toString(8), parsed.guestPath]);

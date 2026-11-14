@@ -46,21 +46,47 @@ async function coordinatorRoles(putResponse?: { status: number; body: unknown })
 }
 
 describe('Crabbox lazy family authoring', () => {
-  it.each(['inspect', 'reconcile', 'check', 'options'] as const)('preserves a typed refusal through the activated %s read role', async role => {
+  it.each([['inspect', 'GET'], ['reconcile', 'GET'], ['check', 'GET'], ['options', 'GET'],
+    ['acquire', 'PUT'], ['destroy', 'GET'], ['destroy', 'POST']] as const)('preserves a typed %s refusal from %s', async (role, method) => {
     const runtime = await coordinatorRoles();
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
-      details: { phase: 'activation' } });
+      details: { phase: 'activation' }, remediation: { kind: 'retry' },
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null } });
     const context = { ...runtime.context, services: { ...runtime.context.services,
       managedServices: { dependencies: { status: async (id: string) => ({ state: 'missing', id, supported: true }) } },
-      http: { ...runtime.context.services.http, request: async () => { throw refusal; } },
+      http: { ...runtime.context.services.http, request: async (...args: Parameters<PluginInvocationContext['services']['http']['request']>) => {
+        if (args[0].method === method) throw refusal;
+        return runtime.context.services.http.request(...args);
+      } },
       connectedAccounts: { ...runtime.context.services.connectedAccounts,
         ...(role === 'check' || role === 'options' ? { materialize: async () => { throw refusal; } } : {}),
       },
     } };
     const resource = { backendId: 'aws', namespace: 'test-org', transport: 'coordinator',
       leaseId: runtime.leaseId, nativeInstanceId: 'i-exact' };
-    const input = role === 'reconcile' ? { nativeOperation: resource } : role === 'inspect' ? { resource }
+    const input = role === 'reconcile' ? { nativeOperation: resource } : role === 'inspect' || role === 'destroy' ? { resource }
+      : role === 'acquire' ? { managedId: 'host-managed-row', bootstrapPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample',
+        launch: { backendId: 'aws', namespace: 'test-org', transport: 'coordinator', nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', target: 'linux', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } }
       : role === 'options' ? { backendId: 'aws', namespace: 'test-org', transport: 'coordinator', nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', target: 'linux', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } : {};
+    await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(refusal);
+  });
+
+  it.each(['acquire', 'reconcile', 'inspect', 'destroy'] as const)('preserves an authored Exec refusal through the direct %s Action', async role => {
+    const runtime = await coordinatorRoles();
+    const refusal = new PluginError({ code: 'plugin_exec_native_launch_unavailable', message: 'Install the selected native runtime',
+      details: { phase: 'launch' }, remediation: { kind: 'retry' },
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      managedServices: { dependencies: { status: async () => ({ state: 'ready', executable: '/usr/bin/crabbox' }) } },
+      machineProvisioners: { withBootstrapCredentialFile: async (_request: unknown, effect: (lease: { kind: 'file'; path: string; dispose(): Promise<void> }) => Promise<unknown>) =>
+        effect({ kind: 'file', path: `/tmp/crabbox/testboxes/${runtime.leaseId}/id_ed25519`, async dispose() {} }) },
+      exec: { run: async () => { throw refusal; } },
+    } } as unknown as PluginInvocationContext;
+    const launch = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
+      nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+    const resource = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', leaseId: runtime.leaseId, nativeInstanceId: 'c'.repeat(64) };
+    const input = role === 'acquire' ? { launch, managedId: 'host-managed-row', bootstrapPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample' }
+      : role === 'reconcile' ? { nativeOperation: resource } : { resource };
     await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(refusal);
   });
 
@@ -603,14 +629,14 @@ describe('Crabbox lazy family authoring', () => {
     expect(execution.at(-1)).toMatchObject({ cwd: 'C:\\private\\native', env: { XDG_STATE_HOME: 'C:\\private\\native',
       CRABBOX_CONFIG: 'C:\\private\\native\\happier-isolated.yaml', GIT_CEILING_DIRECTORIES: 'C:\\private' } });
   });
-  it('activates ordinary role Actions and refuses acquisition without private retained connection custody', async () => {
+  it('keeps host service failures typed while activating ordinary role Actions and reading the catalog', async () => {
     const testkit = await createPluginTestkit({ manifest: CRABBOX_PLUGIN.manifest, module: CRABBOX_PLUGIN });
     try {
       await expect(testkit.invokeAction('check', {})).rejects.toMatchObject({ code: 'plugin_test_service_unavailable' });
-      expect(await testkit.invokeAction('acquire', { launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
+      await expect(testkit.invokeAction('acquire', { launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
         nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, managedId: 'host-managed-row',
         bootstrapPublicKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQExample host-owned' }))
-        .toEqual({ kind: 'rejected', code: 'credential_unavailable' });
+        .rejects.toMatchObject({ code: 'plugin_test_service_unavailable' });
       const options = MachineProvisionerOptionsResultV1Schema.parse(await testkit.invokeAction('options', {}));
       expect(projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: CrabboxLaunchV1Schema.jsonSchema }))
         .toMatchObject({ kind: 'incomplete' });

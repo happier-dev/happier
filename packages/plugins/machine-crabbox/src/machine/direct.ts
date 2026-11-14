@@ -3,7 +3,7 @@ import * as z from 'zod/mini';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type {
   MachineProvisionerAcquireResultV1, MachineProvisionerBootstrapCarrierV1,
   MachineProvisionerObservationV1, MachineProvisionerPowerResultV1,
@@ -109,7 +109,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
           const status = await observe(resource, run);
           return { kind: 'bound', resource: reference({ ...resource, nativeInstanceId: status.serverId }) };
         });
-      } catch { return submitted ? pending(resource) : { kind: 'rejected', code: 'credential_unavailable' }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => submitted ? pending(resource) : { kind: 'rejected', code: 'credential_unavailable' }); }
     },
     async reconcile(raw: CrabboxResourceV1): Promise<MachineProvisionerAcquireResultV1<CrabboxResourceV1, CrabboxResourceV1>> {
       const resource = identity(raw);
@@ -118,7 +118,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
           const status = await observe(resource, run);
           return { kind: 'bound', resource: reference({ ...resource, nativeInstanceId: status.serverId }) };
         });
-      } catch (error) { return crabboxErrorCode(error) === 'resource_mismatch' ? { kind: 'rejected', code: 'resource_mismatch' } : pending(resource); }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => crabboxErrorCode(error) === 'resource_mismatch' ? { kind: 'rejected', code: 'resource_mismatch' } : pending(resource)); }
     },
     async bootstrap(input: { resource: CrabboxResourceV1; credentialRef?: { kind: 'shared_resource'; resourceId: string } }): Promise<MachineProvisionerBootstrapCarrierV1> {
       const resource = identity(input.resource);
@@ -142,7 +142,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
         return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'present', power: status.state === 'ready' ? 'running' : 'unknown',
           storage: 'unknown', billing: { location: 'local', stoppedBilling: 'unknown' },
           ...(Number.isFinite(expiry) ? { nativeExpiry: expiry } : {}) });
-      } catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: crabboxErrorCode(error) }); }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: crabboxErrorCode(error) })); }
     },
     async destroy(raw: CrabboxResourceV1): Promise<MachineProvisionerPowerResultV1> {
       try {
@@ -162,8 +162,10 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
           return completed(stopped) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'native_transport_unknown' };
         });
       } catch (error) {
-        const code = crabboxErrorCode(error);
-        return { kind: code === 'resource_mismatch' ? 'refused' : 'unknown', code };
+        return projectMachineProvisionerActionFailure(error, () => {
+          const code = crabboxErrorCode(error);
+          return { kind: code === 'resource_mismatch' ? 'refused' : 'unknown', code };
+        });
       }
     },
   };

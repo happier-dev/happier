@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { changeLimaPower, execLimaGuest, inspectLimaInstance, putLimaGuestFile } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
+import { changeLimaPower, execLimaGuest, inspectLimaInstance, openLimaGuestChannel, putLimaGuestFile } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import { createLimaSdkExecutor } from './nativeExecutor.js';
 
 const executable: ManagedExecutableRef = { kind: 'managedDependency', id: { pluginId: 'happier.machine.lima', localId: 'lima-cli' } };
@@ -21,6 +21,33 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('public Lima process transport', () => {
+  it('opens the stream channel as one interactive guest shell process carrying the invocation channel', async () => {
+    const spawned: unknown[] = [];
+    const handle = { kind: 'channel-handle' };
+    const exec: Pick<ExecService, 'run' | 'spawn'> = {
+      run: async () => success(new TextEncoder().encode(JSON.stringify(native))),
+      spawn: async (request, options) => {
+        spawned.push({ args: request.args, cwd: request.cwd, env: request.env, outputDelivery: options?.outputDelivery });
+        return handle as never;
+      },
+    };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(openLimaGuestChannel({ executor, ...identity, argv: ['hshim', 'attach', '--socket', '/s'] })).resolves.toBe(handle);
+    expect(spawned).toEqual([{ args: ['shell', '--workdir=/', identity.instance, '--', 'hshim', 'attach', '--socket', '/s'],
+      cwd: identity.store, env: { LIMA_HOME: '.' }, outputDelivery: 'invocation' }]);
+  });
+
+  it('opens no channel to a guest that is not running', async () => {
+    let spawned = 0;
+    const exec: Pick<ExecService, 'run' | 'spawn'> = {
+      run: async () => success(new TextEncoder().encode(JSON.stringify({ ...native, status: 'Stopped' }))),
+      spawn: async () => { spawned += 1; return {} as never; },
+    };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(openLimaGuestChannel({ executor, ...identity, argv: ['x'] })).rejects.toMatchObject({ code: 'LIMA_GUEST_UNAVAILABLE' });
+    expect(spawned).toBe(0);
+  });
+
   it('uses a short relative native home inside the exact missing long persistent store', async () => {
     const store = join(testDirectory, 'long-selected-persistent-store-'.repeat(5));
     const exec: Pick<ExecService, 'run'> = { run: async request => {

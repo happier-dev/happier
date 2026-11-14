@@ -8,7 +8,7 @@ import {
   defineMachineProvisionerSchemas,
   defineMachineProvisionerReconciliationSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
+  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   MachineProvisionerResizeResultV1Schema,
@@ -58,7 +58,7 @@ export const LIMA_MACHINE_PROVISIONER = {
     diskBytes: { kind: 'supported', requiresRestart: true, changes: 'grow-only' } },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', resize: 'resize' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: LimaResourceSchema.jsonSchema },
-  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const LIMA_PLUGIN = definePlugin({
@@ -224,6 +224,15 @@ export const LIMA_PLUGIN = definePlugin({
         return { termination: result.process.termination, stdoutBase64: Buffer.from(result.process.stdout).toString('base64'),
           stderrBase64: Buffer.from(result.process.stderr).toString('base64'),
           stdoutTruncated: result.process.stdoutTruncated, stderrTruncated: result.process.stderrTruncated };
+      },
+    },
+    stream: {
+      ...actionDefaults, title: 'Open a private Lima guest channel', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Open a channel into this Lima guest?', body: 'This runs one admitted command inside the exact managed guest for as long as the channel is open.' },
+      inputSchema: LIMA_ROLE_SCHEMAS.streamInput, resultSchema: MachineProvisionerNativeStreamResultV1Schema,
+      async run(input, context) {
+        const channel = await (await provider(context)).stream(input.resource, input.argv);
+        try { return { termination: await channel.waitForExit() }; } finally { await channel.dispose(); }
       },
     },
     'put-file': {

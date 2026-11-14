@@ -20,18 +20,30 @@ function redact(bytes: Uint8Array, token: string) {
 
 /** Finite native Coder SSH only. Shared enrollment owns pairing and daemon
  * lifecycle. Cancellation closes this invocation; Coder may leave remote work. */
-export function createCoderTransport(input: { exec: Pick<ExecService, 'run'>; executable: ManagedExecutableRef; signal: AbortSignal; endpoint: string; token: string }) {
-  async function run(resource: CoderResource, argv: readonly string[], stdin?: Uint8Array, allowWake?: false, timeoutMs?: number | null, privateEnvironment?: Readonly<Record<string, string>>) {
-    input.signal.throwIfAborted();
+export function createCoderTransport(input: { exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>; executable: ManagedExecutableRef; signal: AbortSignal; endpoint: string; token: string }) {
+  function ssh(resource: CoderResource, argv: readonly string[], allowWake?: false, privateEnvironment?: Readonly<Record<string, string>>) {
     // Coder v2.39.0 cli/ssh.go joins [command] with spaces before sending it to
     // the guest shell. Quote each argv, rather than passing lossy raw strings.
-    return input.exec.run({ executable: input.executable,
+    return { executable: input.executable,
       args: ['ssh', ...(allowWake === false ? ['--disable-autostart'] : []), `${resource.ownerName}/${resource.workspaceName}.${resource.agentName}`, '--', ...argv.map(quote)],
-      env: { CODER_URL: input.endpoint, CODER_SESSION_TOKEN: input.token, ...privateEnvironment },
+      env: { CODER_URL: input.endpoint, CODER_SESSION_TOKEN: input.token, ...privateEnvironment } };
+  }
+  async function run(resource: CoderResource, argv: readonly string[], stdin?: Uint8Array, allowWake?: false, timeoutMs?: number | null, privateEnvironment?: Readonly<Record<string, string>>) {
+    input.signal.throwIfAborted();
+    return input.exec.run({ ...ssh(resource, argv, allowWake, privateEnvironment),
       ...(stdin === undefined ? {} : { stdin }), ...(timeoutMs === undefined || timeoutMs === null ? {} : { timeoutMs }),
     }, { signal: input.signal });
   }
   return {
+    /** The optional `stream` role: one non-PTY `coder ssh` process carrying the invocation channel.
+     * Its bytes are the guest command's own output (the holder's frames), never redacted. Coder may
+     * keep the remote command running after this process ends: that is "state unknown", not exit. */
+    async stream(value: Readonly<{ resource: CoderResource; argv: readonly string[] }>) {
+      input.signal.throwIfAborted();
+      if (!input.exec.spawn) throw new PluginError({ code: 'provider_unavailable', message: 'This host carries no native Coder channel' });
+      // A channel never wakes a stopped workspace (`--disable-autostart`): power belongs to the reconciler.
+      return input.exec.spawn(ssh(value.resource, value.argv, false), { signal: input.signal, outputDelivery: 'invocation' });
+    },
     async exec(value: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
       const config = value.processConfig;
       // Go's serpent StringArray uses CSV. Alternate names avoid Coder agent's
@@ -54,7 +66,7 @@ export function createCoderTransport(input: { exec: Pick<ExecService, 'run'>; ex
     async putFile(value: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>) {
       if (!value.guestPath.startsWith('/') || value.guestPath.includes('\0')) return { kind: 'refused' as const, code: 'invalid_request' };
       const command = `umask 077; cat > ${quote(value.guestPath)} && chmod ${(value.mode ?? 0o600).toString(8)} ${quote(value.guestPath)}`;
-      const result = await run(value.resource, ['sh', '-c', command], Buffer.from(value.bytesBase64, 'base64'));
+      const result = await run(value.resource, ['sh', '-c', command], Buffer.from(value.bytesBase64, 'base64'), value.allowWake);
       return completed(result) ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'provider_unavailable' };
     },
   };

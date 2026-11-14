@@ -108,9 +108,9 @@ export class CrabboxCoordinatorClient {
             const observation = observe(resource, lease);
             return { status: 'allocated', resource: observation.resource, observation };
         } catch (error) {
-            return { status: error instanceof CrabboxNativeError && error.code === 'native_lease_ended' ? 'refused' : 'unknown', resource,
+            return projectMachineProvisionerActionFailure(error, () => ({ status: error instanceof CrabboxNativeError && error.code === 'native_lease_ended' ? 'refused' : 'unknown', resource,
                 code: error instanceof CrabboxNativeError ? error.code : 'native_transport_unknown',
-                ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) };
+                ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) }));
         }
     }
     async inspect(resource: CrabboxResourceV1, signal?: AbortSignal): Promise<CrabboxObservation> {
@@ -162,7 +162,7 @@ export class CrabboxCoordinatorClient {
             });
         } catch (error) {
           const transportFailure = (): CoordinatorLease | undefined => { return undefined; };
-          return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+          return projectMachineProvisionerActionFailure(error, transportFailure);
         }
         if (!response.ok) {
             if (method === 'PUT' && response.status === 409) {

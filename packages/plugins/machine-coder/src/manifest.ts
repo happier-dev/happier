@@ -4,7 +4,7 @@ import { CODER_CLI_INSTALL_ACTION } from './machine/cliPrerequisite.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema,
-  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CODER_CONNECTED_ACCOUNT_RUNTIME, CODER_PORTABLE_ACCOUNT_RUNTIME } from './machine/connection.js';
 import { ACCOUNT_PURPOSE, ACCOUNT_SERVICE, CONTRIBUTION, DEPENDENCY_ID, BILLING, RETENTION,
@@ -25,7 +25,7 @@ export const MACHINE_PROVISIONER = {
   platforms: ['darwin', 'linux', 'win32'], browserReachable: false,
   prerequisites: [{ kind: 'managedDependency', id: DEPENDENCY_ID }], billing: BILLING, retention: RETENTION,
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
-  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   reconciliation: { nativeOperationSchema: CoderOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'cleanup' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -95,6 +95,11 @@ export const PLUGIN = definePlugin({
       async run(input, context) { try { return await (await runtime(context)).cleanup(input.nativeOperation); } catch (error) { return failure(error, { kind: 'unknown', code: 'provider_unavailable' }); } } },
     exec: { ...defaults, title: 'Execute Coder guest command', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return (await runtime(context)).exec(input); } },
+    stream: { ...defaults, title: 'Open a Coder guest channel', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.streamInput, resultSchema: MachineProvisionerNativeStreamResultV1Schema,
+      async run(input, context) {
+        const channel = await (await runtime(context)).stream(input);
+        try { return { termination: await channel.waitForExit() }; } finally { await channel.dispose(); }
+      } },
     'put-file': { ...defaults, title: 'Write Coder guest file', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
       async run(input, context) { return (await runtime(context)).putFile(input); } },
   },

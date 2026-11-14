@@ -1,5 +1,5 @@
 import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
-import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
@@ -19,8 +19,8 @@ export class LimaNativeCommandError extends PluginError {
 
 /** The public, invocation-owned process service is the only Lima process boundary. */
 export function createLimaSdkExecutor({ exec, executable, signal }: Readonly<{
-  exec: Pick<ExecService, 'run'>; executable: ManagedExecutableRef; signal: AbortSignal;
-}>): LimaExecutor<LimaProcessCommandResult> {
+  exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>; executable: ManagedExecutableRef; signal: AbortSignal;
+}>): LimaExecutor<LimaProcessCommandResult> & Readonly<{ channel(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<PluginProcessHandle> }> {
   const capture: LimaExecutor<LimaProcessCommandResult>['capture'] = async (_command, args, options) => {
     if (options?.cwd !== undefined) await mkdir(options.cwd, { recursive: true, mode: 0o700 });
     const process = await exec.run({
@@ -52,5 +52,12 @@ export function createLimaSdkExecutor({ exec, executable, signal }: Readonly<{
       out: new TextDecoder().decode(process.stdout), err: new TextDecoder().decode(process.stderr), process,
     };
   };
-  return { capture, run: capture };
+  // The `stream` role's process: the invocation feeds its stdin and observes its output.
+  const channel = async (_command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }) => {
+    if (!exec.spawn) throw Object.assign(new Error('native Lima channel is unavailable'), { code: 'LIMA_CHANNEL_UNSUPPORTED' });
+    if (options?.cwd !== undefined) await mkdir(options.cwd, { recursive: true, mode: 0o700 });
+    return exec.spawn({ executable, args, ...(options?.cwd === undefined ? {} : { cwd: options.cwd }), ...(options?.env ? { env: options.env } : {}) },
+      { signal, outputDelivery: 'invocation' });
+  };
+  return { capture, run: capture, channel };
 }

@@ -50,7 +50,7 @@ export async function acquireCrabbox<TContext extends CoordinatorContext>(input:
     code: 'provider_unavailable' as const, nativeCause: { localCause: 'native_route_unavailable' as const } };
   if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
   try { return await (await providerFor(input.launch, context)).acquire(input); }
-  catch (error) { return { kind: 'rejected' as const, code: providerFailureCode(error, input.launch) }; }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'rejected' as const, code: providerFailureCode(error, input.launch) })); }
 }
 
 export async function bootstrapCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'bootstrapInput'>, context: TContext,
@@ -70,7 +70,7 @@ export async function destroyCrabbox<TContext extends CoordinatorContext>(
   input: ProtocolSchemaOutput<typeof CRABBOX_RECONCILIATION.destroyInput>, context: TContext, providerFor: CrabboxProviderResolver<TContext>) {
   const resource = 'resource' in input ? input.resource : input.nativeOperation;
   try { return await (await providerFor(resource, context)).destroy(resource); }
-  catch (error) { return { kind: 'refused' as const, code: providerFailureCode(error, resource) }; }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'refused' as const, code: providerFailureCode(error, resource) })); }
 }
 
 export async function inspectedCrabboxProvider(context: CoordinatorContext, reference: PluginContributionRef = contributionRef) {
