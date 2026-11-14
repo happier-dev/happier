@@ -1716,7 +1716,7 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
   });
 
-  it('returns typed source_invalid when a candidate continuation crosses source replacement', async () => {
+  it('continues after the served row when a session is replaced between pages', async () => {
     const agentDir = await createAgentDir();
     const paths = await Promise.all(Array.from({ length: 4 }, async (_, index) => (
       await writeTranscript({
@@ -1739,14 +1739,11 @@ describe('Oh My Pi public External Sessions contribution', () => {
       source,
       maxItems: 2,
     });
-    expect(first).toMatchObject({
-      ok: true,
-      value: {
-        nextCursor: expect.any(String),
-        preparation: { kind: 'building_candidate_index', scanned: 2 },
-      },
-    });
+    expect(first).toMatchObject({ ok: true, value: { nextCursor: expect.any(String) } });
     if (!first.ok || !first.value.nextCursor) return;
+    expect(first.value).not.toHaveProperty('preparation');
+    expect(first.value.candidates.map((candidate) => candidate.remoteSessionId))
+      .toEqual(['candidate-generation-3', 'candidate-generation-2']);
 
     const replacementPath = `${paths[1]}.replacement`;
     await writeFile(replacementPath, jsonlLine({
@@ -1757,16 +1754,24 @@ describe('Oh My Pi public External Sessions contribution', () => {
     }), 'utf8');
     await rename(replacementPath, paths[1]);
 
+    // The replaced session is newer now and sorts above the continuation; the
+    // seek continuation still serves exactly the rows after the one it served.
     await expect(contribution.listCandidates({
       ...invocation(),
       source,
       cursor: first.value.nextCursor,
       maxItems: 2,
     })).resolves.toMatchObject({
-      ok: false,
-      code: 'source_invalid',
-      retryable: true,
+      ok: true,
+      value: { candidates: [expect.objectContaining({ remoteSessionId: 'candidate-generation-0' })], nextCursor: null },
     });
+    // A continuation of the retired index scan is stale, not malformed.
+    await expect(contribution.listCandidates({
+      ...invocation(),
+      source,
+      cursor: 'omp2.AAAAAAAAAAAAAAAA.0.-.-.0.0.AAAAAAAAAAAAAAAA.0.-.-',
+      maxItems: 2,
+    })).resolves.toMatchObject({ ok: false, code: 'source_invalid', retryable: true });
   });
 
   it('refuses a persisted candidate path that has been replaced by a symbolic link', async () => {

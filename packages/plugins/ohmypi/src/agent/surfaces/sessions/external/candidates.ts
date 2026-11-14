@@ -1,15 +1,20 @@
 import { createHash } from 'node:crypto';
-import { lstat, opendir } from 'node:fs/promises';
+import { lstat, opendir, readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import {
+  readJsonlSessionLastActivityMs,
   scanJsonlSessionFile,
   ExternalSessionContentSearchYield,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import type { AgentExternalSessionCandidate } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   deriveExternalSessionActivity,
+  ExternalSessionActivityPageBudgetError,
+  pageExternalSessionCandidatesByActivity,
+  parseExternalSessionActivityPosition,
   readSessionInputPromptUserTextV1,
+  type ExternalSessionActivityPosition,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { resolveOhMyPiSessionsRoot } from './files.js';
@@ -30,17 +35,11 @@ export type OhMyPiExternalSessionCandidate = Readonly<{
   }>;
 }>;
 
-type CandidatePreparation = Readonly<{
-  kind: 'building_candidate_index';
-  scanned: number;
-}>;
-
 export type OhMyPiCandidateResultBudget = Readonly<{
   fits(
     candidates: readonly OhMyPiExternalSessionCandidate[],
     nextCursor: string | null,
     searchIncomplete: boolean | undefined,
-    preparation: CandidatePreparation | undefined,
   ): boolean;
 }>;
 
@@ -51,17 +50,19 @@ type CandidateScanPosition = Readonly<{
   fileEntryOffset: number;
 }>;
 
-type CandidateCursorV2 = Readonly<{
-  v: 2;
-  kind: 'ohMyPiCandidateIndexScan';
+/** A searched listing's resumable directory position. */
+type CandidateSearchCursorV3 = Readonly<{
+  v: 3;
+  kind: 'ohMyPiCandidateSearchScan';
   sourceGeneration: string;
-  phase: 'scan' | 'verify';
   position: CandidateScanPosition;
-  scanned: number;
-  aggregateXor: string;
-  aggregateCount: number;
-  expectedAggregateXor?: string;
-  expectedAggregateCount?: number;
+}>;
+
+/** Unsearched Browse continuation: the last row served, in activity order. */
+type CandidateActivityCursorV1 = Readonly<{
+  v: 1;
+  kind: 'ohMyPiCandidateActivity';
+  after: ExternalSessionActivityPosition;
 }>;
 
 type FileIdentity = Readonly<{
@@ -73,7 +74,10 @@ type FileIdentity = Readonly<{
 }>;
 
 const GENERATION_PATTERN = /^[A-Za-z0-9_-]{16}$/;
-const EMPTY_AGGREGATE_XOR = Buffer.alloc(12).toString('base64url');
+const SEARCH_CURSOR_PREFIX = 'omp3';
+const ACTIVITY_CURSOR_PREFIX = 'ompa1';
+/** Prefix of the retired index-scan cursor; a continuation of it is stale, not malformed. */
+const RETIRED_INDEX_CURSOR_PREFIX = 'omp2.';
 
 const OH_MY_PI_CANDIDATE_TITLE_MAX_CHARS = 120;
 
@@ -108,10 +112,9 @@ export class OhMyPiCandidateSourceChangedError extends Error {
   readonly name = 'OhMyPiCandidateSourceChangedError';
 }
 
-function encodeCandidateCursor(cursor: CandidateCursorV2): string {
+function encodeSearchCursor(cursor: CandidateSearchCursorV3): string {
   return [
-    'omp2',
-    cursor.phase === 'scan' ? 's' : 'v',
+    SEARCH_CURSOR_PREFIX,
     cursor.sourceGeneration,
     cursor.position.rootEntryOffset.toString(36),
     cursor.position.rootName
@@ -119,12 +122,22 @@ function encodeCandidateCursor(cursor: CandidateCursorV2): string {
       : '-',
     cursor.position.rootGeneration ?? '-',
     cursor.position.fileEntryOffset.toString(36),
-    cursor.scanned.toString(36),
-    cursor.aggregateXor,
-    cursor.aggregateCount.toString(36),
-    cursor.expectedAggregateXor ?? '-',
-    cursor.expectedAggregateCount?.toString(36) ?? '-',
   ].join('.');
+}
+
+function encodeActivityCursor(after: ExternalSessionActivityPosition): string {
+  return `${ACTIVITY_CURSOR_PREFIX}.${Buffer.from(JSON.stringify(after), 'utf8').toString('base64url')}`;
+}
+
+function decodeActivityCursor(raw: string): CandidateActivityCursorV1 | null {
+  const [prefix, payload, ...rest] = raw.split('.');
+  if (prefix !== ACTIVITY_CURSOR_PREFIX || !payload || rest.length > 0) return null;
+  try {
+    const after = parseExternalSessionActivityPosition(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')));
+    return after ? { v: 1, kind: 'ohMyPiCandidateActivity', after } : null;
+  } catch {
+    return null;
+  }
 }
 
 function isPosition(value: unknown): value is CandidateScanPosition {
@@ -139,42 +152,20 @@ function isPosition(value: unknown): value is CandidateScanPosition {
     && (record.fileEntryOffset as number) >= 0;
 }
 
-function decodeCandidateCursor(raw: string | undefined): CandidateCursorV2 | null {
+function decodeSearchCursor(raw: string | undefined): CandidateSearchCursorV3 | null {
   if (!raw?.trim()) return null;
   try {
     const value = raw.split('.');
-    if (value.length !== 12) return null;
-    const [
-      version,
-      rawPhase,
-      sourceGeneration,
-      rootEntryOffset,
-      rootName,
-      rootGeneration,
-      fileEntryOffset,
-      scanned,
-      aggregateXor,
-      aggregateCount,
-      expectedAggregateXor,
-      expectedAggregateCount,
-    ] = value;
-    const phase = rawPhase === 's' ? 'scan' : rawPhase === 'v' ? 'verify' : null;
+    if (value.length !== 6) return null;
+    const [version, sourceGeneration, rootEntryOffset, rootName, rootGeneration, fileEntryOffset] = value;
     const parseInteger = (input: string | undefined): number | null => {
       if (!input || !/^[0-9a-z]+$/.test(input)) return null;
       const parsed = Number.parseInt(input, 36);
       return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
     };
-    const parsedRootOffset = parseInteger(rootEntryOffset);
-    const parsedFileOffset = parseInteger(fileEntryOffset);
-    const parsedScanned = parseInteger(scanned);
-    const parsedAggregateCount = parseInteger(aggregateCount);
-    const parsedExpectedCount = expectedAggregateCount === '-'
-      ? null
-      : parseInteger(expectedAggregateCount);
     const parsedRootName = rootName === '-'
       ? null
       : Buffer.from(rootName ?? '', 'base64url').toString('utf8');
-    const parsedRootGeneration = rootGeneration === '-' ? null : rootGeneration;
     if (
       rootName !== '-'
       && (
@@ -184,49 +175,19 @@ function decodeCandidateCursor(raw: string | undefined): CandidateCursorV2 | nul
       )
     ) return null;
     const position = {
-      rootEntryOffset: parsedRootOffset,
+      rootEntryOffset: parseInteger(rootEntryOffset),
       rootName: parsedRootName,
-      rootGeneration: parsedRootGeneration,
-      fileEntryOffset: parsedFileOffset,
+      rootGeneration: rootGeneration === '-' ? null : rootGeneration,
+      fileEntryOffset: parseInteger(fileEntryOffset),
     };
     if (
-      version !== 'omp2'
-      || phase === null
+      version !== SEARCH_CURSOR_PREFIX
       || typeof sourceGeneration !== 'string'
       || !GENERATION_PATTERN.test(sourceGeneration)
       || !isPosition(position)
-      || (
-        position.rootGeneration !== null
-        && !GENERATION_PATTERN.test(position.rootGeneration)
-      )
-      || parsedScanned === null
-      || typeof aggregateXor !== 'string'
-      || !GENERATION_PATTERN.test(aggregateXor)
-      || parsedAggregateCount === null
+      || (position.rootGeneration !== null && !GENERATION_PATTERN.test(position.rootGeneration))
     ) return null;
-    if (
-      phase === 'scan'
-      && (expectedAggregateXor !== '-' || expectedAggregateCount !== '-')
-    ) return null;
-    if (phase === 'verify' && (
-      typeof expectedAggregateXor !== 'string'
-      || !GENERATION_PATTERN.test(expectedAggregateXor)
-      || parsedExpectedCount === null
-    )) return null;
-    return {
-      v: 2,
-      kind: 'ohMyPiCandidateIndexScan',
-      sourceGeneration,
-      phase,
-      position,
-      scanned: parsedScanned,
-      aggregateXor,
-      aggregateCount: parsedAggregateCount,
-      ...(phase === 'verify' ? {
-        expectedAggregateXor: expectedAggregateXor as string,
-        expectedAggregateCount: parsedExpectedCount as number,
-      } : {}),
-    };
+    return { v: 3, kind: 'ohMyPiCandidateSearchScan', sourceGeneration, position };
   } catch {
     return null;
   }
@@ -270,70 +231,15 @@ function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
     && left.size === right.size;
 }
 
-function updateAggregate(
-  currentXor: string,
-  currentCount: number,
-  value: string,
-): Readonly<{ xor: string; count: number }> {
-  const left = Buffer.from(currentXor, 'base64url');
-  const right = createHash('sha256').update(value, 'utf8').digest().subarray(0, 12);
-  const combined = Buffer.alloc(12);
-  for (let index = 0; index < combined.length; index += 1) {
-    combined[index] = (left[index] ?? 0) ^ (right[index] ?? 0);
-  }
-  return { xor: combined.toString('base64url'), count: currentCount + 1 };
-}
-
-function cursorAt(params: Readonly<{
-  sourceGeneration: string;
-  phase: 'scan' | 'verify';
-  position: CandidateScanPosition;
-  scanned: number;
-  aggregateXor: string;
-  aggregateCount: number;
-  expectedAggregateXor?: string;
-  expectedAggregateCount?: number;
-}>): string {
-  return encodeCandidateCursor({
-    v: 2,
-    kind: 'ohMyPiCandidateIndexScan',
-    ...params,
-  });
-}
-
-function preparation(scanned: number, searchTerm: string): CandidatePreparation | undefined {
-  return searchTerm
-    ? undefined
-    : { kind: 'building_candidate_index', scanned };
-}
-
-function searchIncomplete(searchTerm: string, hasMore: boolean): true | undefined {
-  return searchTerm && hasMore ? true : undefined;
-}
-
-function throwSourceChanged(): never {
-  throw new OhMyPiCandidateSourceChangedError(
-    'Oh My Pi candidate source changed while building its exact index.',
-  );
-}
-
 async function inspectCandidateFile(params: Readonly<{
   filePath: string;
   sessionRoot: string;
   agentDir: string;
   env: NodeJS.ProcessEnv;
   searchTerm: string;
-}>): Promise<Readonly<{
-  candidate: OhMyPiExternalSessionCandidate | null;
-  identityToken: string;
-}>> {
+}>): Promise<OhMyPiExternalSessionCandidate | null> {
   const beforeMetadata = await lstat(params.filePath);
-  if (!beforeMetadata.isFile() || beforeMetadata.isSymbolicLink()) {
-    return {
-      candidate: null,
-      identityToken: `${params.filePath}\u0000not-file`,
-    };
-  }
+  if (!beforeMetadata.isFile() || beforeMetadata.isSymbolicLink()) return null;
   const before = fileIdentity(beforeMetadata);
   const scanned = await scanJsonlSessionFile(params.filePath);
   const afterMetadata = await lstat(params.filePath);
@@ -343,8 +249,7 @@ async function inspectCandidateFile(params: Readonly<{
     || afterMetadata.isSymbolicLink()
     || !sameFileIdentity(before, after)
   ) throwSourceChanged();
-  const identityToken = `${params.filePath}\u0000${JSON.stringify(after)}`;
-  if (!scanned) return { candidate: null, identityToken };
+  if (!scanned) return null;
   // The bounded scan already read the head of this file; the derived title reuses
   // that result and never opens the session file a second time.
   const persistedTitle = scanned.title === null || scanned.title === undefined
@@ -359,11 +264,8 @@ async function inspectCandidateFile(params: Readonly<{
     scanned.cwd ?? '',
     basename(params.sessionRoot),
   ].join(' ').toLowerCase();
-  if (params.searchTerm && !haystack.includes(params.searchTerm)) {
-    return { candidate: null, identityToken };
-  }
+  if (params.searchTerm && !haystack.includes(params.searchTerm)) return null;
   return {
-    candidate: {
       remoteSessionId: scanned.sessionId,
       ...(title ? { title } : {}),
       updatedAtMs: scanned.lastActivityAtMs || Math.trunc(afterMetadata.mtimeMs),
@@ -377,17 +279,139 @@ async function inspectCandidateFile(params: Readonly<{
         agentDir: params.agentDir,
         sessionFilePath: params.filePath,
       },
-    },
-    identityToken,
   };
 }
 
+function throwSourceChanged(): never {
+  throw new OhMyPiCandidateSourceChangedError(
+    'Oh My Pi candidate source changed while paging.',
+  );
+}
+
+function searchIncomplete(searchTerm: string, hasMore: boolean): true | undefined {
+  return searchTerm && hasMore ? true : undefined;
+}
+
+/**
+ * Browse's activity fact for every session file: the same last-activity rule
+ * the candidate publishes (`readJsonlSessionLastActivityMs`, the scanner's
+ * `lastActivityAtMs`, else mtime), read from each file's tail without its
+ * title or messages. The tie-break is the file's path under the sessions root.
+ */
+async function listOhMyPiSessionActivity(params: Readonly<{
+  sessionsRoot: string;
+  signal?: AbortSignal;
+}>): Promise<readonly Readonly<{ remoteSessionId: string; updatedAtMs: number; filePath: string; sessionRoot: string }>[]> {
+  const roots = await readdir(params.sessionsRoot, { withFileTypes: true });
+  const rows: { remoteSessionId: string; updatedAtMs: number; filePath: string; sessionRoot: string }[] = [];
+  for (const root of roots) {
+    params.signal?.throwIfAborted();
+    if (!root.isDirectory() || root.isSymbolicLink()) continue;
+    const sessionRoot = join(params.sessionsRoot, root.name);
+    const files = await readdir(sessionRoot, { withFileTypes: true }).catch(() => []);
+    const found = await Promise.all(files.map(async (file) => {
+      if (!file.isFile() || file.isSymbolicLink() || !file.name.endsWith('.jsonl')) return null;
+      const filePath = join(sessionRoot, file.name);
+      const activity = await readJsonlSessionLastActivityMs(filePath);
+      if (activity === null) return null;
+      const updatedAtMs = activity || Math.trunc((await lstat(filePath).catch(() => null))?.mtimeMs ?? 0);
+      return { remoteSessionId: `${root.name}/${file.name}`, updatedAtMs, filePath, sessionRoot };
+    }));
+    for (const row of found) if (row) rows.push(row);
+  }
+  params.signal?.throwIfAborted();
+  return rows;
+}
+
+function withoutTitle(candidate: OhMyPiExternalSessionCandidate): OhMyPiExternalSessionCandidate {
+  const { title: _discardedTitle, ...rest } = candidate;
+  return rest;
+}
+
+async function listOhMyPiSessionCandidatesByActivity(params: Readonly<{
+  sessionsRoot: string;
+  agentDir: string;
+  env: NodeJS.ProcessEnv;
+  cursor?: string;
+  limit: number;
+  updatedAfterMs?: number;
+  signal?: AbortSignal;
+  resultBudget?: OhMyPiCandidateResultBudget;
+}>): Promise<Readonly<{ candidates: OhMyPiExternalSessionCandidate[]; nextCursor: string | null }>> {
+  const decoded = params.cursor ? decodeActivityCursor(params.cursor) : null;
+  if (params.cursor && !decoded) {
+    if (params.cursor.startsWith(RETIRED_INDEX_CURSOR_PREFIX)) throwSourceChanged();
+    throw new OhMyPiCandidateInvalidCursorError('Invalid Oh My Pi candidate cursor.');
+  }
+  const sessionsRootMetadata = await lstat(params.sessionsRoot).catch(() => null);
+  if (!sessionsRootMetadata?.isDirectory() || sessionsRootMetadata.isSymbolicLink()) {
+    if (decoded) throwSourceChanged();
+    return { candidates: [], nextCursor: null };
+  }
+  const updatedAfterMs = params.updatedAfterMs;
+  const entries = (await listOhMyPiSessionActivity({ sessionsRoot: params.sessionsRoot, signal: params.signal }))
+    .filter((entry) => updatedAfterMs === undefined || entry.updatedAtMs >= updatedAfterMs);
+  try {
+    const page = await pageExternalSessionCandidatesByActivity({
+      entries,
+      after: decoded?.after ?? null,
+      limit: params.limit,
+      ...(params.signal ? { signal: params.signal } : {}),
+      readRows: async (rows) => await Promise.all(rows.map(async (row) => {
+        const candidate = await inspectCandidateFile({
+          filePath: row.filePath,
+          sessionRoot: row.sessionRoot,
+          agentDir: params.agentDir,
+          env: params.env,
+          searchTerm: '',
+        }).catch((error: unknown) => {
+          if (error instanceof OhMyPiCandidateSourceChangedError) throw error;
+          return null;
+        });
+        // The listed activity is the row's place in this order; publish it.
+        return candidate ? {
+          ...candidate,
+          updatedAtMs: row.updatedAtMs,
+          activity: deriveExternalSessionActivity({ updatedAtMs: row.updatedAtMs, env: params.env }),
+        } : null;
+      })),
+      ...(params.resultBudget ? {
+        // A title is optional enrichment: a row that fits only without it is still served.
+        fits: (candidates: readonly OhMyPiExternalSessionCandidate[], next: ExternalSessionActivityPosition | null) => {
+          const cursor = next ? encodeActivityCursor(next) : null;
+          return params.resultBudget!.fits(candidates, cursor, undefined)
+            || params.resultBudget!.fits([...candidates.slice(0, -1), withoutTitle(candidates.at(-1)!)], cursor, undefined);
+        },
+      } : {}),
+    });
+    const nextCursor = page.next ? encodeActivityCursor(page.next) : null;
+    const candidates: OhMyPiExternalSessionCandidate[] = [];
+    for (const candidate of page.candidates) {
+      candidates.push(!params.resultBudget || params.resultBudget.fits([...candidates, candidate], nextCursor, undefined)
+        ? candidate
+        : withoutTitle(candidate));
+    }
+    return { candidates, nextCursor };
+  } catch (error) {
+    if (error instanceof ExternalSessionActivityPageBudgetError) {
+      throw new OhMyPiCandidateResultBudgetTooSmallError('Oh My Pi candidate result byte budget cannot fit one candidate.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Unsearched Browse pages in activity order (`listOhMyPiSessionCandidatesByActivity`).
+ * A search walks the native directories in bounded, resumable chunks and
+ * serves its matches in traversal order with `searchIncomplete` until done.
+ */
 export async function listOhMyPiSessionCandidates(params: Readonly<{
   source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
   searchTerm?: string;
+  updatedAfterMs?: number;
   signal?: AbortSignal;
   resultBudget?: OhMyPiCandidateResultBudget;
   searchCandidate?: (candidate: OhMyPiExternalSessionCandidate) => Promise<OhMyPiExternalSessionCandidate | null>;
@@ -395,7 +419,6 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   candidates: OhMyPiExternalSessionCandidate[];
   nextCursor: string | null;
   searchIncomplete?: true;
-  preparation?: CandidatePreparation;
 }>> {
   params.signal?.throwIfAborted();
   const env = params.env ?? process.env;
@@ -405,7 +428,19 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
     ? params.searchCandidate ? params.searchTerm : params.searchTerm.trim().toLowerCase()
     : '';
   const limit = Math.max(1, Math.trunc(params.limit));
-  const decoded = params.cursor ? decodeCandidateCursor(params.cursor) : null;
+  if (!searchTerm && !params.searchCandidate) {
+    return await listOhMyPiSessionCandidatesByActivity({
+      sessionsRoot,
+      agentDir,
+      env,
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+      limit,
+      ...(params.updatedAfterMs === undefined ? {} : { updatedAfterMs: params.updatedAfterMs }),
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.resultBudget ? { resultBudget: params.resultBudget } : {}),
+    });
+  }
+  const decoded = params.cursor ? decodeSearchCursor(params.cursor) : null;
   if (params.cursor && !decoded) {
     throw new OhMyPiCandidateInvalidCursorError('Invalid Oh My Pi candidate cursor.');
   }
@@ -413,30 +448,20 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   const sessionsRootMetadata = await lstat(sessionsRoot).catch(() => null);
   if (!sessionsRootMetadata?.isDirectory() || sessionsRootMetadata.isSymbolicLink()) {
     if (decoded) throwSourceChanged();
-    return {
-      candidates: [],
-      nextCursor: null,
-      ...(searchTerm ? {} : { preparation: { kind: 'building_candidate_index', scanned: 0 } }),
-    };
+    return { candidates: [], nextCursor: null };
   }
   const sourceGeneration = formatPhysicalGeneration(sessionsRootMetadata);
-  if (
-      decoded
-    && decoded.sourceGeneration !== sourceGeneration
-  ) throwSourceChanged();
+  if (decoded && decoded.sourceGeneration !== sourceGeneration) throwSourceChanged();
 
-  const phase = decoded?.phase ?? 'scan';
   let position: CandidateScanPosition = decoded?.position ?? {
     rootEntryOffset: 0,
     rootName: null,
     rootGeneration: null,
     fileEntryOffset: 0,
   };
-  let scanned = decoded?.scanned ?? 0;
-  let aggregateXor = decoded?.aggregateXor ?? EMPTY_AGGREGATE_XOR;
-  let aggregateCount = decoded?.aggregateCount ?? 0;
-  const expectedAggregateXor = decoded?.expectedAggregateXor;
-  const expectedAggregateCount = decoded?.expectedAggregateCount;
+  const cursorAt = (at: CandidateScanPosition): string => encodeSearchCursor({
+    v: 3, kind: 'ohMyPiCandidateSearchScan', sourceGeneration, position: at,
+  });
   const candidates: OhMyPiExternalSessionCandidate[] = [];
   let inspectedEntries = 0;
   let inspectedRoots = 0;
@@ -450,25 +475,10 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
         continue;
       }
       if (inspectedRoots >= limit) {
-        const nextCursor = cursorAt({
-          sourceGeneration,
-          phase,
-          position: {
-            rootEntryOffset: currentRootOffset,
-            rootName: null,
-            rootGeneration: null,
-            fileEntryOffset: 0,
-          },
-          scanned,
-          aggregateXor,
-          aggregateCount,
-          ...(phase === 'verify' ? { expectedAggregateXor, expectedAggregateCount } : {}),
-        });
         return {
           candidates,
-          nextCursor,
+          nextCursor: cursorAt({ rootEntryOffset: currentRootOffset, rootName: null, rootGeneration: null, fileEntryOffset: 0 }),
           ...(searchIncomplete(searchTerm, true) ? { searchIncomplete: true } : {}),
-          ...(preparation(scanned, searchTerm) ? { preparation: preparation(scanned, searchTerm) } : {}),
         };
       }
       inspectedRoots += 1;
@@ -481,12 +491,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
         || rootMetadata.isSymbolicLink()
       ) {
         currentRootOffset += 1;
-        position = {
-          rootEntryOffset: currentRootOffset,
-          rootName: null,
-          rootGeneration: null,
-          fileEntryOffset: 0,
-        };
+        position = { rootEntryOffset: currentRootOffset, rootName: null, rootGeneration: null, fileEntryOffset: 0 };
         continue;
       }
       const rootGeneration = formatPhysicalGeneration(rootMetadata);
@@ -514,29 +519,13 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
               !currentRootMetadata?.isDirectory()
               || formatPhysicalGeneration(currentRootMetadata) !== rootGeneration
             ) throwSourceChanged();
-            const nextCursor = cursorAt({
-              sourceGeneration,
-              phase,
-              position: {
-                rootEntryOffset: currentRootOffset,
-                rootName: rootEntry.name,
-                rootGeneration,
-                fileEntryOffset: fileOffset,
-              },
-              scanned,
-              aggregateXor,
-              aggregateCount,
-              ...(phase === 'verify' ? { expectedAggregateXor, expectedAggregateCount } : {}),
-            });
             return {
               candidates,
-              nextCursor,
+              nextCursor: cursorAt({ rootEntryOffset: currentRootOffset, rootName: rootEntry.name, rootGeneration, fileEntryOffset: fileOffset }),
               ...(searchIncomplete(searchTerm, true) ? { searchIncomplete: true } : {}),
-              ...(preparation(scanned, searchTerm) ? { preparation: preparation(scanned, searchTerm) } : {}),
             };
           }
           inspectedEntries += 1;
-          scanned += 1;
           fileOffset += 1;
           if (
             !fileEntry.isFile()
@@ -546,87 +535,38 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
 
           const filePath = join(rootPath, fileEntry.name);
           const cursorBeforeCandidate = cursorAt({
-            sourceGeneration,
-            phase,
-            position: {
-              rootEntryOffset: currentRootOffset,
-              rootName: rootEntry.name,
-              rootGeneration,
-              fileEntryOffset: fileOffset - 1,
-            },
-            scanned: scanned - 1,
-            aggregateXor,
-            aggregateCount,
-            ...(phase === 'verify' ? { expectedAggregateXor, expectedAggregateCount } : {}),
+            rootEntryOffset: currentRootOffset, rootName: rootEntry.name, rootGeneration, fileEntryOffset: fileOffset - 1,
           });
-          let identityToken: string;
           let candidate: OhMyPiExternalSessionCandidate | null = null;
-          if (phase === 'scan') {
-            try {
-              const inspected = await inspectCandidateFile({
-                filePath,
-                sessionRoot: rootPath,
-                agentDir,
-                env,
-                searchTerm: params.searchCandidate ? '' : searchTerm,
-              }).catch((error: unknown) => {
-                if (error instanceof OhMyPiCandidateSourceChangedError) throw error;
-                return null;
-              });
-              if (!inspected) continue;
-              identityToken = inspected.identityToken;
-              candidate = inspected.candidate;
-              if (candidate && params.searchCandidate) candidate = await params.searchCandidate(candidate);
-            } catch (error) {
-              if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
-              return { candidates, nextCursor: cursorBeforeCandidate, searchIncomplete: true };
-            }
-          } else {
-            const metadata = await lstat(filePath).catch(() => null);
-            if (!metadata?.isFile() || metadata.isSymbolicLink()) {
-              identityToken = `${filePath}\u0000not-file`;
-            } else {
-              identityToken = `${filePath}\u0000${JSON.stringify(fileIdentity(metadata))}`;
-            }
+          try {
+            candidate = await inspectCandidateFile({
+              filePath,
+              sessionRoot: rootPath,
+              agentDir,
+              env,
+              searchTerm: params.searchCandidate ? '' : searchTerm,
+            }).catch((error: unknown) => {
+              if (error instanceof OhMyPiCandidateSourceChangedError) throw error;
+              return null;
+            });
+            if (candidate && params.searchCandidate) candidate = await params.searchCandidate(candidate);
+          } catch (error) {
+            if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
+            return { candidates, nextCursor: cursorBeforeCandidate, searchIncomplete: true };
           }
-          const aggregate = updateAggregate(aggregateXor, aggregateCount, identityToken);
-          aggregateXor = aggregate.xor;
-          aggregateCount = aggregate.count;
           if (!candidate) continue;
 
           const nextCursor = cursorAt({
-            sourceGeneration,
-            phase,
-            position: {
-              rootEntryOffset: currentRootOffset,
-              rootName: rootEntry.name,
-              rootGeneration,
-              fileEntryOffset: fileOffset,
-            },
-            scanned,
-            aggregateXor,
-            aggregateCount,
+            rootEntryOffset: currentRootOffset, rootName: rootEntry.name, rootGeneration, fileEntryOffset: fileOffset,
           });
-          const nextPreparation = preparation(scanned, searchTerm);
           const nextSearchIncomplete = searchIncomplete(searchTerm, true);
           const proposed = [...candidates, candidate];
-          if (!params.resultBudget || params.resultBudget.fits(
-            proposed,
-            nextCursor,
-            nextSearchIncomplete,
-            nextPreparation,
-          )) {
+          if (!params.resultBudget || params.resultBudget.fits(proposed, nextCursor, nextSearchIncomplete)) {
             candidates.push(candidate);
             continue;
           }
           const { title: _discardedTitle, ...candidateWithoutTitle } = candidate;
-          const withoutTitle = [...candidates, candidateWithoutTitle];
-          if (params.resultBudget.fits(
-            withoutTitle,
-            nextCursor,
-            nextSearchIncomplete,
-            nextPreparation,
-          )) {
+          if (params.resultBudget.fits([...candidates, candidateWithoutTitle], nextCursor, nextSearchIncomplete)) {
             candidates.push(candidateWithoutTitle);
             continue;
           }
@@ -639,9 +579,6 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
             candidates,
             nextCursor: cursorBeforeCandidate,
             ...(searchIncomplete(searchTerm, true) ? { searchIncomplete: true } : {}),
-            ...(preparation(scanned - 1, searchTerm)
-              ? { preparation: preparation(scanned - 1, searchTerm) }
-              : {}),
           };
         }
       } finally {
@@ -653,12 +590,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
         || formatPhysicalGeneration(currentRootMetadata) !== rootGeneration
       ) throwSourceChanged();
       currentRootOffset += 1;
-      position = {
-        rootEntryOffset: currentRootOffset,
-        rootName: null,
-        rootGeneration: null,
-        fileEntryOffset: 0,
-      };
+      position = { rootEntryOffset: currentRootOffset, rootName: null, rootGeneration: null, fileEntryOffset: 0 };
     }
   } finally {
     await rootDirectory.close().catch(() => undefined);
@@ -669,39 +601,5 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
     !finalSessionsRootMetadata?.isDirectory()
     || formatPhysicalGeneration(finalSessionsRootMetadata) !== sourceGeneration
   ) throwSourceChanged();
-
-  if (searchTerm) {
-    return { candidates, nextCursor: null };
-  }
-  if (phase === 'scan') {
-    const nextCursor = cursorAt({
-      sourceGeneration,
-      phase: 'verify',
-      position: {
-        rootEntryOffset: 0,
-        rootName: null,
-        rootGeneration: null,
-        fileEntryOffset: 0,
-      },
-      scanned,
-      aggregateXor: EMPTY_AGGREGATE_XOR,
-      aggregateCount: 0,
-      expectedAggregateXor: aggregateXor,
-      expectedAggregateCount: aggregateCount,
-    });
-    return {
-      candidates,
-      nextCursor,
-      preparation: { kind: 'building_candidate_index', scanned },
-    };
-  }
-  if (
-    aggregateXor !== expectedAggregateXor
-    || aggregateCount !== expectedAggregateCount
-  ) throwSourceChanged();
-  return {
-    candidates: [],
-    nextCursor: null,
-    preparation: { kind: 'building_candidate_index', scanned },
-  };
+  return { candidates, nextCursor: null };
 }

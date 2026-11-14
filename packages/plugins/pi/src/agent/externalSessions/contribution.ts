@@ -1,10 +1,11 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import type { Dir, Dirent } from 'node:fs';
-import { lstat, opendir, stat } from 'node:fs/promises';
+import { lstat, opendir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
+  AgentExternalSessionsListCandidatesRequest,
   AgentExternalSessionLinkData,
   AgentExternalSessionLinkDataValue,
   AgentExternalSessionTranscriptItem,
@@ -25,7 +26,11 @@ import type {
 import {
   compareExternalSessionCandidatePrecedence,
   createAgentExternalSessionsProducerOverflowFailure,
+  ExternalSessionActivityPageBudgetError,
   getAgentExternalSessionsInvocationFailure,
+  pageExternalSessionCandidatesByActivity,
+  parseExternalSessionActivityPosition,
+  type ExternalSessionActivityPosition,
   readSessionInputPromptUserTextV1,
   isAgentExternalSessionsResultWithinByteBudget,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -211,7 +216,7 @@ function readOptionalString(value: unknown): string | null {
 }
 
 function encodeCursor(
-  value: PiCandidateCursor | PiTranscriptCursorV2,
+  value: PiCandidateCursor | PiTranscriptCursorV2 | PiActivityCandidateCursor,
 ): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -523,21 +528,6 @@ function readContentItemText(item: AgentExternalSessionsTranscriptPage['items'][
   return null;
 }
 
-function candidateScanPreparation(
-  scan: PiCandidateScanState,
-  searchTerm: string,
-): Readonly<{
-  preparation?: Readonly<{
-    kind: 'building_candidate_index';
-    scanned: number;
-  }>;
-}> {
-  if (searchTerm) return {};
-  return {
-    preparation: { kind: 'building_candidate_index', scanned: scan.scanned },
-  };
-}
-
 class PiCandidateSourceChangedError extends Error {
   readonly name = 'PiCandidateSourceChangedError';
 }
@@ -754,6 +744,8 @@ async function inspectPiCandidateFile(params: Readonly<{
   filePath: string;
   fullScanLineLimit: number;
   searchTerm: string;
+  /** Activity already read by the Browse ordering pass; skips a second tail read. */
+  updatedAtMs?: number;
 }>): Promise<AgentExternalSessionCandidate | null> {
   const header = await readPiV3Header({
     filePath: params.filePath,
@@ -769,18 +761,135 @@ async function inspectPiCandidateFile(params: Readonly<{
   const title = scanned.title ?? formatPiCandidateTitle(scanned.firstUserMessage);
   const haystack = `${scanned.sessionId} ${title ?? ''} ${scanned.cwd ?? ''}`.toLowerCase();
   if (params.searchTerm && !haystack.includes(params.searchTerm)) return null;
-  const lastRecordTimestampMs = await readLastRecordTimestampMs({
+  const lastRecordTimestampMs = params.updatedAtMs !== undefined ? null : await readLastRecordTimestampMs({
     filePath: params.filePath,
     maxBytes: PI_CANDIDATE_INSPECTION_MAX_BYTES,
   });
   return {
     remoteSessionId: scanned.sessionId,
     ...(title ? { title } : {}),
-    updatedAtMs: Math.max(header.createdAtMs, lastRecordTimestampMs ?? header.createdAtMs),
+    updatedAtMs: params.updatedAtMs ?? Math.max(header.createdAtMs, lastRecordTimestampMs ?? header.createdAtMs),
     createdAtMs: header.createdAtMs,
     linkData: { sessionFile: params.filePath },
     ...(scanned.cwd ? { cwd: scanned.cwd } : {}),
   };
+}
+
+type PiActivityCandidateCursor = Readonly<{
+  v: 4;
+  kind: 'piCandidateActivity';
+  sourceKey: string;
+  after: ExternalSessionActivityPosition;
+}>;
+
+function decodeActivityCandidateCursor(raw: string): PiActivityCandidateCursor | null {
+  const record = decodeCursorRecord(raw);
+  const after = record ? parseExternalSessionActivityPosition(record.after) : null;
+  return record && record.v === 4 && record.kind === 'piCandidateActivity' && typeof record.sourceKey === 'string' && after
+    ? { v: 4, kind: 'piCandidateActivity', sourceKey: record.sourceKey, after }
+    : null;
+}
+
+function isMissingFile(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'));
+}
+
+/**
+ * Pi's activity truth is its records' timestamps, not file mtime: a session's
+ * place in Browse is its last record's time (its header's when the tail has
+ * none). One bounded tail read per session file; titles and identity are read
+ * only for the rows a page serves. The ordering tie-break is the file's path
+ * under the sessions root, which is unique without opening the header.
+ */
+async function listPiSessionActivity(params: Readonly<{
+  sessionsRoot: string;
+  signal: AbortSignal;
+}>): Promise<readonly Readonly<{ remoteSessionId: string; updatedAtMs: number; filePath: string }>[]> {
+  const workspaces = await readdir(params.sessionsRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isMissingFile(error)) return [];
+    throw error;
+  });
+  const rows: { remoteSessionId: string; updatedAtMs: number; filePath: string }[] = [];
+  for (const workspace of workspaces) {
+    params.signal.throwIfAborted();
+    if (!workspace.isDirectory() || workspace.isSymbolicLink()) continue;
+    const workspacePath = join(params.sessionsRoot, workspace.name);
+    const files = await readdir(workspacePath, { withFileTypes: true }).catch((error: unknown) => {
+      if (isMissingFile(error)) return [];
+      throw error;
+    });
+    const found = await Promise.all(files.map(async (file) => {
+      if (!file.isFile() || file.isSymbolicLink() || !file.name.endsWith('.jsonl')) return null;
+      const filePath = join(workspacePath, file.name);
+      try {
+        const updatedAtMs = await readLastRecordTimestampMs({ filePath, maxBytes: PI_CANDIDATE_INSPECTION_MAX_BYTES })
+          ?? (await readPiV3Header({ filePath, maxBytes: PI_CANDIDATE_INSPECTION_MAX_BYTES }))?.createdAtMs;
+        return updatedAtMs == null ? null : { remoteSessionId: `${workspace.name}/${file.name}`, updatedAtMs, filePath };
+      } catch (error) {
+        if (isMissingFile(error)) return null;
+        throw error;
+      }
+    }));
+    for (const row of found) if (row) rows.push(row);
+  }
+  params.signal.throwIfAborted();
+  return rows;
+}
+
+/**
+ * Unsearched Browse in activity order (see `listPiSessionActivity`). A cursor
+ * from the retired directory scan is a stale source continuation.
+ */
+async function listPiCandidatesByActivity(params: Readonly<{
+  request: AgentExternalSessionsListCandidatesRequest;
+  source: ResolvedPiSource;
+}>): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
+  const { request } = params;
+  const key = sourceKey(params.source);
+  const cursor = request.cursor ? decodeActivityCandidateCursor(request.cursor) : null;
+  if (request.cursor && !cursor) {
+    // A continuation of the retired directory scan is stale, not malformed.
+    return decodeCandidateCursor(request.cursor)?.sourceKey === key
+      ? failed('source_invalid', 'Pi candidate cursor source generation is stale or unavailable.', true)
+      : failed('invalid_request', 'Pi candidate cursor does not match the resolved source.');
+  }
+  if (cursor && cursor.sourceKey !== key) {
+    return failed('invalid_request', 'Pi candidate cursor does not match the resolved source.');
+  }
+  const updatedAfterMs = request.updatedAfterMs;
+  const entries = (await listPiSessionActivity({ sessionsRoot: params.source.sessionsRoot, signal: request.signal }))
+    .filter((entry) => updatedAfterMs === undefined || entry.updatedAtMs >= updatedAfterMs);
+  let page;
+  try {
+    page = await pageExternalSessionCandidatesByActivity({
+      entries,
+      after: cursor?.after ?? null,
+      limit: request.maxItems,
+      signal: request.signal,
+      readRows: async (rows) => await Promise.all(rows.map(async (row) => await inspectPiCandidateFile({
+        filePath: row.filePath,
+        fullScanLineLimit: request.maxItems,
+        searchTerm: '',
+        updatedAtMs: row.updatedAtMs,
+      }))),
+      fits: (candidates, next) => isAgentExternalSessionsResultWithinByteBudget(
+        ok({ candidates, nextCursor: next ? encodeCursor({ v: 4, kind: 'piCandidateActivity', sourceKey: key, after: next }) : null }),
+        request.maxSerializedBytes,
+      ),
+    });
+  } catch (error) {
+    if (error instanceof ExternalSessionActivityPageBudgetError) {
+      return createAgentExternalSessionsProducerOverflowFailure('Pi candidate result byte budget cannot fit one candidate.');
+    }
+    throw error;
+  }
+  const result = ok({
+    candidates: page.candidates,
+    nextCursor: page.next ? encodeCursor({ v: 4, kind: 'piCandidateActivity', sourceKey: key, after: page.next }) : null,
+  });
+  return isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)
+    ? result
+    : createAgentExternalSessionsProducerOverflowFailure('Pi candidate result byte budget cannot fit the page envelope.');
 }
 
 type PiTranscriptEntryProjection =
@@ -1368,6 +1477,16 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         signal: request.signal,
         deadlineAtMs: request.scanDeadlineAtMs ?? request.deadlineAtMs,
       }) : null;
+      if (!searchTerm && !contentSearch) {
+        try {
+          return await listPiCandidatesByActivity({ request, source: resolved.value });
+        } catch (error) {
+          const after = getAgentExternalSessionsInvocationFailure(request);
+          if (after) return after;
+          if (isPluginError(error) && error.code === 'JSONL_RECORD_TOO_LARGE') return failed('agent_error', error.message, false);
+          return failed('agent_error', error instanceof Error ? error.message : 'Pi external-session listing failed.', true);
+        }
+      }
       let yielded = false;
       let partial = false;
       const decodedCursor = request.cursor ? decodeCandidateCursor(request.cursor) : null;
@@ -1470,7 +1589,6 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             nextCursor,
             ...(searchTerm ? { searchIncomplete: true } : {}),
             ...(contentSearch ? { contentCoverage: 'partial' as const } : {}),
-            ...candidateScanPreparation(scan, searchTerm),
           });
           if (!isAgentExternalSessionsResultWithinByteBudget(proposed, request.maxSerializedBytes)) {
             if (candidates.length === 0) {
@@ -1512,7 +1630,6 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           nextCursor,
           ...(searchTerm && hasMore ? { searchIncomplete: true } : {}),
           ...(contentSearch ? { contentCoverage: hasMore || partial ? 'partial' as const : 'complete' as const } : {}),
-          ...candidateScanPreparation(scan, searchTerm),
         };
         const result = ok(value);
         if (!isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)) {

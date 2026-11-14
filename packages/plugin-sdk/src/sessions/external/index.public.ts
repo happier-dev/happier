@@ -54,7 +54,6 @@ export type { AgentExternalSessionTranscriptItem } from '../../externalSessions.
 export type { AgentExternalSessionTranscriptRawRecord } from '../../externalSessions.js';
 export { AgentExternalSessionTranscriptRawRecordSchema } from '../../externalSessions.js';
 export type { AgentExternalSessionUserProjection } from '../../externalSessions.js';
-export type { AgentExternalSessionsCandidatePreparation } from '../../externalSessions.js';
 export type { AgentExternalSessionsContribution } from '../../externalSessions.js';
 export type { AgentExternalSessionsFailureCode } from '../../externalSessions.js';
 export type { AgentExternalSessionsInvocation } from '../../externalSessions.js';
@@ -125,3 +124,10 @@ export {
 export type { AgentExternalSessionsMaterializeTranscriptMediaRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsHydrateCandidatesRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsHydrateCandidatesResult } from '../../externalSessions.js';
+export {
+    compareExternalSessionActivityPositions,
+    ExternalSessionActivityPageBudgetError,
+    pageExternalSessionCandidatesByActivity,
+    parseExternalSessionActivityPosition,
+} from './activityPage.js';
+export type { ExternalSessionActivityPosition } from './activityPage.js';

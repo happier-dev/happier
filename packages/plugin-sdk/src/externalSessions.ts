@@ -397,20 +397,14 @@ export type AgentExternalSessionsListCandidatesRequest = AgentExternalSessionsIn
      * sessions only, and pages, cursors and progress describe that listing.
      */
     includeThreads?: boolean;
-    /** Read-only lookup into the same host index receiving this result. */
+    /** Read-only lookup into the host's per-row checkpoints for rows it has served. */
     readCandidateIndexState?: AgentExternalSessionCandidateIndexLookup;
-}>;
-export type AgentExternalSessionsCandidatePreparation = Readonly<{
-    kind: 'building_candidate_index';
-    scanned: number;
-    total?: number;
 }>;
 export type AgentExternalSessionsListCandidatesResult = Readonly<{
     candidates: readonly AgentExternalSessionCandidate[];
     nextCursor: string | null;
     searchIncomplete?: boolean;
     contentCoverage?: 'complete' | 'partial' | 'unsupported';
-    preparation?: AgentExternalSessionsCandidatePreparation;
 }>;
 
 /** Optional display enrichment for an already selected, source-admitted page.

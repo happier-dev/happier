@@ -50,47 +50,52 @@ afterEach(async () => {
 });
 
 describe('listOhMyPiSessionCandidates', () => {
-  it('emits a bounded preparation chunk instead of scanning the whole corpus before slicing', async () => {
-    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-bounded-candidates-'));
+  it('serves Browse newest-activity-first and reads titles only for the served rows', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-activity-candidates-'));
     tempDirs.add(agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');
     await mkdir(sessionRoot, { recursive: true });
-    await Promise.all(Array.from({ length: 100 }, async (_, index) => {
+    const count = 120;
+    const base = Date.UTC(2026, 6, 23);
+    for (let index = 0; index < count; index += 1) {
+      // Created in index order; the first created was active most recently.
       const remoteSessionId = `session-${String(index).padStart(3, '0')}`;
+      const createdAt = new Date(base + index * 1_000).toISOString();
+      const lastAt = new Date(base + 10_000_000 + (count - index) * 60_000).toISOString();
       await writeFile(
-        join(sessionRoot, `2026-07-23T10-00-00-000Z_${remoteSessionId}.jsonl`),
-        jsonlLine({
-          type: 'session',
-          version: 3,
-          id: remoteSessionId,
-          timestamp: `2026-07-23T10:${String(index % 60).padStart(2, '0')}:00.000Z`,
-          cwd: '/repo',
-        }),
+        join(sessionRoot, `${createdAt.replaceAll(':', '-').replace('.', '-')}_${remoteSessionId}.jsonl`),
+        jsonlLine({ type: 'session', version: 3, id: remoteSessionId, timestamp: createdAt, cwd: '/repo' })
+          + jsonlLine({ type: 'message', id: `${remoteSessionId}-user`, parentId: null, timestamp: lastAt,
+            message: { role: 'user', content: `prompt ${index}` } }),
         'utf8',
       );
-    }));
+    }
     vi.mocked(open).mockClear();
-
-    const result = await listOhMyPiSessionCandidates({
-      source: { kind: 'ohMyPiAgentDir', agentDir },
-      env: {},
-      limit: 5,
+    const first = await listOhMyPiSessionCandidates({ source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 10 });
+    const firstOpens = vi.mocked(open).mock.calls.length;
+    expect({
+      ids: first.candidates.map((candidate) => candidate.remoteSessionId),
+      titles: first.candidates.map((candidate) => candidate.title),
+      preparation: (first as { preparation?: unknown }).preparation,
+    }).toEqual({
+      ids: Array.from({ length: 10 }, (_, index) => `session-${String(index).padStart(3, '0')}`),
+      titles: Array.from({ length: 10 }, (_, index) => `prompt ${index}`),
+      preparation: undefined,
     });
-
-    expect(vi.mocked(open).mock.calls.length).toBeLessThanOrEqual(12);
-    expect(result).toMatchObject({
-      candidates: expect.any(Array),
-      nextCursor: expect.any(String),
-      preparation: {
-        kind: 'building_candidate_index',
-        scanned: 5,
-      },
+    // One tail read per file for its activity time; head and tail scans only
+    // for the 10 served rows.
+    expect(firstOpens).toBe(count + 2 * 10);
+    if (!first.nextCursor) throw new Error('expected a Browse continuation');
+    const second = await listOhMyPiSessionCandidates({
+      source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 10, cursor: first.nextCursor,
     });
-    expect(result.candidates).toHaveLength(5);
+    expect(second.candidates.map((candidate) => candidate.remoteSessionId))
+      .toEqual(Array.from({ length: 10 }, (_, index) => `session-${String(index + 10).padStart(3, '0')}`));
+    expect(second.candidates[0]?.updatedAtMs).toBe(base + 10_000_000 + (count - 10) * 60_000);
   });
 
-  it('rejects a generation-bound continuation after replacement would reorder prior results', async () => {
-    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-generation-candidates-'));
+  it('continues after the served row when a session becomes newer between pages', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-activity-moved-'));
     tempDirs.add(agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');
     await mkdir(sessionRoot, { recursive: true });
@@ -98,152 +103,24 @@ describe('listOhMyPiSessionCandidates', () => {
       const remoteSessionId = `session-${index}`;
       const path = join(sessionRoot, `2026-07-23T10-00-0${index}-000Z_${remoteSessionId}.jsonl`);
       await writeFile(path, jsonlLine({
-        type: 'session',
-        version: 3,
-        id: remoteSessionId,
-        timestamp: `2026-07-23T10:00:0${index}.000Z`,
-        cwd: '/repo',
+        type: 'session', version: 3, id: remoteSessionId, timestamp: `2026-07-23T10:00:0${index}.000Z`, cwd: '/repo',
       }), 'utf8');
       return path;
     }));
-
-    const first = await listOhMyPiSessionCandidates({
-      source: { kind: 'ohMyPiAgentDir', agentDir },
-      env: {},
-      limit: 2,
-    });
-    expect(first.nextCursor).toEqual(expect.any(String));
-    if (!first.nextCursor) return;
-
-    const replacement = `${paths[2]}.replacement`;
-    await writeFile(replacement, jsonlLine({
-      type: 'session',
-      version: 3,
-      id: 'session-2',
-      timestamp: '2026-07-23T11:00:00.000Z',
-      cwd: '/repo',
-    }), 'utf8');
-    await rename(replacement, paths[2]);
-
-    await expect(listOhMyPiSessionCandidates({
-      source: { kind: 'ohMyPiAgentDir', agentDir },
-      env: {},
-      cursor: first.nextCursor,
-      limit: 2,
-    })).rejects.toBeInstanceOf(OhMyPiCandidateSourceChangedError);
-  });
-
-  it('rejects the completed preparation when a previously scanned file changes in place', async () => {
-    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-verify-candidates-'));
-    tempDirs.add(agentDir);
-    const sessionRoot = join(agentDir, 'sessions', '-repo');
-    await mkdir(sessionRoot, { recursive: true });
-    await Promise.all(Array.from({ length: 6 }, async (_, index) => {
-      const remoteSessionId = `verify-${index}`;
-      await writeFile(
-        join(sessionRoot, `2026-07-23T10-00-0${index}-000Z_${remoteSessionId}.jsonl`),
-        jsonlLine({
-          type: 'session',
-          version: 3,
-          id: remoteSessionId,
-          timestamp: `2026-07-23T10:00:0${index}.000Z`,
-          cwd: '/repo',
-        }),
-        'utf8',
-      );
-    }));
-
-    const first = await listOhMyPiSessionCandidates({
-      source: { kind: 'ohMyPiAgentDir', agentDir },
-      env: {},
-      limit: 2,
-    });
-    const firstCandidateDetails = first.candidates[0]?.details as
-      | Readonly<{ sessionFilePath?: unknown }>
-      | undefined;
-    expect(firstCandidateDetails?.sessionFilePath).toEqual(expect.any(String));
-    expect(first.nextCursor).toEqual(expect.any(String));
-    if (typeof firstCandidateDetails?.sessionFilePath !== 'string' || !first.nextCursor) return;
-
+    const first = await listOhMyPiSessionCandidates({ source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 2 });
+    expect(first.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['session-3', 'session-2']);
+    if (!first.nextCursor) throw new Error('expected a Browse continuation');
+    await appendFile(paths[0]!, jsonlLine({ type: 'session_info', name: 'later', timestamp: '2026-07-23T11:00:00.000Z' }), 'utf8');
     const second = await listOhMyPiSessionCandidates({
-      source: { kind: 'ohMyPiAgentDir', agentDir },
-      env: {},
-      cursor: first.nextCursor,
-      limit: 2,
+      source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 2, cursor: first.nextCursor,
     });
-    expect(second.nextCursor).toEqual(expect.any(String));
-    if (!second.nextCursor) return;
-    await appendFile(firstCandidateDetails.sessionFilePath, jsonlLine({
-      type: 'session_info',
-      name: 'mutated after its scan chunk',
-      timestamp: '2026-07-23T12:00:00.000Z',
-    }), 'utf8');
-
-    let cursor = second.nextCursor;
-    let rejection: unknown = null;
-    for (let attempt = 0; attempt < 10 && cursor; attempt += 1) {
-      try {
-        const page = await listOhMyPiSessionCandidates({
-          source: { kind: 'ohMyPiAgentDir', agentDir },
-          env: {},
-          cursor,
-          limit: 2,
-        });
-        cursor = page.nextCursor ?? '';
-      } catch (error) {
-        rejection = error;
-        break;
-      }
-    }
-    expect(rejection).toBeInstanceOf(OhMyPiCandidateSourceChangedError);
+    // session-0 moved above the continuation: the next listing from the top shows it first.
+    expect(second).toMatchObject({ candidates: [expect.objectContaining({ remoteSessionId: 'session-1' })], nextCursor: null });
+    const refreshed = await listOhMyPiSessionCandidates({ source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 1 });
+    expect(refreshed.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['session-0']);
   });
 
-  it('keeps every scan and verification chunk bounded while covering the stable corpus exactly once', async () => {
-    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-bounded-verification-'));
-    tempDirs.add(agentDir);
-    const sessionRoot = join(agentDir, 'sessions', '-repo');
-    await mkdir(sessionRoot, { recursive: true });
-    const expectedIds = Array.from({ length: 6 }, (_, index) => `bounded-verify-${index}`);
-    await Promise.all(expectedIds.map(async (remoteSessionId, index) => {
-      await writeFile(
-        join(sessionRoot, `2026-07-23T10-00-0${index}-000Z_${remoteSessionId}.jsonl`),
-        jsonlLine({
-          type: 'session',
-          version: 3,
-          id: remoteSessionId,
-          timestamp: `2026-07-23T10:00:0${index}.000Z`,
-          cwd: '/repo',
-        }),
-        'utf8',
-      );
-    }));
-
-    const seen: string[] = [];
-    let cursor: string | undefined;
-    let sawVerificationChunk = false;
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      vi.mocked(open).mockClear();
-      const page = await listOhMyPiSessionCandidates({
-        source: { kind: 'ohMyPiAgentDir', agentDir },
-        env: {},
-        ...(cursor ? { cursor } : {}),
-        limit: 2,
-      });
-      expect(vi.mocked(open).mock.calls.length).toBeLessThanOrEqual(4);
-      expect(page.candidates.length).toBeLessThanOrEqual(2);
-      expect(page.preparation).toMatchObject({ kind: 'building_candidate_index' });
-      if (page.candidates.length === 0 && page.nextCursor) sawVerificationChunk = true;
-      seen.push(...page.candidates.map((candidate) => candidate.remoteSessionId));
-      cursor = page.nextCursor ?? undefined;
-      if (!cursor) break;
-    }
-
-    expect(sawVerificationChunk).toBe(true);
-    expect(seen).toHaveLength(expectedIds.length);
-    expect(new Set(seen)).toEqual(new Set(expectedIds));
-  });
-
-  it('stops bounded preparation when the browse signal is cancelled', async () => {
+  it('stops Browse when the signal is cancelled', async () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-cancel-candidates-'));
     tempDirs.add(agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');

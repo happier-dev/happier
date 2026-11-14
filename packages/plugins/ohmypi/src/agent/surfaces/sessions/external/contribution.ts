@@ -368,7 +368,6 @@ function candidateResultFits(params: Readonly<{
   candidates: readonly ReturnType<typeof mapCandidate>[];
   nextCursor: string | null;
   searchIncomplete: boolean | undefined;
-  preparation: Readonly<{ kind: 'building_candidate_index'; scanned: number }> | undefined;
   maxSerializedBytes?: number;
   contentSearch?: boolean;
 }>): boolean {
@@ -376,7 +375,6 @@ function candidateResultFits(params: Readonly<{
     candidates: params.candidates,
     nextCursor: params.nextCursor,
     ...(params.searchIncomplete !== undefined ? { searchIncomplete: params.searchIncomplete } : {}),
-    ...(params.preparation !== undefined ? { preparation: params.preparation } : {}),
     ...(params.contentSearch ? { contentCoverage: 'complete' } : {}),
   })) <= params.maxSerializedBytes;
 }
@@ -404,12 +402,11 @@ async function resolveUnqualifiedOhMyPiCandidate(params: Readonly<{
       searchTerm: params.remoteSessionId,
       signal: params.invocation.signal,
       resultBudget: {
-        fits(candidates, nextCursor, searchIncomplete, preparation) {
+        fits(candidates, nextCursor, searchIncomplete) {
           return candidateResultFits({
             candidates: candidates.map(mapCandidate),
             nextCursor,
             searchIncomplete,
-            preparation,
             maxSerializedBytes: params.invocation.maxSerializedBytes,
           });
         },
@@ -523,6 +520,7 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
           cursor,
           limit: request.maxItems,
           searchTerm: request.searchTerm,
+          ...(request.updatedAfterMs === undefined ? {} : { updatedAfterMs: request.updatedAfterMs }),
           signal: request.signal,
           ...(control ? {
             async searchCandidate(candidate: OhMyPiExternalSessionCandidate) {
@@ -581,12 +579,11 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
             },
           } : {}),
           resultBudget: {
-            fits(candidates, nextCursor, searchIncomplete, preparation) {
+            fits(candidates, nextCursor, searchIncomplete) {
               return candidateResultFits({
                 candidates: candidates.map(mapCandidate),
                 nextCursor: wrapCursor(nextCursor),
                 searchIncomplete,
-                preparation,
                 maxSerializedBytes: request.maxSerializedBytes,
                 contentSearch,
               });
@@ -603,7 +600,6 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
           ...(listed.searchIncomplete !== undefined
             ? { searchIncomplete: listed.searchIncomplete }
             : {}),
-          ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
         };
         const result = ok(value);
         if (serializedByteLength(result) <= request.maxSerializedBytes) return result;

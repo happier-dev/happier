@@ -506,7 +506,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
     expect(JSON.stringify(listed)).not.toContain('ambient-pi');
   });
 
-  it('lists source-qualified candidates one bounded page at a time without using mtime as activity truth', async () => {
+  it('lists source-qualified candidates in record-time activity order without using mtime as activity truth', async () => {
     const { agentDir, sessionRoot } = await createAgentDir();
     const olderPath = await createSessionFile({
       sessionRoot,
@@ -542,15 +542,14 @@ describe('Pi pure External Sessions contribution leaf', () => {
       },
     });
     if (!first.ok || !first.value.nextCursor) return;
-    expect(first.value).toMatchObject({
-      preparation: { kind: 'building_candidate_index', scanned: 1 },
-    });
+    expect(first.value).not.toHaveProperty('preparation');
+    // The older session's 2035 mtime does not move it ahead of the newer one.
+    expect(first.value.candidates[0]?.remoteSessionId).toBe('pi-newer');
     expect(JSON.parse(Buffer.from(first.value.nextCursor, 'base64url').toString('utf8'))).toMatchObject({
-      v: 3,
-      kind: 'piCandidateIndexScan',
+      v: 4,
+      kind: 'piCandidateActivity',
       sourceKey: JSON.stringify([await realpath(agentDir), await realpath(join(agentDir, 'sessions'))]),
-      sourceGeneration: expect.any(String),
-      scanned: 1,
+      after: { updatedAtMs: Date.parse('2026-07-21T10:00:00.000Z') },
     });
 
     const candidates = [...first.value.candidates];
@@ -565,14 +564,13 @@ describe('Pi pure External Sessions contribution leaf', () => {
       });
       expect(page.ok).toBe(true);
       if (!page.ok) return;
-      expect(page.value).toMatchObject({
-        preparation: { kind: 'building_candidate_index', scanned: expect.any(Number) },
-      });
+      expect(page.value).not.toHaveProperty('preparation');
       candidates.push(...page.value.candidates);
       cursor = page.value.nextCursor;
       calls += 1;
       expect(calls).toBeLessThanOrEqual(4);
     }
+    expect(candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['pi-newer', 'pi-older']);
     expect(candidates).toEqual(expect.arrayContaining([
       expect.objectContaining({
         remoteSessionId: 'pi-newer',
@@ -586,75 +584,6 @@ describe('Pi pure External Sessions contribution leaf', () => {
           linkData: { sessionFile: canonicalOlderPath },
       }),
     ]));
-  });
-
-  it('hands a newer candidate discovered in a later filesystem chunk to canonical index preparation', async () => {
-    const { agentDir, sessionRoot } = await createAgentDir();
-    const createdAt = '2026-07-20T10:00:00.000Z';
-    const firstPath = await createSessionFile({
-      sessionRoot,
-      sessionId: 'pi-traversal-first',
-      createdAt,
-      title: 'First traversal candidate',
-    });
-    const laterPath = await createSessionFile({
-      sessionRoot,
-      sessionId: 'pi-traversal-later',
-      createdAt,
-      title: 'Later traversal candidate',
-    });
-    const directory = await opendir(sessionRoot);
-    const traversal = [] as string[];
-    for await (const entry of directory) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) traversal.push(entry.name);
-    }
-    const newestPath = traversal.at(-1) === basename(firstPath)
-      ? firstPath
-      : laterPath;
-    const newestId = newestPath === firstPath ? 'pi-traversal-first' : 'pi-traversal-later';
-    const newestTimestamp = '2026-07-22T10:00:00.000Z';
-    await writeFile(
-      newestPath,
-      (await readFile(newestPath, 'utf8')).replaceAll(createdAt, newestTimestamp),
-      'utf8',
-    );
-
-    const contribution = createPiExternalSessionsContribution({
-      env: { PI_CODING_AGENT_DIR: agentDir },
-    });
-    const source = { kind: 'piAgentDir' as const };
-    const first = await contribution.listCandidates({
-      ...invocation(),
-      source,
-      maxItems: 1,
-    });
-    expect(first).toMatchObject({
-      ok: true,
-      value: {
-        candidates: [expect.any(Object)],
-        nextCursor: expect.any(String),
-        preparation: { kind: 'building_candidate_index', scanned: 1 },
-      },
-    });
-    if (!first.ok || !first.value.nextCursor) throw new Error('expected later traversal cursor');
-    expect(first.value.candidates[0]?.remoteSessionId).not.toBe(newestId);
-
-    const second = await contribution.listCandidates({
-      ...invocation(),
-      source,
-      cursor: first.value.nextCursor,
-      maxItems: 1,
-    });
-    expect(second).toMatchObject({
-      ok: true,
-      value: {
-        candidates: [expect.objectContaining({
-          remoteSessionId: newestId,
-          updatedAtMs: Date.parse(newestTimestamp),
-        })],
-        preparation: { kind: 'building_candidate_index', scanned: 2 },
-      },
-    });
   });
 
   it('keeps full searched traversal bounded instead of materializing a leaf-local corpus', async () => {
@@ -1130,14 +1059,17 @@ describe('Pi pure External Sessions contribution leaf', () => {
       expect(page.ok).toBe(true);
       if (!page.ok) throw new Error(page.code);
       expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(byteBudget);
-      expect(page.value.candidates).toHaveLength(1);
+      // A continuation page holds one row at this budget; the final page needs
+      // no cursor and may fit one more.
+      expect(page.value.candidates.length).toBe(page.value.nextCursor ? 1 : page.value.candidates.length);
+      expect(page.value.candidates.length).toBeGreaterThan(0);
       ids.push(...page.value.candidates.map(candidate => candidate.remoteSessionId));
       cursor = page.value.nextCursor ?? undefined;
     } while (cursor);
     expect(ids.sort()).toEqual(['pi-byte-page-0', 'pi-byte-page-1', 'pi-byte-page-2']);
   });
 
-  it('rejects a candidate continuation when native root membership changes between chunks', async () => {
+  it('continues after the cursor when a newer session appears between pages', async () => {
     const { agentDir, sessionRoot } = await createAgentDir();
     await createSessionFile({
       sessionRoot,
@@ -1166,9 +1098,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
       },
     });
     if (!first.ok || !first.value.nextCursor) return;
-    expect(first.value).toMatchObject({
-      preparation: { kind: 'building_candidate_index', scanned: expect.any(Number) },
-    });
+    expect(first.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['pi-before-first']);
 
     await createSessionFile({
       sessionRoot,
@@ -1177,15 +1107,17 @@ describe('Pi pure External Sessions contribution leaf', () => {
       title: 'Inserted Pi session',
     });
 
-    await expect(contribution.listCandidates({
+    // The seek continuation resumes strictly after the row it served; the
+    // newer session sorts above it and appears on the next listing from the top.
+    const second = await contribution.listCandidates({
       ...invocation(),
       source: { kind: 'piAgentDir' },
       cursor: first.value.nextCursor,
       maxItems: 1,
-    })).resolves.toMatchObject({
-      ok: false,
-      code: 'source_invalid',
-      retryable: true,
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      value: { candidates: [expect.objectContaining({ remoteSessionId: 'pi-before-second' })], nextCursor: null },
     });
   });
 
@@ -1247,7 +1179,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
     ]);
   });
 
-  it('bounds native directory traversal to one candidate preparation chunk', async () => {
+  it('checks cancellation per workspace and page, not per native directory entry', async () => {
     const { agentDir, sessionRoot } = await createAgentDir();
     await Promise.all(Array.from({ length: 128 }, async (_, index) => {
       const suffix = String(index).padStart(3, '0');
@@ -1287,11 +1219,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
         nextCursor: expect.any(String),
       },
     });
-    if (page.ok) {
-      expect(page.value).toMatchObject({
-        preparation: { kind: 'building_candidate_index', scanned: expect.any(Number) },
-      });
-    }
+    if (page.ok) expect(page.value).not.toHaveProperty('preparation');
     expect(boundaryChecks).toBeLessThanOrEqual(24);
   });
 
@@ -1394,35 +1322,6 @@ describe('Pi pure External Sessions contribution leaf', () => {
       },
     });
     if (result.ok) expect(result.value).not.toHaveProperty('preparation');
-  });
-
-  it('advances candidate preparation progress when a bounded chunk consumes only a workspace root', async () => {
-    const { agentDir } = await createAgentDir();
-    await mkdir(join(agentDir, 'sessions', '--empty-workspace--'));
-    const contribution = createPiExternalSessionsContribution({
-      env: { PI_CODING_AGENT_DIR: agentDir },
-    });
-
-    const first = await contribution.listCandidates({
-      ...invocation(),
-      source: { kind: 'piAgentDir' },
-      maxItems: 1,
-    });
-
-    expect(first).toMatchObject({
-      ok: true,
-      value: {
-        candidates: [],
-        nextCursor: expect.any(String),
-        preparation: { kind: 'building_candidate_index', scanned: expect.any(Number) },
-      },
-    });
-    if (!first.ok || !first.value.nextCursor) return;
-    expect(first.value.preparation?.scanned).toBeGreaterThan(0);
-    expect(JSON.parse(Buffer.from(first.value.nextCursor, 'base64url').toString('utf8'))).toMatchObject({
-      kind: 'piCandidateIndexScan',
-      scanned: expect.any(Number),
-    });
   });
 
   it('resolves an unqualified duplicate session id through shared candidate precedence', async () => {
@@ -2535,14 +2434,17 @@ describe('Pi pure External Sessions contribution leaf', () => {
       ok: false,
       code: 'invalid_request',
     });
-    // The cursor is untrusted input: a directory position cannot grant a path
-    // outside this source, even with an otherwise valid source generation.
+    // The cursor is untrusted input: its activity position is only compared
+    // with listed rows and never opened, so a forged key cannot grant a path.
     const forged: Record<string, unknown> = JSON.parse(Buffer.from(first.value.nextCursor, 'base64url').toString('utf8'));
-    forged.position = { rootEntryOffset: 1, rootName: '../outside', rootGeneration: 'forged', fileEntryOffset: 0 };
-    await expect(firstContribution.listCandidates({
-      ...invocation(), source: { kind: 'piAgentDir' }, maxItems: 1,
+    forged.after = { updatedAtMs: Number.MAX_SAFE_INTEGER, remoteSessionId: '../outside/escape.jsonl' };
+    const forgedPage = await firstContribution.listCandidates({
+      ...invocation(), source: { kind: 'piAgentDir' }, maxItems: 5,
       cursor: Buffer.from(JSON.stringify(forged)).toString('base64url'),
-    })).resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+    });
+    if (!forgedPage.ok) throw new Error(forgedPage.code);
+    const sessionsRoot = await realpath(join(firstRoot.agentDir, 'sessions'));
+    expect(forgedPage.value.candidates.every((candidate) => String(candidate.linkData?.sessionFile).startsWith(sessionsRoot))).toBe(true);
   });
 
   it('replaces inline tool-result image bytes with a visible transcript marker', async () => {
