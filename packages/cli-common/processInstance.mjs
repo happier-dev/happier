@@ -6,11 +6,11 @@ function normalizePid(pid) {
   return Number.isInteger(value) && value > 1 ? value : null;
 }
 
-function runProbe(command, args, { spawnSyncImpl }) {
+function runProbe(command, args, { spawnSyncImpl, stderr = 'ignore' }) {
   const result = spawnSyncImpl(command, args, {
     encoding: 'utf8',
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', stderr],
   });
   if (result?.error || result?.status !== 0) return null;
   const value = String(result?.stdout ?? '').trim();
@@ -51,17 +51,19 @@ export function readProcessInstanceFingerprintSync(pid, {
     // any other .NET failure (for example access denied) falls back to the original CIM query.
     const script = [
       `$t = $null; try { $t = [System.Diagnostics.Process]::GetProcessById(${normalizedPid}).StartTime.ToUniversalTime() } catch [System.ArgumentException] { exit 3 } catch { $t = $null }`,
-      'if ($null -ne $t) { [DateTime]::new($t.Ticks - ($t.Ticks % 10), [DateTimeKind]::Utc).ToString("O"); exit 0 }',
+      'if ($null -ne $t) { $t = [DateTime]::new($t.Ticks - ($t.Ticks % 10), [DateTimeKind]::Utc) } else {',
+      '[Console]::Error.WriteLine("[happier] Windows process fingerprint: .NET StartTime unavailable; using slower CIM probe.")',
       `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${normalizedPid}" -ErrorAction Stop`,
       'if ($null -eq $p) { exit 3 }',
-      '$p.CreationDate.ToUniversalTime().ToString("O")',
+      '$t = $p.CreationDate.ToUniversalTime() }',
+      '$t.ToString("O")',
     ].join('; ');
     const value = runProbe('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
       script,
-    ], { spawnSyncImpl });
+    ], { spawnSyncImpl, stderr: 'inherit' });
     return value ? `win32-cim:${value}` : null;
   }
 
