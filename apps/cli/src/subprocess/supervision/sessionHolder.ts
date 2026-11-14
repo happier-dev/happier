@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
@@ -144,8 +144,12 @@ export function createSessionHolderAdoptedTurnReader(environment: NodeJS.Process
     };
 }
 
-/** One held Agent of a runner, as the daemon records it in the Session marker. */
-export type SessionHeldAgentV1 = Omit<SessionHolderAdoptToken, 'turnId'> & Readonly<{ role: 'primary' }>;
+/**
+ * One held Agent of a runner, as the daemon records it in the Session marker. A
+ * target-held Agent also names the relay its runner reaches the target through
+ * (`relaySocketPath`): a restarted daemon serves it again for the surviving runner.
+ */
+export type SessionHeldAgentV1 = Omit<SessionHolderAdoptToken, 'turnId'> & Readonly<{ role: 'primary'; relaySocketPath?: string }>;
 
 /**
  * A container/sandbox target that holds this Session's Agents (placement "target"):
@@ -259,7 +263,8 @@ function reportHeldPrimaryAgent(child: SessionHolderChild, sessionId: string | u
     // A target-held Agent is recorded with the target's pids (the daemon reaches it through the target).
     const agentPid = child.target ? child.remoteAgentPid : child.pid;
     if (child.role !== 'primary' || !sessionId || child.holderPid === undefined || agentPid === undefined) return;
-    const heldAgentsV1 = [{ role: 'primary' as const, socketPath: child.socketPath, holderPid: child.holderPid, agentPid }];
+    const relaySocketPath = child.target ? readSessionTargetPlacement(sessionProcessEnvironment())?.relaySocketPath : undefined;
+    const heldAgentsV1 = [{ role: 'primary' as const, socketPath: child.socketPath, holderPid: child.holderPid, agentPid, ...(relaySocketPath ? { relaySocketPath } : {}) }];
     void import('@/daemon/controlClient')
         .then(({ notifyDaemonSessionHolder }) => notifyDaemonSessionHolder({ sessionId, runnerPid: process.pid, heldAgentsV1 }))
         .catch(error => logger.debug('[SessionHolder] Held Agent not recorded with a daemon', { error: String(error) }));
@@ -305,6 +310,12 @@ export function createSessionHolderSocketPath(platform: NodeJS.Platform = proces
         throw Object.assign(new Error('Session holder directory is not private to this user'), { code: 'session_holder_directory_unsafe' });
     }
     return join(directory, `${id}.sock`);
+}
+
+/** Whether `path` is an address `createSessionHolderSocketPath` hands out on this Machine (its private directory). */
+export function isSessionHolderSocketPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
+    if (platform === 'win32') return /^\\\\\.\\pipe\\happier-holder-[0-9a-f]{24}$/u.test(path);
+    return /^[0-9a-f]{24}\.sock$/u.test(basename(path)) && dirname(path) === dirname(createSessionHolderSocketPath(platform));
 }
 
 function isOwnedPrivateDirectory(path: string, uid: number): boolean {
@@ -590,6 +601,8 @@ export class SessionHolderChild extends ChildProcess {
         this.reattaching = true;
         return new Promise((resolve, reject) => connectHolder(this, () => resolve(), (error) => {
             this.reattaching = false;
+            // Input queued for this attach fails like any write to an unattached holder; the next write tries again.
+            for (const [, , callback] of this.pendingFrames.splice(0)) callback(Object.assign(new Error('Session holder is not attached'), { code: 'EPIPE' }));
             reject(error);
         }));
     }
@@ -806,6 +819,13 @@ export class SessionHolderChild extends ChildProcess {
             this.pendingFrames.push([kind, payload, callback]);
             return;
         }
+        if (!socket && this.target && !this.closed && !this.exitSeen) {
+            // A target channel whose reattach found no relay (the daemon was restarting): the runner's next use
+            // attaches again through the relay the restarted daemon serves at the same address.
+            this.pendingFrames.push([kind, payload, callback]);
+            this.reattach().catch(error => logger.debug('[SessionHolder] Target reattach failed; Agent state unknown', { error: String(error) }));
+            return;
+        }
         if (!socket || socket.destroyed) {
             callback(Object.assign(new Error('Session holder is not attached'), { code: 'EPIPE' }));
             return;
@@ -955,8 +975,8 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
     const ready = `${launch.socketPath}.ready`;
     const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
         ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
-        // The primary Agent's Session MCP relays reach this Machine through its holder (`--session-mcp`).
-        `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)}${launch.role === 'primary' ? ' --session-mcp' : ''} -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
+        // Every held Agent's Session MCP relays reach this Machine through its own holder (`--session-mcp`).
+        `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)} --session-mcp -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
         `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
     void target.exec(command).then((result) => {
         const line = result.stdout.split('\n')[0] ?? '';

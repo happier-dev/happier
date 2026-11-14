@@ -2025,6 +2025,7 @@ export function createDaemonControlApp({
           socketPath: z.string().check(z.minLength(1), z.maxLength(4096)),
           holderPid: z.number().check(z.int(), z.positive()),
           agentPid: z.number().check(z.int(), z.positive()),
+          relaySocketPath: z.optional(z.string().check(z.minLength(1), z.maxLength(4096))),
         })).check(z.maxLength(1)),
       }),
       response: { 200: z.strictObject({ ok: z.boolean() }), 401: authSchema401 },

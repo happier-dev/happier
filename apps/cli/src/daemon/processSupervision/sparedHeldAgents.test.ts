@@ -140,6 +140,39 @@ describe('spared held Agent custody through the respawn owner', () => {
         expect(ended).toEqual(['reattached:4102']);
     });
 
+    it('serves a reattached placed runner\'s relay again after a daemon restart; its exit releases the relay and ends no Agent it stopped itself', async () => {
+        const ended: string[] = [];
+        const served: string[] = [];
+        const released: string[] = [];
+        const custody = createSparedHeldAgentCustody({
+            ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
+            endTurn: async () => undefined,
+            target: { probe: async () => true, end: async (tracked, candidate) => { ended.push(`${tracked.happySessionId}:${candidate.agentPid}`); },
+                serveRelay: async (tracked, candidate) => { served.push(`${tracked.happySessionId}:${candidate.relaySocketPath}`);
+                    return () => { released.push(tracked.happySessionId!); }; } },
+        });
+        const placement = { managedId: 'row-1', workspaceRoot: '/workspace' };
+        const relayed = { ...held, relaySocketPath: '/run/user/1/happier-holders-1/relay.sock' };
+        const session = (id: string, pid: number, extra: Partial<TrackedSession>) => ({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: id, startedBy: 'daemon',
+            heldAgentsV1: [relayed], ...extra }) as TrackedSession;
+        const reattached = session('reattached', 4300, { reattachedFromDiskMarker: true,
+            spawnOptions: { directory: '/tmp/work', managedTargetPlacement: placement } as SpawnSessionOptions });
+        const crashed = session('crashed', 4400, { reattachedFromDiskMarker: true,
+            spawnOptions: { directory: '/tmp/work', managedTargetPlacement: placement } as SpawnSessionOptions });
+        await custody.restoreRelays([reattached, crashed,
+            // A local Session and a runner this daemon placed (its relay is live) have nothing to restore.
+            session('local', 4500, { reattachedFromDiskMarker: true, spawnOptions: { directory: '/tmp/work' } as SpawnSessionOptions }),
+            session('placed-here', 4600, { spawnOptions: { directory: '/tmp/work', managedTargetPlacement: placement } as SpawnSessionOptions })]);
+        expect(served).toEqual([`reattached:${relayed.relaySocketPath}`, `crashed:${relayed.relaySocketPath}`]);
+
+        // The runner reached its Agent again and stopped it through its holder: its final exit only releases the relay.
+        await custody.endStranded(reattached);
+        expect({ ended, released }).toEqual({ ended: [], released: ['reattached'] });
+        // A crash of a restored runner: the respawn places the Session anew, so the restored relay is released.
+        await custody.spare(crashed);
+        expect(released).toEqual(['reattached', 'crashed']);
+    });
+
     it('spares nothing when the holder is not the recorded adoptable one', async () => {
         const run = scenario({ maxRestarts: 0 });
         const custody = createSparedHeldAgentCustody({ ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },

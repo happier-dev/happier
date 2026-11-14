@@ -10,7 +10,9 @@ import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourc
 import type { ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 import { connectSessionTarget } from '@/subprocess/supervision/sessionTargetRelay';
 
-import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement } from './prepareSessionTargetPlacement';
+import { createSessionHolderSocketPath } from '@/subprocess/supervision/sessionHolder';
+
+import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, restoreSessionTargetRelay } from './prepareSessionTargetPlacement';
 
 /**
  * The spawn owner places a Session on a managed target: the target's custody is
@@ -143,6 +145,24 @@ describe('Session placement on a managed target at spawn', () => {
             holderVersion: 'v', readTrustedCallerPid: () => process.pid, runnerExit: Promise.resolve(), openManagedSessionTarget: custody.open, launchResourceScope: failing, socketPath: join(directory, 'f.sock') });
         await failing.retire();
         expect(custody.requests[0]!.lifetime.aborted).toBe(true);
+    });
+
+    it.skipIf(process.platform === 'win32')('a restarted daemon serves a reattached runner\'s relay again at its holder-directory address, under its own authority', async () => {
+        const custody = fakeCustody();
+        const socketPath = createSessionHolderSocketPath();
+        const request = { request: { managedId: 'row-1' }, sessionKey: 'reattach-cs1', requesterAccountId: 'owner', holderVersion: 'v',
+            openManagedSessionTarget: custody.open, readTrustedCallerPid: () => process.pid };
+        // An address outside this Machine's holder directory is never served (the runner reported it).
+        await expect(restoreSessionTargetRelay({ ...request, socketPath: join(tmpdir(), 'elsewhere.sock') })).resolves.toBeNull();
+        expect(custody.requests).toHaveLength(0);
+
+        const release = await restoreSessionTargetRelay({ ...request, socketPath });
+        expect(release).toBeTypeOf('function');
+        const reply = await connectSessionTarget({ id: 'managed:row-1', holderPath: '/h', socketDirectory: '/g/run', relaySocketPath: socketPath }).exec('true');
+        expect(reply.stdout).toBe('ran:true');
+        release!();
+        expect(custody.requests[0]!.lifetime.aborted).toBe(true);
+        await expect.poll(() => existsSync(socketPath)).toBe(false);
     });
 });
 
@@ -300,6 +320,62 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
             onSessionEnd: () => undefined }))
             .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });
         expect(existsSync(join(other, '.local', 'bin', 'fake-agent'))).toBe(false);
+    }, 60_000);
+
+    it('stages a GitHub-release Agent CLI for the target\'s architecture on this Machine and streams its declared files into the target once', async () => {
+        const { guest, target, channels } = await localGuest();
+        const { mkdir: mkdirAsync, readFile: readFileAsync, writeFile: writeFileAsync } = await import('node:fs/promises');
+        // The target runs the other CPU architecture than this Machine (arm64 container on an x64 host, or the reverse).
+        const foreign = target.platform.arch === 'x64' ? 'arm64' as const : 'x64' as const;
+        const elf = (arch: 'x64' | 'arm64') => { const header = Buffer.alloc(64); header.writeUInt32BE(0x7f454c46, 0); header.writeUInt16LE(arch === 'arm64' ? 0xb7 : 0x3e, 18); return header; };
+        // This Machine's own CLI: an executable for this Machine's architecture (no target of the other arch can run it).
+        const hostCli = join(await mkdtemp(join(tmpdir(), 'stl-h-')), 'fakerel'); directories.push(dirname(hostCli));
+        await writeFileAsync(hostCli, elf(target.platform.arch));
+        const tools = await mkdtemp(join(tmpdir(), 'stl-tools-')); directories.push(tools);
+        const runtimeSpec = { id: 'fakerel', title: 'Fake release CLI', binaryName: 'fakerel', knownUserBinDirSuffixes: null,
+            sourcePreferenceDefault: 'system-first' as const, manualInstallKind: null, manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+            managedInstall: { kind: 'github_release_binary' as const, githubRepo: 'example/fakerel', releaseTag: 'v1', binaryName: 'fakerel',
+                assetNameByPlatform: { darwin: { arm64: 'd-a', x64: 'd-x' }, win32: { arm64: 'w-a', x64: 'w-x' },
+                    linux: { arm64: 'fakerel-aarch64-unknown-linux-musl.tar.gz', x64: 'fakerel-x86_64-unknown-linux-musl.tar.gz' } },
+                archiveEntriesByPlatform: { darwin: [], win32: [], linux: [
+                    { archivePath: 'bin/fakerel', destinationPath: 'bin/fakerel' },
+                    { archivePath: 'resources/helper', destinationPath: 'resources/helper' }] } } };
+        // Only GitHub (release listing, asset download) is the boundary; selection, staging, promotion are the installer's own.
+        const downloads: string[] = [];
+        const agentCliInstall = { env: { ...process.env, HAPPIER_MANAGED_TOOLS_ROOT: tools },
+            deps: {
+                fetchGitHubReleaseByTag: async () => ({ assets: ['aarch64', 'x86_64'].map(arch => ({ name: `fakerel-${arch}-unknown-linux-musl.tar.gz`,
+                    browser_download_url: `https://example.test/${arch}`, digest: `sha256:${'c'.repeat(64)}` })) }),
+                downloadGitHubReleaseAsset: async (params: { url: string; destinationPath: string }) => { downloads.push(params.url); await writeFileAsync(params.destinationPath, 'archive'); },
+                extractGitHubReleaseAsset: async (params: { outputDir?: string; archiveEntries?: ReadonlyArray<{ destinationPath: string }> }) => {
+                    const arch = downloads.at(-1)!.endsWith('aarch64') ? 'arm64' : 'x64';
+                    for (const entry of params.archiveEntries ?? []) {
+                        const path = join(params.outputDir!, ...entry.destinationPath.split('/'));
+                        await mkdirAsync(dirname(path), { recursive: true });
+                        await writeFileAsync(path, entry.destinationPath === 'bin/fakerel' ? elf(arch) : 'helper-bytes', { mode: 0o755 });
+                    }
+                } } };
+        const base = { target: { ...target, platform: { ...target.platform, arch: foreign } }, runnerEnvironment: {}, materializedRoot: null,
+            agent: leasedAgent('fakerel', [], runtimeSpec), requestAuthMaterializedRoot: null, agentCommand: hostCli,
+            workspace: { hostRoot: '/h', targetRoot: '/t' }, onSessionEnd: () => undefined, agentCliInstall };
+        const launch = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-20' });
+        const placedCli = launch.executables[hostCli]!;
+        expect(placedCli).toMatch(new RegExp(`^${join(guest, '.happier', 'agent-cli')}/[0-9a-f]{64}/bin/fakerel$`));
+        // The target-architecture release, not this Machine's: one download, staged apart from this Machine's managed CLI.
+        expect(downloads).toEqual([`https://example.test/${foreign === 'arm64' ? 'aarch64' : 'x86_64'}`]);
+        expect((await readFileAsync(placedCli)).equals(elf(foreign))).toBe(true);
+        await expect(readFileAsync(join(dirname(dirname(placedCli)), 'resources', 'helper'), 'utf8')).resolves.toBe('helper-bytes');
+        // Under its pinned release: a catalog pin change stages the new release instead of reusing this one.
+        expect(existsSync(join(tools, 'targets', `linux-${foreign}`, 'providers', 'fakerel', 'v1'))).toBe(true);
+        expect(existsSync(join(tools, 'providers', 'fakerel'))).toBe(false);
+        const transfers = channels.length;
+        expect(transfers).toBe(2);
+
+        // A later Session reuses both the staged release (no download) and the target's copy (no transfer).
+        const again = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-21' });
+        expect(again.executables[hostCli]).toBe(placedCli);
+        expect(downloads).toHaveLength(1);
+        expect(channels).toHaveLength(transfers);
     }, 60_000);
 
     it('reads the Agent\'s declared auth files and install recipe from the leased catalog; a nested auth path (Muse `muse/auth.json`) crosses alone', async () => {

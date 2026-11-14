@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, readdir, readFile } from 'node:fs/promises';
-import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
-import { planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
+import { installAgentCliForTarget, planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/composition/executableTypes';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { createSessionHolderSocketPath, readAdoptableHolderHello, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import { createSessionHolderSocketPath, isSessionHolderSocketPath, readAdoptableHolderHello, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readSessionTargetHolderArtifacts } from '@/subprocess/supervision/sessionHolderTargetArtifacts';
 import { assertSessionTargetWorkspaceUnambiguous, createTargetHolderSocketPath, serveSessionTargetRelay, type SessionTargetLaunch, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
 import { logger } from '@/ui/logger';
@@ -151,6 +151,49 @@ function sweepEndedSessionsCommand(sessions: string): string {
         + `if flock -n -x "$k/.live" true 2>/dev/null; then rm -rf -- "$k"; fi; done; exit 0`;
 }
 
+type SessionTargetAuthorityRequest = Readonly<{
+    request: Readonly<{ managedId: string }>;
+    sessionKey: string;
+    requesterAccountId: string | null;
+    holderVersion: string;
+    openManagedSessionTarget?: OpenManagedSessionTarget;
+}>;
+
+/** A Session authority of the daemon's own for a placed Session it did not place (reattached or crashed runner). */
+function openSessionTargetAuthority(input: SessionTargetAuthorityRequest, lifetime: AbortSignal): Promise<ManagedSessionTarget> | null {
+    if (!input.openManagedSessionTarget || !input.requesterAccountId) return null;
+    return input.openManagedSessionTarget({ managedId: input.request.managedId, sessionId: input.sessionKey,
+        requesterAccountId: input.requesterAccountId, lifetime,
+        holder: { version: input.holderVersion, resolveArtifacts: readSessionTargetHolderArtifacts } });
+}
+
+/**
+ * After a daemon restart, a reattached placed Session's runner still lives but
+ * its relay ended with the previous daemon: the relay is served again at the
+ * address the runner's placement names (one this Machine's holder directory
+ * hands out), admitting only that runner, under a Session authority of this
+ * daemon's own. Returns its release (authority, channels and socket end), or
+ * `null` when the target cannot be reached (the caller keeps today's end of the
+ * stranded Agent at the runner's exit).
+ */
+export async function restoreSessionTargetRelay(input: SessionTargetAuthorityRequest & Readonly<{
+    socketPath: string;
+    readTrustedCallerPid(): number | null;
+}>): Promise<(() => void) | null> {
+    if (!isSessionHolderSocketPath(input.socketPath)) return null;
+    const lifetime = new AbortController();
+    try {
+        const target = await openSessionTargetAuthority(input, lifetime.signal);
+        if (!target) return null;
+        await serveSessionTargetRelay({ operations: target, lifetime: lifetime.signal, readTrustedCallerPid: input.readTrustedCallerPid, socketPath: input.socketPath });
+        return () => lifetime.abort();
+    } catch (error) {
+        lifetime.abort();
+        logger.warn('[DAEMON RUN] Session target relay could not be served again', { code: (error as { code?: unknown })?.code ?? 'session_target_unavailable' });
+        return null;
+    }
+}
+
 /**
  * A crashed runner's held primary Agent of a placed Session (its pids are the
  * target's): probed for adoption, or ended when the respawn gives up, under a
@@ -158,21 +201,14 @@ function sweepEndedSessionsCommand(sessions: string): string {
  * Ending signals the Agent's process group and its holder in the target, then
  * sweeps the Session directories no Agent holds any more.
  */
-export async function reachHeldTargetAgent(input: Readonly<{
-    request: Readonly<{ managedId: string }>;
-    sessionKey: string;
-    requesterAccountId: string | null;
-    holderVersion: string;
-    openManagedSessionTarget?: OpenManagedSessionTarget;
+export async function reachHeldTargetAgent(input: SessionTargetAuthorityRequest & Readonly<{
     held: SessionHeldAgentV1;
     action: 'probe' | 'end';
 }>): Promise<boolean> {
-    if (!input.openManagedSessionTarget || !input.requesterAccountId) return false;
     const lifetime = new AbortController();
     try {
-        const target = await input.openManagedSessionTarget({ managedId: input.request.managedId, sessionId: input.sessionKey,
-            requesterAccountId: input.requesterAccountId, lifetime: lifetime.signal,
-            holder: { version: input.holderVersion, resolveArtifacts: readSessionTargetHolderArtifacts } });
+        const target = await openSessionTargetAuthority(input, lifetime.signal);
+        if (!target) return false;
         if (input.action === 'probe') {
             return await readAdoptableHolderHello(target.openChannel([target.holderPath, 'attach', '--socket', input.held.socketPath], lifetime.signal), input.held);
         }
@@ -214,10 +250,16 @@ async function hashFile(path: string): Promise<string> {
  * - Agent CLI: placed when it is a Linux ELF for the target's arch, once per
  *   content digest (`~/.happier/agent-cli/<sha256>/`, shared by Sessions),
  *   streamed through the provider channel and verified in the guest with the
- *   digest computed here from the bytes sent. The guest's own `sha256sum`
+ *   digests computed here from the bytes sent. The guest's own `sha256sum`
  *   checks transport only: the guest user can replace files it owns.
- *   Otherwise (a launcher script, another architecture) the provider's own
- *   Linux install recipe (`planAgentCliInstallForRuntime`, the install owner)
+ *   Otherwise, when the Agent's CLI ships as a GitHub release (catalog
+ *   `github_release_binary`), the release for the target's platform and
+ *   architecture is staged on this Machine by the install owner
+ *   (`installAgentCliForTarget`: same asset declaration, digest-verified
+ *   download and promotion as this Machine's managed install, under
+ *   `tools/targets/linux-<arch>/`, once per Machine) and every declared file of
+ *   it is placed the same way. Otherwise (a launcher script, no release for
+ *   it) the provider's own Linux install recipe (`planAgentCliInstallForRuntime`)
  *   runs in the target as its user, once per target, with this Session's
  *   delivered credential environment (vendor installers that download with the
  *   login, e.g. Muse, need it); the installed CLI is found in the provider's
@@ -240,6 +282,8 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
     /** The placement's Session-end steps (`prepareSessionTargetPlacement`). */
     onSessionEnd(step: () => Promise<void>): void;
+    /** This Machine's environment for staging a release for the target (managed tools root, GitHub token); GitHub is the boundary. */
+    agentCliInstall?: Readonly<{ env?: NodeJS.ProcessEnv; deps?: Parameters<typeof installAgentCliForTarget>[0]['deps'] }>;
     signal?: AbortSignal;
 }>): Promise<SessionTargetLaunch> {
     const signal = input.signal ?? new AbortController().signal;
@@ -293,32 +337,84 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
 
     const executables: Record<string, string> = {};
     if (input.agentCommand) {
+        const { platform } = input.target;
         const arch = await readElfArch(input.agentCommand).catch(() => null);
-        if (input.target.platform.os !== 'linux' || arch !== input.target.platform.arch) {
-            executables[input.agentCommand] = await installAgentCliInTarget({ target: input.target, runtime, env, signal });
-            return { executables, env, workspace: input.workspace, ...(locking ? { lockPath: posix.join(base, '.live') } : {}) };
-        }
-        const digest = await hashFile(input.agentCommand);
-        const directory = posix.join(input.target.home, '.happier', 'agent-cli', digest);
-        const placed = posix.join(directory, basename(input.agentCommand));
-        const present = (await input.target.exec(`sha256sum ${q(placed)} 2>/dev/null | cut -d' ' -f1`, signal)).stdout.trim();
-        if (present !== digest) {
-            const staged = `${placed}.${input.sessionKey}.staged`;
-            await run(`umask 077; mkdir -p ${q(directory)}`);
-            // Too large for one provider file put: stream it through the channel, then verify in the guest.
-            const channel = input.target.openChannel(['sh', '-c', 'umask 077 && cat > "$1"', 'sh', staged], signal);
-            await new Promise<void>((resolve, reject) => {
-                channel.once('error', reject);
-                channel.once('close', () => resolve());
-                channel.resume();
-                createReadStream(input.agentCommand!).once('error', reject).pipe(channel);
-            });
-            const verified = await run(`if [ "$(sha256sum ${q(staged)} | cut -d' ' -f1)" = ${q(digest)} ]; then chmod 700 ${q(staged)} && mv -f ${q(staged)} ${q(placed)} && echo promoted; else rm -f ${q(staged)}; echo mismatch; fi`);
-            if (verified.trim() !== 'promoted') throw refusal('agent_cli_target_unavailable', 'The Agent CLI did not verify in the Session target');
-        }
-        executables[input.agentCommand] = placed;
+        const release = platform.os === 'linux' && arch === platform.arch
+            ? { root: dirname(input.agentCommand), files: [basename(input.agentCommand)], command: basename(input.agentCommand) }
+            : await stageAgentCliReleaseForTarget({ platform, runtime, install: input.agentCliInstall, signal });
+        executables[input.agentCommand] = release
+            ? await placeAgentCliRelease({ target: input.target, sessionKey: input.sessionKey, release, run, signal })
+            : await installAgentCliInTarget({ target: input.target, runtime, env, signal });
     }
     return { executables, env, workspace: input.workspace, ...(locking ? { lockPath: posix.join(base, '.live') } : {}) };
+}
+
+type AgentCliRelease = Readonly<{ root: string; files: ReadonlyArray<string>; command: string }>;
+
+/**
+ * The Agent's GitHub release for a Linux target of another architecture, staged
+ * on this Machine by the install owner. `null` when the Agent has no such
+ * release (its CLI installs through a vendor recipe in the target instead).
+ */
+async function stageAgentCliReleaseForTarget(input: Readonly<{
+    platform: ManagedSessionTarget['platform'];
+    runtime: AgentCliRuntimeDescriptor | null;
+    install: Parameters<typeof deliverSessionTargetLaunch>[0]['agentCliInstall'];
+    signal: AbortSignal;
+}>): Promise<AgentCliRelease | null> {
+    const { platform } = input;
+    if (!input.runtime || platform.os !== 'linux') return null;
+    const staged = await installAgentCliForTarget({ runtimeSpec: input.runtime, target: { platform: 'linux', arch: platform.arch },
+        env: input.install?.env ?? process.env, ...(input.install?.deps ? { deps: input.install.deps } : {}), signal: input.signal });
+    if (!staged.ok && staged.errorCode === 'no-recipe') return null;
+    const unavailable = (detail: string) => refusal('agent_cli_target_unavailable', `This Agent CLI cannot run in a ${platform.os}-${platform.arch} target: ${detail}`);
+    if (!staged.ok) throw unavailable(`its ${platform.arch} release could not be staged on this Machine (${staged.errorCode})`);
+    // The asset declaration is the catalog's: a release that is not an executable for the target is never placed.
+    if (await readElfArch(staged.command).catch(() => null) !== platform.arch) throw unavailable(`its ${platform.arch} release is not a Linux ${platform.arch} executable`);
+    return { root: staged.installDir, files: staged.files, command: relative(staged.installDir, staged.command).split(sep).join('/') };
+}
+
+/**
+ * Places an Agent CLI's files (the executable, plus the declared files of a
+ * managed release) once per content digest in the target
+ * (`~/.happier/agent-cli/<sha256 of the sha256sum list>/`): streamed through
+ * the provider channel into a staging directory, verified there against the
+ * digests computed here, then moved into place. Returns the placed executable.
+ */
+async function placeAgentCliRelease(input: Readonly<{
+    target: Pick<ManagedSessionTarget, 'home' | 'exec' | 'openChannel'>;
+    sessionKey: string;
+    release: AgentCliRelease;
+    run(command: string): Promise<string>;
+    signal: AbortSignal;
+}>): Promise<string> {
+    const q = safeBashSingleQuote;
+    const { release } = input;
+    const sums = await Promise.all(release.files.map(async file => `${await hashFile(join(release.root, ...file.split('/')))}  ${file}\n`));
+    const list = sums.join('');
+    const directory = posix.join(input.target.home, '.happier', 'agent-cli', createHash('sha256').update(list).digest('hex'));
+    const verifies = (dir: string) => `(cd ${q(dir)} 2>/dev/null && printf '%s' ${q(list)} | sha256sum -c >/dev/null 2>&1)`;
+    const placed = posix.join(directory, release.command);
+    if ((await input.target.exec(`${verifies(directory)} && echo present`, input.signal)).stdout.trim() === 'present') return placed;
+    const staged = `${directory}.${input.sessionKey}.staged`;
+    const paths = release.files.map(file => posix.join(staged, file));
+    await input.run(`umask 077; rm -rf ${q(staged)} && mkdir -p ${[...new Set(paths.map(path => posix.dirname(path)))].map(q).join(' ')}`);
+    for (const [index, file] of release.files.entries()) {
+        // Too large for one provider file put: stream it through the channel, then verify in the guest.
+        const channel = input.target.openChannel(['sh', '-c', 'umask 077 && cat > "$1"', 'sh', paths[index]!], input.signal);
+        await new Promise<void>((resolve, reject) => {
+            channel.once('error', reject);
+            channel.once('close', () => resolve());
+            channel.resume();
+            createReadStream(join(release.root, ...file.split('/'))).once('error', reject).pipe(channel);
+        });
+    }
+    // A directory at the digest that does not verify is replaced; a concurrent Session's completed copy is kept.
+    const promoted = await input.run(`if ${verifies(staged)}; then chmod 700 ${paths.map(q).join(' ')} && `
+        + `if ${verifies(directory)}; then rm -rf ${q(staged)}; else rm -rf ${q(directory)} && mv -f ${q(staged)} ${q(directory)}; fi; `
+        + `if ${verifies(directory)}; then echo promoted; fi; else rm -rf ${q(staged)}; echo mismatch; fi`);
+    if (promoted.trim() !== 'promoted') throw refusal('agent_cli_target_unavailable', 'The Agent CLI did not verify in the Session target');
+    return placed;
 }
 
 /** The leased runtime registry members the launch step reads (catalog facts live under `contributes`). */

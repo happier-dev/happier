@@ -1,7 +1,7 @@
 import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
-import { reachHeldTargetAgent } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
@@ -3067,18 +3067,29 @@ export async function startDaemonSessionControlRuntime(
     },
     // A placed Session's held Agent lives in its target: reached under a short Session authority of its own.
     target: (() => {
-      const reach = (tracked: TrackedSession, held: SessionHeldAgentV1, action: 'probe' | 'end') => {
+      const authority = (tracked: TrackedSession, sessionKey: string) => {
         const placement = tracked.spawnOptions?.managedTargetPlacement;
-        if (!placement || !tracked.happySessionId) return Promise.resolve(false);
-        return reachHeldTargetAgent({ request: placement, sessionKey: `respawn-${tracked.happySessionId}`,
+        if (!placement || !tracked.happySessionId) return null;
+        return { request: placement, sessionKey,
           requesterAccountId: tracked.spawnOptions?.requesterWorkAttributionV1?.accountId ?? readPreviewAccountIdFromToken(params.credentials.token) ?? null,
-          holderVersion: configuration.currentCliVersion, openManagedSessionTarget: request => managedMachinePolicyAdapter.openSessionTarget(request),
-          held, action });
+          holderVersion: configuration.currentCliVersion, openManagedSessionTarget: (request: Parameters<OpenManagedSessionTarget>[0]) => managedMachinePolicyAdapter.openSessionTarget(request) };
+      };
+      const reach = (tracked: TrackedSession, held: SessionHeldAgentV1, action: 'probe' | 'end') => {
+        const request = authority(tracked, `respawn-${tracked.happySessionId}`);
+        return request ? reachHeldTargetAgent({ ...request, held, action }) : Promise.resolve(false);
       };
       return { probe: (tracked: TrackedSession, held: SessionHeldAgentV1) => reach(tracked, held, 'probe'),
-        end: async (tracked: TrackedSession, held: SessionHeldAgentV1) => { await reach(tracked, held, 'end'); } };
+        end: async (tracked: TrackedSession, held: SessionHeldAgentV1) => { await reach(tracked, held, 'end'); },
+        serveRelay: async (tracked: TrackedSession, held: SessionHeldAgentV1) => {
+          const request = authority(tracked, `reattach-${tracked.happySessionId}`);
+          return request && held.relaySocketPath ? await restoreSessionTargetRelay({ ...request, socketPath: held.relaySocketPath,
+            // The runner (or its session host) this daemon reattached, read live.
+            readTrustedCallerPid: () => tracked.sessionRunnerPid ?? tracked.pid }) : null;
+        } };
     })(),
   });
+  // Runners this daemon reattached after a restart reach their targets again through their restored relays.
+  void sparedHeldAgents.restoreRelays(params.trackedSessionsByKey.values());
   let onChildExited: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
   let releaseExecutionRunAuthorityForRunnerExit: (
     input: Readonly<{

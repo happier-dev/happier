@@ -901,7 +901,7 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
 export async function notifyDaemonSessionHolder(body: Readonly<{
   sessionId: string;
   runnerPid: number;
-  heldAgentsV1: readonly Readonly<{ role: 'primary'; socketPath: string; holderPid: number; agentPid: number }>[];
+  heldAgentsV1: readonly Readonly<{ role: 'primary'; socketPath: string; holderPid: number; agentPid: number; relaySocketPath?: string }>[];
 }>): Promise<boolean> {
   const response: unknown = await daemonPost('/session-holder', body);
   return typeof response === 'object' && response !== null && (response as { ok?: unknown }).ok === true;

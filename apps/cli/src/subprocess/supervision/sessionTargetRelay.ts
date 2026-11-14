@@ -133,16 +133,15 @@ export function resolveSessionHostCwd(cwd: string): string {
 
 /**
  * The Session MCP context file an Agent's relay (`holder mcp-relay`) reads. This
- * Machine's endpoint is a local socket nothing in a target can reach, so in a
- * placed Session it is the context the primary holder writes beside its socket
- * in the target (`serve --session-mcp`): the relay connects to that holder, which
- * admits only its Agent tree and carries the connection on its client channel to
- * this runner (`sessionHolder.ts`, `M` stream). `undefined` when it has none.
+ * Machine's endpoint is a local socket nothing in a target can reach, so a placed
+ * Session's Agents are named none: each relay uses the context of the holder it
+ * runs under in the target (`serve --session-mcp`, found among its ancestors),
+ * which admits only that holder's Agent tree and carries the connection on its
+ * client channel to this runner (`sessionHolder.ts`, `M` stream). The primary
+ * and every other held Agent (execution runs) reach the Session's MCP alike.
  */
 export function resolveSessionAgentMcpContextFile(hostContextFile: string | undefined): string | undefined {
-    const placement = readSessionTargetPlacement(sessionProcessEnvironment());
-    if (!placement) return hostContextFile;
-    return placement.primarySocketPath ? `${placement.primarySocketPath}.mcp.json` : undefined;
+    return readSessionTargetPlacement(sessionProcessEnvironment()) ? undefined : hostContextFile;
 }
 
 /**

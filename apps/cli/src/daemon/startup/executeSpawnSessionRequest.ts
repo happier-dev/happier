@@ -1387,6 +1387,7 @@ export async function executeSpawnSessionRequest(
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
                         workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
+                        agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
                     extraEnvForChild[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ ...sessionTarget.placement, launch } satisfies SessionTargetPlacement);
                 } catch (error) {

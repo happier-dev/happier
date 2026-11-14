@@ -3,7 +3,8 @@
 //! Session's MCP endpoint in the session host and back; the host serves every tool.
 //!
 //! The endpoint comes from the Session MCP context file named by
-//! `HAPPIER_SESSION_MCP_CONTEXT_FILE`: a Unix socket (`socketPath`; the host admits
+//! `HAPPIER_SESSION_MCP_CONTEXT_FILE` (an Agent held in a target has none: the
+//! context is its own holder's, found among its ancestors, `session_mcp.rs`): a Unix socket (`socketPath`; the host admits
 //! this process by kernel peer identity in the Session's Agent tree, so the
 //! Agent-visible context carries no bearer) or, on Windows, `url`
 //! `http://127.0.0.1:<port>`, whose bearer arrives only in this relay's MCP client
@@ -125,7 +126,9 @@ fn fail() -> ! {
 
 pub fn run(args: &[String]) -> ! {
     let tool_name_max_length = parse_args(args).unwrap_or_else(|| fail());
+    // A Machine's Agent names its Session's context; an Agent held in a target reaches it through its own holder.
     let context = std::env::var_os(CONTEXT_FILE_ENV)
+        .or_else(|| crate::session_mcp::holder_context_from_ancestry().map(Into::into))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|raw| parse_context(&raw))
         .unwrap_or_else(|| fail());

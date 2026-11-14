@@ -26,6 +26,60 @@ pub fn context_path(socket: &str) -> String {
     format!("{socket}.mcp.json")
 }
 
+/// The context of the nearest ancestor that is this executable serving Session MCP
+/// (`serve --socket <s> --session-mcp`): every Agent held in a target (the Session's
+/// primary and any other) reaches the Session's MCP through its own holder, which
+/// admits only its own Agent tree. The walk ends at init.
+pub fn ancestor_holder_context(
+    start: u32,
+    own_executable: &std::path::Path,
+    read_parent: impl Fn(u32) -> Option<u32>,
+    read_executable: impl Fn(u32) -> Option<std::path::PathBuf>,
+    read_args: impl Fn(u32) -> Option<Vec<String>>,
+) -> Option<String> {
+    let mut current = start;
+    loop {
+        let parent = read_parent(current)?;
+        if parent <= 1 || parent == current {
+            return None;
+        }
+        current = parent;
+        if read_executable(current).as_deref() != Some(own_executable) {
+            continue;
+        }
+        let Some(args) = read_args(current) else { continue };
+        if args.get(1).map(String::as_str) != Some("serve") {
+            continue;
+        }
+        if let Some(serve) = args.get(2..).and_then(crate::parse_serve) {
+            if serve.session_mcp {
+                return Some(context_path(&serve.socket));
+            }
+        }
+    }
+}
+
+/// `ancestor_holder_context` for this process, read from `/proc` (targets are Linux).
+#[cfg(target_os = "linux")]
+pub fn holder_context_from_ancestry() -> Option<String> {
+    let own = std::fs::read_link("/proc/self/exe").ok()?;
+    ancestor_holder_context(
+        std::process::id(),
+        &own,
+        |pid| linux::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?).map(|(parent, _)| parent),
+        |pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok(),
+        |pid| {
+            let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+            Some(raw.split(|byte| *byte == 0).filter(|part| !part.is_empty()).map(|part| String::from_utf8_lossy(part).into_owned()).collect())
+        },
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn holder_context_from_ancestry() -> Option<String> {
+    None
+}
+
 /// The relay's upgrade head (`mcp_relay::upgrade_request`): the tool-name budget when
 /// valid, and the bytes after the head. `None` refuses the connection.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -249,5 +303,30 @@ mod tests {
         assert!(!linux::in_agent_tree(10, 20, read));
         assert!(!linux::in_agent_tree(99, 20, read));
         assert_eq!(linux::parse_stat("123 (a b) c) S 45 67 67 0"), Some((45, 67)));
+    }
+
+    #[test]
+    fn a_relay_finds_its_own_session_mcp_holder_among_its_ancestors() {
+        use std::collections::HashMap;
+        use std::path::{Path, PathBuf};
+        let holder = Path::new("/home/u/.happier/holder/v/happier-session-holder");
+        // pid -> (ppid, exe, args): relay 40 <- Agent 30 <- flock 20 <- holder 10 (`serve --session-mcp`) <- init.
+        // A second holder 11 without `--session-mcp` (local Agent) and a stranger 12 named like a holder.
+        let table: HashMap<u32, (u32, PathBuf, Vec<String>)> = [
+            (40, (30, holder.into(), vec!["holder".into(), "mcp-relay".into()])),
+            (30, (20, "/usr/bin/codex".into(), vec!["codex".into()])),
+            (20, (10, "/usr/bin/flock".into(), vec!["flock".into(), "-s".into(), "l".into(), "codex".into()])),
+            (10, (1, holder.into(), ["holder", "serve", "--socket", "/run/a.sock", "--session-mcp", "--", "flock"].map(String::from).to_vec())),
+            (41, (11, holder.into(), vec!["holder".into(), "mcp-relay".into()])),
+            (11, (1, holder.into(), ["holder", "serve", "--socket", "/run/b.sock", "--", "agent"].map(String::from).to_vec())),
+            (42, (12, holder.into(), vec!["holder".into(), "mcp-relay".into()])),
+            (12, (1, "/tmp/other".into(), ["holder", "serve", "--socket", "/run/c.sock", "--session-mcp", "--", "x"].map(String::from).to_vec())),
+        ].into();
+        let find = |start: u32| ancestor_holder_context(start, holder,
+            |pid| table.get(&pid).map(|row| row.0), |pid| table.get(&pid).map(|row| row.1.clone()), |pid| table.get(&pid).map(|row| row.2.clone()));
+        assert_eq!(find(40), Some("/run/a.sock.mcp.json".into()));
+        assert_eq!(find(41), None);
+        assert_eq!(find(42), None);
+        assert_eq!(find(99), None);
     }
 }

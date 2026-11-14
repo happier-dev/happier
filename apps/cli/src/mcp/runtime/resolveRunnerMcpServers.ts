@@ -6,6 +6,7 @@ import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agent
 import { join } from 'node:path';
 import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from './supervisedStdioTransport';
 import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalTransport';
+import { resolveSessionAgentMcpContextFile } from '@/subprocess/supervision/sessionTargetRelay';
 import type { SessionMcpCustomToolsBridge } from './sessionMcpToolsBridge';
 import { createMcpPermissionChoices } from './mcpPermissionChoices';
 import { listResolvedCustomHappierTools } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
@@ -600,8 +601,9 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       await Promise.allSettled([...customProfileOperations]);
     },
   };
+  // The one mapping of an Agent's context file (a placed Session's Agents are named none: `sessionTargetRelay.ts`).
   const nativeContextFile = params.admittedStdio && builtIn.happierMcpServer.localContext
-    ? join(params.admittedStdio.target.runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH) : undefined;
+    ? resolveSessionAgentMcpContextFile(join(params.admittedStdio.target.runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH)) : undefined;
   const nativeBuiltInServers = nativeContextFile && builtIn.mcpServers.happier ? {
     ...builtIn.mcpServers, happier: { ...builtIn.mcpServers.happier,
       env: { ...builtIn.mcpServers.happier.env, [SESSION_MCP_CONTEXT_FILE_ENV]: nativeContextFile } },

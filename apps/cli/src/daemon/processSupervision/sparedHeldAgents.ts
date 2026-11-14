@@ -43,11 +43,25 @@ export function createSparedHeldAgentCustody(input: Readonly<{
     target?: Readonly<{
         probe(tracked: TrackedSession, held: SessionHeldAgentV1): Promise<boolean>;
         end(tracked: TrackedSession, held: SessionHeldAgentV1): Promise<void>;
+        /**
+         * Serves a reattached runner's relay again at the address its placement names
+         * (the previous daemon's relay ended with it); returns its release, or `null`
+         * when the target could not be reached.
+         */
+        serveRelay?(tracked: TrackedSession, held: SessionHeldAgentV1): Promise<(() => void) | null>;
     }>;
 }>) {
     type Spared = Pick<TrackedSession, 'pid' | 'sessionRunnerPid' | 'happySessionId' | 'activeTurnId'>
         & Readonly<{ placed: Readonly<{ tracked: TrackedSession; held: SessionHeldAgentV1 }> | null }>;
     const spared = new Map<string, Spared>();
+    /** Relays served again for runners this daemon reattached, by tracked Session: released when that runner exits. */
+    const restoredRelays = new Map<TrackedSession, () => void>();
+    const releaseRelay = (tracked: TrackedSession): boolean => {
+        const release = restoredRelays.get(tracked);
+        restoredRelays.delete(tracked);
+        release?.();
+        return release !== undefined;
+    };
     const probe = input.probe ?? probeAdoptableSessionHolder;
     const end = async (sessionId: string): Promise<void> => {
         const turn = spared.get(sessionId);
@@ -59,7 +73,25 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         if (turn.activeTurnId) await input.endTurn(turn);
     };
     return Object.freeze({
+        /**
+         * After a daemon restart: a reattached placed runner whose held primary Agent
+         * names its relay gets that relay served again, so the runner reaches its target
+         * (and stops its Agents through their holders) as before the restart.
+         */
+        async restoreRelays(trackedSessions: Iterable<TrackedSession>): Promise<void> {
+            const serveRelay = input.target?.serveRelay;
+            if (!serveRelay) return;
+            await Promise.all([...trackedSessions].map(async tracked => {
+                const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
+                if (!held?.relaySocketPath || !tracked.reattachedFromDiskMarker || !tracked.spawnOptions?.managedTargetPlacement || restoredRelays.has(tracked)) return;
+                const release = await serveRelay(tracked, held);
+                if (release) restoredRelays.set(tracked, release);
+                else logger.warn('[DAEMON RUN] Session target relay not restored for a reattached runner; its target Agent is ended at its exit', { sessionId: tracked.happySessionId });
+            }));
+        },
         async spare(tracked: TrackedSession): Promise<SparedHeldAgentTransaction | null> {
+            // A crashed runner's restored relay ends with it; a respawn places the Session anew.
+            releaseRelay(tracked);
             const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
             const sessionId = tracked.happySessionId?.trim();
             const placed = tracked.spawnOptions?.managedTargetPlacement !== undefined;
@@ -86,11 +118,13 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         },
         /**
          * A final runner exit with no spare. A placed Session's runner that this daemon
-         * reattached ran without its placement (relay and authority ended with the previous
-         * daemon), so it could not stop its target-held Agent through its holder: that Agent
-         * is ended in its target. A runner this daemon placed stopped its Agents itself.
+         * reattached without restoring its relay ran without its placement (relay and authority
+         * ended with the previous daemon), so it could not stop its target-held Agent through
+         * its holder: that Agent is ended in its target. A runner this daemon placed, or whose
+         * relay it restored, stopped its Agents itself (the restored relay is released).
          */
         async endStranded(tracked: TrackedSession): Promise<void> {
+            if (releaseRelay(tracked)) return;
             const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
             if (!held || !tracked.reattachedFromDiskMarker || !tracked.spawnOptions?.managedTargetPlacement || !input.target) return;
             await input.target.end(tracked, held);

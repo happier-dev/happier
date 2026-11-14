@@ -103,8 +103,8 @@ describe('Session MCP through the native holder relay', () => {
             const config = bridge.mcpServers.happier!;
             const hostContext = bridge.happierMcpServer.localContext;
             if (!hostContext) throw new Error('missing Session MCP context');
-            // The relay reads its primary holder's context in the target; this Machine's socket and bearer never cross.
-            expect(config.env).toEqual({ [SESSION_MCP_CONTEXT_FILE_ENV]: `${primarySocketPath}.mcp.json` });
+            // No context is named: the relay uses its own holder's in the target; this Machine's socket and bearer never cross.
+            expect(config.env?.[SESSION_MCP_CONTEXT_FILE_ENV]).toBeUndefined();
             const target = shellTarget(directory, { ...config.env });
             await agent.connect(sessionMcpAgentTransport(config, { target, socketPath: primarySocketPath, role: 'primary' }));
             const names = (await agent.listTools()).tools.map(tool => tool.name);
@@ -121,6 +121,30 @@ describe('Session MCP through the native holder relay', () => {
         } finally {
             delete process.env[SESSION_TARGET_PLACEMENT_ENV_KEY];
             await agent.close().catch(() => undefined);
+            await bridge?.happierMcpServer.stop();
+            await rm(directory, { recursive: true, force: true });
+        }
+    }, 60_000);
+
+    it.runIf(process.platform === 'linux')('every Agent held in a target reaches Session MCP through its own holder (primary and auxiliary)', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'mcp-target-aux-'));
+        const primarySocketPath = join(directory, 'primary.sock');
+        process.env[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ id: 'local-test-target', holderPath: requireSessionHolderExecutablePath(),
+            socketDirectory: directory, relaySocketPath: join(directory, 'relay.sock'), primarySocketPath });
+        let bridge: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
+        const agents = [new Client({ name: 'target-primary', version: '1' }), new Client({ name: 'target-auxiliary', version: '1' })];
+        try {
+            bridge = await startSessionMcp('session-mcp-target-aux');
+            const config = bridge.mcpServers.happier!;
+            const target = shellTarget(directory, { ...config.env });
+            await agents[0]!.connect(sessionMcpAgentTransport(config, { target, socketPath: primarySocketPath, role: 'primary' }));
+            // An execution run's Agent in the same target: its own holder, its own Agent tree.
+            await agents[1]!.connect(sessionMcpAgentTransport(config, { target, socketPath: join(directory, 'auxiliary.sock'), role: 'auxiliary' }));
+            const listed = await Promise.all(agents.map(async agent => (await agent.listTools()).tools.length));
+            expect(listed.filter(count => count > 0)).toHaveLength(2);
+        } finally {
+            delete process.env[SESSION_TARGET_PLACEMENT_ENV_KEY];
+            await Promise.all(agents.map(agent => agent.close().catch(() => undefined)));
             await bridge?.happierMcpServer.stop();
             await rm(directory, { recursive: true, force: true });
         }

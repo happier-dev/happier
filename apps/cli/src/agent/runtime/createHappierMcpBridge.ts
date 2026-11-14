@@ -28,8 +28,8 @@ function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: Session
   // An isolated Agent's context file is placed by its launch materialization (`resolveRunnerMcpServers`).
   // The Unix socket admits the relay by kernel peer proof. The Windows loopback relay needs its
   // bearer, which rides only this MCP client config (never the context file or the Agent env).
-  // In a placed Session the relay reads its primary holder's context in the target, which admits
-  // by the holder's own Agent-tree proof; this Machine's bearer never crosses.
+  // In a placed Session the relay uses the context of the holder it runs under in the target, which
+  // admits by that holder's own Agent-tree proof; this Machine's bearer never crosses.
   const contextFilePath = resolveSessionAgentMcpContextFile(server.contextFilePath)
   const placed = readSessionTargetPlacement(sessionProcessEnvironment()) !== null
   const loopbackBearer: Readonly<Record<string, string>> = !placed && 'url' in server.localContext ? { [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken } : {}

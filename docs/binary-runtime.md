@@ -373,6 +373,8 @@ Before adding or changing an agent runtime, managed dependency, install, or upda
 
 Agent detection, install status, daemon validation, runtime spawning, and UI/managedDependencies must reuse the same source of truth. Agent CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
 
+In 0.3 development, a GitHub-release Agent CLI (`github_release_binary`) can also be staged for another platform than this Machine's, for a Session target (container, VM) of another CPU architecture: `installAgentCliForTarget` (`packages/cli-common/src/agents/install.ts`) plans with the target platform, selects the asset for the target architecture from the same catalog declaration (`assetNameByPlatform`, else the conventional names), downloads and digest-verifies it through the same managed installer and promotion, and keeps it under `tools/targets/<platform>-<arch>/providers/<id>` (resolved by `resolveAgentCliManagedInstallRootForRuntime(..., { target })`; the host's own platform resolves to the ordinary root). A staged release is never this Machine's CLI; detection is the same managed command path. The Session target launch step places its declared files in the target (`docs/cli-architecture.md`).
+
 In 0.3 development, managed Agent installation publishes the providers directory, install
 root and promoted runtime code for separate execution users through the same
 permission publisher as first-party payloads. POSIX runtime directories are

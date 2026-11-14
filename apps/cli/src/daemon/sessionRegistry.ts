@@ -92,6 +92,8 @@ const DaemonSessionMarkerSchema = lazyZodSchema(() => z.object({
     socketPath: z.string().check(z.minLength(1), z.maxLength(4096)),
     holderPid: z.number().check(z.int(), z.positive()),
     agentPid: z.number().check(z.int(), z.positive()),
+    // A target-held Agent: the relay its runner reaches the target through (served again after a daemon restart).
+    relaySocketPath: z.optional(z.string().check(z.minLength(1), z.maxLength(4096))),
   })).check(z.maxLength(1))),
   agentRuntimeDaemonServiceActiveAdmission: z.optional(z.strictObject({
     turnId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
