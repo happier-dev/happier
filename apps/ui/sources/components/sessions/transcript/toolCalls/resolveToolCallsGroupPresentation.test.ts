@@ -20,6 +20,9 @@ describe('hidden tool group presentation', () => {
         expect(resolveToolCallsGroupSummary({ toolMessages: [stopped], showToolCalls: false }))
             .toMatchObject({ status: 'stopped', failed: 0 });
         expect(groupStatus({ toolMessages: [stopped, failed], showToolCalls: false })).toBe('error');
+        const running = createToolCallMessageFixture({ id: 'running', tool: { ...base.tool,
+            state: 'running', result: null, completedAt: null } });
+        expect(groupStatus({ toolMessages: [stopped, running], showToolCalls: false })).toBe('running');
     });
 
     it.each(['denied', 'canceled'] as const)('summarises a person’s Shell %s decision with the approval vocabulary', (status) => {

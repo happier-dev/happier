@@ -111,21 +111,23 @@ const { useOpenSessionSimulatorPreview } =
   await import('./useOpenSessionSimulatorPreview');
 
 let opener: ReturnType<typeof useOpenSessionSimulatorPreview> = null;
-let bumpRefreshKey: () => void = () => {};
+let initiallyActive = true;
+let setMenuActive: (active: boolean) => void = () => {};
 function Probe() {
-  const [refreshKey, setRefreshKey] = React.useState(0);
-  bumpRefreshKey = () => setRefreshKey((key) => key + 1);
+  const [active, setActive] = React.useState(initiallyActive);
+  setMenuActive = setActive;
   opener = useOpenSessionSimulatorPreview({
     sessionId: 's1',
     serverId: runtime.serverId,
-    refreshKey,
+    active,
   });
   return null;
 }
 
 /** Mounts after the Home's feature snapshot has settled, so the opener reads its current decision. */
-async function mount() {
+async function mount(active = true) {
   opener = null;
+  initiallyActive = active;
   const { getServerFeaturesSnapshot } =
     await import('@/sync/api/capabilities/serverFeaturesClient');
   // The harness restores the Home before a case sets its world; re-read the Home's answer.
@@ -147,6 +149,15 @@ function simulatorTabs() {
 }
 
 describe('useOpenSessionSimulatorPreview', () => {
+  it('does not read the daemon until the menu opens, then discovers the simulator', async () => {
+    await mount(false);
+    expect(snapshotReads).toBe(0);
+    expect(opener).toBeNull();
+    await act(async () => setMenuActive(true));
+    await waitForHomeGovernance(() => expect(opener).not.toBeNull());
+    expect(snapshotReads).toBe(1);
+  });
+
   it('opens one Simulator tab in Details and focuses it again instead of duplicating it', async () => {
     await mount();
     await waitForHomeGovernance(() => expect(opener).not.toBeNull());
@@ -194,14 +205,16 @@ describe('useOpenSessionSimulatorPreview', () => {
     },
   );
 
-  it('asks the daemon again on a new refresh key and keeps its last answer meanwhile', async () => {
+  it('asks the daemon again on reopening and keeps its last answer meanwhile', async () => {
     await mount();
     await waitForHomeGovernance(() => expect(opener).not.toBeNull());
     const reads = snapshotReads;
+    await act(async () => setMenuActive(false));
+    expect(snapshotReads).toBe(reads);
 
     world.daemon = 'pending';
     await act(async () => {
-      bumpRefreshKey();
+      setMenuActive(true);
     });
     await waitForHomeGovernance(() => expect(snapshotReads).toBe(reads + 1));
     expect(opener).not.toBeNull();

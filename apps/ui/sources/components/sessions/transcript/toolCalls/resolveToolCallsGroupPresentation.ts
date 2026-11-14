@@ -86,8 +86,8 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             : failed > 0 ? 'error'
                 : refused > 0 ? 'refused'
                     : sawPermissionDenied ? 'permission_denied'
-                        : sawStopped ? 'stopped'
                         : sawRunning ? 'running'
+                            : sawStopped ? 'stopped'
                             : 'completed';
     return { status, failed, refused, failuresAreActionOutcomes,
         ...(hasDecisionRefusal ? { refusalLabel: [...refusalLabels].join(' · ') } : {}),

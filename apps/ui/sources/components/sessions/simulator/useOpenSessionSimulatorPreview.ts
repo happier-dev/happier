@@ -15,14 +15,14 @@ import { createSimulatorPreviewDetailsTab } from './simulatorPreviewDetailsTab';
  * The one way to open a Session's simulator preview: its Details tab, which the Session details
  * runtime fills for the Session's Machine. Offered only while the Home's `devices.simulatorPreview`
  * decision is enabled and that Machine's daemon snapshot lists a simulator; otherwise null, so no
- * caller renders an entry that cannot land. The snapshot is read on mount and again whenever
- * `refreshKey` changes (a menu opening), keeping the last answer while it is asked again.
+ * caller renders an entry that cannot land. The menu's existing open state admits each snapshot
+ * read, keeping the last answer while closed and while the next opening asks again.
  */
 export function useOpenSessionSimulatorPreview(
     input: Readonly<{
         sessionId: string;
         serverId: string | null;
-        refreshKey?: unknown;
+        active: boolean;
     }>,
 ): Readonly<{ open: () => void }> | null {
     const serverId = usePreferredServerIdForSession({ sessionId: input.sessionId, serverId: input.serverId });
@@ -36,7 +36,7 @@ export function useOpenSessionSimulatorPreview(
     // The daemon's last answer for this Machine; another Machine's answer never carries over.
     const [listed, setListed] = React.useState<Readonly<{ machineKey: string; hasSimulator: boolean }> | null>(null);
     React.useEffect(() => {
-        if (!machineKey || !machineId) return;
+        if (!input.active || !machineKey || !machineId) return;
         const controller = new AbortController();
         void fetchSimulatorPreviewSnapshotViaMachineRpc({ machineId, serverId, signal: controller.signal }).then((result) => {
             if (controller.signal.aborted) return;
@@ -45,7 +45,7 @@ export function useOpenSessionSimulatorPreview(
                 ? previous : { machineKey, hasSimulator });
         });
         return () => controller.abort();
-    }, [machineId, machineKey, serverId, input.refreshKey]);
+    }, [machineId, machineKey, serverId, input.active]);
 
     const openDetailsTab = useOptionalDetailsTabOpener(
         useDestinationPaneScopeId(createSessionPaneScopeId(input.sessionId, serverId ?? undefined)),

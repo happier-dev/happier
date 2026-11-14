@@ -383,12 +383,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
   const [open, setOpen] = React.useState(false);
-  // Each opening asks the simulator owner again, so a simulator booted since mount appears.
-  const [menuOpenings, setMenuOpenings] = React.useState(0);
-  const onMenuOpenChange = React.useCallback((next: boolean) => {
-    if (next) setMenuOpenings((count) => count + 1);
-    setOpen(next);
-  }, []);
   // People is a rail destination; the header's ⋯ carries it (with its conversation attention) only
   // while the rail is not on screen. No named-viewer presence is read for a header entry any more.
   const collaborationAttentionLabel = useSessionPeopleAttentionLabel(
@@ -439,7 +433,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const openComputer = props.destinationsInMenu === true ? computerOpener : null;
   // The rail does not carry the simulator, so the ⋯ is its entry wherever the Session is open.
   const openSimulator = useOpenSessionSimulatorPreview({
-    sessionId: props.sessionId, serverId: sessionServerId ?? null, refreshKey: menuOpenings,
+    sessionId: props.sessionId, serverId: sessionServerId ?? null, active: open,
   });
   const showCompanionInOverflow = props.companionHeaderActionPlacement === 'overflow'
     && companionRevealPort !== null
@@ -920,7 +914,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     <View ref={menuAnchorRef} collapsable={false}>
     <DropdownMenu
       open={open}
-      onOpenChange={onMenuOpenChange}
+      onOpenChange={setOpen}
       items={actions}
       showCategoryTitles
       // On a phone the menu is the anchored panel under its ⋯ (owner R2), named by the session it acts on.
