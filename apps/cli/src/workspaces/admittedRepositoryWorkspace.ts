@@ -4,6 +4,7 @@ import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/pro
 import { readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { normalizeAdmittedHomeServerIdV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
+import { matchesRepositoryWorkspaceIntentV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from './workspaceRefsV1';
 import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -29,8 +30,10 @@ export async function resolveAdmittedRepositoryWorkspace(input: Readonly<{
   const resolved = resolveWorkspaceRefById(rows.workspaceRefs, input.workspace.id, input.workspace.serverId, { normalizeServerId });
   if (!resolved) return { kind: 'refused', reason: 'workspace_unavailable' };
   const workspace = { ...resolved, serverId: normalizeServerId(resolved.serverId) };
-  if (input.expected && (workspace.source?.sourceId !== input.expected.projectSourceId || workspace.source.revision !== input.expected.sourceRevision
-    || !sameScmHostingRepositoryIdentity(workspace.repositoryIdentity, input.expected.repository))) return { kind: 'conflict', reason: 'source_changed' };
+  if (input.expected && !matchesRepositoryWorkspaceIntentV1(workspace, {
+    source: { sourceId: input.expected.projectSourceId, revision: input.expected.sourceRevision },
+    repositoryIdentity: input.expected.repository,
+  })) return { kind: 'conflict', reason: 'source_changed' };
   return { kind: 'resolved', workspace };
 }
 

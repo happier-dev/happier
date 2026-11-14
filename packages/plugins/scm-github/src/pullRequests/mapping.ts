@@ -138,6 +138,11 @@ export function mapGithubPullRequest(
     : undefined;
   const baseSha = readNestedString(raw.base, 'sha') ?? readGithubString(raw.baseRefOid);
   const headSha = readNestedString(raw.head, 'sha') ?? readGithubString(raw.headRefOid);
+  const state = readGithubPullRequestState(raw);
+  // Before merge GitHub's REST field is only the synthetic mergeability commit.
+  const mergeCommitSha = state === 'merged'
+    ? readGithubString(raw.merge_commit_sha) ?? readNestedString(raw.mergeCommit, 'oid')
+    : null;
   const headRepositoryNameWithOwner = readGithubHeadRepositoryNameWithOwner(raw);
   const providerNameWithOwner = provider.nameWithOwner?.trim() || null;
   const isDraft = readGithubBoolean(raw.draft) ?? readGithubBoolean(raw.isDraft) ?? undefined;
@@ -161,7 +166,8 @@ export function mapGithubPullRequest(
       : {}),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
-    state: readGithubPullRequestState(raw),
+    ...(mergeCommitSha !== null ? { mergeCommitSha } : {}),
+    state,
     ...(createdAtMs !== null ? { createdAtMs } : {}),
     ...(closedAtMs !== null ? { closedAtMs } : {}),
     ...(mergedAtMs !== null ? { mergedAtMs } : {}),

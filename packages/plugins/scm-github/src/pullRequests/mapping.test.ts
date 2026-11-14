@@ -25,6 +25,7 @@ describe('GitHub pull request mapping', () => {
       draft: true,
       created_at: '2026-10-01T12:00:00Z',
       merged_at: '2026-10-02T12:00:00Z',
+      merge_commit_sha: 'a'.repeat(40),
       closed_at: '2026-10-02T12:00:00Z',
       user: {
         login: 'octocat',
@@ -54,6 +55,7 @@ describe('GitHub pull request mapping', () => {
       isCrossRepository: false,
       baseSha: 'base-sha',
       headSha: 'head-sha',
+      mergeCommitSha: 'a'.repeat(40),
       state: 'merged',
       createdAtMs: Date.parse('2026-10-01T12:00:00Z'),
       mergedAtMs: Date.parse('2026-10-02T12:00:00Z'),
@@ -79,6 +81,7 @@ describe('GitHub pull request mapping', () => {
       isDraft: false,
       createdAt: 'invalid',
       mergedAt: '2026-10-02T12:00:00Z',
+      mergeCommit: { oid: 'b'.repeat(40) },
       author: {
         login: 'monalisa',
         name: 'Mona Lisa',
@@ -104,6 +107,7 @@ describe('GitHub pull request mapping', () => {
       isCrossRepository: false,
       baseSha: 'cli-base-sha',
       headSha: 'cli-head-sha',
+      mergeCommitSha: 'b'.repeat(40),
       state: 'merged',
       mergedAtMs: Date.parse('2026-10-02T12:00:00Z'),
       isDraft: false,
@@ -136,6 +140,14 @@ describe('GitHub pull request mapping', () => {
     })?.checks?.state).toBe(state);
   });
 
+  it('leaves merge evidence absent when a merged payload only supplies its source head', async () => {
+    const { mapGithubPullRequest } = await import('./mapping.js');
+    expect(mapGithubPullRequest(provider, {
+      number: 8, title: 'Missing merge evidence', url: 'https://github.com/happier-dev/happier/pull/8',
+      baseRefName: 'main', headRefName: 'feature', state: 'MERGED', headRefOid: 'c'.repeat(40),
+    })).not.toHaveProperty('mergeCommitSha');
+  });
+
   it('keeps native close time separate from absent merge time and omits invalid dates', async () => {
     const { mapGithubPullRequest } = await import('./mapping.js');
     const mapped = mapGithubPullRequest(provider, {
@@ -148,10 +160,12 @@ describe('GitHub pull request mapping', () => {
       created_at: 'invalid',
       closed_at: '2026-10-02T12:00:00Z',
       merged_at: null,
+      merge_commit_sha: 'c'.repeat(40),
     });
     expect(mapped).toMatchObject({ state: 'closed', closedAtMs: Date.parse('2026-10-02T12:00:00Z') });
     expect(mapped).not.toHaveProperty('createdAtMs');
     expect(mapped).not.toHaveProperty('mergedAtMs');
+    expect(mapped).not.toHaveProperty('mergeCommitSha');
   });
 
   it.each([

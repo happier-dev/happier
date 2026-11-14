@@ -473,3 +473,96 @@ describe('GitHub REST pull request adapter', () => {
     });
   });
 });
+
+describe('merged pull request commit completion', () => {
+  const mergeCommitSha = '1fc1aaa6c562a6c12b168e147f072035a40eb0e5';
+  const mergedRestPayload = {
+    number: 1,
+    title: 'Move starter repository',
+    html_url: 'https://github.com/happier-dev/happier/pull/1',
+    state: 'closed',
+    merged: true,
+    merged_at: '2026-11-13T12:40:03Z',
+    merge_commit_sha: null,
+    base: { ref: 'main', sha: 'base-commit' },
+    head: { ref: 'move-repository', sha: 'reviewed-head-commit' },
+  };
+
+  it.each([
+    { credentialKind: 'native', provider: githubProvider, graphqlUrl: 'https://api.github.com/graphql', restUrl: 'https://api.github.com/repos/happier-dev/happier/pulls/1' },
+    { credentialKind: 'account', provider: githubProvider, graphqlUrl: 'https://api.github.com/graphql', restUrl: 'https://api.github.com/repos/happier-dev/happier/pulls/1' },
+    { credentialKind: 'enterprise-native', provider: enterpriseProvider, graphqlUrl: 'https://ghe.internal.test/api/graphql', restUrl: 'https://ghe.internal.test/api/v3/repos/happier-dev/happier/pulls/1' },
+  ] as const)('completes a REST-null merged commit through the authoritative GraphQL read for $credentialKind credentials', async ({ credentialKind, provider, graphqlUrl, restUrl }) => {
+    const requests: Array<Readonly<{ url: string; init?: RequestInit }>> = [];
+    const adapter = createGithubRestAdapter({
+      fetcher: async (url, init) => {
+        requests.push({ url, init });
+        if (init?.method === 'GET') return jsonResponse(mergedRestPayload);
+        return jsonResponse({ data: { repository: { pullRequest: { mergeCommit: { oid: mergeCommitSha } } } } });
+      },
+    });
+    // Credential materialization is the genuine host/native subprocess or Account vault boundary.
+    const runtimeServices: HostingProviderRuntimeServices = {
+      resolveScmHostingTokenMaterialization: async () => ({
+        kind: 'available', token: `merged-null-${credentialKind}`,
+        ...(credentialKind === 'account' ? {
+          account: { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'merge-regression' },
+        } : {}),
+      }),
+    };
+
+    await expect(adapter.getPullRequest({ provider, reference: { number: 1 }, runtimeServices }))
+      .resolves.toMatchObject({ state: 'merged', headSha: 'reviewed-head-commit', mergeCommitSha });
+    expect(requests.map(({ url }) => url)).toEqual([
+      restUrl, graphqlUrl,
+    ]);
+    expect(JSON.parse(String(requests[1]?.init?.body))).toMatchObject({
+      variables: { owner: 'happier-dev', name: 'happier', number: 1 },
+    });
+  });
+
+  it.each([
+    { state: 'closed', merged: true, merge_commit_sha: mergeCommitSha, expected: mergeCommitSha },
+    { state: 'open', merged: false, merge_commit_sha: 'synthetic-mergeability-commit', expected: undefined },
+  ])('keeps supplied merged commits and unmerged reads on the single REST request: $state', async ({ state, merged, merge_commit_sha, expected }) => {
+    const requests: string[] = [];
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'ordinary-merge-read' }),
+      fetcher: async (url) => {
+        requests.push(url);
+        return jsonResponse({ ...mergedRestPayload, state, merged, merged_at: merged ? mergedRestPayload.merged_at : null, merge_commit_sha });
+      },
+    });
+    const result = await adapter.getPullRequest({ provider: githubProvider, reference: { number: 1 } });
+    expect(result?.mergeCommitSha).toBe(expected);
+    expect(requests).toEqual(['https://api.github.com/repos/happier-dev/happier/pulls/1']);
+  });
+
+  it('leaves a merged commit unavailable when GraphQL also has none rather than substituting the reviewed head', async () => {
+    const requests: string[] = [];
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'graphql-null-read' }),
+      fetcher: async (url, init) => {
+        requests.push(url);
+        return init?.method === 'GET' ? jsonResponse(mergedRestPayload)
+          : jsonResponse({ data: { repository: { pullRequest: { mergeCommit: null } } } });
+      },
+    });
+    const result = await adapter.getPullRequest({ provider: githubProvider, reference: { number: 1 } });
+    expect(result).toMatchObject({ state: 'merged', headSha: 'reviewed-head-commit' });
+    expect(result?.mergeCommitSha).toBeUndefined();
+    expect(requests).toHaveLength(2);
+  });
+
+  it('rejects GraphQL HTTP200 permission failures before accepting partial merge data', async () => {
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'graphql-permission-read' }),
+      fetcher: async (_url, init) => init?.method === 'GET' ? jsonResponse(mergedRestPayload) : jsonResponse({
+        data: { repository: { pullRequest: { mergeCommit: { oid: mergeCommitSha } } } },
+        errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible' }],
+      }),
+    });
+    await expect(adapter.getPullRequest({ provider: githubProvider, reference: { number: 1 } }))
+      .rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+  });
+});

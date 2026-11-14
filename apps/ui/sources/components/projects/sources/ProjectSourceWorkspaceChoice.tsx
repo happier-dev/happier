@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/projects/workspaceRefKeyV1';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import { findWorkspaceProjectCandidatesV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { matchesRepositoryWorkspaceIntentV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -29,10 +29,11 @@ export function useProjectSourceWorkspaceChoice(input: Readonly<{
     const refs = useWorkspaceRefs();
     const repository = input.repository ?? (source?.repository ? readScmHostingRepositoryIdentity({ ...source.repository.provider,
         nameWithOwner: source.repository.repository.nameWithOwner }) : null);
-    const candidates = React.useMemo(() => input.destination ? refs : source ? findWorkspaceProjectCandidatesV1(refs, {
-        serverId: input.lifetime.scope.serverId, source: { sourceId: source.id, revision: source.revision },
-        ...(repository ? { repositoryIdentity: repository } : {}),
-    }, { normalizeServerId: resolveServerProfileScopeIdForIdentifier }) : [],
+    const candidates = React.useMemo(() => input.destination ? refs : source && repository ? refs.filter(ref =>
+        resolveServerProfileScopeIdForIdentifier(ref.serverId) === resolveServerProfileScopeIdForIdentifier(input.lifetime.scope.serverId)
+        && matchesRepositoryWorkspaceIntentV1(ref, {
+            source: { sourceId: source.id, revision: source.revision }, repositoryIdentity: repository,
+        })) : [],
     [refs, source, input.destination, input.lifetime.scope.serverId, repository?.kind, repository?.deployment, repository?.repository]);
     const selectedKey = input.value;
     const selected = selectedKey ? resolveWorkspaceRefV1(candidates, selectedKey,

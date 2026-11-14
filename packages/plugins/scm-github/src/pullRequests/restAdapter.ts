@@ -19,11 +19,13 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
 import { readGithubDecodedResponseFacts, type GithubApiMethodV1 } from '../observations/githubApiClient.js';
-import { requestGithubAccountForgeJsonV1 } from '../observations/githubForgeHttpFetcher.js';
+import { requestGithubAccountForgeJsonV1, requestGithubAccountForgeResponseV1 } from '../observations/githubForgeHttpFetcher.js';
 import {
   classifyGithubResponseFacts,
   isGithubInaccessibleResourceFailure,
+  type GithubResponseFailureV1,
 } from '../observations/githubResponseFailure.js';
+import { sendGithubGraphqlRequest } from '../triage/mutations/graphql.js';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import {
@@ -32,7 +34,7 @@ import {
   createGithubNotFoundError,
   createGithubRateLimitedError,
 } from './errors.js';
-import { mapGithubPullRequest } from './mapping.js';
+import { mapGithubPullRequest, readGithubString } from './mapping.js';
 
 type GithubRestResponse = ScmForgeHttpResponse;
 
@@ -69,6 +71,16 @@ export type GithubRestPullRequestAdapter = Readonly<{
 }>;
 
 const GITHUB_DOT_COM_HOST = 'github.com';
+
+const MERGED_COMMIT_QUERY = `query PullRequestMergeCommit($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { mergeCommit { oid } }
+  }
+}`;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 async function defaultRuntimeTokenResolver(input: Parameters<GithubRestTokenResolver>[0]): Promise<GithubRestTokenResolution> {
   const resolver = input.runtimeServices?.resolveScmHostingTokenMaterialization;
@@ -200,6 +212,16 @@ async function resolveToken(
  * 0` — came to be reported as a credential failure that sends the owner to
  * reconnect a working account.
  */
+function mapGithubPullRequestFailure(failure: GithubResponseFailureV1, message: string): Error {
+  return failure.class === 'rateLimit'
+    ? createGithubRateLimitedError(failure.retryNotBeforeMs)
+    : failure.class === 'authentication' || failure.class === 'permission'
+      ? createGithubAuthRequiredError('GitHub pull request authentication failed')
+      : isGithubInaccessibleResourceFailure(failure)
+        ? createGithubNotFoundError()
+        : createGithubCommandFailedError(message);
+}
+
 function mapGithubRestError(context: ScmForgeHttpErrorContext): Error {
   const now = Date.now();
   const failure = classifyGithubResponseFacts(
@@ -212,13 +234,7 @@ function mapGithubRestError(context: ScmForgeHttpErrorContext): Error {
   );
   // A withheld permission stays an authentication repair here: the owner fixes it
   // by reconnecting an account whose scopes cover the operation.
-  const error = failure.class === 'rateLimit'
-    ? createGithubRateLimitedError(failure.retryNotBeforeMs)
-    : failure.class === 'authentication' || failure.class === 'permission'
-      ? createGithubAuthRequiredError('GitHub REST authentication failed')
-      : isGithubInaccessibleResourceFailure(failure)
-        ? createGithubNotFoundError()
-        : createGithubCommandFailedError(`GitHub REST request failed with status ${context.status || context.statusText}`);
+  const error = mapGithubPullRequestFailure(failure, `GitHub REST request failed with status ${context.status || context.statusText}`);
   // A definite client rejection cannot have created a PR. Transport loss,
   // server errors and HTTP request timeout retain uncertain-effect semantics.
   return Object.assign(error, {
@@ -271,6 +287,16 @@ export function createGithubRestAdapter(params?: Readonly<{
   const profileKeyByProvider = new Map<string, string | null>();
   const adapterLifetime = {};
 
+  async function resolveRequestAuth(
+    provider: ScmHostingProviderRef,
+    runtimeServices?: ScmHostingProviderRuntimeServices,
+    signal?: AbortSignal,
+  ) {
+    const auth = await resolveToken(provider, tokenResolver, runtimeServices, signal);
+    profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
+    return auth;
+  }
+
   async function requestJson(
     provider: ScmHostingProviderRef,
     url: string,
@@ -278,8 +304,7 @@ export function createGithubRestAdapter(params?: Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const auth = await resolveToken(provider, tokenResolver, runtimeServices, signal);
-    profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
+    const auth = await resolveRequestAuth(provider, runtimeServices, signal);
     return requestGithubAccountForgeJsonV1({
       url,
       ...init,
@@ -293,11 +318,52 @@ export function createGithubRestAdapter(params?: Readonly<{
     });
   }
 
+  async function readMergedCommitSha(input: ScmHostingProviderPullRequestGetInput, number: number): Promise<string | null> {
+    const repository = readNameWithOwnerSegments(input.provider);
+    if (repository === null) return null;
+    const auth = await resolveRequestAuth(input.provider, input.runtimeServices, input.signal);
+    const result = await sendGithubGraphqlRequest({
+      query: MERGED_COMMIT_QUERY,
+      variables: { owner: repository[0], name: repository[1], number },
+      apiBaseUrl: apiBaseUrl(input.provider),
+      readOnlyGraphql: true,
+    }, {
+      now: Date.now,
+      client: {
+        request: (request) => requestGithubAccountForgeResponseV1({
+          url: request.url,
+          method: request.method,
+          headers: { ...buildHeaders(auth.token), ...request.headers },
+          ...(request.body === undefined ? {} : { body: new TextDecoder().decode(request.body) }),
+          ...(input.signal ? { signal: input.signal } : {}),
+          readOnlyGraphql: request.readOnlyGraphql,
+          auth,
+          executionOrigin: new URL(apiBaseUrl(input.provider)).origin,
+          lifetime: adapterLifetime,
+          fetcher,
+        }),
+      },
+    });
+    if (!result.ok) {
+      input.signal?.throwIfAborted();
+      throw mapGithubPullRequestFailure(result.failure, 'GitHub merge commit read failed');
+    }
+    const rawRepository = result.data.repository;
+    const pullRequest = isRecord(rawRepository) ? rawRepository.pullRequest : null;
+    const mergeCommit = isRecord(pullRequest) ? pullRequest.mergeCommit : null;
+    return isRecord(mergeCommit) ? readGithubString(mergeCommit.oid) : null;
+  }
+
   async function getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null> {
     const number = readReferenceNumber(input);
     if (number) {
       const raw = await requestJson(input.provider, pullUrl({ provider: input.provider, number }), { method: 'GET' }, input.runtimeServices, input.signal);
-      return mapGithubPullRequest(input.provider, raw);
+      const pullRequest = mapGithubPullRequest(input.provider, raw);
+      if (pullRequest?.state !== 'merged' || pullRequest.mergeCommitSha) return pullRequest;
+      // GitHub can report a merged REST PR with merge_commit_sha: null while
+      // GraphQL still exposes the authoritative mergeCommit (SWEEP-A1 PR1).
+      const mergeCommitSha = await readMergedCommitSha(input, number);
+      return mergeCommitSha === null ? pullRequest : { ...pullRequest, mergeCommitSha };
     }
     const reference = input.reference as Readonly<{ headBranch?: unknown }>;
     if (typeof reference.headBranch === 'string') {

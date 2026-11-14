@@ -14,30 +14,33 @@ import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRele
 import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { createDeploymentMoveToRepositoryForHost } from './moveToRepository';
 
-describe('Move definition post-effect refusal', () => {
-  it('retains the opened PR and actual child refusal phase for retry', async () => {
+describe('Move definition post-effect continuation', () => {
+  it.each(['source-refusal', 'merged-rest-null'] as const)('retains the opened PR and continues through %s', async scenario => {
     const git = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'move-source-refusal-' });
     const remote = createBareGitRemoteFixture('move-source-refusal-remote-');
     const url = 'https://github.com/octocat/Hello-World.git';
     const hostConfig = await createLocalGitForgeHostConfig({ url, remotePath: remote.remotePath });
     vi.stubEnv('GIT_CONFIG_GLOBAL', hostConfig.path);
-    const forge = createGithubForgeHttpFixture({ nameWithOwner: 'octocat/Hello-World', cloneUrl: url });
+    const forge = createGithubForgeHttpFixture({ nameWithOwner: 'octocat/Hello-World', cloneUrl: url,
+      omitRestMergeCommit: scenario === 'merged-rest-null' });
     const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting },
       createLocalGitForgeTransport({ url, remotePath: remote.remotePath }));
     try {
       runScmExecutable(git.rootPath, 'git', ['remote', 'add', 'origin', url]);
       runScmExecutable(git.rootPath, 'git', ['push', remote.remotePath, `${git.branchName}:${git.branchName}`]);
+      runScmExecutable(remote.remotePath, 'git', ['symbolic-ref', 'HEAD', `refs/heads/${git.branchName}`]);
       runScmExecutable(git.rootPath, 'git', ['symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${git.branchName}`]);
       const base = createDeploymentEnvironmentDetailV1();
       const definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
         document: 'services: {app: {image: nginx:1}}', profiles: [], services: ['app'] });
-      const source = ProjectSourceV1Schema.parse({ id: base.environment.projectSourceId, revision: 1,
+      let source = ProjectSourceV1Schema.parse({ id: base.environment.projectSourceId, revision: 1,
         name: 'App', audience: [], createdByAccountId: 'owner' });
       const repository = readScmHostingRepositoryIdentity(forge.provider);
       if (!repository) throw new Error('Forge fixture must resolve a repository identity');
       const { remoteName: _remote, urlSafety: _safety, nameWithOwner: _name, ...provider } = forge.provider;
       const sourceRepository = ProjectSourceRepositorySelectorV1Schema.parse({ provider,
         repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: url }, protocol: 'https' });
+      if (scenario === 'merged-rest-null') source = { ...source, repository: sourceRepository };
       const workspace = WorkspaceRefV1WriteSchema.parse({ id: 'workspace', serverId: 'home', machineId: 'machine',
         rootPath: git.rootPath, createdAtMs: 0, source: { sourceId: source.id, revision: source.revision }, repositoryIdentity: repository });
       const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
@@ -59,6 +62,20 @@ describe('Move definition post-effect refusal', () => {
         path: 'deploy/compose.yaml', workspace: { kind: 'workspace-ref', serverId: 'home', id: workspace.id },
         repository, sourceRepository, baseCommit: git.headCommit, baseBranch: git.branchName });
       const result = DeploymentMoveToRepositoryResultV1Schema.parse(await move(input, {}, unexpected));
+      if (scenario === 'merged-rest-null') {
+        expect(result.kind).toBe('pullRequest');
+        if (result.kind !== 'pullRequest') throw new Error('Move must open its PR before merge');
+        runScmExecutable(git.rootPath, 'git', ['merge', '--no-ff', result.continuation.headCommit, '-m', 'Merge exported definition']);
+        const mergedCommit = runScmExecutable(git.rootPath, 'git', ['rev-parse', 'HEAD']).trim();
+        expect(mergedCommit).not.toBe(result.continuation.headCommit);
+        runScmExecutable(git.rootPath, 'git', ['push', remote.remotePath, `${git.branchName}:${git.branchName}`]);
+        forge.setPullRequest({ ...result.continuation.pullRequest, state: 'merged', mergeCommitSha: mergedCommit });
+        const continued = DeploymentMoveToRepositoryResultV1Schema.parse(await move({ ...input, mode: 'preview',
+          continuation: result.continuation }, {}, unexpected));
+        expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'reviewMerged', review: { mergedCommit,
+          mergedDocument: definition.document, currentDocument: definition.document } });
+        return;
+      }
       expect(result).toMatchObject({ kind: 'partial', phase: refusal.failureCause!.phase, errorCode: refusal.errorCode,
         continuation: { pullRequest: { number: 4, url: 'https://github.com/octocat/Hello-World/pull/4' },
           headCommit: expect.stringMatching(/^[a-f0-9]{40,64}$/), document: definition.document } });

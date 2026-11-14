@@ -78,12 +78,16 @@ export type GithubAccountRequestOwnerV1 = Readonly<{
 
 function isGithubSafeRead(input: GithubAccountRequestV1): boolean {
   const method = input.method ?? 'GET';
-  return method === 'GET' || (method === 'POST' && input.readOnlyGraphql === true && new URL(input.url).pathname === '/graphql');
+  return method === 'GET' || (method === 'POST' && input.readOnlyGraphql === true && isGithubGraphqlPath(new URL(input.url).pathname));
+}
+
+function isGithubGraphqlPath(path: string): boolean {
+  return path === '/graphql' || path === '/api/graphql';
 }
 
 function githubRequestResource(input: GithubAccountRequestV1): string {
   const path = new URL(input.url).pathname;
-  return path === '/graphql' ? 'graphql' : path.startsWith('/search/') ? 'search' : 'core';
+  return isGithubGraphqlPath(path) ? 'graphql' : path.startsWith('/search/') ? 'search' : 'core';
 }
 
 type AccountRequestEntry = Readonly<{ credential: string; owner: GithubAccountRequestOwnerV1; clearJoins(): void }>;

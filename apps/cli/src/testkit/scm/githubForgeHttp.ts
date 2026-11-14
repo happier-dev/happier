@@ -8,6 +8,7 @@ import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/scm-github/src/
 /** Fake Forge HTTP and token acquisition with the real registry and GitHub adapters. */
 export function createGithubForgeHttpFixture(input: Readonly<{
   nameWithOwner: string; cloneUrl: string; repositoryExists?: boolean; pullRequestWriteStatus?: number;
+  omitRestMergeCommit?: boolean;
 }>) {
   const provider = { id: GITHUB_SCM_HOSTING_PROVIDER_ID, kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com',
     nameWithOwner: input.nameWithOwner, remoteName: 'origin', urlSafety: { allowedSchemes: ['https:'] } };
@@ -19,11 +20,14 @@ export function createGithubForgeHttpFixture(input: Readonly<{
     json: async () => body, text: async () => JSON.stringify(body) });
   const rawPullRequest = () => pullRequest && ({ number: pullRequest.number, title: pullRequest.title, html_url: pullRequest.url,
     state: pullRequest.state === 'merged' ? 'closed' : pullRequest.state, merged: pullRequest.state === 'merged',
-    merge_commit_sha: pullRequest.mergeCommitSha, base: { ref: pullRequest.baseBranch }, head: { ref: pullRequest.headBranch,
+    merge_commit_sha: input.omitRestMergeCommit ? null : pullRequest.mergeCommitSha, base: { ref: pullRequest.baseBranch }, head: { ref: pullRequest.headBranch,
       sha: pullRequest.headSha, repo: { full_name: input.nameWithOwner } } });
   const fetcher: NonNullable<Parameters<typeof createGithubRestAdapter>[0]>['fetcher'] = async (url, init) => {
     const parsed = new URL(url);
     httpRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname });
+    if (parsed.pathname === '/graphql' && init?.method === 'POST') return response({ data: {
+      repository: { pullRequest: { mergeCommit: pullRequest?.mergeCommitSha ? { oid: pullRequest.mergeCommitSha } : null } },
+    } });
     if (parsed.pathname === `/repos/${input.nameWithOwner}/pulls` && init?.method === 'POST') {
       if (input.pullRequestWriteStatus !== undefined) return response({ message: 'Forge unavailable' }, input.pullRequestWriteStatus);
       const request = JSON.parse(String(init.body)) as { base: string; head: string; title: string };

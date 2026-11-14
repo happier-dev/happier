@@ -254,6 +254,15 @@ export function enrichWorkspaceRefV1<T extends WorkspaceRefV1>(
   return { ...ref, ...facts, projectKey };
 }
 
+/** An executable repository choice must belong to the exact admitted Source pin. */
+export function matchesRepositoryWorkspaceIntentV1(ref: WorkspaceRefV1, expected: Readonly<{
+  source: NonNullable<WorkspaceRefV1['source']>;
+  repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>;
+}>): boolean {
+  return ref.source?.sourceId === expected.source.sourceId && ref.source.revision === expected.source.revision
+    && sameScmHostingRepositoryIdentity(ref.repositoryIdentity, expected.repositoryIdentity);
+}
+
 /** Source/repository enrichment suggests candidates; it never chooses an exact checkout or merges accepted anchors. */
 export function findWorkspaceProjectCandidatesV1<T extends WorkspaceRefV1>(
   refs: readonly T[], input: Readonly<{ serverId: string }> & WorkspaceProjectFactsV1,

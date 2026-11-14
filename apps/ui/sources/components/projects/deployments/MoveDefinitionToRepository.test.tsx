@@ -65,8 +65,9 @@ it('offers Move for a stored definition through Environment Settings without rea
 
 it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('reviews every file from %s repository selection and switches only after explicit merged acceptance', async repositoryChoice => {
     const creating = repositoryChoice === 'create' || repositoryChoice === 'create-new';
+    const serverIdentityId = `srv_${'e'.repeat(32)}`;
     const serverId = await homes.addHome({ name: 'Move review', serverUrl: 'https://move-review.test',
-        serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+        serverIdentityId, accountId: 'account-owner', currentAccount: true });
     const base = createDeploymentEnvironmentDetailV1();
     const definition = { kind: 'stored' as const, contentRevision: 3, composeDigest: `sha256:${'a'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:3\n', publicFiles: [{ path: 'app.conf', content: 'version=3' }], services: [], profiles: [] };
@@ -84,14 +85,20 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: { nameWithOwner: repository.repository }, protocol: 'https' as const };
     const checkout = { id: workspace.id, serverId, machineId: 'checkout-machine', rootPath: '/project', createdAtMs: 1,
         ...(repositoryChoice === 'create-new' ? {} : { repositoryIdentity: repository, source: { sourceId: source.id, revision: source.revision } }) };
+    const { source: _checkoutSource, ...unboundCheckout } = checkout;
+    const checkoutRefs = repositoryChoice === 'existing' ? [checkout,
+        { ...checkout, id: 'other-source', source: { sourceId: 'another-source', revision: source.revision } },
+        { ...checkout, id: 'old-source-revision', source: { sourceId: source.id, revision: source.revision - 1 } },
+        { ...unboundCheckout, id: 'repository-only' },
+    ] : [checkout];
     let admitted = repositoryChoice !== 'create-new';
     storage.getState().activateProfileScope(scope);
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    applyProjectAccountRowsFixture(storage, { workspaceRefs: admitted ? [checkout] : [] });
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: admitted ? checkoutRefs : [] });
     homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
-        select: () => ({ body: createPlainProjectAccountRowListFixture({ workspaceRefs: admitted ? [checkout] : [] }) }),
+        select: () => ({ body: createPlainProjectAccountRowListFixture({ workspaceRefs: admitted ? checkoutRefs : [] }) }),
     });
     storage.getState().applyMachines([createMachineFixture({ id: checkout.machineId, activeAt: Date.now() })], true,
         { sourceServerId: serverId, sourceAccountId: scope.accountId });
@@ -189,7 +196,7 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         try {
             const { createUiProjectAccountRowsClient } = await import('@/sync/api/projects/projectAccountRowsClient');
             const census = await createUiProjectAccountRowsClient(account).read();
-            expect(census).toMatchObject({ status: 'ready', coverage: 'complete', workspaceRefs: [checkout] });
+            expect(census).toMatchObject({ status: 'ready', coverage: 'complete', workspaceRefs: checkoutRefs });
             const preview = await createUiDeploymentActionDeps(account).deploymentMoveToRepository!({ mode: 'preview', serverId,
                 environmentId: detail.environment.id, definition: pin, path, repository, workspace,
                 baseCommit: 'a'.repeat(40), baseBranch: 'main' }, {
@@ -197,6 +204,7 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
             }, async () => ({ ok: false, errorCode: 'unexpected_child', error: 'unexpected_child' }));
             expect(preview).toMatchObject({ kind: 'preview', review: { workspace, path } });
         } finally { account.dispose(); }
+        inputs.length = 0;
     }
     const controller = createDeploymentReadControllerV1({ scope, transport: {
         listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
@@ -220,6 +228,10 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
             await form.submit(); });
     }
     await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0], node => node !== undefined); });
+    if (repositoryChoice === 'existing') {
+        await waitForHomeGovernance(() => expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]?.props.model.status).toBe('ready'));
+        expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]!.props.model.candidates).toEqual([checkout]);
+    }
     if (repositoryChoice === 'create-new') {
         expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync(`${id}.chooseDestination`);
@@ -270,9 +282,9 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
     expect(inputs.at(-1)?.useMergedVersion).toBeUndefined();
     await screen.pressByTestIdAsync(`${id}.useMerged`);
     await act(async () => { await waitForTestEvent(screen.subscribe, () => changed.mock.calls.length, count => count === 1); });
-    expect(inputs[0]).toMatchObject({ mode: 'preview', definition: pin, path,
-        ...(creating ? { workspace, createRepository: { providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' } }
-            : { repository, workspace, baseCommit: 'a'.repeat(40), baseBranch: 'main' }) });
+    expect(inputs[0], JSON.stringify(inputs[0])).toMatchObject({ mode: 'preview', definition: pin, path,
+        ...(creating ? { workspace: { ...workspace, serverId: serverIdentityId }, createRepository: { providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' } }
+            : { repository, workspace: { ...workspace, serverId: serverIdentityId }, baseCommit: 'a'.repeat(40), baseBranch: 'main' }) });
     expect(inputs.at(-1)).toMatchObject({ mode: 'apply', definition: pin,
         ...(repositoryChoice === 'resume' ? { pullRequestReference: { url: continuation.pullRequest.url } } : { continuation }), useMergedVersion: merged });
     if (repositoryChoice === 'attach') expect(inputs[0]?.sourceRepository).toEqual(selector);

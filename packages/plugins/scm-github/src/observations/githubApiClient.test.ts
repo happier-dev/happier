@@ -165,7 +165,7 @@ describe('account request ownership', () => {
     await expect(requestOwner.request(input, { transport: async () => ok })).resolves.toBe(ok);
   });
 
-  it('partitions representations, validators, pages, read bodies and writes', async () => {
+  it.each(['https://api.github.com/graphql', 'https://ghe.internal.test/api/graphql'])('partitions representations, validators, pages, read bodies and writes at %s', async (graphqlUrl) => {
     const requestOwner = owner();
     const transport = vi.fn(async () => ok);
     await Promise.all([
@@ -173,7 +173,7 @@ describe('account request ownership', () => {
       requestOwner.request({ ...input, headers: { 'If-None-Match': 'a' } }, { transport }),
       requestOwner.request({ ...input, headers: { Accept: 'text/plain' } }, { transport }),
       requestOwner.request({ url: `${input.url}?page=2` }, { transport }),
-      ...[1, 2, 1].map((n) => requestOwner.request({ url: 'https://api.github.com/graphql', method: 'POST', readOnlyGraphql: true, body: new TextEncoder().encode(JSON.stringify({ query: 'query Node($id: ID!) { node(id: $id) { id } }', variables: { id: String(n) } })) }, { transport })),
+      ...[1, 2, 1].map((n) => requestOwner.request({ url: graphqlUrl, method: 'POST', readOnlyGraphql: true, body: new TextEncoder().encode(JSON.stringify({ query: 'query Node($id: ID!) { node(id: $id) { id } }', variables: { id: String(n) } })) }, { transport })),
       ...[1, 2].map(() => requestOwner.request({ ...input, method: 'POST' }, { transport })),
       ...[1, 2].map(() => requestOwner.request({ ...input, method: 'POST', readOnlyGraphql: true }, { transport })),
     ]);
