@@ -613,3 +613,31 @@ for (const allowJs of [false, true]) test(`imported JavaScript joins compiler ow
   assert.ok(!files.includes(join(typedDependencyDir, 'runtime.js')),
     'self-referenced dependency JavaScript must not become authored emission roots');
 });
+
+test('TypeScript require() calls do not add compiler roots the compiler would never load', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-compiler-ts-require-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'src'), { recursive: true });
+  const dependencyDir = join(root, 'node_modules/dev-runtime/src');
+  await mkdir(dependencyDir, { recursive: true });
+  // Metro follows this literal require at bundle time; TypeScript does not in
+  // a .ts file, so its vendored TS sources (and their lib references) must
+  // stay out of the derived compiler programs.
+  await writeFile(join(root, 'src/entry.ts'),
+    'declare const require: (id: string) => unknown; export const load = () => require("dev-runtime/src/setup");');
+  await writeFile(join(dependencyDir, 'setup.ts'), '/// <reference lib="esnext" />\ndeclare var leaked: number;');
+  await writeFile(join(root, 'node_modules/dev-runtime/package.json'), JSON.stringify({ name: 'dev-runtime' }));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { moduleResolution: 'bundler', module: 'esnext', types: [] }, include: ['src/**/*.ts'],
+  }));
+  const names = ['foundation', 'core', 'source', 'test'];
+  for (const name of names) await writeFile(join(root, `tsconfig.${name}.json`), JSON.stringify({
+    extends: './tsconfig.json', files: name === 'test' ? [] : ['src/entry.ts'], include: [],
+  }));
+  const program = ts.createProgram({ rootNames: [join(root, 'src/entry.ts')], options: { moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext, types: [], noEmit: true } });
+  assert.ok(!program.getSourceFiles().some(file => file.fileName.includes('/node_modules/dev-runtime/')), 'fixture premise: the compiler does not load it');
+  const inventory = await deriveTypecheckProjects(root, { sourceNames: names.slice(0, -1), testNames: ['test'] });
+  const files = (await Promise.all(inventory.map(async ({ configPath }) => JSON.parse(await readFile(configPath, 'utf8')).files))).flat();
+  assert.ok(files.includes(join(root, 'src/entry.ts')));
+  assert.deepEqual(files.filter(file => file.includes('/node_modules/dev-runtime/')), []);
+});

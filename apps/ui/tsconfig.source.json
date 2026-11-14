@@ -15,14 +15,6 @@
     }
   ],
   "files": [
-    "../../node_modules/expo/src/async-require/buildErrors.ts",
-    "../../node_modules/expo/src/async-require/getFullBundlerUrl.ts",
-    "../../node_modules/expo/src/async-require/hmr.ts",
-    "../../node_modules/expo/src/async-require/hmrUtils.ts",
-    "../../node_modules/expo/src/async-require/messageSocket.ts",
-    "../../node_modules/expo/src/async-require/setup.ts",
-    "../../node_modules/expo/src/async-require/setupFastRefresh.ts",
-    "../../node_modules/expo/src/async-require/setupHMR.ts",
     "../../node_modules/react-native-mmkv/src/Types.ts",
     "../../node_modules/react-native-mmkv/src/createMMKV.mock.ts",
     "../../packages/plugin-ui/src/presentation/find/matchFindText.ts",

@@ -201,7 +201,9 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     if (!cache.has(file)) {
       const text = readSource(file);
       if (text === undefined) return;
-      const info = ts.preProcessFile(text, true, true);
+      // The compiler follows require() only in JavaScript files. Following it in
+      // TypeScript adds roots the program never loads (Metro-only dev shims).
+      const info = ts.preProcessFile(text, true, /\.[cm]?jsx?$/.test(file));
       const specifiers = new Set(info.importedFiles.map(({ fileName }) => fileName));
       // TS5's lightweight preprocessor omits `export * as name from` edges.
       // Read those declarations with its parser; retain only specifiers, not
