@@ -248,9 +248,10 @@ function aggregateResolvedUsageCosts(initial: UsageObservationCost, costs: reado
     return next.value;
 }
 
-function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs: readonly UsageObservationCost[], mode: UsageCostMode,
-    shouldYield?: () => boolean): Generator<void, AggregatedUsageCost, void> {
-    if (!costs.length) return initial;
+/** Fold selected/API facts in witnessed order; a grouping owner may supply its complete observed total. */
+export function createUsageCostPartitionAccumulator(initial: UsageObservationCost, mode: UsageCostMode,
+    observedCost?: () => UsageObservationCost) {
+    let hasOperands = false;
     const fields = ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const;
     const initialState = (initial as AggregatedUsageCost)[usageCostAggregationBasis];
     const initialBasis = resolveUsageCostBasis(initial, mode);
@@ -262,11 +263,14 @@ function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs:
     let selected: SelectedCostEvidence = selectedCostOperands({ available: initialState?.available ?? true, selected: initialBasis });
     const selectedMoney = createUsageMoneyAccumulator(initialBasis
         ? readUsageMoney(initialBasis, 'amountUsd', initialBasis.amountUsd) : { units: 0n, scale: 0 });
-    for (const input of costs) {
+    return { add(input: UsageObservationCost): void {
+        hasOperands = true;
         // Snapshot once before raw and selected exact arithmetic share the operand.
         const cost = { ...input };
-        if (raw) raw.add(cost);
-        else raw = createUsageCostAccumulator(cost);
+        if (!observedCost) {
+            if (raw) raw.add(cost);
+            else raw = createUsageCostAccumulator(cost);
+        }
         if (cost.apiEquivalentUsd !== undefined) {
             const operand = readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd);
             if (api) {
@@ -280,18 +284,30 @@ function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs:
         const right = selectedCostOperands(selectResolvedUsageCost(cost, mode));
         selected = mergeSelectedCostEvidence(selected, right, mode);
         if (selected.available && right.amount) selectedMoney.add(right.amount);
+    }, value(): AggregatedUsageCost {
+        if (!hasOperands) return initial;
+        const observed = observedCost ? observedCost() : raw!.value();
+        const exactApi = api?.value();
+        const exactSelected = selected.basis ? selectedMoney.value() : undefined;
+        const published = publishSelectedCost({ ...selected, ...(exactSelected ? { amount: exactSelected } : {}) });
+        const selectedBasis = published.selected;
+        return withUsageMoney({ ...observed,
+            ...(exactApi === undefined ? {} : { apiEquivalentUsd: usageMoneyToNumber(exactApi), pricingSource }),
+            ...(selectedBasis ? { effectiveUsd: selectedBasis.amountUsd } : {}),
+            [usageCostAggregationBasis]: { mode, available: published.available, ...(selectedBasis ? { selected: selectedBasis } : {}) } },
+            { ...(exactApi === undefined ? {} : { apiEquivalentUsd: exactApi }), ...(exactSelected ? { effectiveUsd: exactSelected } : {}) });
+    } };
+}
+
+function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs: readonly UsageObservationCost[], mode: UsageCostMode,
+    shouldYield?: () => boolean): Generator<void, AggregatedUsageCost, void> {
+    if (!costs.length) return initial;
+    const accumulator = createUsageCostPartitionAccumulator(initial, mode);
+    for (const input of costs) {
+        accumulator.add(input);
         if (shouldYield?.()) yield;
     }
-    const observed = raw!.value();
-    const exactApi = api?.value();
-    const exactSelected = selected.basis ? selectedMoney.value() : undefined;
-    const published = publishSelectedCost({ ...selected, ...(exactSelected ? { amount: exactSelected } : {}) });
-    const selectedBasis = published.selected;
-    return withUsageMoney({ ...observed,
-        ...(exactApi === undefined ? {} : { apiEquivalentUsd: usageMoneyToNumber(exactApi), pricingSource }),
-        ...(selectedBasis ? { effectiveUsd: selectedBasis.amountUsd } : {}),
-        [usageCostAggregationBasis]: { mode, available: published.available, ...(selectedBasis ? { selected: selectedBasis } : {}) } },
-        { ...(exactApi === undefined ? {} : { apiEquivalentUsd: exactApi }), ...(exactSelected ? { effectiveUsd: exactSelected } : {}) });
+    return accumulator.value();
 }
 
 export function withEffectiveUsageCost(cost: UsageObservationCost, mode: UsageCostMode): UsageObservationCost {

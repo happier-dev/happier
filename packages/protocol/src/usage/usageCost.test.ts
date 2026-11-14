@@ -7,6 +7,41 @@ import { addUsageCostForMode, aggregateUsageContributionCosts, createEmptyUsageC
 import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts, projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
 import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
 
+it('reuses grouped observed money while selecting each priced operand in witnessed order', () => {
+  const count = 128;
+  let scales = 0;
+  const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
+  const rows = Array.from({ length: count }, (_, index) => ({ id: `row-${index}`, eventCount: 1,
+    observedAtMs: index, modelId: 'model', tokens, tokenCategories: tokens,
+    cost: withUsageMoney({ reportedUsd: 0.1, estimatedUsd: 0, invoiceUsd: null,
+      currency: 'USD', billingContext: 'api_usage' as const, costSource: 'provider_reported' as const }, {
+      reportedUsd: { units: 100000000000000001n, get scale() { scales++; return 18; } },
+    }),
+  }));
+  scales = 0;
+  const result = createUsagePricedPartitionBuilder('auto').build(rows);
+  expect(scales, 'each exact amount enters the compact raw group and ordered selection, without another raw row fold').toBe(count * 2);
+  expect(result.population.groups).toHaveLength(1);
+  const selected = resolveUsageCostBasis(result.cost, 'auto');
+  expect(result.cost.reportedUsd).toBe(12.8);
+  expect(selected?.amountUsd).toBe(12.8);
+  const exact = { units: 12800000000000000128n, scale: 18 };
+  expect(readUsageMoney(result.cost, 'reportedUsd', 12.8)).toEqual(exact);
+  expect(readUsageMoney(selected!, 'amountUsd', 12.8)).toEqual(exact);
+});
+
+it('keeps grouped money work interruptible after admitting the input rows', () => {
+  const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
+  const rows = Array.from({ length: 128 }, (_, index) => ({ id: `row-${index}`, eventCount: 1,
+    observedAtMs: index, modelId: `model-${index}`, tokens, tokenCategories: tokens,
+    cost: { reportedUsd: 0.1, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const },
+  }));
+  const steps = createUsagePricedPartitionBuilder('auto', () => true).steps(rows);
+  for (const _row of rows) expect(steps.next().done).toBe(false);
+  expect(steps.next().done, 'distinct groups still have money work and must service the caller’s yield request').toBe(false);
+  steps.return(undefined as never);
+});
+
 it('retains empty population zero when an export selects another cost mode', () => {
   const cost = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify({ v: 1,
     totals: projectUsageContributionTotals([], aggregateUsageContributionCosts([], 'auto')) }))).totals.cost;

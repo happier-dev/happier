@@ -59,10 +59,16 @@ describe('captured Usage metadata admission', () => {
         const normalize = createScopedUsageEvidenceRowNormalizer();
         const subjects = new Set<unknown>();
         let last;
-        for (let index = 0; index < 107_019; index++) {
-            const admitted = normalize({ id: index, metadata: value(index) });
-            if (admitted.accountingEvidence.subject) subjects.add(admitted.accountingEvidence.subject);
-            if (index === 107_018) last = admitted;
+        const parser = vi.spyOn(createStoredReadSchema(UsageNativeAccountingSubjectSchema), 'safeParse');
+        try {
+            for (let index = 0; index < 107_019; index++) {
+                const admitted = normalize({ id: index, metadata: value(index) });
+                if (admitted.accountingEvidence.subject) subjects.add(admitted.accountingEvidence.subject);
+                if (index === 107_018) last = admitted;
+            }
+            expect(parser, 'canonical validation runs once per distinct captured subject').toHaveBeenCalledTimes(3_976);
+        } finally {
+            parser.mockRestore();
         }
         expect(subjects.size, 'native identity admission follows distinct subjects, not repeated events').toBe(3_976);
         expect(last).toMatchObject({ id: 107_018, metadata: {

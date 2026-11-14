@@ -1,5 +1,5 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { addUsageCost, aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, addUsageMeasuredTokens, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
+import { addUsageCost, aggregateUsageContributionCosts, addUsageMeasuredTokens, createUsageCostAccumulator, createUsageCostPartitionAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
 import { hasUnresolvedUsageReportedTotalScope, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
@@ -114,12 +114,12 @@ export function buildUsagePricedPartition(rows: readonly UsagePricingOperand[], 
 
 function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
     sharedStates: UsagePricingPopulationStates, admit: typeof admitUsagePricingOperand, shouldYield?: () => boolean) {
-    const { population, prices, admittedCosts } = yield* prepareUsagePricingPopulationSteps(rows, sharedStates, true, mode, admit, shouldYield);
+    const { population, prices, resolvedCost } = yield* prepareUsagePricingPopulationSteps(rows, sharedStates, true, mode, admit, shouldYield);
     // Selected provenance follows the witnessed row order, including interleaved
     // covered facts. Compact grouping is a separate operand, not a new ordering
     // of that canonical rich fold.
     const cost = rows.length === 0 ? aggregateUsageContributionCosts([], mode)
-        : yield* aggregateUsageCostPartitionsSteps(admittedCosts, mode, shouldYield ?? (() => false));
+        : resolvedCost!;
     const priced = prices.filter(price => price.api !== undefined);
     return { population, cost,
         allPriced: prices.every(price => price.api !== undefined),
@@ -151,12 +151,14 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
     complete: boolean, selectedMode?: UsageCostMode, admit = admitUsagePricingOperand, shouldYield?: () => boolean,
     selections?: ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection>) {
     const includePrices = selectedMode !== undefined;
-    const admittedCosts: UsageObservationCost[] = [];
+    let observedCost: UsageObservationCost;
+    const resolvedCosts = selectedMode === undefined ? undefined
+        : createUsageCostPartitionAccumulator(createEmptyUsageCost(), selectedMode, () => observedCost);
     const grouped = new Map<string, { group: Group; costs?: ReturnType<typeof createUsageCostAccumulator>;
         api?: ReturnType<typeof createUsageMoneyAccumulator>; allPriced: boolean; source?: string }>();
     for (const row of rows) {
         const { categories, cost, raw, key } = admit(row);
-        if (selectedMode !== undefined) admittedCosts.push(sharedStates.get(selectedMode)?.get(row) ?? cost);
+        if (selectedMode !== undefined) resolvedCosts!.add(sharedStates.get(selectedMode)?.get(row) ?? cost);
         const state = (mode: typeof modes[number]) => selection(cost, sharedStates.get(mode)?.get(row) ?? cost, mode);
         const states = selections?.get(row) ?? { auto: state('auto'), reported: state('reported'), estimated: state('estimated') };
         const signature = JSON.stringify([key, states]);
@@ -188,12 +190,21 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
         }
         if (shouldYield?.()) yield;
     }
-    return { population: { groups: [...grouped.values()].map(({ group, costs }) => {
+    const groups: Group[] = [];
+    let observed: ReturnType<typeof createUsageCostAccumulator> | undefined;
+    for (const { group, costs } of grouped.values()) {
         const cost = costs?.value() ?? group.cost;
-        return { ...group, cost, categoryUnits: group.categories ? units(group.categories, tokenFields) : {}, costUnits: costUnits(cost) };
-    }) }, prices: includePrices ? [...grouped.values()].map(partition => ({
+        groups.push({ ...group, cost, categoryUnits: group.categories ? units(group.categories, tokenFields) : {}, costUnits: costUnits(cost) });
+        if (selectedMode !== undefined) {
+            if (observed) observed.add(cost);
+            else observed = createUsageCostAccumulator(cost);
+        }
+        if (shouldYield?.()) yield;
+    }
+    if (selectedMode !== undefined) observedCost = observed?.value() ?? createEmptyUsageCost();
+    return { population: { groups }, prices: includePrices ? [...grouped.values()].map(partition => ({
         api: partition.allPriced ? partition.api!.value() : undefined, source: partition.source,
-    })) : [], admittedCosts };
+    })) : [], resolvedCost: resolvedCosts?.value() };
 }
 
 function selectPricingGroupCost(cost: UsageObservationCost, group: Group, mode: UsageCostMode): UsageObservationCost {
