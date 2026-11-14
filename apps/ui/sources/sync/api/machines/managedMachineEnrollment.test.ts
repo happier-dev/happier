@@ -24,10 +24,11 @@ afterEach(() => { resetRuntimeFetch(); vi.restoreAllMocks(); });
 
 describe('app managed enrollment', () => {
     it.each([
-        { mode: 'plain', review: 'matching' }, { mode: 'e2ee', review: 'matching' },
-        { mode: 'plain', review: 'forged' },
-        { mode: 'plain', review: 'mismatched' },
-    ] as const)('uses ordinary $mode Account pairing only under the $review creation review', async ({ mode, review }) => {
+        { mode: 'plain', review: 'matching', snapshot: 'full' }, { mode: 'e2ee', review: 'matching', snapshot: 'full' },
+        { mode: 'plain', review: 'forged', snapshot: 'full' },
+        { mode: 'plain', review: 'mismatched', snapshot: 'full' },
+        { mode: 'e2ee', review: 'matching', snapshot: 'opaque' },
+    ] as const)('uses ordinary $mode Account pairing for the $snapshot snapshot only under the $review creation review', async ({ mode, review, snapshot }) => {
         const homeId = `srv_app_native_${mode}`;
         const serverUrl = `https://app-native-${mode}.example.test`;
         const lifetime = new AbortController();
@@ -53,6 +54,10 @@ describe('app managed enrollment', () => {
             selection: { kind: 'one-off', homeId, launch, retention: machine.retention, wakeOnAcceptedMessage: true } });
         const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ homeId, managedId: machine.id,
             requestId: 'create', expectedIntentRevision: 1, resource: machine.resource });
+        const { launch: _launch, resource: _resource, enrollmentIdentity: _identity, ...structural } = machine;
+        const originalMachine = snapshot === 'opaque' ? ManagedMachineV1Schema.parse({ ...structural,
+            preset: { id: 'private-preset', revision: 2, contentEncryptionMode: 'e2ee' } }) : machine;
+        const homeCorrelation = projectManagedEnrollmentCorrelationV1(originalMachine, correlation);
         const pairing = { secretB64Url: encodeBase64(new Uint8Array(32).fill(23), 'base64url'),
             createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };
         const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
@@ -85,12 +90,14 @@ describe('app managed enrollment', () => {
         let rowReads = 0;
         const progress: unknown[] = [];
         const prompts: unknown[] = [];
+        const installationResources: unknown[] = [];
+        let guestEnrollment: unknown;
         let recipeEntered = false;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             managedMachineAction: async call => {
                 recipeEntered = true;
                 const enrolled = await runUiManagedMachineEnrollment({
-                    correlation, homeCorrelation: projectManagedEnrollmentCorrelationV1(machine, correlation),
+                    correlation, homeCorrelation,
                     target, carrier: { kind: 'native', transport: { contributionRef: launch.provider, schemaVersion: 1 } },
                     channel: 'stable', signal: lifetime.signal, credentials,
                     reviewedAction: review === 'mismatched'
@@ -106,10 +113,19 @@ describe('app managed enrollment', () => {
                 }, {
                     readCurrentManagedRow: async () => { rowReads++; return machine; },
                     // Source-payload transfer is a host IO strategy, replacing only external guest installation bytes.
-                    installNativePayload: async () => ({ binaryPath: '/home/guest/.happier/cli/current/happier' }),
-                    native: { putFile: async () => {}, exec: async ({ command }) => {
+                    installNativePayload: async installation => {
+                        installationResources.push(installation.resource);
+                        return { binaryPath: '/home/guest/.happier/cli/current/happier' };
+                    },
+                    native: { putFile: async () => {}, exec: async ({ command, input }) => {
                         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
-                        if (command.includes("'auth' 'request'")) return { status: 0, stdout: JSON.stringify(request), stderr: '' };
+                        if (command.includes("'auth' 'request'")) {
+                            const guestInput: unknown = JSON.parse(input ?? 'null');
+                            if (guestInput && typeof guestInput === 'object' && 'managedEnrollment' in guestInput) {
+                                guestEnrollment = guestInput.managedEnrollment;
+                            }
+                            return { status: 0, stdout: JSON.stringify(request), stderr: '' };
+                        }
                         if (command.includes("'auth' 'wait'")) return { status: 0, stdout: JSON.stringify(completion), stderr: '' };
                         if (command.includes("'daemon' 'start'")) running = true;
                         const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
@@ -140,6 +156,10 @@ describe('app managed enrollment', () => {
         expect(running).toBe(true);
         expect(rowReads).toBe(1);
         expect(approvalKinds).toEqual([mode === 'plain' ? 'tokenOnly' : 'dataKey']);
+        expect(installationResources).toEqual([correlation.resource.value]);
+        expect(guestEnrollment).toEqual(homeCorrelation);
+        if (snapshot === 'opaque') expect(guestEnrollment).not.toHaveProperty('resource');
+        else expect(guestEnrollment).toHaveProperty('resource', correlation.resource);
         expect(confirm).not.toHaveBeenCalled();
         expect(JSON.stringify([progress, prompts])).not.toContain(pairing.secretB64Url);
     });
