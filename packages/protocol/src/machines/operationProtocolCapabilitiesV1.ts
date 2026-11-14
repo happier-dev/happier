@@ -11,10 +11,12 @@ export const MachineOperationProtocolCapabilityV1Schema = lazyZodSchema(() => z.
     protocolVersions: MachineOperationProtocolVersionsV1Schema,
   })));
 
-const MachineOperationProtocolCapabilityThroughV2Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+const MachineOperationProtocolCapabilityThroughV3Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   protocolVersions: z.union([
     MachineOperationProtocolVersionsV1Schema,
+    z.readonly(z.tuple([z.literal(1), z.literal(3)])),
     z.readonly(z.tuple([z.literal(1), z.literal(2)])),
+    z.readonly(z.tuple([z.literal(1), z.literal(2), z.literal(3)])),
   ]),
 })));
 
@@ -64,7 +66,7 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     localServicePreviewNativeAccess: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // This declares the broker application ingress, not source/resource readiness.
     // Daemons publish it only after handler registration and Home support negotiation.
-    providerBrokerIngress: z.optional(MachineOperationProtocolCapabilityThroughV2Schema),
+    providerBrokerIngress: z.optional(MachineOperationProtocolCapabilityThroughV3Schema),
     // Bounded finite-transfer RPC ingress. A host publishes it only after those
     // handlers are installed, which is what lets a client that has no daemon
     // state at all — an ephemeral Session Runner — still be reachable for
@@ -232,4 +234,10 @@ export function supportsMachineSessionFollowWakeOnHumanChangeV1(capabilities: un
   return parsed.success
     && parsed.data.sessionFollow?.contextV1 === true
     && parsed.data.sessionFollow.wakeOnHumanChangeV1 === true;
+}
+
+/** Exact broker application epoch, decided from the one stored capability leaf. */
+export function supportsMachineProviderBrokerProtocolVersion(capabilities: unknown, version: 1 | 2 | 3): boolean {
+  const parsed = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(capabilities);
+  return parsed.success && parsed.data.providerBrokerIngress?.protocolVersions.some(supported => supported === version) === true;
 }

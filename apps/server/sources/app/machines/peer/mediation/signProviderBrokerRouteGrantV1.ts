@@ -1,3 +1,4 @@
+import { SignedProviderBrokerActionRouteGrantV3Schema, ProviderBrokerActionRouteGrantPayloadV3Schema, createProviderBrokerActionRouteGrantSigningInputV3, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { SignedProviderBrokerRouteGrantV1Schema, ProviderBrokerRouteGrantPayloadV1Schema, createProviderBrokerRouteGrantSigningInputV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import tweetnacl from 'tweetnacl';
 import { signRouteGrantPayload } from './mintDirectRouteGrantV1';
@@ -21,40 +22,49 @@ export function signProviderBrokerRouteGrantV1(input: Readonly<{
     });
 }
 
-/** Verifies the strict broker envelope against the current Home signing root. */
-export function verifyProviderBrokerRouteGrantSignatureV1(input: Readonly<{
+type ProviderBrokerSignatureVerificationInput = Readonly<{
     authority: unknown;
     signingCapability: Readonly<{ keyId: string; publicKey: string; expiresAt: number | null }>;
     nowMs: number;
-}>): boolean {
-    const authority = SignedProviderBrokerRouteGrantV1Schema.safeParse(input.authority);
-    if (!authority.success
-        || authority.data.signature.keyId !== input.signingCapability.keyId
-        || (input.signingCapability.expiresAt !== null && input.nowMs >= input.signingCapability.expiresAt)) return false;
-    let publicKey: Uint8Array;
-    let signature: Uint8Array;
-    try {
-        publicKey = Buffer.from(input.signingCapability.publicKey, 'base64url');
-        signature = Buffer.from(authority.data.signature.valueBase64Url, 'base64url');
-    } catch {
-        return false;
-    }
-    if (publicKey.length !== tweetnacl.sign.publicKeyLength || signature.length !== tweetnacl.sign.signatureLength) {
-        return false;
-    }
-    return tweetnacl.sign.detached.verify(
-        Buffer.from(createProviderBrokerRouteGrantSigningInputV1(authority.data.payload)),
-        signature,
-        publicKey,
-    );
-}
+}>;
 
-export function verifyProviderBrokerRouteGrantSignatureV2(input: Parameters<typeof verifyProviderBrokerRouteGrantSignatureV1>[0]): boolean {
-    const authority = SignedProviderBrokerRouteGrantV2Schema.safeParse(input.authority);
-    if (!authority.success || authority.data.signature.keyId !== input.signingCapability.keyId
+function verifyProviderBrokerSignature(input: Omit<ProviderBrokerSignatureVerificationInput, 'authority'> & Readonly<{
+    signature: Readonly<{ keyId: string; valueBase64Url: string }>;
+    signingInput: string;
+}>): boolean {
+    if (input.signature.keyId !== input.signingCapability.keyId
         || (input.signingCapability.expiresAt !== null && input.nowMs >= input.signingCapability.expiresAt)) return false;
     const publicKey = Buffer.from(input.signingCapability.publicKey, 'base64url');
-    const signature = Buffer.from(authority.data.signature.valueBase64Url, 'base64url');
+    const signature = Buffer.from(input.signature.valueBase64Url, 'base64url');
     if (publicKey.length !== tweetnacl.sign.publicKeyLength || signature.length !== tweetnacl.sign.signatureLength) return false;
-    return tweetnacl.sign.detached.verify(Buffer.from(createProviderBrokerRouteGrantSigningInputV2(authority.data.payload)), signature, publicKey);
+    return tweetnacl.sign.detached.verify(Buffer.from(input.signingInput), signature, publicKey);
+}
+
+/** Verifies each closed epoch through the same Home signature authority. */
+export function verifyProviderBrokerRouteGrantSignatureV1(input: ProviderBrokerSignatureVerificationInput): boolean {
+    const parsed = SignedProviderBrokerRouteGrantV1Schema.safeParse(input.authority);
+    return parsed.success && verifyProviderBrokerSignature({ ...input, signature: parsed.data.signature,
+        signingInput: createProviderBrokerRouteGrantSigningInputV1(parsed.data.payload) });
+}
+
+export function verifyProviderBrokerRouteGrantSignatureV2(input: ProviderBrokerSignatureVerificationInput): boolean {
+    const parsed = SignedProviderBrokerRouteGrantV2Schema.safeParse(input.authority);
+    return parsed.success && verifyProviderBrokerSignature({ ...input, signature: parsed.data.signature,
+        signingInput: createProviderBrokerRouteGrantSigningInputV2(parsed.data.payload) });
+}
+
+export function signProviderBrokerActionRouteGrantV3(input: Readonly<{
+    payload: unknown;
+    signingKey: Readonly<{ keyId: string; secretKey: Uint8Array }>;
+}>): SignedProviderBrokerActionRouteGrantV3 {
+    const payload = ProviderBrokerActionRouteGrantPayloadV3Schema.parse(input.payload);
+    return SignedProviderBrokerActionRouteGrantV3Schema.parse({ payload, signature: signRouteGrantPayload({
+        signingInput: createProviderBrokerActionRouteGrantSigningInputV3(payload), signingKey: input.signingKey,
+    }) });
+}
+
+export function verifyProviderBrokerActionRouteGrantSignatureV3(input: ProviderBrokerSignatureVerificationInput): boolean {
+    const parsed = SignedProviderBrokerActionRouteGrantV3Schema.safeParse(input.authority);
+    return parsed.success && verifyProviderBrokerSignature({ ...input, signature: parsed.data.signature,
+        signingInput: createProviderBrokerActionRouteGrantSigningInputV3(parsed.data.payload) });
 }

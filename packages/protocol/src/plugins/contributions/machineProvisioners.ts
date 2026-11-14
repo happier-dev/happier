@@ -1,3 +1,4 @@
+import { readManagedProvisionerCredentialRootRoleV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { isNormalizedPluginJsonSchema, isRecursivelyClosedPluginJsonSchemaV2 as isClosedSchema } from './jsonSchema.js';
@@ -28,7 +29,7 @@ import { MachineProvisionerSizeV1Schema as sizeSchema, MACHINE_PROVISIONER_SIZE_
 export { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, type MachineProvisionerSizeDimensionV1, type MachineProvisionerSizeV1 } from '../../machines/managed/providerFactsV1.js';
 import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 
-export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'resize', 'snapshot', 'nativeCredentialApply', 'renew'] as const;
+export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'stream', 'power', 'destroy', 'rebuild', 'resize', 'snapshot', 'nativeCredentialApply', 'renew'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
 export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
 
@@ -117,7 +118,10 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   // Where the provider's own id for a created resource lives in its resource value (the id its console
   // shows), so a host can name it without guessing native field names. Display only, never an identity.
   resourceIdPath: z.optional(InputPathSchema),
-  bootstrapTransport: z.optional(z.strictObject({ kind: z.literal('native'), exec: local(), putFile: local() })),
+  // `stream` (optional): a long-lived non-PTY duplex byte channel running one argv in the guest
+  // (the Session holder's `attach`). Lifetime = the invocation; the result is termination only,
+  // and a channel that ends says nothing about the remote process (state unknown, reattach).
+  bootstrapTransport: z.optional(z.strictObject({ kind: z.literal('native'), exec: local(), putFile: local(), stream: z.optional(local()) })),
   bootstrapCredential: z.optional(z.strictObject({ kind: z.enum(['ssh', 'native-token']) })),
   nativeCredentialDelivery: z.optional(z.strictObject({
     apply: local(), transports: z.tuple([z.literal('https_headers')]),
@@ -212,6 +216,7 @@ export function readMachineProvisionerActionRolesV1(descriptor: MachineProvision
     ...(descriptor.bootstrapTransport ? [
       { role: 'exec' as const, action: descriptor.bootstrapTransport.exec },
       { role: 'putFile' as const, action: descriptor.bootstrapTransport.putFile },
+      ...(descriptor.bootstrapTransport.stream ? [{ role: 'stream' as const, action: descriptor.bootstrapTransport.stream }] : []),
     ] : []),
     ...(descriptor.reconciliation ? [{ role: 'reconcile' as const, action: descriptor.reconciliation.action }] : []),
     ...(descriptor.reconciliation?.cleanup ? [{ role: 'cleanup' as const, action: descriptor.reconciliation.cleanup }] : []),
@@ -659,6 +664,7 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
     case 'cleanup': return MachineProvisionerCleanupObservationV1Schema.jsonSchema;
     case 'exec': return MachineProvisionerNativeExecResultV1Schema.jsonSchema;
     case 'putFile': return MachineProvisionerPutFileResultV1Schema.jsonSchema;
+    case 'stream': return MachineProvisionerNativeStreamResultV1Schema.jsonSchema;
     case 'nativeCredentialApply': return MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema;
     case 'power': return MachineProvisionerPowerResultV1Schema.jsonSchema;
     case 'resize': return MachineProvisionerResizeResultV1Schema.jsonSchema;
@@ -713,7 +719,7 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   const roles = genericRoleSchemas(descriptor.reconciliation?.continueAcquire === true);
   const schema = role === 'check' ? roles.checkInput : role === 'acquire' ? roles.acquireInput
     : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'resize' ? roles.resizeInput : role === 'snapshot' ? roles.snapshotInput : role === 'renew' ? roles.renewInput : role === 'rebuild' ? roles.rebuildInput
-      : role === 'exec' ? roles.execInput : role === 'putFile' ? roles.putFileInput : roles.resourceInput;
+      : role === 'exec' ? roles.execInput : role === 'putFile' ? roles.putFileInput : role === 'stream' ? roles.streamInput : roles.resourceInput;
   if (role === 'check') return schema.jsonSchema;
   const key = role === 'acquire' ? 'launch' : 'resource';
   const native = role === 'acquire' ? descriptor.launchSchema : descriptor.resourceSchema;
@@ -794,15 +800,12 @@ export function defineMachineProvisionerReconciliationSchemas<LI, LO, RI, RO, NI
 const closedRole = { policy: 'closed' } as const;
 const roleString = defineProtocolString({ minLength: 1 });
 const roleBoolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
-const roleBase64Character = '[A-Za-z0-9+/]';
 /** A native file Action carries one fragment within the incumbent Action body
  * budget. The host reserves its actual JSON metadata before encoding bytes;
  * this is a per-call memory boundary, never a maximum installer/archive size. */
 export const MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 = EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES;
-// Unroll each fixed-width group: a nested {4} repetition exhausts V8's regexp
-// stack on release archives. The final assertion also rejects a trailing newline.
-const roleBase64Pattern = `^(?:${roleBase64Character.repeat(4)})*(?:${roleBase64Character.repeat(2)}==|${roleBase64Character.repeat(3)}=)?$(?![\\s\\S])`;
-const roleBase64 = defineProtocolString({ pattern: roleBase64Pattern });
+// A byte format shares non-backtracking validation across Node and Bun.
+const roleBase64 = defineProtocolString({ format: 'byte' });
 const roleRef = PluginContributionIdentityV1Schema;
 /** Read-only exact cleanup evidence; retryable is native idempotency evidence,
  * never independent admission to replay an effect. */
@@ -823,8 +826,7 @@ const nativeDiagnostic = defineProtocolObject({
     defineProtocolObject({ kind: defineProtocolLiteral('openUrl'), url: roleString }, closedRole),
   ]).optional(),
 }, closedRole);
-export const MachineProvisionerNativeExecResultV1Schema = defineProtocolUnion([defineProtocolObject({
-  termination: defineProtocolObject({
+const nativeTermination = defineProtocolObject({
     observed: defineProtocolUnion([
       defineProtocolObject({ kind: defineProtocolLiteral('exit'), exitCode: defineProtocolNumber({ integer: true }) }, closedRole),
       defineProtocolObject({ kind: defineProtocolLiteral('signal'), signal: roleString }, closedRole),
@@ -839,9 +841,14 @@ export const MachineProvisionerNativeExecResultV1Schema = defineProtocolUnion([d
         defineProtocolLiteral('hostShutdown'), defineProtocolLiteral('runtimeRecovery'),
       ]).optional() }, closedRole),
     ]),
-  }, closedRole),
+  }, closedRole);
+export const MachineProvisionerNativeExecResultV1Schema = defineProtocolUnion([defineProtocolObject({
+  termination: nativeTermination,
   stdoutBase64: roleBase64, stderrBase64: roleBase64, stdoutTruncated: roleBoolean, stderrTruncated: roleBoolean,
 }, closedRole), defineProtocolObject({ kind: defineProtocolLiteral('process-configured') }, closedRole)]);
+/** Stream role result: how the channel's local carrier ended. Bytes travel only on the
+ * live channel, and this termination never proves the remote process exited. */
+export const MachineProvisionerNativeStreamResultV1Schema = defineProtocolObject({ termination: nativeTermination }, closedRole);
 export type MachineProvisionerProcessConfigV1 = Readonly<{
   environment: Readonly<{ HOME: string; HAPPIER_HOME_DIR: string }>;
   /** The top-level argv is the supervised foreground alternative. Providers
@@ -890,7 +897,23 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
         detachedDaemonStartArgv: defineProtocolArray(defineProtocolString(), { minItems: 1 }),
       }, closed).optional() }, closed),
     putFileInput: defineProtocolObject({ resource: schemas.resource, guestPath: defineProtocolString({ minLength: 1 }),
-      bytesBase64: defineProtocolString({ pattern: roleBase64Pattern, maxLength: MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 }),
+      // A file placed for a running Session never powers a stopped target on (same rule as exec).
+      allowWake: defineProtocolLiteral(false).optional(),
+      bytesBase64: defineProtocolString({ format: 'byte', maxLength: MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 }),
       mode: defineProtocolNumber({ integer: true, minimum: 0 }).optional() }, closed),
+    streamInput: defineProtocolObject({ resource: schemas.resource, argv: defineProtocolArray(defineProtocolString(), { minItems: 1 }) }, closed),
   });
+}
+
+/** Native provisioning admits only the selected plugin's declared provider roles. */
+export function isManagedProvisionerOperationActionForRootV1(
+  rootActionId: string,
+  action: Readonly<{ pluginId: string; localId: string }>,
+  manifest: Pick<import('../manifest/v2.js').ParsedPluginManifestV2, 'id' | 'contributes'>,
+): boolean {
+  const role = readManagedProvisionerCredentialRootRoleV1(rootActionId);
+  if (!role || manifest.id !== action.pluginId) return false;
+  return manifest.contributes.machineProvisioners?.some(descriptor =>
+    readMachineProvisionerActionRolesV1(descriptor).some(binding =>
+      binding.action === action.localId && (role === 'all' || binding.role === role))) ?? false;
 }
