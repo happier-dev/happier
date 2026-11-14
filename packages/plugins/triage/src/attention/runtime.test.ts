@@ -91,3 +91,70 @@ describe('registered Triage attention producer', () => {
     }
   });
 });
+
+describe('attention feed recovery', () => {
+  it('restarts a transiently stopped feed on an ordinary same-revision invalidation', async () => {
+    vi.useFakeTimers();
+    const fixture = createTriageSourceV1Fixture();
+    const { control, watchableCollections } = createTestkitCorpusCollections();
+    control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: `a${'0'.repeat(42)}`,
+      sourceQualifiedId: 'happier.example.source/example-forge', lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+      configured: fixture.configuredInstance }));
+    const controller = new AbortController();
+    let invalidate = () => {};
+    let reads = 0;
+    let failed = false;
+    const inputs: unknown[] = [];
+    const notices: Notice[] = [];
+    const kit = await createPluginTestkit({ manifest: TRIAGE_PLUGIN.manifest, module: TRIAGE_PLUGIN });
+    // Substituted boundaries: host contribution transport, persistent collections and notification sink.
+    const context = { signal: controller.signal, surface: 'background', plugin: { id: 'happier.triage', version: '0.0.0' },
+      services: {
+        storage: { account: { collection: () => watchableCollections.sourceInstances } },
+        targetedContributions: { observeForSelf: (_point: unknown, options: { onInvalidated: () => void }) => {
+          invalidate = options.onInvalidated;
+          return { readCurrent: async () => ({ contributions: [{ descriptor: fixture.descriptor,
+            contributor: { pluginId: fixture.configuredInstance.instance.source.pluginId,
+              contributionId: fixture.configuredInstance.instance.source.localId, occurrenceId: 'unchanged-occurrence' },
+            operations: { readAttention: { role: 'readAttention' } } }] }), dispose() {} };
+        } },
+        actions: { executeAdmittedTargetedOperation: async (_operation: unknown, input: unknown) => {
+          inputs.push(input);
+          reads += 1;
+          return failed ? { kind: 'failed', failure: { class: 'transient', code: 'http_503' } }
+            : { kind: 'page', items: [{ localRef: fixture.getInput.localRef, reason: 'reviewRequested',
+              type: 'decision', title: 'Review this pull request', resolved: false }],
+              cursor: { v: 1, token: 'source-watermark' }, nextPage: false, pollIntervalMs: 90_000 };
+        } }, notifications: { send: async (notice: Notice) => {
+          notices.push(notice); return { deliveries: [], replayed: false };
+        } }, logger: { warn() {} },
+      } } as unknown as BackgroundServiceContext;
+    const runner = kit.registration('backgroundServices', 'attention');
+    if (!runner) throw new Error('Missing real attention registration');
+    const running = runner(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads).toBe(1);
+      failed = true;
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(reads).toBe(2);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(reads).toBe(2);
+      expect(notices).toHaveLength(1);
+      failed = false;
+      invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads).toBe(3);
+      expect(inputs[2]).toMatchObject({ cursor: { v: 1, token: 'source-watermark' } });
+      expect(notices).toHaveLength(2);
+      expect(notices[1]?.itemId).toBe(notices[0]?.itemId);
+      invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads).toBe(3);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(reads).toBe(4);
+    } finally {
+      controller.abort(); await running; await kit.dispose(); vi.useRealTimers();
+    }
+  });
+});

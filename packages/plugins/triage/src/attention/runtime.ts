@@ -10,17 +10,24 @@ import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributio
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 
 type Operation = NonNullable<TriageAdmittedSourceV1['operations']['readAttention']>;
+type Feed = {
+  revision: number;
+  occurrenceId: string | undefined;
+  controller: AbortController;
+  running?: Promise<void>;
+  cursor?: { v: 1; token: string };
+};
 
-async function followFeed(context: BackgroundServiceContext, instance: TriageConfiguredSourceInstanceV1, operation: Operation, signal: AbortSignal) {
-  let cursor: { v: 1; token: string } | undefined;
+async function followFeed(context: BackgroundServiceContext, instance: TriageConfiguredSourceInstanceV1, operation: Operation, feed: Feed) {
+  const signal = feed.controller.signal;
   while (!signal.aborted) {
     const result = TriageReadAttentionResultV1Schema.parse(await context.services.actions.executeAdmittedTargetedOperation(operation, {
-      v: 1, instance, ...(cursor === undefined ? {} : { cursor }),
+      v: 1, instance, ...(feed.cursor === undefined ? {} : { cursor: feed.cursor }),
     }, { signal }));
     signal.throwIfAborted();
     if (result.kind === 'failed') {
       context.services.logger.warn('Triage attention source unavailable', { sourceInstanceId: instance.instance.sourceInstanceId, code: result.failure.code });
-      // An unavailable source is not absence. Only its own retry evidence may restart this feed.
+      // Without source retry evidence, rejoin at the next lifecycle invalidation.
       if (result.failure.retryNotBeforeMs === undefined) return;
       const delay = result.failure.retryNotBeforeMs - Date.now();
       if (delay > 0) await sleepWithSignal(delay, signal);
@@ -37,7 +44,7 @@ async function followFeed(context: BackgroundServiceContext, instance: TriageCon
         },
       });
     }
-    cursor = result.cursor;
+    feed.cursor = result.cursor;
     if (result.nextPage) continue;
     if (result.pollIntervalMs === undefined) return;
     await sleepWithSignal(result.pollIntervalMs, signal);
@@ -47,7 +54,7 @@ async function followFeed(context: BackgroundServiceContext, instance: TriageCon
 /** The SDK owns adoption/lifetime. Only sources with a finite feed role join this loop. */
 export async function runTriageAttention(context: BackgroundServiceContext): Promise<void> {
   const rows = requireTriageAccountStorage(context).collection(CORPUS_SOURCE_INSTANCES_COLLECTION);
-  const feeds = new Map<string, { revision: number; occurrenceId: string | undefined; controller: AbortController; running: Promise<void> }>();
+  const feeds = new Map<string, Feed>();
   const stop = () => { for (const feed of feeds.values()) feed.controller.abort(); };
   const observation = context.services.targetedContributions.observeForSelf(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => reconcile.trigger() });
   const reconcile = createCoalescedScheduler({
@@ -66,14 +73,17 @@ export async function runTriageAttention(context: BackgroundServiceContext): Pro
         current.add(id);
         const occurrenceId = contribution.contributor.occurrenceId;
         const existing = feeds.get(id);
-        if (existing?.revision === record.revision && existing.occurrenceId === occurrenceId) continue;
+        const unchanged = existing?.revision === record.revision && existing.occurrenceId === occurrenceId;
+        if (unchanged && existing.running) continue;
         if (existing) { existing.controller.abort(); await existing.running; }
         context.signal.throwIfAborted();
         const controller = new AbortController();
-        const running = followFeed(context, record.value.configured, operation, controller.signal).catch(() => {
+        const feed: Feed = { revision: record.revision, occurrenceId, controller,
+          cursor: unchanged ? existing.cursor : undefined };
+        feed.running = followFeed(context, record.value.configured, operation, feed).catch(() => {
           if (!controller.signal.aborted) context.services.logger.warn('Triage attention feed stopped', { sourceInstanceId: id });
-        });
-        feeds.set(id, { revision: record.revision, occurrenceId, controller, running });
+        }).finally(() => { feed.running = undefined; });
+        feeds.set(id, feed);
       }
       for (const [id, feed] of feeds) if (!current.has(id)) {
         feed.controller.abort(); await feed.running; feeds.delete(id);
