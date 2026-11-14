@@ -1,6 +1,10 @@
 import psList from 'ps-list';
 
-import { killProcessTree as terminateProcessTree, type ProcessTreeTerminationResult } from '../../../../scripts/process_tree.cjs';
+import {
+  killProcessTree as terminateProcessTree,
+  withWindowsFastlistFallback,
+  type ProcessTreeTerminationResult,
+} from '../../../../scripts/process_tree.cjs';
 import { logger } from '@/ui/logger';
 
 type ProcessTreeRoot = Readonly<{ pid?: number; exitCode?: number | null; signalCode?: NodeJS.Signals | null }>;
@@ -11,7 +15,9 @@ type ProcessTreeOptions = Readonly<{ graceMs?: number }>;
 
 export async function killProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<ProcessTreeTerminationResult> {
   try {
-    return await terminateProcessTree(proc, opts, psList);
+    // ps-list cannot find fastlist.exe inside the Bun-compiled Windows binary; the fallback runs
+    // the payload's on-disk copy instead, so descendant discovery works there too.
+    return await terminateProcessTree(proc, opts, withWindowsFastlistFallback(() => psList()));
   } catch (error) {
     // Existing best-effort callers may catch cleanup rejection. Keep this outcome
     // observable at its canonical owner without exposing OS errors or terminal noise.
