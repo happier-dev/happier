@@ -58,7 +58,7 @@ export default defineConfig({
                 singleFork: true,
             },
         },
-        setupFiles: [fileURLToPath(new URL('../../scripts/testing/vitestHomeSetup.mjs', import.meta.url)), './src/configureZodLocale.ts', './src/vitestHomeGuard.ts'],
+        setupFiles: [fileURLToPath(new URL('../../scripts/testing/vitestAgentSetup.mjs', import.meta.url)), './src/configureZodLocale.ts', './src/vitestHomeGuard.ts'],
         sequence: { setupFiles: 'list' },
         include: [
             'src/**/*.integration.test.ts',

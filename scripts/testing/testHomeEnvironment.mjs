@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { createTestTempDirectory } from './process/temporaryDirectories.mjs';
 
 // Shared by config-time admission and worker setup. No application imports:
@@ -64,7 +64,37 @@ export function assertTestHomePath(homeDir, root = process.env.HAPPIER_TEST_HOME
   }
 }
 
-export function installTestHomeEnvironment() {
+// Agent suites need real OS utilities, but must never discover installed coding
+// agents. Project only these test tools into a disposable bin; never retain a
+// host PATH directory (even /usr/bin can contain an installed agent).
+function isolateTestExecutables(root) {
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  const hostPath = String(process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const tools = ['node', 'git', 'sh', 'bash', 'env', 'ps', 'stat', 'date', 'sed', 'awk', 'grep',
+    'cat', 'readlink', 'realpath', 'sleep', 'mkdir', 'rm', 'chmod', 'dirname', 'basename',
+    'head', 'tail', 'tr', 'cut', 'sort', 'uniq', 'find', 'xargs', 'wc', 'cp', 'tar', 'which', 'id'];
+  for (const name of tools) {
+    const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
+    const executable = name === 'node' ? process.execPath : hostPath
+      .flatMap(dir => extensions.map(ext => join(dir, name + ext)))
+      .find(candidate => existsSync(candidate));
+    if (!executable) continue;
+    const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+    const contents = process.platform === 'win32'
+      ? `@echo off\r\n"${executable}" %*\r\n`
+      : `#!/bin/sh\nexec ${quote(executable)} "$@"\n`;
+    writeFileSync(join(bin, name + (process.platform === 'win32' ? '.cmd' : '')), contents, { mode: 0o755 });
+  }
+  // Explicit binary overrides are test inputs too; opt in after setup, never
+  // borrow a launcher override exported by the developer's active session.
+  for (const key of Object.keys(process.env)) {
+    if (/^HAPPIER_[A-Z0-9_]+_PATH$/.test(key)) delete process.env[key];
+  }
+  process.env.PATH = bin;
+}
+
+export function installTestHomeEnvironment({ isolateExecutables = false } = {}) {
   // Test workers cannot borrow a daemon's selected server/Stack identity.
   // Cases that exercise these inputs set them explicitly after setup.
   for (const key of Object.keys(process.env)) {
@@ -77,5 +107,6 @@ export function installTestHomeEnvironment() {
   const home = createTestHomeEnvironment();
   applyTestHomeEnvironment(process.env, home.env.HAPPIER_TEST_HOME_ROOT);
   assertTestHomePath(process.env.HAPPIER_HOME_DIR);
+  if (isolateExecutables) isolateTestExecutables(home.env.HAPPIER_TEST_HOME_ROOT);
   return home;
 }

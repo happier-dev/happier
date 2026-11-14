@@ -10,7 +10,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import { ANTIGRAVITY_PLUGIN } from '@happier-dev/plugins-antigravity';
@@ -62,6 +62,8 @@ it.each(['controlsWithoutCatalog', 'emptyControls'] as const)('reads the Codex A
     expect(evidence).not.toContain('model/list');
   });
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'absent' | 'auth' | 'authMissing' | 'exit' | 'ohmypi' | 'cursor' | 'antigravity' | 'authRequired' | 'cursorModels' | 'controlsWithoutCatalog' | 'emptyControls' | 'configControls' | 'declaredConfigControls' | 'fxControls' | 'fxScopeSwitch' | 'fxScopeAuthError' | 'fxCustomScopeSwitch' | 'scopeWithdraw' | 'scopeWithdrawThenError' | 'scopeLegacy' | 'scopeUnobserved' | 'scopeUnobservedError') {
   const evidencePath = join(dir, 'requests.jsonl');
@@ -157,6 +159,16 @@ function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'abs
       }
     });
   ` });
+  // Model probes also resolve the native CLI before opening the managed ACP
+  // fixture. Declare that OS dependency here instead of borrowing host Codex.
+  const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+  const nativeCli = writeExecutableShimSync({
+    dir, fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+    contents: process.platform === 'win32'
+      ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+      : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+  });
+  vi.stubEnv('HAPPIER_CODEX_PATH', nativeCli);
   return { script, evidencePath };
 }
 

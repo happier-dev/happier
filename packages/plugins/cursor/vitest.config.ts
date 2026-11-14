@@ -9,5 +9,6 @@ export default defineConfig({
     { packageName: '@happier-dev/agents', packageSourceRoot: resolve(__dirname, '../../agents/src') },
     { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(__dirname, '../../protocol/src') },
   ])],
-  test: { ...resolveVitestWorkers(), environment: 'node' },
+  test: { ...resolveVitestWorkers(), environment: 'node',
+    setupFiles: [resolve(__dirname, '../../../scripts/testing/vitestAgentSetup.mjs')] },
 });

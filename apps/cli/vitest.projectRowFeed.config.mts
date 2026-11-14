@@ -28,7 +28,8 @@ export default {
     test: {
         environment: 'node', pool: 'forks', maxWorkers: 1,
         include: ['src/**/*.test.ts'],
-        setupFiles: [resolve(root, 'scripts/testing/vitestHomeSetup.mjs'), resolve(cliRoot, 'src/vitestSetup.ts')],
+        setupFiles: [resolve(root, 'scripts/testing/vitestAgentSetup.mjs'), resolve(cliRoot, 'src/vitestSetup.ts')],
+        sequence: { setupFiles: 'list' },
         env: createTestHomeEnvironment().env,
         globalSetup: [resolve(cliRoot, 'src/test-setup.unit.ts')],
         testTimeout: 60000, hookTimeout: 60000,

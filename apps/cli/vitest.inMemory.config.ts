@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 import cliConfig from './vitest.config';
@@ -8,7 +7,7 @@ export default defineConfig({
   ...cliConfig,
   test: {
     ...cliConfig.test,
-    setupFiles: [resolve(__dirname, 'src/vitestSetup.ts')],
+    setupFiles: cliConfig.test?.setupFiles,
     globalSetup: [],
   },
 });

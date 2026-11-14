@@ -18,7 +18,7 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    setupFiles: [fileURLToPath(new URL('../../scripts/testing/vitestHomeSetup.mjs', import.meta.url)), './src/configureZodLocale.ts', './src/vitestHomeGuard.ts'],
+    setupFiles: [fileURLToPath(new URL('../../scripts/testing/vitestAgentSetup.mjs', import.meta.url)), './src/configureZodLocale.ts', './src/vitestHomeGuard.ts'],
     sequence: { setupFiles: 'list' },
     include: ['src/**/*.slow.test.ts'],
     exclude: [...configDefaults.exclude, '**/._*', ...resolveVitestFeatureTestExcludeGlobs({ ...process.env, ...testEnv })],
