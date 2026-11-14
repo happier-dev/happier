@@ -22,12 +22,15 @@ export type ListedConnectedDevice = ConnectedDeviceIdentity & Readonly<{ id: str
 
 /**
  * Devices seen in the last fourteen days. `lastSeenByClientId` is the relay's presence (client id →
- * epoch ms); a device without presence falls back to the last-seen time an older build stored.
+ * epoch ms); a device without presence falls back to the last-seen time an older build stored. The
+ * running device (`localClientId`) is connected by definition, so it is listed as seen now even when
+ * the relay has no presence for it (older relay, failed request); other devices need real evidence.
  */
 export function listConnectedDevices(
     settings: unknown,
     lastSeenByClientId: Readonly<Record<string, number>>,
     now: number,
+    localClientId: string | null = null,
 ): ListedConnectedDevice[] {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return [];
     const devices: ListedConnectedDevice[] = [];
@@ -35,10 +38,11 @@ export function listConnectedDevices(
         if (!key.startsWith(CONNECTED_DEVICE_KEY_PREFIX) || key.length === CONNECTED_DEVICE_KEY_PREFIX.length) continue;
         const parsed = ConnectedDeviceSchema.safeParse(value);
         if (!parsed.success) continue;
-        const lastSeen = lastSeenByClientId[key.slice(CONNECTED_DEVICE_KEY_PREFIX.length)] ?? parsed.data.lastSeen;
+        const id = key.slice(CONNECTED_DEVICE_KEY_PREFIX.length);
+        const lastSeen = lastSeenByClientId[id] ?? parsed.data.lastSeen ?? (id === localClientId ? now : undefined);
         if (lastSeen === undefined || lastSeen < now - CONNECTED_DEVICE_WINDOW_MS) continue;
         const { name, platform, appVersion } = parsed.data;
-        devices.push({ name, platform, appVersion, lastSeen, id: key.slice(CONNECTED_DEVICE_KEY_PREFIX.length) });
+        devices.push({ name, platform, appVersion, lastSeen, id });
     }
     return devices.sort((a, b) => b.lastSeen - a.lastSeen);
 }

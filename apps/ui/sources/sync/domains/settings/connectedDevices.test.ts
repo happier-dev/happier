@@ -28,6 +28,18 @@ describe('connected devices', () => {
         ]);
     });
 
+    it('lists this device from its synced identity even when the relay has no presence for it', () => {
+        const now = 2_000_000_000_000;
+        const identity = { name: 'This laptop', platform: 'desktop', appVersion: '0.2.20-beta1.4' } as const;
+        const settings = {
+            [`${CONNECTED_DEVICE_KEY_PREFIX}this`]: identity,
+            [`${CONNECTED_DEVICE_KEY_PREFIX}other`]: { ...identity, name: 'Other laptop' },
+        };
+        // Presence is unavailable (older relay, failed request): only the running device is known to be connected now.
+        expect(listConnectedDevices(settings, {}, now, 'this')).toEqual([{ ...identity, lastSeen: now, id: 'this' }]);
+        expect(listConnectedDevices(settings, {}, now)).toEqual([]);
+    });
+
     it('retains other devices when applying an independent device update', () => {
         const existing = { name: 'Phone', platform: 'android', appVersion: '0.2.19-fork.20' } as const;
         const updated = { name: 'Laptop', platform: 'desktop', appVersion: '0.2.19-fork.23' } as const;
