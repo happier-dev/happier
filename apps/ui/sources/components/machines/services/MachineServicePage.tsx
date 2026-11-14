@@ -37,6 +37,7 @@ import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionShe
 import {
   machineServiceControls,
   machineServiceDisplayName,
+  machineServiceConfigurationRows,
   machineServiceDeclaredFacts,
   machineServiceGroupEnvironmentId,
   machineServiceGroupOf,
@@ -175,6 +176,12 @@ function MachineServicePresent(props: Readonly<{
   const { facts: detail, measuring, measure } = useMachineServiceDetail({ serverId: props.serverId, machineId: props.machineId,
     serviceId: service.serviceId, generation: service.generation, active: props.active });
   const usage = React.useMemo(() => usageFacts(detail), [detail]);
+  // Configuration (pfc-redesign dCtr): what the Machine reports this service was started with; absent until it does.
+  const configurationSource = detail?.runtimeFacts?.configuration ?? null;
+  const configuration = React.useMemo(() => configurationSource
+    ? machineServiceConfigurationRows(configurationSource).map((row) => ({ key: row.key, label: row.label,
+      value: row.values.join(' · ') }))
+    : null, [configurationSource]);
   // The service's Environment, by the address its admitted header names (the Services list's Open environment).
   const router = useRouter();
   const openEnvironment = React.useMemo(() => environmentId && header ? () => router.push(deploymentEnvironmentRoute({
@@ -342,6 +349,12 @@ function MachineServicePresent(props: Readonly<{
             <TextLinkButton testID="machine-service-measure" size="meta" tone="strong" disabled={measuring}
               label={t('machineServices.usage.measure')} onPress={measure} />
           </View>
+        </ItemGroup>
+      ) : null}
+      {configuration ? (
+        <ItemGroup title={t('machineServices.configuration.title')}
+          description={t('machineServices.configuration.description')} surface="none" testID="machine-service-configuration">
+          <FactStrip facts={configuration} testID="machine-service-configuration-facts" />
         </ItemGroup>
       ) : null}
       <ItemGroup

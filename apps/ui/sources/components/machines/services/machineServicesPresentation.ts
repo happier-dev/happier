@@ -218,6 +218,35 @@ export function machineServiceDeclaredFacts(
   };
 }
 
+export type MachineServiceConfigurationRow = Readonly<{ key: 'ports' | 'mounts' | 'healthCheck'; label: string; values: readonly string[] }>;
+
+/**
+ * The service's Configuration section (pfc-redesign dCtr): what the Machine reports it was started with. Ports say
+ * whether they are published and where, mounts say source → target, and the health check only whether one exists;
+ * nothing here is a variable value.
+ */
+export function machineServiceConfigurationRows(
+  configuration: Pick<DeploymentReviewServiceV1, 'ports' | 'mounts' | 'healthcheck'>,
+): readonly MachineServiceConfigurationRow[] {
+  const s = 'machineServices.configuration' as const;
+  const ports = configuration.ports.map((port) => {
+    const target = `${port.target ?? '?'}${port.protocol ? `/${port.protocol}` : ''}`;
+    return port.published === null
+      ? `${target} · ${t(`${s}.notPublished`)}`
+      : `${target} · ${t(`${s}.publishedOn`, { address: `${port.bindAddress ?? '0.0.0.0'}:${port.published}` })}`;
+  });
+  const mounts = configuration.mounts.map((mount) => [
+    `${mount.source ?? mount.type ?? '?'} → ${mount.target ?? '?'}`,
+    mount.readOnly ? t(`${s}.readOnly`) : null,
+  ].filter(Boolean).join(' · '));
+  return [
+    { key: 'ports', label: t(`${s}.ports`), values: ports.length > 0 ? ports : [t(`${s}.none`)] },
+    { key: 'mounts', label: t(`${s}.mounts`), values: mounts.length > 0 ? mounts : [t(`${s}.none`)] },
+    { key: 'healthCheck', label: t(`${s}.healthCheck`),
+      values: [t(configuration.healthcheck === 'configured' ? `${s}.healthConfigured` : `${s}.healthAbsent`)] },
+  ];
+}
+
 export type MachineServiceWatchChoice = Readonly<{
   candidateId: string; revision: string; name: string; kind: string; nativeResourceId: string;
   /** The line a person can read for this identity; a Compose tuple has none and stays an operand. */

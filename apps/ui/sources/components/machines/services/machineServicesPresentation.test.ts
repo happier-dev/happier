@@ -11,6 +11,7 @@ import {
   machineServiceKind,
   machineServiceIdentityLine,
   machineServiceDeclaredFacts,
+  machineServiceConfigurationRows,
   machineServiceWatchChoices,
   machineServiceRunFacts,
   machineServiceExpectedStop,
@@ -160,6 +161,24 @@ describe('Machine services presentation', () => {
     expect(machineServiceDeclaredFacts(config({ restartPolicy: 'always' })).restart).toBe('always');
     // A value Compose may add later is shown as declared rather than hidden.
     expect(machineServiceDeclaredFacts(config({ restartPolicy: 'sometimes' })).restart).toBe('sometimes');
+  });
+  it('lists a service configuration as reported: where each port is published, each mount, and whether a health check exists', () => {
+    const rows = machineServiceConfigurationRows({
+      ports: [{ target: 8080, published: null, bindAddress: null, protocol: 'tcp' },
+        { target: 5432, published: 15432, bindAddress: '127.0.0.1', protocol: 'tcp' }],
+      mounts: [{ type: 'volume', source: 'uploads', target: '/app/uploads', readOnly: false },
+        { type: 'bind', source: null, target: '/etc/app', readOnly: true }],
+      healthcheck: 'configured',
+    });
+    const s = 'machineServices.configuration' as const;
+    expect(rows.map((row) => [row.key, row.values])).toEqual([
+      ['ports', [`8080/tcp · ${t(`${s}.notPublished`)}`, `5432/tcp · ${t(`${s}.publishedOn`, { address: '127.0.0.1:15432' })}`]],
+      ['mounts', ['uploads → /app/uploads', `bind → /etc/app · ${t(`${s}.readOnly`)}`]],
+      ['healthCheck', [t(`${s}.healthConfigured`)]],
+    ]);
+    // Nothing declared says so; it never reads as an empty row.
+    expect(machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'absent' }).map((row) => row.values))
+      .toEqual([[t(`${s}.none`)], [t(`${s}.none`)], [t(`${s}.healthAbsent`)]]);
   });
   it('offers each discovered service once, by kind then name, with what is already watched held back', () => {
     const adapter = (localId: string) => ({ pluginId: 'happier.machine.services', localId });
