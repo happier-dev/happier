@@ -655,12 +655,14 @@ describe('managed continuation through the ordinary public Action transport', ()
             privateKey, serverHttpBaseUrl: 'https://home.example',
             invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
         // Use the same hydrated enrollment producer as controller creation.
-        await applyManagedMachineEnrollmentRoles({ machine: hydrated, dispatch: async value => {
+        const seedWarnings: string[] = [];
+        await applyManagedMachineEnrollmentRoles({ machine: hydrated, warn: code => seedWarnings.push(code), dispatch: async value => {
             const result = await invoke(keyPair.secretKey, value);
             expect(result.ok, JSON.stringify({ result, managedReads, mutations })).toBe(true);
             if (!result.ok) throw new Error(result.errorCode);
             return result.result;
         } });
+        expect(seedWarnings).toEqual([]);
         expect(mutations).toBe(1);
         expect(managedReads).toBe(0);
         tamper = true;

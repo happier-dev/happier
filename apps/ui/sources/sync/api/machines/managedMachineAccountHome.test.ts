@@ -120,3 +120,19 @@ it('adopted completion without an Agent preserves roles without a guest effect',
         input: {}, machine: enrolled, requestId: 'creation', context: { surface: 'ui' },
     })).resolves.toEqual(enrolled);
 });
+
+it('keeps a delegated Account creation successful when Home refuses its optional roles seed', async () => {
+    const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
+    const enrolled = { ...machine, enrollmentIdentity, enrolledMachineId: 'joined',
+        custodianAccountId: 'company', enrollmentAccountId: 'member' };
+    const progress: unknown[] = [];
+    await expect(completeUiManagedAccountGuest({
+        account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
+        input: {}, machine: enrolled, requestId: 'creation', context: { surface: 'ui', runtimeAccountId: 'member',
+            operationProgress: { update: value => { progress.push(value); } }, hostReviewedChild: {
+                invoke: async () => ({ ok: false, errorCode: 'permission_denied', error: 'PRIVATE_REMOTE_MESSAGE' }),
+            } },
+    })).resolves.toEqual(enrolled);
+    expect(progress).toEqual([expect.objectContaining({ phase: 'machines.roles.set', label: expect.stringContaining('permission_denied') })]);
+    expect(JSON.stringify(progress)).not.toContain('PRIVATE_REMOTE_MESSAGE');
+});

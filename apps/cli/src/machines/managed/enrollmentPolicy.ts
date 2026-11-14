@@ -63,7 +63,11 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
 
 /** Seeds the owner-approved role set for this install type over the missing field (OWNER-RULINGS 2026-11-12). */
 async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
-    await applyManagedMachineEnrollmentRoles({ machine, dispatch: async request => {
+    await applyManagedMachineEnrollmentRoles({ machine, signal: options.signal,
+        // Report only the public code, never a remote message or input.
+        warn: code => logger.warn('[MANAGED MACHINE] Enrollment roles seed failed', {
+            managedId: machine.id, machineId: machine.enrolledMachineId, code,
+        }), dispatch: async request => {
         options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
         const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
             { remote: dispatchManagedMachineRoles, local: dispatchLocalManagedMachineRoles });
@@ -72,19 +76,10 @@ async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput
     } });
 }
 
-/** Enrollment owns creation; an optional roles seed cannot turn its success into a bootstrap failure. */
+/** Creation policy effects retain their own outcomes; the shared roles seed owns its optional warning. */
 export async function initializeManagedMachineEnrollmentPolicies(input: ManagedMachineAcquisitionDriverInput,
     machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
     await recordEnrollmentAdministratorAccess(input, machine, options);
-    try {
-        await recordEnrollmentRoles(input, machine, options);
-    } catch (error) {
-        options.signal?.throwIfAborted();
-        // Keep the current role policy and report the public code, never a remote message or input.
-        logger.warn('[MANAGED MACHINE] Enrollment roles seed failed', {
-            managedId: machine.id, machineId: machine.enrolledMachineId,
-            code: error instanceof ManagedMachineControllerError ? error.code : 'internal_error',
-        });
-    }
+    await recordEnrollmentRoles(input, machine, options);
     await initializeManagedMachineEnrollmentIsolation(machine, input, options);
 }

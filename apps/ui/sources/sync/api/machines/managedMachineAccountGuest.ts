@@ -6,6 +6,7 @@ import { ManagedControllerContextOutputV1Schema,
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { t } from '@/text';
 import { createUiManagedAccountHomeRequest, normalizeUiManagedAccountMachine, type UiManagedAccountMachineNormalizer } from './managedMachineAccountHome';
 
 /** Retained creation follows up through the invoking Account's existing child executor. */
@@ -33,7 +34,9 @@ export async function completeUiManagedAccountGuest(params: Readonly<{
         } } };
     };
     let preparedGuest: Awaited<ReturnType<typeof prepareGuest>> | undefined;
-    await applyManagedMachineEnrollmentRoles({ machine: params.machine, dispatch: async input => {
+    await applyManagedMachineEnrollmentRoles({ machine: params.machine, signal: params.signal,
+        warn: code => params.context.operationProgress?.update({ phase: 'machines.roles.set',
+            label: `${t('machineDetailPage.roles.saveFailed')} (${code})` }), dispatch: async input => {
         preparedGuest = await prepareGuest();
         const result = await preparedGuest.port.invoke({ action: 'machines.roles.set', role: 'machines.roles.set',
             input: projectNativeJsonValueForTransport(input), invocationServices: preparedGuest.invocationServices });

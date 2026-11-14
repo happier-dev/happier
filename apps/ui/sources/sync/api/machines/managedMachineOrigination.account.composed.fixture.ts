@@ -102,6 +102,7 @@ function e2eeRecipient(accountId: string, contentPublicKey: Uint8Array) {
 export function registerManagedAccountHostTests(host: 'native' | 'browser') {
 const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machines.managed.cancel' | null, boolean, boolean, boolean, boolean, ('bound' | 'unknown')?]> = host === 'native' ? [
     ['native', false, null, false, false, false, false],
+    ['native refused roles seed', false, null, false, false, false, false],
     ['native E2EE one-off', false, null, false, false, false, false],
     ['native opaque E2EE preset', false, null, false, false, true, false],
     ['native opaque E2EE preset missing policy', false, null, false, false, true, false],
@@ -111,6 +112,7 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['native authored failure', false, null, false, false, false, false],
 ] : [
     ['browser', true, null, false, false, false, false],
+    ['browser refused roles seed', true, null, false, false, false, false],
     ['browser delete', false, 'machines.managed.delete', false, false, false, false],
     ['browser cancel', false, 'machines.managed.cancel', false, false, false, false],
     ['browser absent cleanup', false, 'machines.managed.delete', true, false, false, false],
@@ -122,6 +124,7 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
 it.each(cases)('%s host carries the designed Create/Send review through the public Account path', async (label, startAgent, cleanupAction, alreadyAbsent, stoppedCleanup, opaquePreset, keylessE2ee, uncertainDelete) => {
     const missingPolicy = label.includes('missing policy');
     const delegatedPolicy = label.includes('delegated policy');
+    const refusedRoles = label.includes('refused roles seed');
     const plainPreset = label.includes('Plain preset');
     const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
     const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
@@ -366,6 +369,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 const actionId = path === '/v1/actions/machines.roles.set/execution-authorization' ? 'machines.roles.set' : 'session.spawn_new';
                 const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
                 guestContinuation = body.managedContinuation;
+                if (refusedRoles && actionId === 'machines.roles.set') {
+                    return Response.json({ code: 'permission_denied' }, { status: 403 });
+                }
                 return Response.json({ v: 1, token: 'guest-creation-proof', binding: {
                     serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 0 },
                     actionId, requestId: body.envelope.requestId, target: { kind: 'machine', machineId: 'joined' },
@@ -1012,7 +1018,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect({ admissions, allocations, approvals, machineRpcs, guestDispatches }).toEqual({
             admissions: missingPolicy && !plainPreset ? 2 : 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
         });
-        expect(roleDispatches).toBe(1);
+        expect(roleDispatches).toBe(refusedRoles ? 0 : 1);
         expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
         expect(JSON.stringify({ interrupted, retried })).not.toContain(secret);
         if (missingPolicy) {
