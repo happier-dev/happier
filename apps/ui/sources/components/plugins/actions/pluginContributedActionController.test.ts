@@ -1615,6 +1615,26 @@ describe('plugin contributed Action controller', () => {
         ]);
     });
 
+    it('reads host admission only for Actions declared for the requested placement and scope', () => {
+        const current = snapshot([
+            action({ id: 'row', placementBindings: ['rowAction'] }),
+            ...Array.from({ length: 12 }, (_, index) => action({ id: `palette-${index}`, placementBindings: ['commandPalette'], scopes: ['global'] })),
+            action({ id: 'settings-only', placementBindings: ['rowAction'], scopes: ['settings'] }),
+            action({ id: 'plugin-only', placementBindings: ['rowAction'], surfaces: ['plugin'] }),
+        ]);
+        const admissionReads: string[] = [];
+        const controller = createPluginContributedActionController({
+            resolveCurrent: (identity) => {
+                if (identity) admissionReads.push(identity.localId);
+                return current;
+            },
+        });
+
+        expect(controller.list({ placement: 'rowAction', scope: 'session' }).map((entry) => entry.identity.localId)).toEqual(['row']);
+        // Each Action outside the selector is rejected from its own declaration before any per-Action host read.
+        expect(admissionReads).toEqual(['row']);
+    });
+
     it('requires a placement host to retain an Action before it lists or dispatches it', async () => {
         let admitted = true;
         const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { refreshed: true } });

@@ -595,6 +595,19 @@ function actionPresentationForResolver(
     };
 }
 
+/**
+ * Whether the Action's own declaration admits this UI selector. It reads only
+ * the declaration, so listing checks it before any per-Action host admission.
+ */
+function actionMatchesSelector(action: PluginProjectionAction, selector: PluginContributedActionSelector): boolean {
+    return isPluginProjectedActionExecutable(action)
+        && action.surfaces.includes('ui')
+        && actionPlacementBindings(action).includes(selector.placement)
+        && actionScopes(action).includes(selector.scope);
+}
+
+const COMPOSER_SLASH_SELECTOR: PluginContributedActionSelector = Object.freeze({ placement: 'composer.slash', scope: 'session' });
+
 function descriptorForAction(params: Readonly<{
     pluginId: string;
     /** The plugin's projection entry title (its display name). */
@@ -609,16 +622,8 @@ function descriptorForAction(params: Readonly<{
         localId: params.action.id,
     });
     if (!identity.success) return null;
-    const placementBindings = actionPlacementBindings(params.action);
+    if (!actionMatchesSelector(params.action, params.selector)) return null;
     const scopes = actionScopes(params.action);
-    if (
-        !isPluginProjectedActionExecutable(params.action)
-        || !params.action.surfaces.includes('ui')
-        || !placementBindings.includes(params.selector.placement)
-        || !scopes.includes(params.selector.scope)
-    ) {
-        return null;
-    }
     const presentation = resolvePluginProjectedActionPresentation({
         pluginId: params.pluginId,
         presentation: actionPresentationForResolver(params.action),
@@ -1906,6 +1911,7 @@ export function createPluginContributedActionController(params: Readonly<{
             for (const plugin of Object.values(snapshot.pluginProjectionById)) {
                 if (plugin.enabled !== true) continue;
                 for (const action of plugin.actions) {
+                    if (!actionMatchesSelector(action, selector)) continue;
                     const identity = { pluginId: plugin.pluginId, localId: action.id };
                     const actionSnapshot = currentSnapshot(identity);
                     if (!actionSnapshot || hostStatus(actionSnapshot).kind !== 'ready'
@@ -1935,6 +1941,7 @@ export function createPluginContributedActionController(params: Readonly<{
             for (const plugin of Object.values(snapshot.pluginProjectionById)) {
                 if (plugin.enabled !== true) continue;
                 for (const action of plugin.actions) {
+                    if (!actionMatchesSelector(action, COMPOSER_SLASH_SELECTOR)) continue;
                     const identity = { pluginId: plugin.pluginId, localId: action.id };
                     if (!canPresentAction({ snapshot, identity }, 'composer.slash')) continue;
                     if (
@@ -1947,7 +1954,7 @@ export function createPluginContributedActionController(params: Readonly<{
                         action,
                         pluginUiProjection: snapshot.pluginUiProjection,
                         localize: snapshot.localize,
-                        selector: { placement: 'composer.slash', scope: 'session' },
+                        selector: COMPOSER_SLASH_SELECTOR,
                     });
                     if (!descriptor || !hasComposerSlashTokens(descriptor.slash)) continue;
                     actions.push(descriptor);
