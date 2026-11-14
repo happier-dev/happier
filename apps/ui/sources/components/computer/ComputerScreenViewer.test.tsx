@@ -9,6 +9,10 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { getComputerSessionProjection, publishComputerStreamInputFailure } from '@/sync/domains/computer/computerControlClient';
+import { projectComputerCopresence } from '@/sync/domains/computer/presence';
 
 import {
   ComputerScreenViewer,
@@ -88,6 +92,48 @@ function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('ComputerScreenViewer', () => {
+  it('retains the native background refusal through the input failure bus while control stays unconfirmed', async () => {
+    const scope = { machineId: 'background-machine', sessionId: 'background-session' };
+    const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
+    const sourceId = 'background-source';
+    // The daemon is the boundary; the projection, failure bus, recovery and viewer remain real.
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: async ({ actionId }) => {
+      if (actionId === 'computer.target.get') return { sourceId, selectedTarget: target, access: 'use', consentGranted: true,
+        approvalDisplay: { machineDisplayName: 'Studio', requiresTargetSelection: false, target: { kind: 'window', title: 'Editor' } } };
+      if (actionId === 'computer.control.status') return { sourceId, target, controller: 'human', controlEpoch: 2, stopping: false, uncertain: true };
+      throw new Error(`Unexpected Computer Action: ${actionId}`);
+    } }));
+    const projection = getComputerSessionProjection(scope, executor.execute);
+    const onCheckAgain = vi.fn();
+    function ProjectedViewer({ pictureUp = true }: { pictureUp?: boolean }) {
+      const snapshot = React.useSyncExternalStore(projection.subscribe, projection.getSnapshot);
+      return <ComputerScreenViewer {...props({ onCheckAgain, failure: snapshot.failure,
+        presence: projectComputerCopresence({ status: snapshot.status, stopRequested: false }),
+        stream: pictureUp ? { machineName: 'Studio', input: { sourceId, streamId: 'background-stream', send: vi.fn() },
+          playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+            lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } } : null })} />;
+    }
+    const screen = await renderScreen(<ProjectedViewer />);
+    try {
+      await act(async () => { await projection.refresh(); });
+      await act(async () => { publishComputerStreamInputFailure(scope, sourceId, 'background_unavailable'); });
+      expect(projection.getSnapshot()).toMatchObject({ failure: 'background_unavailable',
+        status: { controller: 'human', uncertain: true } });
+      expect(screen.getTextContent()).toContain('background_unavailable');
+      expect(screen.getTextContent()).toContain('computerUse.presentation.inputUnknown');
+      expect(screen.findHostByTestId('v-picture')).not.toBeNull();
+      expect(screen.findByTestId('v-input')).toBeNull();
+      expect(screen.root.findByType(BrowserPresenceCapsule).props.presence.kind).toBe('unconfirmed');
+      await screen.pressByTestIdAsync('v-recovery-action');
+      expect(onCheckAgain).toHaveBeenCalledTimes(1);
+      expect(projection.getSnapshot().status?.uncertain).toBe(true);
+      await screen.update(<ProjectedViewer pictureUp={false} />);
+      expect(screen.root.findByType(SurfaceStateCard).props.reason).toContain('background_unavailable');
+      expect(screen.getTextContent()).toContain('computerUse.presentation.inputUnknown');
+      expect(screen.root.findByType(BrowserPresenceCapsule).props.presence.kind).toBe('unconfirmed');
+    } finally { await screen.unmount(); }
+  });
+
   it('reveals the typed refusal reason while retaining the last picture and Check again', async () => {
     const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
     const browser = await installBrowserRuntimeForTests({ url: 'https://computer-viewer.test/' });

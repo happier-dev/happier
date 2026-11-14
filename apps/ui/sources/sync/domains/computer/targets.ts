@@ -55,7 +55,7 @@ export function resolveComputerRecovery(state: ComputerTargetPickerState, access
         || code === 'capture_frame_mismatch' || code === 'capture_coordinate_invalid' || code === 'capture_not_found'
         || code === 'capture_id_invalid' || code === 'capture_target_mismatch' || code === 'capture_action_refused'
         || code === 'point_outside_window') return { cause: 'geometry_changed', action: 'capture', code };
-    if (code === 'human_input_interruption_uncertain') return { cause: 'input_unknown', action: 'capture', code };
+    if (code === 'human_input_interruption_uncertain' || code === 'background_unavailable') return { cause: 'input_unknown', action: 'capture', code };
     if (code === 'machine_unreachable') return { cause: 'offline', action: 'reconnect', code };
     if (code === 'forbidden') return { cause: 'access_removed', action: null, code };
     if (code === 'computer_target_not_available' || code === 'computer_target_not_open') return { cause: 'source_lost', action: 'choose_source', code };

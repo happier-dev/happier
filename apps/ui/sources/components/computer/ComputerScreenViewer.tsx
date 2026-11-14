@@ -359,6 +359,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         : t('computerUse.presentation.unavailableTitle');
     const recoveryReason = stopFailed ? recoveryTitle
         : needsDriverRepair ? t('computerUse.presentation.driverRepairBody', { machine: machineInSentence })
+        : recovery?.cause === 'input_unknown' && recovery.code ? `${recoveryTitle} (${recovery.code})`
         : recovery?.cause === 'headless' ? t('computerUse.picker.noScreenBody')
         : recovery?.cause === 'unsupported' ? t('computerUse.picker.unsupportedBody')
         : recovery?.cause === 'machine_mismatch' ? t('computerUse.picker.otherMachineBody')

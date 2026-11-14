@@ -212,8 +212,9 @@ export function useComputerSessionControl(input: Readonly<{
         void (async () => {
             const snapshot = projection?.getSnapshot();
             let identity: Readonly<{ target: ComputerTargetV1; sourceId: string }> | undefined;
-            if (snapshot?.status?.uncertain || snapshot?.failure === 'human_input_interruption_uncertain') {
-                const selected = snapshot.selection;
+            const recovery = snapshot?.failure ? resolveComputerRecovery({ kind: 'failed', code: snapshot.failure }, 'use') : null;
+            if (snapshot?.status?.uncertain || recovery?.cause === 'input_unknown') {
+                const selected = snapshot?.selection;
                 if (!selected?.selectedTarget || !selected.sourceId) {
                     updateLocalPresentation({ busy: null, failure: 'computer_target_not_open' });
                     return;

@@ -349,7 +349,7 @@ describe('useComputerSessionControl', () => {
         }
     });
 
-    it.each(['stale_capture', 'capture_expired', 'capture_generation_mismatch', 'capture_frame_mismatch', 'capture_coordinate_invalid', 'human_input_interruption_uncertain'] as const)('retains the exact source but blocks input after %s until capture is confirmed', async code => {
+    it.each(['stale_capture', 'capture_expired', 'capture_generation_mismatch', 'capture_frame_mismatch', 'capture_coordinate_invalid', 'human_input_interruption_uncertain', 'background_unavailable'] as const)('retains the exact source but blocks input after %s until capture is confirmed', async code => {
         const { machine, calls } = createMachine();
         const scope = { sessionId: 'input-refusal', machineId: 'machine_1' };
         const executor = executorWith(machine);
@@ -368,7 +368,7 @@ describe('useComputerSessionControl', () => {
         expect(hook.getCurrent().failure).toBeNull();
         expect(hook.getCurrent().canInput).toBe(true);
         expect(calls.filter(action => action === 'computer.capture')).toHaveLength(1);
-        expect(calls.filter(action => action === 'computer.target.select')).toHaveLength(code === 'human_input_interruption_uncertain' ? 1 : 0);
+        expect(calls.filter(action => action === 'computer.target.select')).toHaveLength(code === 'human_input_interruption_uncertain' || code === 'background_unavailable' ? 1 : 0);
         expect(calls).not.toContain('computer.input');
     });
     it('does not release the native quarantine when an explicit recapture still fails', async () => {
