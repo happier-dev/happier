@@ -720,6 +720,57 @@ pub struct DesktopWindowStatePayload {
 }
 
 #[cfg(desktop)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeWindowPresentation {
+    pub minimized: bool,
+    pub maximized: bool,
+    pub fullscreen: bool,
+}
+
+/// Controls and frame persistence consume the same current native presentation state.
+#[cfg(desktop)]
+pub(crate) fn read_native_window_presentation<R: Runtime>(
+    window: &Window<R>,
+) -> Result<NativeWindowPresentation, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+
+        let retained = window.clone();
+        crate::desktop_panel::run_on_main_thread(
+            window.app_handle(),
+            move || {
+                retained
+                    .gtk_window()
+                    .map_err(|error| error.to_string())
+                    .map(|window| {
+                        // New geometry can arrive before GTK and Tao refresh their cached flags.
+                        // GDK's current flags prevent a maximized rect from becoming normal.
+                        let state = window
+                            .window()
+                            .map(|window| window.state())
+                            .unwrap_or_else(gtk::gdk::WindowState::empty);
+                        NativeWindowPresentation {
+                            minimized: state.contains(gtk::gdk::WindowState::ICONIFIED),
+                            maximized: state.contains(gtk::gdk::WindowState::MAXIMIZED),
+                            fullscreen: state.contains(gtk::gdk::WindowState::FULLSCREEN),
+                        }
+                    })
+            },
+            "Native window presentation read did not return",
+        )?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(NativeWindowPresentation {
+            minimized: window.is_minimized().map_err(|error| error.to_string())?,
+            maximized: window.is_maximized().map_err(|error| error.to_string())?,
+            fullscreen: window.is_fullscreen().map_err(|error| error.to_string())?,
+        })
+    }
+}
+
+#[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DesktopWindowCloseStrategy {
     Hide,
@@ -885,6 +936,16 @@ fn resolve_window_chrome_policy<R: Runtime>(
     )
 }
 
+/// Creation precedes the app-window live record, so its caller supplies the known chrome kind.
+#[cfg(desktop)]
+pub(crate) fn window_creation_uses_decorations<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    full_chrome: bool,
+) -> bool {
+    resolve_window_chrome_policy(app, chrome_policy_label(label, full_chrome)).use_window_decorations
+}
+
 #[cfg(desktop)]
 fn window_chrome_policy_payload(
     label: &str,
@@ -934,13 +995,14 @@ fn resolve_desktop_window_state_payload_for_policy(
 #[cfg(desktop)]
 fn resolve_desktop_window_state_payload_for_window<R: Runtime>(
     window: &Window<R>,
-) -> DesktopWindowStatePayload {
+) -> Result<DesktopWindowStatePayload, String> {
     let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
-    resolve_desktop_window_state_payload_for_policy(
+    let presentation = read_native_window_presentation(window)?;
+    Ok(resolve_desktop_window_state_payload_for_policy(
         policy,
-        window.is_maximized().unwrap_or(false),
-        window.is_fullscreen().unwrap_or(false),
-    )
+        presentation.maximized,
+        presentation.fullscreen,
+    ))
 }
 
 #[cfg(desktop)]
@@ -976,10 +1038,17 @@ fn emit_desktop_window_state<R: Runtime>(
         return;
     }
 
+    let presentation = match read_native_window_presentation(&window.as_ref().window()) {
+        Ok(presentation) => presentation,
+        Err(error) => {
+            log::warn!("could not read native window presentation for state event: {error}");
+            return;
+        }
+    };
     let next = resolve_desktop_window_state_payload_for_policy(
         policy,
-        window.is_maximized().unwrap_or(false),
-        window.is_fullscreen().unwrap_or(false),
+        presentation.maximized,
+        presentation.fullscreen,
     );
     let changed = match last_emitted.lock() {
         Ok(mut last) => record_desktop_window_state_change(&mut last, next),
@@ -1093,10 +1162,9 @@ pub(crate) fn create_main_window(
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
     // The renderer starts solid and clears selected paint roles only after native success.
     config.transparent = cfg!(any(target_os = "macos", target_os = "windows"));
-    let policy = resolve_window_chrome_policy(app, MAIN_WINDOW_LABEL);
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .visible(false)
-        .decorations(policy.use_window_decorations)
+        .decorations(window_creation_uses_decorations(app, MAIN_WINDOW_LABEL, false))
         .on_page_load(|window, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 window.app_handle().state::<MainWindowPresentationState>().0.lock().unwrap()
@@ -1172,7 +1240,7 @@ pub async fn desktop_set_native_title_bar(
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_get_window_state(window: Window) -> Result<DesktopWindowStatePayload, String> {
-    Ok(resolve_desktop_window_state_payload_for_window(&window))
+    resolve_desktop_window_state_payload_for_window(&window)
 }
 
 #[cfg(desktop)]
@@ -1192,7 +1260,7 @@ pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
     window.minimize().map_err(|error| error.to_string())?;
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_window(&window),
+        resolve_desktop_window_state_payload_for_window(&window)?,
     );
     Ok(true)
 }
@@ -1205,18 +1273,19 @@ pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, Stri
         return Ok(false);
     }
     // Fullscreen is owned by the OS/menu, not by titlebar zoom gestures.
-    if window.is_fullscreen().map_err(|error| error.to_string())? {
+    let presentation = read_native_window_presentation(&window)?;
+    if presentation.fullscreen {
         return Ok(false);
     }
 
-    if window.is_maximized().unwrap_or(false) {
+    if presentation.maximized {
         window.unmaximize().map_err(|error| error.to_string())?;
     } else {
         window.maximize().map_err(|error| error.to_string())?;
     }
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_window(&window),
+        resolve_desktop_window_state_payload_for_window(&window)?,
     );
     Ok(true)
 }
@@ -1257,7 +1326,7 @@ pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, Strin
     if !crate::desktop_window::window_allows_dragging(window.label()) {
         return Ok(false);
     }
-    if window.is_fullscreen().map_err(|error| error.to_string())? {
+    if read_native_window_presentation(&window)?.fullscreen {
         return Ok(false);
     }
 

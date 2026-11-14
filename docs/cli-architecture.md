@@ -7691,6 +7691,19 @@ preference owner, `window_chrome_preferences.rs`, loads the channel-local AppCon
 applies immediately; a failed save retains the applied runtime mode and exposes the persistence
 failure for retry. Both modes preserve Tauri's close-to-tray behavior.
 
+Tauri window geometry is owned by `window_sizing.rs`, separately from chrome preferences.
+`WindowSizingState` keeps one app-lifetime normal-frame persistence owner for the main window
+and app windows, using their existing `window-state/<label>.json` files. Writes use logical outer
+geometry; readers still normalize physical predecessor values. One trailing debounce saves the
+latest change, while destruction, admitted Quit, actual exit and Windows updater installation
+flush pending frames. Failed writes remain pending, and minimized/fullscreen or maximized geometry
+does not replace the normal frame. Controls and persistence share the chrome owner's native
+presentation-state read; Linux uses current GDK flags instead of lagging GTK/Tao transition caches.
+Restoration selects the remembered connected monitor before
+applying its scale and translates outer dimensions to Tauri's inner-size API. Main-window caps and
+app-window work-area recovery remain separate sizing policies. Wayland does not support restoring
+absolute window positions. This is development-only behavior.
+
 The experimental Electron host uses its main-process `apps/desktop/src/main/windowChrome.ts`
 owner for creation and policy replies. It saves the Windows choice in `window-chrome.json` under
 Electron's user-data directory. Electron's frame is set at creation, so settings show

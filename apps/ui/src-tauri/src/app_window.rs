@@ -398,6 +398,11 @@ pub fn desktop_app_window_open(
         records.insert(record.window_id.clone(), record.clone());
     })?;
     let created = builder
+        .decorations(crate::window_chrome::window_creation_uses_decorations(
+            &app,
+            &label,
+            record.chrome == Some(AppWindowChrome::Full),
+        ))
         .title("Happier")
         .resizable(true)
         .transparent(cfg!(any(target_os = "macos", target_os = "windows")))
@@ -619,21 +624,11 @@ fn close_record(records: &mut BTreeMap<String, AppWindowRecord>, window_id: &str
 fn destroy_window(app: &AppHandle, window_id: &str) -> Result<(), String> {
     let label = label_for_id(&window_id)?;
     if let Some(window) = app.get_webview_window(&label) {
-        crate::window_sizing::persist_app_window_frame(&window);
+        crate::window_sizing::persist_window_frame(&window);
         // destroy bypasses CloseRequested after the existing UI return/guard owner has admitted Close.
         window.destroy().map_err(|error| error.to_string())?;
     }
     Ok(())
-}
-
-/// Desktop Quit owns the exit decision; preserving these references must never run Return.
-#[cfg(desktop)]
-pub(crate) fn preserve_for_quit(app: &AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if is_app_window(&label) {
-            crate::window_sizing::persist_app_window_frame(&window);
-        }
-    }
 }
 
 #[cfg(desktop)]

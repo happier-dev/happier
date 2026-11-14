@@ -302,7 +302,7 @@ pub fn run() {
                     if desktop_lifecycle::handle_exit_requested(app_handle, code) {
                         api.prevent_exit();
                     } else {
-                        app_window::preserve_for_quit(app_handle);
+                        window_sizing::preserve_for_quit(app_handle);
                     }
                 }
                 tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Focused(true), .. } => {
@@ -316,6 +316,7 @@ pub fn run() {
                 // final application shutdown; the persistent identity key is
                 // retained so restarts reuse the same endpoint identity.
                 tauri::RunEvent::Exit => {
+                    window_sizing::flush_window_frames(app_handle);
                     capture::shortcuts::shutdown(app_handle);
                     iroh::shutdown_process_endpoint(app_handle);
                 }
@@ -402,8 +403,18 @@ mod app_updates {
         if let Some(reason) = pending_update.0.lock().map_err(|_| poisoned())?.setup_error.clone() {
             return Err(reason);
         }
-        let update = app
-            .updater()
+        let updater = app.updater_builder();
+        #[cfg(target_os = "windows")]
+        let updater = {
+            let app = app.clone();
+            updater.on_before_exit(move || {
+                // Windows installation exits without the ordinary Tauri exit events.
+                crate::window_sizing::preserve_for_quit(&app);
+                app.cleanup_before_exit();
+            })
+        };
+        let update = updater
+            .build()
             .map_err(|e| e.to_string())?
             .check()
             .await
