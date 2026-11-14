@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "追蹤器會在你選擇的機器上即時讀取。其中的任務絕不會複製到你的帳戶。",
   "plugins.triage.surface.sources.permanent": "重試無法解決此問題。「詳情」中有支援團隊需要的資訊。",
   "plugins.triage.surface.sources.supportCode": "供支援團隊使用",
-  "plugins.triage.surface.failure.unreachableSuffix": "無法連線"
+  "plugins.triage.surface.failure.unreachableSuffix": "無法連線",
+  "plugins.triage.tasks.where.group": "{source} {kinds}",
+  "plugins.triage.tasks.where.loading": "正在讀取位置…",
+  "plugins.triage.tasks.where.failed": "無法讀取這些位置",
+  "plugins.triage.tasks.where.more": "顯示更多位置",
+  "plugins.triage.tasks.where.recent": "最近",
+  "plugins.triage.tasks.where.lastUsed": "上次使用"
 }

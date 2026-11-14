@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Tracker werden live auf dem Gerät gelesen, das du wählst. Ihre Aufgaben werden nie in dein Konto kopiert.",
   "plugins.triage.surface.sources.permanent": "Ein erneuter Versuch behebt das nicht. Unter Details steht, was der Support braucht.",
   "plugins.triage.surface.sources.supportCode": "Für den Support",
-  "plugins.triage.surface.failure.unreachableSuffix": "konnte nicht erreicht werden"
+  "plugins.triage.surface.failure.unreachableSuffix": "konnte nicht erreicht werden",
+  "plugins.triage.tasks.where.group": "{source}-{kinds}",
+  "plugins.triage.tasks.where.loading": "Orte werden gelesen…",
+  "plugins.triage.tasks.where.failed": "Diese Orte konnten nicht gelesen werden",
+  "plugins.triage.tasks.where.more": "Weitere Orte anzeigen",
+  "plugins.triage.tasks.where.recent": "Zuletzt",
+  "plugins.triage.tasks.where.lastUsed": "Zuletzt verwendet"
 }

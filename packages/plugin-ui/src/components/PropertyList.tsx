@@ -98,6 +98,8 @@ export type PropertyEditor =
       choices: readonly PropertyChoice[];
       /** Find choices by their name or supporting identity. */
       searchable?: boolean;
+      /** The choices are read from a directory (a place's projects): its state is said in the picker. */
+      directory?: PropertyChoiceDirectory;
     }> & PropertyCommit<string | null>
   | Readonly<{
       kind: 'choices';
@@ -311,7 +313,7 @@ function PropertyChoiceMenu(
   );
   const clearable = item.clearable !== false && selected.size > 0;
   const radioGroupId = 'property';
-  const directory = editor.kind === 'choices' ? editor.directory : undefined;
+  const directory = editor.directory;
   // A directory's state is a line of the picker itself, never a second surface; picking stays the only way in.
   const directoryItems: MenuItem[] = directory === undefined || directory.status === 'ready' ? []
     : directory.status === 'loading'

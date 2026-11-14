@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Trackery są czytane na żywo na wybranej maszynie. Ich zadania nigdy nie są kopiowane do twojego konta.",
   "plugins.triage.surface.sources.permanent": "Ponowna próba tego nie naprawi. W Szczegółach jest to, czego potrzebuje pomoc techniczna.",
   "plugins.triage.surface.sources.supportCode": "Dla pomocy technicznej",
-  "plugins.triage.surface.failure.unreachableSuffix": "nie udało się połączyć"
+  "plugins.triage.surface.failure.unreachableSuffix": "nie udało się połączyć",
+  "plugins.triage.tasks.where.group": "{source}: {kinds}",
+  "plugins.triage.tasks.where.loading": "Odczytywanie miejsc…",
+  "plugins.triage.tasks.where.failed": "Nie udało się odczytać tych miejsc",
+  "plugins.triage.tasks.where.more": "Pokaż więcej miejsc",
+  "plugins.triage.tasks.where.recent": "Ostatnie",
+  "plugins.triage.tasks.where.lastUsed": "Ostatnio używane"
 }

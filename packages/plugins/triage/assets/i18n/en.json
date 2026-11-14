@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Trackers are read live on the machine you choose. Their tasks are never copied into your account.",
   "plugins.triage.surface.sources.permanent": "Trying again won’t fix this. Details has what support needs.",
   "plugins.triage.surface.sources.supportCode": "For support",
-  "plugins.triage.surface.failure.unreachableSuffix": "could not be reached"
+  "plugins.triage.surface.failure.unreachableSuffix": "could not be reached",
+  "plugins.triage.tasks.where.group": "{source} {kinds}",
+  "plugins.triage.tasks.where.loading": "Reading places…",
+  "plugins.triage.tasks.where.failed": "These places couldn’t be read",
+  "plugins.triage.tasks.where.more": "Show more places",
+  "plugins.triage.tasks.where.recent": "Recent",
+  "plugins.triage.tasks.where.lastUsed": "Last used"
 }

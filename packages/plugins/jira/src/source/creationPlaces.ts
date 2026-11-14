@@ -18,8 +18,8 @@ export async function listJiraCreationPlaces(raw: unknown, context: JiraSourceCo
           ...(jiraProjectIncluded(configuration, unit.id)
             ? { childScopeId: unit.id, ...(configuration.projectId === unit.id && configuration.issueTypeId !== undefined
               ? { placeId: `${unit.id}/${configuration.issueTypeId}` }
-              : { refusal: { reason: 'jira/issueTypeRequired' } }) }
-            : { refusal: { reason: 'jira/projectMismatch' } }),
+              : { refusal: { reason: 'jira/issueTypeRequired', message: 'Choose an issue type' } }) }
+            : { refusal: { reason: 'jira/projectMismatch', message: 'Not part of this connection' } }),
         })) });
     }
     if (!numericId(input.scopeId) || !jiraProjectIncluded(configuration, input.scopeId)) throw invalidJira('jira/projectMismatch');

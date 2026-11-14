@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Les trackers sont lus en direct sur la machine de votre choix. Leurs tâches ne sont jamais copiées dans votre compte.",
   "plugins.triage.surface.sources.permanent": "Réessayer n’y changera rien. Détails contient ce dont le support a besoin.",
   "plugins.triage.surface.sources.supportCode": "Pour le support",
-  "plugins.triage.surface.failure.unreachableSuffix": "n’a pas pu être joint"
+  "plugins.triage.surface.failure.unreachableSuffix": "n’a pas pu être joint",
+  "plugins.triage.tasks.where.group": "{kinds} {source}",
+  "plugins.triage.tasks.where.loading": "Lecture des emplacements…",
+  "plugins.triage.tasks.where.failed": "Impossible de lire ces emplacements",
+  "plugins.triage.tasks.where.more": "Afficher plus d’emplacements",
+  "plugins.triage.tasks.where.recent": "Récents",
+  "plugins.triage.tasks.where.lastUsed": "Dernier utilisé"
 }

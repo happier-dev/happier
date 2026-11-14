@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "跟踪器在你选择的机器上实时读取。其中的任务绝不会复制到你的账户。",
   "plugins.triage.surface.sources.permanent": "重试无法解决此问题。“详情”中有支持团队需要的信息。",
   "plugins.triage.surface.sources.supportCode": "供支持团队使用",
-  "plugins.triage.surface.failure.unreachableSuffix": "无法连接"
+  "plugins.triage.surface.failure.unreachableSuffix": "无法连接",
+  "plugins.triage.tasks.where.group": "{source} {kinds}",
+  "plugins.triage.tasks.where.loading": "正在读取位置…",
+  "plugins.triage.tasks.where.failed": "无法读取这些位置",
+  "plugins.triage.tasks.where.more": "显示更多位置",
+  "plugins.triage.tasks.where.recent": "最近",
+  "plugins.triage.tasks.where.lastUsed": "上次使用"
 }

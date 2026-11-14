@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Los trackers se leen en directo en la máquina que elijas. Sus tareas nunca se copian a tu cuenta.",
   "plugins.triage.surface.sources.permanent": "Volver a intentarlo no lo arreglará. En Detalles está lo que necesita soporte.",
   "plugins.triage.surface.sources.supportCode": "Para soporte",
-  "plugins.triage.surface.failure.unreachableSuffix": "no se pudo contactar"
+  "plugins.triage.surface.failure.unreachableSuffix": "no se pudo contactar",
+  "plugins.triage.tasks.where.group": "{kinds} de {source}",
+  "plugins.triage.tasks.where.loading": "Leyendo ubicaciones…",
+  "plugins.triage.tasks.where.failed": "No se pudieron leer estas ubicaciones",
+  "plugins.triage.tasks.where.more": "Mostrar más ubicaciones",
+  "plugins.triage.tasks.where.recent": "Recientes",
+  "plugins.triage.tasks.where.lastUsed": "Último usado"
 }

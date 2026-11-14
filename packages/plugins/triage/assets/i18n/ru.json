@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Трекеры читаются в реальном времени на выбранной машине. Их задачи никогда не копируются в ваш аккаунт.",
   "plugins.triage.surface.sources.permanent": "Повторная попытка не поможет. В разделе «Подробности» есть то, что нужно поддержке.",
   "plugins.triage.surface.sources.supportCode": "Для поддержки",
-  "plugins.triage.surface.failure.unreachableSuffix": "не удалось подключиться"
+  "plugins.triage.surface.failure.unreachableSuffix": "не удалось подключиться",
+  "plugins.triage.tasks.where.group": "{source}: {kinds}",
+  "plugins.triage.tasks.where.loading": "Чтение мест…",
+  "plugins.triage.tasks.where.failed": "Не удалось прочитать эти места",
+  "plugins.triage.tasks.where.more": "Показать больше мест",
+  "plugins.triage.tasks.where.recent": "Недавние",
+  "plugins.triage.tasks.where.lastUsed": "Последнее"
 }

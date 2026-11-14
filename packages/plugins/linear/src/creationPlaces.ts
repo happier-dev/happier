@@ -14,7 +14,7 @@ export async function listLinearCreationPlaces(raw: unknown, context: LinearSour
       const { units, selection: _selection, ...page } = result;
       return TriageTaskCreationPlacesResultV1Schema.parse({ ...page,
         places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: { scopeId: unit.id },
-          ...(linearIncludesTeam(configuration, unit.id) ? { childScopeId: unit.id } : { refusal: { reason: 'linear/teamMismatch' } }),
+          ...(linearIncludesTeam(configuration, unit.id) ? { childScopeId: unit.id } : { refusal: { reason: 'linear/teamMismatch', message: 'Not part of this connection' } }),
         })) });
     }
     if (!linearIncludesTeam(configuration, input.scopeId)) throw linearFailure('teamMismatch');

@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Os trackers são lidos ao vivo na máquina que você escolher. As tarefas deles nunca são copiadas para sua conta.",
   "plugins.triage.surface.sources.permanent": "Tentar de novo não resolve. Em Detalhes está o que o suporte precisa.",
   "plugins.triage.surface.sources.supportCode": "Para o suporte",
-  "plugins.triage.surface.failure.unreachableSuffix": "não foi possível contactar"
+  "plugins.triage.surface.failure.unreachableSuffix": "não foi possível contactar",
+  "plugins.triage.tasks.where.group": "{kinds} do {source}",
+  "plugins.triage.tasks.where.loading": "Lendo locais…",
+  "plugins.triage.tasks.where.failed": "Não foi possível ler estes locais",
+  "plugins.triage.tasks.where.more": "Mostrar mais locais",
+  "plugins.triage.tasks.where.recent": "Recentes",
+  "plugins.triage.tasks.where.lastUsed": "Último usado"
 }

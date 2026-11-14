@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "Els trackers es llegeixen en directe a la màquina que triïs. Les seves tasques mai es copien al teu compte.",
   "plugins.triage.surface.sources.permanent": "Tornar-ho a provar no ho arreglarà. A Detalls hi ha el que necessita el suport.",
   "plugins.triage.surface.sources.supportCode": "Per al suport",
-  "plugins.triage.surface.failure.unreachableSuffix": "no s’ha pogut contactar"
+  "plugins.triage.surface.failure.unreachableSuffix": "no s’ha pogut contactar",
+  "plugins.triage.tasks.where.group": "{kinds} de {source}",
+  "plugins.triage.tasks.where.loading": "S’estan llegint els llocs…",
+  "plugins.triage.tasks.where.failed": "No s’han pogut llegir aquests llocs",
+  "plugins.triage.tasks.where.more": "Mostra més llocs",
+  "plugins.triage.tasks.where.recent": "Recents",
+  "plugins.triage.tasks.where.lastUsed": "Últim utilitzat"
 }

@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "トラッカーは選んだマシンでライブに読み取られます。タスクがアカウントにコピーされることはありません。",
   "plugins.triage.surface.sources.permanent": "再試行しても解決しません。サポートに必要な情報は「詳細」にあります。",
   "plugins.triage.surface.sources.supportCode": "サポート用",
-  "plugins.triage.surface.failure.unreachableSuffix": "に接続できませんでした"
+  "plugins.triage.surface.failure.unreachableSuffix": "に接続できませんでした",
+  "plugins.triage.tasks.where.group": "{source} の{kinds}",
+  "plugins.triage.tasks.where.loading": "場所を読み込み中…",
+  "plugins.triage.tasks.where.failed": "これらの場所を読み込めませんでした",
+  "plugins.triage.tasks.where.more": "さらに表示",
+  "plugins.triage.tasks.where.recent": "最近",
+  "plugins.triage.tasks.where.lastUsed": "前回使用"
 }

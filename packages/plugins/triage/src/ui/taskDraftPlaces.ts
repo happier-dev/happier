@@ -58,3 +58,19 @@ export function suggestTriageTaskDraftPlacesV1(
   }
   return suggestions;
 }
+
+/**
+ * Where the person last created a task: the place of the newest entry they authored that the window already
+ * holds. Choice-only, like a suggestion; no source or provider read.
+ */
+export function recentTriageTaskDraftPlaceV1(rows: readonly TriageListRowV1[]): TriageTaskDraftPlaceSuggestionV1 | undefined {
+  let newest: Readonly<{ at: number; place: TriageTaskDraftPlaceSuggestionV1 }> | undefined;
+  for (const row of rows) for (const observation of row.observations) {
+    if (observation.outcome.kind !== 'present' || !observation.outcome.viewer.involvement.includes('author')) continue;
+    const { createdAtMs, scopeUnitId } = observation.outcome.snapshot;
+    if (createdAtMs === undefined || (newest !== undefined && newest.at >= createdAtMs)) continue;
+    newest = { at: createdAtMs, place: { source: row.entryRef.source, sourceInstanceId: observation.sourceInstanceId,
+      kindId: row.entryRef.kindId, ...(scopeUnitId === undefined ? {} : { scopeUnitId }) } };
+  }
+  return newest?.place;
+}

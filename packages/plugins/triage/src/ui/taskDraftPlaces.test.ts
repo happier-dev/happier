@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TriageEntryRepositoryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { testkitEntryRef, testkitObservation, testkitPresentOutcome, testkitSnapshot, TRIAGE_TESTKIT_SOURCE } from '../corpus/testkit/observations.test-support.js';
+import { testkitEntryRef, testkitObservation, testkitPresentOutcome, testkitSnapshot, testkitViewer, TRIAGE_TESTKIT_SOURCE } from '../corpus/testkit/observations.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
-import { defaultTriageTaskDraftPlaceV1, suggestTriageTaskDraftPlacesV1 } from './taskDraftPlaces.js';
+import { defaultTriageTaskDraftPlaceV1, recentTriageTaskDraftPlaceV1, suggestTriageTaskDraftPlacesV1 } from './taskDraftPlaces.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../internalTasks/identity.js';
 import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
 import type { TriageListLaneHealthV1 } from '../projection/listWindow.js';
@@ -68,5 +68,19 @@ describe('Session repository suggestions for the existing Where choices', () => 
     expect(suggestTriageTaskDraftPlacesV1(undefined, windowRows([{ repository }]), [place])).toEqual([]);
     expect(suggestTriageTaskDraftPlacesV1(repository, windowRows([{ repository }]), [{ ...place,
       source: { ...source, pluginId: 'example.foreign' } }])).toEqual([]);
+  });
+});
+
+describe('Recent for the Where list', () => {
+  it('is the place of the newest task the person created that the window holds, never one they only follow', () => {
+    const rows = foldTriageListWindow({ observations: [
+      { at: 3, author: false, unit: 'team-followed' }, { at: 2, author: true, unit: 'team-chk' }, { at: 1, author: true, unit: 'team-old' },
+    ].map((value, index) => ({ ...testkitObservation({ sourceInstanceId: instance, outcome: testkitPresentOutcome({
+      snapshot: testkitSnapshot({ createdAtMs: value.at, scopeUnitId: value.unit }),
+      viewer: testkitViewer({ involvement: value.author ? ['author'] : ['assignee'] }) }) }),
+    entryRef: testkitEntryRef({ kindId: 'issue', entryId: String(index) }) })), lanes: [], configuredSourcesStatus: 'complete',
+    activeSourceInstanceIds: [instance], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 1 }).rows;
+    expect(recentTriageTaskDraftPlaceV1(rows)).toEqual({ ...place, scopeUnitId: 'team-chk' });
+    expect(recentTriageTaskDraftPlaceV1([])).toBeUndefined();
   });
 });

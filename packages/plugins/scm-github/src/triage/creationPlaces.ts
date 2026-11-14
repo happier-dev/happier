@@ -20,7 +20,7 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
     const { units, selection: _selection, ...page } = result;
     return TriageTaskCreationPlacesResultV1Schema.parse({ ...page,
       places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: { scopeId: unit.id },
-        ...(included(unit.id) ? { childScopeId: unit.id } : { refusal: { reason: 'github_repository_not_included' } }),
+        ...(included(unit.id) ? { childScopeId: unit.id } : { refusal: { reason: 'github_repository_not_included', message: 'Not part of this connection' } }),
       })) });
   }
   const route = parseGithubRoutingToken(input.scopeId);
@@ -32,6 +32,7 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
   const availability = projectGithubRepositoryWriteAvailability(repository, 'issue');
   return TriageTaskCreationPlacesResultV1Schema.parse({ kind: 'page', status: 'complete', places: [{
     id: input.scopeId, label: repository.repositoryKey ?? input.scopeId, kindId: 'issue', fields: { scopeId: input.scopeId },
-    ...(availability.kind === 'available' ? {} : { refusal: { reason: availability.code } }),
+    ...(availability.kind === 'available' ? {} : { refusal: { reason: availability.code,
+      message: availability.code === 'repository_archived' ? 'This repository is archived' : 'Issues are turned off for this repository' } }),
   }] });
 }

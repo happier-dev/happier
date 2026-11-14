@@ -308,6 +308,73 @@ it.each([false, true])('submits a create through the Account aggregate without a
   expect(saved[0]?.sourceInstanceId).toBe(source.configuredInstance.instance.sourceInstanceId);
 });
 
+/** The same admitted source, also declaring the optional `listCreationPlaces` role. */
+function withCreationPlaces(targeted: PluginUiTargetedContributionsV1): PluginUiTargetedContributionsV1 {
+  const point = targeted.points[0]!;
+  const protocol = point.protocols[0]!;
+  const contribution = protocol.contributions[0]!;
+  const create = contribution.operations[0]!;
+  return { ...targeted, points: [{ ...point, protocols: [{ ...protocol, contributions: [{ ...contribution, operations: [...contribution.operations,
+    { ...create, role: 'listCreationPlaces', action: { ...create.action, localId: 'list-creation-places' } }] }] }] }] };
+}
+
+it('creates at the place the source names, narrowed by its own places, with the source’s operands and no typed ids', async () => {
+  const source = createTriageSourceV1Fixture();
+  const placeReads: (string | null)[] = [];
+  const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
+  const page = (places: readonly unknown[]) => ({ kind: 'page', status: 'complete', places });
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-places', mountNonce: 'places' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageCreateTaskFields sources={[{ sourceInstanceId: source.configuredInstance.instance.sourceInstanceId,
+        configured: source.configuredInstance, displayLabel: 'Engineering' }]} sourcesLoaded sourcesUnavailableReason={null}
+        draft={{ title: 'Show the server total' }} onApplied={async () => undefined} onClose={() => undefined} />),
+      surfaceContext: createSurfaceContextFixture({ targetedContributions: withCreationPlaces(targetedTaskSource(source.configuredInstance.instance.source,
+        'issue', 'create', false, ['title', 'scopeId', 'projectId'])) }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      handlers: { executeAction: ({ action, input }) => {
+        if (action === 'tasks/create-v1') { saved.push(TriageCreateTaskActionInputV1Schema.parse(input)); return { kind: 'refused', reason: 'unavailable' }; }
+        expect(action).toMatchObject({ localId: 'list-creation-places' });
+        const scopeId = (input as { scopeId?: string }).scopeId ?? null;
+        placeReads.push(scopeId);
+        if (scopeId === null) return page([
+          { id: 'team-chk', label: 'Checkout', kindId: 'issue', fields: { scopeId: 'team-chk' }, childScopeId: 'team-chk' },
+          { id: 'project-ops', label: 'Platform Ops', kindId: 'issue', fields: {}, childScopeId: 'project-ops', refusal: { reason: 'example/typeRequired' } },
+          { id: 'team-mob', label: 'Mobile', kindId: 'issue', fields: {}, refusal: { reason: 'example/excluded', message: 'Not part of this connection' } },
+        ]);
+        if (scopeId === 'team-chk') return page([
+          { id: 'project-q4', label: 'Q4 checkout reliability', kindId: 'issue', fields: { scopeId: 'team-chk', projectId: 'project-q4' } },
+        ]);
+        return page([{ id: 'project-ops/bug', placeId: 'project-ops/bug', label: 'Bug', kindId: 'issue', fields: {} }]);
+      } },
+    });
+  });
+  mounted.push(fixture);
+  // Places are named, one read for the whole list; a place that can't be used says why and can't be chosen.
+  expect(placeReads).toEqual([null]);
+  expect((await fixture.getByRole('button', { name: 'Mobile' })).state?.disabled).toBe(true);
+  expect(document.body.textContent).toContain('Not part of this connection');
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Checkout' })); });
+  // The place sets where the task goes: no typed team or project id, and its projects are picked by name.
+  expect(document.querySelector('[aria-label^="Repository or project"]')).toBeNull();
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Project, None' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemradio', { name: 'Q4 checkout reliability' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(saved.at(-1)).toMatchObject({ kindId: 'issue', fields: { title: 'Show the server total', scopeId: 'team-chk', projectId: 'project-q4' } });
+  expect(saved.at(-1)).not.toHaveProperty('placeId');
+  // A place the source must narrow first opens its own places; the narrower place's opaque id goes to the source unchanged.
+  await act(async () => { document.querySelector<HTMLElement>('[aria-label^="Where: "]')!.click(); });
+  await act(async () => { document.querySelector<HTMLElement>('[role="menuitemradio"][aria-label^="Platform Ops"]')!.click(); });
+  expect(placeReads).toEqual([null, 'team-chk', 'project-ops']);
+  await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Bug' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(saved.at(-1)).toMatchObject({ kindId: 'issue', placeId: 'project-ops/bug', fields: { title: 'Show the server total' } });
+  expect(saved.at(-1)?.fields).not.toHaveProperty('scopeId');
+  expect(saved).toHaveLength(2);
+  expect(placeReads).toEqual([null, 'team-chk', 'project-ops']);
+});
+
 it('creates with the typed properties the chosen place accepts, in one write', async () => {
   const source = createTriageSourceV1Fixture();
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];

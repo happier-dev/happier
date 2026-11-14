@@ -50,7 +50,22 @@ resolves it inside the configured project selection. A Jira project with a
 configured issue type remains directly selectable. GitHub supplies repository
 fields and, on selected-repository expansion, archived/issues-disabled reasons.
 The picker consumes these operands rather than parsing labels or accepting raw
-native IDs. Rendering of the picker is a separate pending consumer change.
+native IDs. A refusal carries the source's own `message`, which the picker shows
+as the place's reason.
+
+New task's Where list (`ui/detail/taskFields.tsx`, read by
+`ui/detail/taskCreationPlaces.ts`) reads each source's root page when the list
+or the place chip's menu opens, and shows "Show more places" while a page has a
+continuation. A place's children are read once, when it is chosen or, for a
+refused place with `childScopeId`, when it is expanded. Children are presented
+by their shape: a single child with the parent's id is that place's own
+creation details (its refusal holds Create); children adding exactly one create
+field become that field's choice in the draft (a Linear team's Project);
+otherwise they are narrower places listed under the parent (Jira issue types).
+The draft never offers `scopeId` or `projectId` as typed ids for a source that
+names its places. Recent is the place of the newest entry the viewer authored
+in the current window, with no extra read. Sources without the role keep one
+place per task kind.
 
 ## Unavailable source diagnostics (0.3 development source)
 

@@ -975,5 +975,11 @@
   "plugins.triage.tasks.firstRun.trust": "I tracker vengono letti in tempo reale sulla macchina che scegli. Le loro attività non vengono mai copiate nel tuo account.",
   "plugins.triage.surface.sources.permanent": "Riprovare non risolverà il problema. In Dettagli c’è ciò che serve all’assistenza.",
   "plugins.triage.surface.sources.supportCode": "Per l’assistenza",
-  "plugins.triage.surface.failure.unreachableSuffix": "non è raggiungibile"
+  "plugins.triage.surface.failure.unreachableSuffix": "non è raggiungibile",
+  "plugins.triage.tasks.where.group": "{kinds} di {source}",
+  "plugins.triage.tasks.where.loading": "Lettura dei luoghi…",
+  "plugins.triage.tasks.where.failed": "Impossibile leggere questi luoghi",
+  "plugins.triage.tasks.where.more": "Mostra altri luoghi",
+  "plugins.triage.tasks.where.recent": "Recenti",
+  "plugins.triage.tasks.where.lastUsed": "Ultimo usato"
 }
