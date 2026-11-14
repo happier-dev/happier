@@ -9,19 +9,24 @@ export type VoicePromptActionSpec = Pick<
   'id' | 'title' | 'description' | 'bindings' | 'examples' | 'inputHints' | 'prompting' | 'surfaceBindings'
 >;
 
-const VOICE_TOOL_NAME_BY_ACTION_ID = new Map(
-  listVoiceToolActionSpecs().flatMap((spec) => {
-    const name = spec.bindings?.voiceClientToolName;
-    return typeof name === 'string' && name ? [[spec.id, name] as const] : [];
-  }),
-);
+// Built on first use: deriving it at module evaluation built the whole Action
+// catalog in every process that imports this module (daemon, session host).
+let voiceToolNameByActionId: ReadonlyMap<string, string> | undefined;
+function readVoiceToolNameByActionId(): ReadonlyMap<string, string> {
+  return voiceToolNameByActionId ??= new Map(
+    listVoiceToolActionSpecs().flatMap((spec) => {
+      const name = spec.bindings?.voiceClientToolName;
+      return typeof name === 'string' && name ? [[spec.id, name] as const] : [];
+    }),
+  );
+}
 
 function referencesUnavailableVoiceTool(
   text: string,
   availability: VoiceGuidanceAvailability,
 ): boolean {
   const available = new Set(availability.availableActionIds ?? []);
-  for (const [actionId, toolName] of VOICE_TOOL_NAME_BY_ACTION_ID) {
+  for (const [actionId, toolName] of readVoiceToolNameByActionId()) {
     if (!available.has(actionId) && text.includes(toolName)) return true;
   }
   return false;
