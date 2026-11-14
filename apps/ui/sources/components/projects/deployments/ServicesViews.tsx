@@ -25,6 +25,7 @@ import { t } from '@/text';
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import { DeploymentDomainsList } from './DeploymentDomainRow';
 import { deploymentDomainNeedKind } from './deploymentDomainAttention';
+import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
@@ -257,6 +258,30 @@ export function useReportViewCount(view: ServicesView, parts: readonly (string |
   }, [onCount, signature, view]);
 }
 
+type AccountDomainItem = Readonly<{ environment: Readonly<{ projectSourceId: string }>; environmentTitle: string;
+  projectSourceName: string | null }>;
+const OTHER_DOMAIN_PROJECT = 'other';
+const domainEnvironmentTitle = (item: AccountDomainItem) => item.environmentTitle;
+const domainProjectOf = (item: AccountDomainItem) => item.projectSourceName ? item.environment.projectSourceId : OTHER_DOMAIN_PROJECT;
+
+/**
+ * Domains banded by Project (lab svcDom), through the one Project grouping the Apps view and the Services column
+ * share; addresses whose Project name the read could not carry stand in the same last band the Apps view uses.
+ */
+function domainProjectBands<Item extends AccountDomainItem>(items: readonly Item[]) {
+  const { named, unnamed } = groupDeploymentRowsByProject(items.map((item) => ({
+    projectSourceId: item.environment.projectSourceId, projectName: item.projectSourceName })));
+  const band = (key: string, title: string, count: number) => ({ key, title, section: SERVICES_ONE_SHEET,
+    description: t('projects.deployments.editors.domainsCount', { count }) });
+  return {
+    axis: [
+      ...named.map((group) => band(group.key, group.title, group.rows.length)),
+      ...(unnamed.length > 0 ? [band(OTHER_DOMAIN_PROJECT, t('projects.deployments.allOtherProject'), unnamed.length)] : []),
+    ],
+    groupOf: domainProjectOf,
+  };
+}
+
 /** Newer / Older under a paged view's sheet (the Apps paging pattern): only the way that exists is offered. */
 export function ServicesPaging(props: Readonly<{
   testID: string;
@@ -308,6 +333,7 @@ export function ServicesDomainsView(
     ];
   }, [items, read.snapshot.value]);
   useReportViewCount('domains', countParts, props.onCount);
+  const bands = React.useMemo(() => domainProjectBands(items), [items]);
   if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
@@ -359,6 +385,8 @@ export function ServicesDomainsView(
           <DeploymentDomainsList
             testID="services.domains"
             items={items}
+            groups={bands}
+            environmentTitle={domainEnvironmentTitle}
             accountId={props.accountId}
             serverId={props.serverId}
             demand={props.demand}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Collection, Status, useHappierCollection, type CollectionAnatomy, type HappierCollectionGrouping } from '@happier-dev/plugin-ui';
 import {
   isDeploymentReadDemandActiveV1,
   projectDeploymentDomainDnsReadinessV1,
@@ -66,10 +66,14 @@ const keyOf = (item: DomainItem) => item.domain.id;
  * The domain list (lab `envDom` / `svcDom`): one row per address with its host and the line that matters (the
  * record to add, a redirect, password protection), then Reaches, Certificate and State columns and the row's ⋯.
  * The shared Collection list draws the columns on a wide page and folds them on a phone, where the state stays at
- * the row's end. The Environment's Domains tab and Services → Domains both draw it.
+ * the row's end. The Environment's Domains tab and Services → Domains both draw it; the Account-wide view adds its
+ * Project bands (`groups`) and an Environment column (`environmentTitle`).
  */
-export function DeploymentDomainsList(props: Readonly<{
-  items: readonly DomainItem[];
+export function DeploymentDomainsList<Item extends DomainItem>(props: Readonly<{
+  items: readonly Item[];
+  groups?: HappierCollectionGrouping<Item>;
+  /** Where each address belongs, for a list that spans Environments; the Environment's own tab names it already. */
+  environmentTitle?: (item: Item) => string;
   accountId: string;
   serverId: string;
   demand: DeploymentReadDemandV1;
@@ -81,27 +85,35 @@ export function DeploymentDomainsList(props: Readonly<{
 }>) {
   const { theme } = useUnistyles();
   const notFound = useDomainOperationReads(props.items, props.accountId, props.demand);
-  const model = useHappierCollection<DomainItem>({ items: props.items, keyOf, openKey: null, onOpenChange: noop });
+  const model = useHappierCollection<Item>({ items: props.items, keyOf, ...(props.groups ? { groups: props.groups } : {}),
+    openKey: null, onOpenChange: noop });
+  const { environmentTitle } = props;
   const context = React.useMemo<DomainRowContext>(() => ({
     accountId: props.accountId, serverId: props.serverId, disabled: props.disabled, ownMachineId: props.ownMachineId ?? null,
     machineName: props.machineName ?? null, actions: props.actions ?? null, notFound,
   }), [notFound, props.accountId, props.actions, props.disabled, props.machineName, props.ownMachineId, props.serverId]);
-  const anatomy = React.useMemo<CollectionAnatomy<DomainItem>>(() => ({
+  const anatomy = React.useMemo<CollectionAnatomy<Item>>(() => ({
     glyph: () => <Icon name="globe" size={18} color={theme.colors.text.secondary} />,
+    // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
     title: (item) => item.content.hostname,
-    byline: (item, layout) => <DomainByline item={item} context={context} columns={layout?.fieldColumns === true} />,
+    titleIdentifier: true,
+    byline: (item, layout) => <DomainByline item={item} context={context} columns={layout?.fieldColumns === true}
+      environment={environmentTitle?.(item) ?? null} />,
     // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
     titleControls: (item) => <DomainRowControls item={item} context={context} />,
     // A phone folds the columns; the state and ⋯ keep the row's end.
     titleMeta: (item) => <DomainRowEnd item={item} context={context} />,
     titleMetaAlign: 'row',
+    // The facts keep tight columns so the host keeps most of the row (lab envDom: Domain about 45%).
     fields: [
-      { key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 112, priority: 3, listColumn: true,
+      { key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 104, priority: 3, listColumn: true,
         render: (item) => <DomainReaches item={item} /> },
-      { key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 128, priority: 2, listColumn: true,
+      ...(environmentTitle ? [{ key: 'environment', title: t('projects.deployments.editors.domainColumnEnvironment'), minWidth: 112,
+        priority: 1, listColumn: true, render: (item: Item) => <DomainEnvironment title={environmentTitle(item)} /> }] : []),
+      { key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 120, priority: 2, listColumn: true,
         render: (item) => <DomainCertificate item={item} /> },
       // The state and the row's ⋯ share the last column, so the bar's titles stay over their figures.
-      { key: 'state', title: t('projects.deployments.editors.domainColumnState'), minWidth: 148, priority: 4, listColumn: true,
+      { key: 'state', title: t('projects.deployments.editors.domainColumnState'), minWidth: 128, priority: 4, listColumn: true,
         align: 'end', control: true, render: (item) => <DomainRowEnd item={item} context={context} /> },
     ],
     accessibilityLabel: (item) => [item.content.hostname, domainRoute(item.content)].filter(Boolean).join(', '),
@@ -110,10 +122,10 @@ export function DeploymentDomainsList(props: Readonly<{
       title: t('projects.deployments.editors.domainColumnDomain'),
       titleMeta: t('projects.deployments.editors.domainColumnState'),
     },
-  }), [context, theme.colors.text.secondary]);
+  }), [context, environmentTitle, theme.colors.text.secondary]);
   return (
     <CoreCollectionScope>
-      <Collection<DomainItem>
+      <Collection<Item>
         testID={props.testID}
         model={model}
         anatomy={anatomy}
@@ -216,6 +228,11 @@ function DomainReaches(props: Readonly<{ item: DomainItem }>) {
   return <Text variant="meta" numberOfLines={1} style={[Typography.mono(), { color: theme.colors.text.secondary }]}>{text}</Text>;
 }
 
+function DomainEnvironment(props: Readonly<{ title: string }>) {
+  const { theme } = useUnistyles();
+  return <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>{props.title}</Text>;
+}
+
 /** Certificate: whose it is, and when it expires once the outside check has read it. */
 function DomainCertificate(props: Readonly<{ item: DomainItem }>) {
   const { theme } = useUnistyles();
@@ -237,7 +254,7 @@ function DomainCertificate(props: Readonly<{ item: DomainItem }>) {
  * The row's second line: the record to add while DNS is missing, or what sets the address apart (a redirect, a
  * password), then the Machines it leads to. A phone has no Reaches column, so a row with nothing else says its route.
  */
-function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowContext; columns: boolean }>) {
+function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowContext; columns: boolean; environment: string | null }>) {
   const { theme } = useUnistyles();
   const { item, context } = props;
   const { content } = item;
@@ -257,7 +274,8 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
     : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
     : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
     : null;
-  const parts = [lead, routedOn].filter(Boolean);
+  // A phone has no Environment column: the line names it first.
+  const parts = [props.columns ? null : props.environment, lead, routedOn].filter(Boolean);
   const line = parts.length > 0 ? parts.join(' · ') : props.columns ? null : domainRoute(content);
   if (!line) return null;
   return <Text variant="meta" numberOfLines={2} selectable={records.length > 0} style={{ color: theme.colors.text.secondary }}

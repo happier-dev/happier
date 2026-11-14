@@ -399,4 +399,35 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     expect(screen.findByTestId('services.domains.paging.older')).toBeNull();
     controller.retire();
   });
+  it('bands Domains by Project and names each address\'s Environment (lab svcDom, G5)', async () => {
+    const accountDomain = (id: string, hostname: string, environmentId: string, projectSourceId: string,
+      environmentTitle: string, projectSourceName: string | null) => ({
+      domain: { id, environmentId, targetLinkId: 'link', revision: 1, state: 'active', contentArtifactId: `c-${id}`,
+        contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
+      title: hostname,
+      content: { hostname, target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } },
+      environment: createDeploymentEnvironmentHeaderV1({ id: environmentId, projectSourceId }),
+      environmentTitle, projectSourceName,
+    });
+    const { controller } = controllerFor(() => page([]), {
+      listDomainPage: async () => ({ ok: true, value: { nextCursor: null, items: [
+        accountDomain('d-shop', 'shop.example.com', 'env-shop', 'source-shop', 'Production', 'shop'),
+        accountDomain('d-shop-staging', 'staging.shop.example.com', 'env-shop-staging', 'source-shop', 'Staging', 'shop'),
+        accountDomain('d-old', 'old.example.com', 'env-old', 'source-old', 'Legacy', null),
+      ] } }),
+    });
+    const screen = await renderScreen(<Page controller={controller} view="domains" />);
+    await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.domains.d-old')).not.toBeNull());
+    const { t } = await import('@/text');
+    const text = screen.getTextContent();
+    // One band per Project, by the read's Source name; a result without one stands in the Apps view's last band.
+    expect(text).toContain('shop');
+    // A band title may be drawn in more than one text run (it middle-ellipsizes), so compare without spaces.
+    expect(text.replace(/\s/g, '')).toContain(t('projects.deployments.allOtherProject').replace(/\s/g, ''));
+    // The Environment column names where each address belongs.
+    expect(text).toContain(t('projects.deployments.editors.domainColumnEnvironment'));
+    expect(text).toContain('Staging');
+    expect(text).toContain('Legacy');
+    controller.retire();
+  });
 });

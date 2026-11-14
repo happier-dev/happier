@@ -73,6 +73,8 @@ export type HappierUiTypography = Readonly<Record<HappierTypeRole, HappierTypeRo
    * draw in the host's exact family. Absent, a numeric weight applies.
    */
   weights?: Readonly<Record<'regular' | 'medium' | 'semiBold' | 'bold', HappierFontFace>>;
+  /** The host's mono face, for titles that are identifiers (a host name, a path). Absent, the platform's monospace. */
+  mono?: HappierFontFace;
 }>;
 
 /**

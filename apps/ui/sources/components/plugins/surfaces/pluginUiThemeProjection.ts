@@ -148,6 +148,7 @@ export function readPluginUiHostTypography(): HappierUiTypography {
             semiBold: projectFontFace(Typography.default('semiBold')),
             bold: projectFontFace(Typography.default('bold')),
         }),
+        mono: projectFontFace(Typography.mono('regular')),
     });
     return hostTypography;
 }

@@ -94,6 +94,7 @@ type DeploymentEditorsTranslations = Readonly<{
   domainsLede: string;
   domainColumnDomain: string;
   domainColumnReaches: string;
+  domainColumnEnvironment: string;
   domainColumnCertificate: string;
   domainColumnState: string;
   domainServing: string;
@@ -170,6 +171,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Each address, the service it reaches, and where its DNS and certificate stand.',
     domainColumnDomain: 'Domain',
     domainColumnReaches: 'Reaches',
+    domainColumnEnvironment: 'Environment',
     domainColumnCertificate: 'Certificate',
     domainColumnState: 'State',
     domainServing: 'Serving',
@@ -286,6 +288,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Каждый адрес, сервис, к которому он ведёт, и состояние его DNS и сертификата.',
     domainColumnDomain: 'Домен',
     domainColumnReaches: 'Ведёт к',
+    domainColumnEnvironment: 'Окружение',
     domainColumnCertificate: 'Сертификат',
     domainColumnState: 'Состояние',
     domainServing: 'Работает',
@@ -401,6 +404,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Każdy adres, usługa, do której prowadzi, oraz stan jego DNS i certyfikatu.',
     domainColumnDomain: 'Domena',
     domainColumnReaches: 'Prowadzi do',
+    domainColumnEnvironment: 'Środowisko',
     domainColumnCertificate: 'Certyfikat',
     domainColumnState: 'Stan',
     domainServing: 'Działa',
@@ -517,6 +521,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Cada dirección, el servicio al que llega y el estado de su DNS y su certificado.',
     domainColumnDomain: 'Dominio',
     domainColumnReaches: 'Llega a',
+    domainColumnEnvironment: 'Entorno',
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Sirviendo',
@@ -633,6 +638,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Chaque adresse, le service qu’elle atteint, et l’état de son DNS et de son certificat.',
     domainColumnDomain: 'Domaine',
     domainColumnReaches: 'Mène à',
+    domainColumnEnvironment: 'Environnement',
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'État',
     domainServing: 'En service',
@@ -749,6 +755,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Ogni indirizzo, il servizio che raggiunge e lo stato di DNS e certificato.',
     domainColumnDomain: 'Dominio',
     domainColumnReaches: 'Raggiunge',
+    domainColumnEnvironment: 'Ambiente',
     domainColumnCertificate: 'Certificato',
     domainColumnState: 'Stato',
     domainServing: 'Attivo',
@@ -864,6 +871,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Cada endereço, o serviço que alcança e o estado do DNS e do certificado.',
     domainColumnDomain: 'Domínio',
     domainColumnReaches: 'Alcança',
+    domainColumnEnvironment: 'Ambiente',
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Servindo',
@@ -980,6 +988,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Cada adreça, el servei al qual arriba i l’estat del DNS i del certificat.',
     domainColumnDomain: 'Domini',
     domainColumnReaches: 'Arriba a',
+    domainColumnEnvironment: 'Entorn',
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'Estat',
     domainServing: 'En servei',
@@ -1095,6 +1104,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: 'Jede Adresse, der Dienst, den sie erreicht, und der Stand von DNS und Zertifikat.',
     domainColumnDomain: 'Domain',
     domainColumnReaches: 'Erreicht',
+    domainColumnEnvironment: 'Umgebung',
     domainColumnCertificate: 'Zertifikat',
     domainColumnState: 'Status',
     domainServing: 'Aktiv',
@@ -1210,6 +1220,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: '每个地址、它到达的服务，以及其 DNS 和证书的状态。',
     domainColumnDomain: '域名',
     domainColumnReaches: '指向',
+    domainColumnEnvironment: '环境',
     domainColumnCertificate: '证书',
     domainColumnState: '状态',
     domainServing: '正在服务',
@@ -1325,6 +1336,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: '每個位址、它到達的服務，以及其 DNS 與憑證的狀態。',
     domainColumnDomain: '網域',
     domainColumnReaches: '指向',
+    domainColumnEnvironment: '環境',
     domainColumnCertificate: '憑證',
     domainColumnState: '狀態',
     domainServing: '服務中',
@@ -1440,6 +1452,7 @@ export const deploymentEditorsTranslations = {
     domainsLede: '各アドレス、到達先のサービス、DNS と証明書の状態。',
     domainColumnDomain: 'ドメイン',
     domainColumnReaches: '到達先',
+    domainColumnEnvironment: '環境',
     domainColumnCertificate: '証明書',
     domainColumnState: '状態',
     domainServing: '稼働中',

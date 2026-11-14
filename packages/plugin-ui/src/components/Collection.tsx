@@ -194,6 +194,11 @@ export type CollectionAnatomy<Item> = Readonly<{
   glyphBadge?: (item: Item) => CollectionGlyphBadge | null;
   title: (item: Item) => string;
   /**
+   * The title is an identifier (a host name, a path): the list row draws it on one line in the host's mono face,
+   * ending in an ellipsis, instead of wrapping it as a name. Keep the full title in `accessibilityLabel`.
+   */
+  titleIdentifier?: boolean;
+  /**
    * The rest of the title line in the table's Entry cell: the item's short designation ("#2481", "!88") as quiet
    * text, or the caller's own inline line (a status word, a command, chips) that gives way before the title does.
    * A two-line list row says it in its `byline` instead. A single-line list row (an anatomy with no `byline`,
@@ -1331,6 +1336,8 @@ const controlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 
 const sharedLineFactsStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 };
 // The reason chip keeps its words whole; the facts beside it truncate first. A long sentence is held to most of the line.
 const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0, flexBasis: 'auto', minWidth: 0, maxWidth: '70%' };
+/** An identifier title's face when the host supplies no mono face. */
+const IDENTIFIER_FALLBACK_FONT = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
 /** A page row grows with its content: controls that don't fit beside the line move beneath it instead of erasing it. */
 const wrappingControlsLineStyle: HappierPortableStyle = { flexWrap: 'wrap', rowGap: 6 };
@@ -1519,8 +1526,9 @@ function ListCells<Item>(props: Readonly<{
         {singleLine ? null : <View pointerEvents={layer?.leaf} style={catalog ? catalogTitleLineStyle : props.wrapTitle ? wrappedTitleLineStyle : lineStyle}>
           {/* A catalog name, and an authored name on the resting page list, is never ellipsized: it wraps and the
               row grows above its floor (ST-5; a phone at large text, FIN-QA-LARGETEXT T1). A dense index row keeps one line. */}
-          <HappierText variant="label" tone="neutral" {...(catalog || props.wrapTitle ? {} : { numberOfLines: 1 })}
-            style={[titleTextStyle, catalog ? null : flexCellStyle, page ? resolveHappierPageTextStyle('rowTitle', typography) : resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.listRowTitle, typography)]}>
+          <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && anatomy.titleIdentifier !== true ? {} : { numberOfLines: 1 })}
+            style={[titleTextStyle, catalog ? null : flexCellStyle, page ? resolveHappierPageTextStyle('rowTitle', typography) : resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.listRowTitle, typography),
+              anatomy.titleIdentifier === true ? { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT } : null]}>
             {anatomy.title(item)}
             {kindWord}
           </HappierText>
