@@ -272,7 +272,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
           readStoredSessionMessagesForAddress(storage.getState(), note.continuation.conversation), note.continuation.conversation, note.continuation.deviceId,
         )) recordVoiceSessionArrival(snapshot.adapterId, snapshot.sessionId);
         void Promise.resolve(appendVoiceConversationNoteText({ conversationSessionId: note.continuation.conversation.sessionId,
-          text: 'Voice continued.', ...note })).then(
+          text: 'Voice continued.', backendTarget: snapshot.agentRuntime?.backendTarget, ...note })).then(
           () => continuation.settle(note, true),
           () => continuation.settle(note, false),
         );

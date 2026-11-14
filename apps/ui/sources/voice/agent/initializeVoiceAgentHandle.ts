@@ -948,6 +948,7 @@ export async function initializeVoiceAgentHandle({
         backend,
         rpcSessionId,
         agentBackendId: backend === 'daemon' ? resolvedAgentId : null,
+        ...(resolvedBackendTarget ? { agentBackendTarget: resolvedBackendTarget } : {}),
     };
     const machineId = readVoiceSessionOwnerMetadataFromState(storage.getState(), {
         serverId: accountLifetime.scope.serverId, sessionId: rpcSessionId,

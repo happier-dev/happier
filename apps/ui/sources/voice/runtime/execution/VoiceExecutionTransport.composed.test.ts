@@ -16,6 +16,65 @@ await prepareStandaloneVoicePolicyHarness();
 await import('@/voice/adapters/localConversation/localConversationAdapter');
 
 describe('real Local Voice Agent activation', () => {
+    it('publishes the admitted backend before initialization and readiness only after the Run is initialized', async () => {
+        const daemon = await createRetainedVoiceAgentRpcBoundary();
+        const startEntered = createDeferred<void>();
+        const releaseStart = createDeferred<void>();
+        let deferStart = false;
+        const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: async (method, input) => {
+            if (deferStart && (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+                || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
+                startEntered.resolve();
+                await releaseStart.promise;
+            }
+            return await daemon.dispatch(method, input);
+        } });
+        const { createVoiceExecutionTransport } = await import('./VoiceExecutionTransport');
+        const { voiceConversationRuntimeMachine: machine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        const { createVoiceContinuationProjection } = await import('@/voice/transcript/voiceContinuationProjection');
+        const transport = createVoiceExecutionTransport();
+        const continuation = createVoiceContinuationProjection();
+        const conversation = { serverId: fixture.handle.accountLifetime.scope.serverId, sessionId: fixture.sessionId };
+        const binding = { adapterId: 'local_conversation', controlSessionId: fixture.sessionId,
+            conversationSessionId: fixture.sessionId, conversationSessionAddress: conversation,
+            transcriptMode: 'synthetic' as const, targetSessionAddress: null, updatedAt: 1 };
+        let initialization: Promise<void> | undefined;
+        try {
+            machine.transitionToConnecting({ controlSessionId: fixture.sessionId });
+            expect(continuation.update({ snapshot: deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()),
+                binding, deviceId: 'device', sessionSeq: 0 })).toBeNull();
+            await transport.prepareAgentSelection(fixture.sessionId, new AbortController().signal);
+            const admitted = machine.getSnapshot().agentRuntime;
+            expect(admitted).toMatchObject({ ready: false, serverId: fixture.handle.accountLifetime.scope.serverId });
+            deferStart = true;
+            initialization = transport.ensureRunning(fixture.sessionId);
+            await startEntered.promise;
+            expect(machine.getSnapshot().agentRuntime).toBe(admitted);
+            machine.transitionToListening({ controlSessionId: fixture.sessionId });
+            const firstConnected = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot());
+            expect(continuation.update({ snapshot: firstConnected, binding, deviceId: 'device', sessionSeq: 0 })).not.toBeNull();
+            expect(firstConnected.agentRuntime).toBe(admitted);
+            releaseStart.resolve();
+            await initialization;
+            expect(machine.getSnapshot().agentRuntime).toMatchObject({ ...admitted, ready: true });
+            const initializedHandle = transport.readVoiceAgentHandle(fixture.sessionId);
+            machine.transitionToDisconnected({ controlSessionId: fixture.sessionId });
+            machine.transitionToConnecting({ controlSessionId: fixture.sessionId });
+            expect(machine.getSnapshot().agentRuntime).toBeUndefined();
+            await transport.prepareAgentSelection(fixture.sessionId, new AbortController().signal);
+            expect(transport.readVoiceAgentHandle(fixture.sessionId)).toBe(initializedHandle);
+            expect(machine.getSnapshot().agentRuntime).toMatchObject({ ...admitted, ready: true });
+            const stopping = transport.stop(fixture.sessionId);
+            expect(machine.getSnapshot().agentRuntime).toBeUndefined();
+            await stopping;
+        } finally {
+            releaseStart.resolve();
+            await initialization;
+            machine.reset();
+            await fixture.dispose();
+        }
+    });
     it.each(['primary', 'inventory'] as const)('overlaps independent cleanup inventory with primary Stop and awaits both before clearing retained metadata (%s first)', async first => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
         const stopEntered = createDeferred<void>();

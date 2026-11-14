@@ -2166,7 +2166,7 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.credential_missing'));
     }, 120_000);
 
-    it.each(['session', 'agent'] as const)('uses recovered inventory instead of a retained Start authentication refusal for the %s Agent', async (agentSource) => {
+    it.each(['session', 'agent'] as const)('uses a connected runtime and recovered inventory instead of a retained refusal for the %s Agent', async (agentSource) => {
         const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
         const { deriveVoiceSetupFacts } = await import('../setup/voiceSetupFacts');
         const { VoiceSetupPanel } = await import('../setup/VoiceSetupPanel');
@@ -2212,8 +2212,32 @@ describe('VoiceProviderSection', () => {
         const projected = screen.tree.root.findByType('ColdHome').props;
         expect(projected, JSON.stringify(projected)).toMatchObject({ readiness: { status: 'unavailable', code: 'runtime_unknown' }, canTry: false });
         expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
-        const { beginVoiceSessionRuntimePreparation, getVoiceSessionFailedAttempt, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+        const { beginVoiceSessionRuntimePreparation, getVoiceSessionActiveAgentRuntime, getVoiceSessionFailedAttempt, resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
         onTestFinished(resetVoiceSessionStoreForTests);
+        const connected = { adapterId: 'local_conversation', sessionId: 'voice-home', status: 'connected' as const,
+            mode: 'listening' as const, canStop: true, agentRuntime: {
+                serverId: accountFixture.scope.serverId, machineId: 'machine-1',
+                backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, ready: false,
+            }, recoveryTarget: {
+                serverId: accountFixture.scope.serverId, machineId: 'machine-1', machineLabel: 'Voice Computer',
+                agentRuntime: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            } };
+        await act(async () => setVoiceSessionSnapshot(connected, null,
+            { accountScope: accountFixture.scope, conversationScope: null }));
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { code: 'runtime_unknown' }, canTry: false });
+        await act(async () => setVoiceSessionSnapshot({ ...connected, agentRuntime: { ...connected.agentRuntime, ready: true } }));
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({
+            readiness: { status: 'ready', code: 'ready' }, canTry: true,
+        });
+        expect(getVoiceSessionActiveAgentRuntime({ ...accountFixture.scope, accountId: 'other-account' })).toBeUndefined();
+        await act(async () => setVoiceSessionSnapshot({ ...connected, status: 'error', canStop: false }));
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { code: 'runtime_unknown' }, canTry: false });
+        await act(async () => setVoiceSessionSnapshot({ ...connected, agentRuntime: { ...connected.agentRuntime, ready: true } }));
+        await screen.update(<ColdHome machineId="machine-2" />);
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { code: 'runtime_unknown' }, canTry: false });
+        await screen.update(<ColdHome />);
+        await act(async () => setVoiceSessionSnapshot({ ...connected, status: 'disconnected', canStop: false }));
+        expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { code: 'runtime_unknown' }, canTry: false });
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Missing Settings Account lifetime');
         const refreshAgent = async (status: 'signedOut' | 'signedIn') => {

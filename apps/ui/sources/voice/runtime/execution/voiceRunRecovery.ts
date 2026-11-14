@@ -28,6 +28,7 @@ export function createVoiceRunRecovery(
     voiceAttemptExplicitContextBySessionId: Map<string, string[]>;
     deferredTargetSessionContextBySessionId: Map<string, (() => string) | null>;
     latestAutomaticUiContextBySessionId: Map<string, string>;
+    onHandleChanged?: (sessionId: string, handle: VoiceAgentHandle | undefined) => void;
   }>,
 ): Readonly<{
   appendAttemptContextUpdate: (sessionId: string, update: string) => void;
@@ -63,6 +64,7 @@ export function createVoiceRunRecovery(
         handle.accountLifetime.isCurrent()
       ) {
         args.voiceAgentBySessionId.set(sessionId, handle);
+        args.onHandleChanged?.(sessionId, handle);
       }
       return handle;
     } finally {
@@ -115,6 +117,7 @@ export function createVoiceRunRecovery(
         throw error;
       }
       args.voiceAgentBySessionId.delete(sessionId);
+      args.onHandleChanged?.(sessionId, undefined);
       return await commitWithHandle();
     }
   };
@@ -135,6 +138,7 @@ export function createVoiceRunRecovery(
     const pendingInit = args.voiceAgentInitBySessionId.get(sessionId) ?? null;
     args.voiceAgentInitBySessionId.delete(sessionId);
     args.voiceAgentBySessionId.delete(sessionId);
+    args.onHandleChanged?.(sessionId, undefined);
     args.voiceAttemptExplicitContextBySessionId.delete(sessionId);
     args.deferredTargetSessionContextBySessionId.delete(sessionId);
     args.latestAutomaticUiContextBySessionId.delete(sessionId);
@@ -322,6 +326,7 @@ export function createVoiceRunRecovery(
     isActive: (sessionId: string) => args.voiceAgentBySessionId.has(sessionId),
     resetCachedHandle: (sessionId: string) => {
       args.voiceAgentBySessionId.delete(sessionId);
+      args.onHandleChanged?.(sessionId, undefined);
     },
     prepareStop,
   };

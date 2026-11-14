@@ -1,4 +1,5 @@
 import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { getVoiceSessionActiveAgentRuntime, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
@@ -364,6 +365,8 @@ export function useVoiceConversationsReadinessModel(props: {
   const accountSettings = React.useMemo(() => ({ voiceSettingsV1, secrets, backendEnabledByTargetKey }),
     [voiceSettingsV1, secrets, backendEnabledByTargetKey]);
   const settingsScope = useAccountSettingsScope();
+  const readActiveAgentRuntime = React.useCallback(() => getVoiceSessionActiveAgentRuntime(settingsScope), [settingsScope]);
+  const activeAgentRuntime = React.useSyncExternalStore(subscribeToVoiceSessionSnapshot, readActiveAgentRuntime, readActiveAgentRuntime);
   const credentialSelectionAction = useMountedActionExecution(settingsScope);
   const purposes = useConnectedAccountCatalog('purposes', settingsScope);
   const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
@@ -449,7 +452,7 @@ export function useVoiceConversationsReadinessModel(props: {
     machineId: props.executionMachineId ?? null, agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
     enabled: personalProvidersEnabled && Boolean(selectedProviderModel?.providerConnectionId), currentSelection: selectedProviderModel ?? undefined });
   const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-    { serverId: settingsScope?.serverId, machineId: props.executionMachineId,
+    { serverId: settingsScope?.serverId, machineId: props.executionMachineId, activeRuntime: activeAgentRuntime,
       ...(selectedAgentModel ? { modelRoute: { selection: selectedAgentModel,
         agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
         declarationContext: providerDeclarationContext(props.executionMachineId, agentProjection.inputs?.pluginProjectionV2),

@@ -2,6 +2,15 @@ import type { VoiceAdapterId } from '@/voice/session/types';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+
+/** Projection of this attempt's admitted selection and initialized Run, authored by execution. */
+export type VoiceAgentRuntimeProjection = Readonly<{
+    serverId: string;
+    machineId: string | null;
+    backendTarget: BackendTargetRefV1;
+    ready: boolean;
+}>;
 
 export type VoiceMachineErrorKind = import('@happier-dev/protocol/voice/attemptPresentation').VoiceAttemptFailureKind;
 
@@ -73,5 +82,6 @@ export type VoiceConversationRuntimeSnapshot = Readonly<{
     /** Speech application accepted by this attempt; pending preferences never write it. */
     inUseVoice?: VoiceConversationInUseVoice;
     preparedInstructionsFor?: SessionAddress;
+    agentRuntime?: VoiceAgentRuntimeProjection;
     error: VoiceMachineError | null;
 }>;

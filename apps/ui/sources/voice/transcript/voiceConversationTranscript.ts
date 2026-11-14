@@ -3,6 +3,7 @@ import type {
 import type {
     VoiceTranscriptCanonicalEventV1,
 } from '@happier-dev/protocol/voice/realtime/events';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 
 import {
     voiceTranscriptProjector as projector,
@@ -58,6 +59,7 @@ export function appendVoiceConversationNoteText(params: Readonly<{
     conversationSessionId: string;
     text: string;
     continuation?: VoiceContinuationProvenance;
+    backendTarget?: BackendTargetRefV1;
     localId?: string;
     createdAt?: number;
 }>): ReturnType<typeof projector.projectNoteText> {

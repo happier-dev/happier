@@ -73,14 +73,33 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         backendTarget: BackendTargetRefV1; agentSource: 'session' | 'agent'; dispose(): void;
     }>>();
 
+    const publishAgentRuntime = (sessionId: string, handle: VoiceAgentHandle | undefined): void => {
+        const backendTarget = handle?.agentBackendTarget ?? admittedSessionAgents.get(sessionId)?.backendTarget;
+        const account = handle?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
+        const target = handle ? { serverId: handle.accountLifetime.scope.serverId, sessionId: handle.rpcSessionId }
+            : resolveBoundTargetSessionAddress(sessionId) ?? (account ? {
+                serverId: account.scope.serverId, sessionId: resolveBoundConversationSessionId(sessionId) ?? sessionId,
+            } : null);
+        const metadata = target ? readVoiceSessionOwnerMetadataFromState(storage.getState(), target) : null;
+        voiceConversationRuntimeMachine.setAgentRuntime({ controlSessionId: sessionId,
+            agentRuntime: account?.isCurrent() && !handle?.signal?.aborted && backendTarget ? {
+                serverId: account.scope.serverId, machineId: metadata?.machineId ?? null,
+                backendTarget, ready: handle !== undefined,
+            } : null });
+    };
+
     const clearAgentSelection = (sessionId: string): void => {
         admittedSessionAgents.get(sessionId)?.dispose();
         admittedSessionAgents.delete(sessionId);
+        voiceConversationRuntimeMachine.setAgentRuntime({ controlSessionId: sessionId, agentRuntime: null });
     };
 
     const prepareAgentSelection = async (sessionId: string, signal: AbortSignal): Promise<void> => {
         signal.throwIfAborted();
-        if (admittedSessionAgents.has(sessionId)) return;
+        if (admittedSessionAgents.has(sessionId)) {
+            publishAgentRuntime(sessionId, voiceAgentBySessionId.get(sessionId));
+            return;
+        }
         const agent = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent;
         const account = captureActiveServerAccountScopeLifetime();
         if (!account) throw new Error('voice_agent_account_scope_unavailable');
@@ -121,6 +140,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         const retirement = account.onRetire(() => clearAgentSelection(sessionId));
         admittedSessionAgents.set(sessionId, { backendTarget,
             agentSource: configured ? 'agent' : 'session', dispose: () => retirement.dispose() });
+        publishAgentRuntime(sessionId, undefined);
     };
 
     const trackActiveTurn = async <T>(sessionId: string, task: () => Promise<T>): Promise<T> => {
@@ -205,6 +225,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         voiceAttemptExplicitContextBySessionId,
         deferredTargetSessionContextBySessionId,
         latestAutomaticUiContextBySessionId,
+        onHandleChanged: publishAgentRuntime,
     });
 
     const welcomePolicy = createVoiceWelcomePolicy({

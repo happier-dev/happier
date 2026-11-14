@@ -18,6 +18,25 @@ function createDeferred<T>() {
 }
 
 describe('VoiceConversationRuntimeMachine', () => {
+    it('projects admitted Agent readiness only for its owning attempt and withdraws it on failure', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        const agentRuntime = { serverId: 'home', machineId: 'machine',
+            backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' }, ready: false };
+        machine.transitionToConnecting({ controlSessionId: 'a', attemptId: 1 });
+        machine.setAgentRuntime({ controlSessionId: 'a', attemptId: 1, agentRuntime });
+        machine.transitionToListening({ controlSessionId: 'a', attemptId: 1 });
+        expect(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()).agentRuntime).toEqual(agentRuntime);
+        machine.setAgentRuntime({ controlSessionId: 'a', attemptId: 1, agentRuntime: { ...agentRuntime, ready: true } });
+        expect(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()).agentRuntime?.ready).toBe(true);
+        machine.setError({ controlSessionId: 'a', attemptId: 1, error: createVoiceMachineError({
+            kind: 'provider_error', reason: 'runtime_unavailable',
+        }) });
+        expect(machine.getSnapshot().agentRuntime).toBeUndefined();
+        machine.transitionToDisconnected({ controlSessionId: 'a' });
+        machine.transitionToConnecting({ controlSessionId: 'a', attemptId: 2 });
+        machine.setAgentRuntime({ controlSessionId: 'a', attemptId: 1, agentRuntime: { ...agentRuntime, ready: true } });
+        expect(machine.getSnapshot().agentRuntime).toBeUndefined();
+    });
     it('projects delivered instructions only for their current attempt and retires them on End', () => {
         const machine = createVoiceConversationRuntimeMachine();
         const receipt = { serverId: 'home', sessionId: 'target' };

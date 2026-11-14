@@ -192,6 +192,7 @@ export function deriveLocalVoiceSessionSnapshot(
         ...(snapshot.micMuted ? { micMuted: true } : {}),
         ...(snapshot.inUseVoice && projection.sessionStatus === 'connected' ? { inUseVoice: snapshot.inUseVoice } : {}),
         ...(snapshot.preparedInstructionsFor && projection.sessionStatus === 'connected' ? { preparedInstructionsFor: snapshot.preparedInstructionsFor } : {}),
+        ...(snapshot.agentRuntime ? { agentRuntime: snapshot.agentRuntime } : {}),
         ...(snapshot.error
             ? {
                 errorCode: snapshot.error.kind,

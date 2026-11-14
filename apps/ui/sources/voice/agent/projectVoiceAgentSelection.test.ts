@@ -3,8 +3,22 @@ import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { projectVoiceSelectedAgentReadiness } from './projectVoiceAgentSelection';
+import { EMPTY_MACHINE_AGENTS } from '@/agents/machineAgents/machineAgentInventoryStore';
 
 describe('selected Voice Agent readiness', () => {
+    it('uses initialized execution readiness only for the exact selected Machine and backend', () => {
+        const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const activeRuntime = { serverId: 'home', machineId: 'machine',
+            backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' }, ready: true };
+        const context = { serverId: 'home', machineId: 'machine', activeRuntime };
+        expect(projectVoiceSelectedAgentReadiness(target, EMPTY_MACHINE_AGENTS, context).runtime).toBe('ready');
+        for (const mismatched of [
+            { ...context, serverId: 'other-home' },
+            { ...context, machineId: 'other-machine' },
+            { ...context, activeRuntime: { ...activeRuntime, ready: false } },
+            { ...context, activeRuntime: { ...activeRuntime, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' } } },
+        ]) expect(projectVoiceSelectedAgentReadiness(target, EMPTY_MACHINE_AGENTS, mismatched).runtime).toBe('unknown');
+    });
     it('uses the selected Provider credential route while preserving installation and unknown-route blockers', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const serviceId = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' })!.authIsolation.suppressConnectedServiceIds[0]!;
@@ -15,12 +29,13 @@ describe('selected Voice Agent readiness', () => {
                 platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } });
         const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
         const inventory = { status: 'ready' as const, agents: [agent], lastCheckedAt: null };
-        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'Shared models',
-            resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team',
+            displayName: { content: { t: 'plain', v: 'Shared models' }, recipientEnvelope: null },
+            resourceRevision: 3, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
-            providerModels: [{ descriptor: { id: 'model', name: 'Model' }, sourceRevision: 'source-1', availability: 'available',
-                selection: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 1,
-                    deliveryMode: 'brokered', agentTargetKey, modelId: 'model' }, application: { agentTargetKey,
+            providerModels: [{ descriptor: { id: 'muse-spark-1.3', name: 'Muse Spark 1.3' }, sourceRevision: 'source-1', availability: 'available',
+                selection: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 3,
+                    deliveryMode: 'brokered', agentTargetKey, modelId: 'muse-spark-1.3' }, application: { agentTargetKey,
                     implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
                     endpointTemplateId: 'responses', protocol: 'openai-responses' } }] });
         const context = { serverId: 'home', machineId: 'machine', modelRoute: {
@@ -33,6 +48,12 @@ describe('selected Voice Agent readiness', () => {
         expect(projectVoiceSelectedAgentReadiness(target, inventory, { ...context, modelRoute: {
             ...context.modelRoute, teamCredentialResourceStatusByKey: new Map(),
         } }).runtime).toBe('unknown');
+        // The initialized brokered Run already proved its admitted execution route.
+        // An unobserved passive Team catalog cannot withdraw that runtime fact.
+        expect(projectVoiceSelectedAgentReadiness(target, EMPTY_MACHINE_AGENTS, { ...context, modelRoute: {
+            ...context.modelRoute, teamCredentialResourceStatusByKey: new Map(),
+        }, activeRuntime: { serverId: 'home', machineId: 'machine',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, ready: true } }).runtime).toBe('ready');
         expect(projectVoiceSelectedAgentReadiness(target, inventory, { serverId: 'home', machineId: 'machine' }))
             .toMatchObject({ runtime: 'missing', selectedAgent: { needsSignIn: true } });
     });

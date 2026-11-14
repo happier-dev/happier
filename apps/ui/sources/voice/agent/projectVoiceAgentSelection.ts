@@ -1,5 +1,7 @@
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveVoiceAgentRunBackendId } from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
+import type { VoiceAgentRuntimeProjection } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -27,11 +29,12 @@ export function projectVoiceDefaultAgentSelection(
     }) };
 }
 
-/** Inventory owns authentication and installation; catalog presence alone is not readiness. */
+/** An initialized Run owns active readiness; inventory owns passive authentication and installation. */
 export function projectVoiceSelectedAgentReadiness(
     target: AgentExecutionTargetV1 | null,
     inventory: MachineAgentsSnapshot,
     context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined;
+        activeRuntime?: VoiceAgentRuntimeProjection;
         modelRoute?: Parameters<typeof resolveSelectedProviderRoute>[0] }>,
 ): Readonly<{ runtime: VoiceReadinessFact; selectedAgent?: VoiceRoleReadiness['selectedAgent'] }> {
     if (!target) return { runtime: 'unknown' };
@@ -40,14 +43,17 @@ export function projectVoiceSelectedAgentReadiness(
     const row = inventory.agents.find(agent => agent.agentId === agentId && agent.definitionId === target.definitionId);
     const observed = inventory.status === 'idle' || inventory.status === 'offline' || inventory.status === 'error'
         || row?.stale ? undefined : row;
-    const providerRoute = context.modelRoute ? resolveSelectedProviderRoute(context.modelRoute) : null;
+    const activeReady = context.activeRuntime?.ready === true
+        && context.activeRuntime.serverId === context.serverId && context.activeRuntime.machineId === context.machineId
+        && resolveVoiceAgentRunBackendId(context.activeRuntime.backendTarget) === (target.definitionId ?? agentId);
+    const providerRoute = !activeReady && context.modelRoute ? resolveSelectedProviderRoute(context.modelRoute) : null;
     const agent = providerRoute ? projectMachineAgentForCredential(observed, { credentialBindings: null, providerRoute }) : observed;
-    const runtime: VoiceReadinessFact = agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
+    const runtime: VoiceReadinessFact = activeReady || agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
         : agent?.state === 'needsSignIn' || agent?.state === 'notInstalled' ? 'missing'
             : agent?.state === 'installing' ? 'installing' : agent?.state === 'unsupported' ? 'incompatible' : 'unknown';
     return { runtime, selectedAgent: {
         title: row?.title ?? (bundledId ? resolveAgentCatalogTitle(bundledId) : target.identity.localId),
-        needsSignIn: agent?.state === 'needsSignIn',
+        needsSignIn: !activeReady && agent?.state === 'needsSignIn',
         runtimeTarget: resolveVoiceAttemptRecoveryRuntimeTarget({ agentRuntime: target.identity,
             serverId: context.serverId, machineId: context.machineId }),
     } };

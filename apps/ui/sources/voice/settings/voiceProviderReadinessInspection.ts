@@ -1,4 +1,5 @@
 import { readMachineAgentsForScope } from '@/agents/machineAgents/useMachineAgents';
+import { getVoiceSessionActiveAgentRuntime } from '@/voice/session/voiceSessionStore';
 import { EMPTY_MACHINE_AGENTS } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -290,7 +291,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
             teamCredentialResourceStatusByKey: teamCatalog?.resourceStatusByKey };
     }
     const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-        { serverId, machineId: machine.machineId, modelRoute });
+        { serverId, machineId: machine.machineId, modelRoute, activeRuntime: getVoiceSessionActiveAgentRuntime(scope) });
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,

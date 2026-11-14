@@ -183,6 +183,7 @@ export type VoiceAgentHandle = Readonly<{
   backend: 'daemon';
   rpcSessionId: string;
   agentBackendId: string | null;
+  agentBackendTarget?: import('@happier-dev/protocol/backends/targets/backendTargetRef').BackendTargetRefV1;
 }>;
 
 export interface VoiceAgentClient {

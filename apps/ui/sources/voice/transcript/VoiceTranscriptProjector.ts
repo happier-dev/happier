@@ -2,6 +2,8 @@ import { REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1, type ConversationTurnOrigin
 import { deriveVoiceAgentTurnLocalId, deriveVoiceAgentTurnProvisionalLocalId, readVoiceAgentTurnPayloadFromMeta, readVoiceAgentTurnProvisionalLocalId } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
 import type { VoiceAgentTurnV1 } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
 import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol/voice/realtime/events';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { resolveVoiceAgentRunBackendId } from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
 
 import {
     readStoredSessionMessages,
@@ -106,6 +108,7 @@ export function buildRealtimeConversationRawRecord(params: Readonly<{
     role: 'user' | 'assistant';
     text: string;
     source?: RealtimeConversationTurnSource;
+    backendTarget?: BackendTargetRefV1;
 }>): RawRecord {
     const meta = buildRealtimeConversationTurnMeta(params.source);
     return params.role === 'user'
@@ -114,7 +117,12 @@ export function buildRealtimeConversationRawRecord(params: Readonly<{
             content: { type: 'text', text: params.text },
             meta,
         }
-        : {
+        : params.backendTarget ? {
+            role: 'agent',
+            content: { type: 'acp', agentId: resolveVoiceAgentRunBackendId(params.backendTarget),
+                data: { type: 'message', message: params.text } },
+            meta,
+        } : {
             role: 'agent',
             content: {
                 type: 'output',
@@ -571,7 +579,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         return created;
     };
 
-    type NoteTextInput = Readonly<{ conversationSessionId: string; text: string; continuation?: VoiceContinuationProvenance; localId?: string; createdAt?: number }>;
+    type NoteTextInput = Readonly<{ conversationSessionId: string; text: string; continuation?: VoiceContinuationProvenance;
+        backendTarget?: BackendTargetRefV1; localId?: string; createdAt?: number }>;
     function projectNoteText(params: NoteTextInput & { continuation: VoiceContinuationProvenance }): Promise<NormalizedMessage>;
     function projectNoteText(params: NoteTextInput & { continuation?: undefined }): NormalizedMessage | null;
     function projectNoteText(params: NoteTextInput): NormalizedMessage | null | Promise<NormalizedMessage>;
@@ -583,7 +592,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 const localId = message?.localId;
                 if (!message || !localId || !deps.persistFinal) throw new Error('voice_continuation_persist_unavailable');
                 await deps.persistFinal({ sessionId: params.conversationSessionId, localId, createdAt: message.createdAt,
-                    messageRole: 'agent', rawRecord: { ...buildRealtimeConversationRawRecord({ id: localId, role: 'assistant', text: 'Voice continued.' }), meta: message.meta } });
+                    messageRole: 'agent', rawRecord: { ...buildRealtimeConversationRawRecord({ id: localId, role: 'assistant', text: 'Voice continued.',
+                        backendTarget: params.backendTarget }), meta: message.meta } });
                 return message;
             } catch (error) {
                 recordVoiceRuntimeFailure('voice.transcript', 'transcript_dropped', 'continuation_persist_failed',

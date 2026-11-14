@@ -7,7 +7,7 @@ import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { resolveTranscriptMessageDisplayText } from '@/components/sessions/transcript/messageDisplayText';
 
-import { persistSessionTranscriptMessage, readStoredSessionMessages, type PersistedSessionTranscriptMessage } from "@happier-dev/session-core/messages";
+import { persistSessionTranscriptMessage, readStoredSessionMessages, type PersistedSessionTranscriptMessage, type PersistSessionTranscriptMessageInput } from "@happier-dev/session-core/messages";
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
 import { createVoiceTranscriptProjector } from './VoiceTranscriptProjector';
 import { createVoiceContinuationProjection } from './voiceContinuationProjection';
@@ -38,6 +38,22 @@ function seedOrderedTranscript() {
 }
 
 describe('VoiceTranscriptProjector', () => {
+    it('persists continuation notes with the bound Run backend rather than a Claude envelope', async () => {
+        const sessionId = 'conversation';
+        let written: PersistSessionTranscriptMessageInput | undefined;
+        const projector = createVoiceTranscriptProjector({ getState: storage.getState, nowMs: () => 100,
+            persistFinal: input => { written = input; } });
+        await projector.projectNoteText({ conversationSessionId: sessionId, text: 'Voice continued.',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            continuation: { v: 1, deviceId: 'device', conversation: { serverId: 'home', sessionId } } });
+        expect(written?.rawRecord.content).toEqual({ type: 'acp', agentId: 'codex',
+            data: { type: 'message', message: 'Voice continued.' } });
+        const normalized = written && normalizeRawMessage('ack', written.localId ?? null, written.createdAt ?? 100, written.rawRecord);
+        expect(normalized).toMatchObject({ role: 'agent', content: [expect.objectContaining({ type: 'text', text: 'Voice continued.' })] });
+        expect(normalized?.meta).toEqual(buildVoiceTranscriptNoteMeta({
+            continuation: { v: 1, deviceId: 'device', conversation: { serverId: 'home', sessionId } },
+        }));
+    });
     it('replaces native snapshots by segment identity and retains a separate same-text utterance', () => {
         // Native-session speech enters through the session writer, rather than
         // the synthetic Voice projector. Keep normalization, reducer and selector real.

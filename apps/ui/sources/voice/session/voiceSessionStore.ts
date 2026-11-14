@@ -201,6 +201,7 @@ const SNAPSHOT_FIELDS = {
   reconnectRetryAvailable: true,
   inUseVoice: true,
   preparedInstructionsFor: true,
+  agentRuntime: true,
   recoveryTarget: true,
 } satisfies Record<keyof VoiceSessionSnapshot, true>;
 const SNAPSHOT_KEYS = Object.keys(SNAPSHOT_FIELDS) as Array<keyof VoiceSessionSnapshot>;
@@ -238,6 +239,7 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     reconnectRetryAvailable: snapshot.reconnectRetryAvailable,
     inUseVoice: snapshot.status === 'connected' ? snapshot.inUseVoice : undefined,
     preparedInstructionsFor: snapshot.status === 'connected' ? snapshot.preparedInstructionsFor : undefined,
+    agentRuntime: snapshot.status === 'connected' || snapshot.status === 'connecting' ? snapshot.agentRuntime : undefined,
     recoveryTarget: snapshot.recoveryTarget,
   };
 }
@@ -422,6 +424,14 @@ export function getVoiceSessionFailedAttempt(providerId: string, accountScope: S
     && lastAttemptSnapshot.adapterId === providerId
     && areServerAccountScopesEqual(activeAttemptConversationContext?.accountScope, accountScope)
     ? lastAttemptSnapshot : null;
+}
+
+/** Read execution's ready fact only within the currently connected Account attempt. */
+export function getVoiceSessionActiveAgentRuntime(accountScope: ServerAccountScope | null): VoiceSessionSnapshot['agentRuntime'] {
+  const snapshot = getVoiceSessionSnapshot();
+  return snapshot.adapterId === 'local_conversation' && snapshot.status === 'connected'
+    && areServerAccountScopesEqual(activeAttemptConversationContext?.accountScope, accountScope)
+    ? snapshot.agentRuntime : undefined;
 }
 
 /** Default restart stays with the presented attempt; explicit Home/composer intents remain explicit. */

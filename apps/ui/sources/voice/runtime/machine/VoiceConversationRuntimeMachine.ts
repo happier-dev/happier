@@ -70,6 +70,7 @@ export type VoiceConversationRuntimeMachine = Readonly<{
     setMuted: (args: MuteArgs) => void;
     setInUseVoice: (args: TransitionArgs & { inUseVoice: VoiceConversationInUseVoice | null }) => void;
     setPreparedInstructionsFor: (args: TransitionArgs & { preparedInstructionsFor: SessionAddress | null }) => void;
+    setAgentRuntime: (args: TransitionArgs & { agentRuntime: VoiceConversationRuntimeSnapshot['agentRuntime'] | null }) => void;
     setError: (args: TransitionArgs & { error: VoiceMachineError }) => void;
     reset: () => void;
 }>;
@@ -287,6 +288,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     : current.micMuted,
                 inUseVoice: terminalState || (isEntryTransition && !sameOwner) ? undefined : current.inUseVoice,
                 preparedInstructionsFor: terminalState || (isEntryTransition && !sameOwner) ? undefined : current.preparedInstructionsFor,
+                agentRuntime: terminalState || (isEntryTransition && !sameOwner) ? undefined : current.agentRuntime,
                 endingBeforeConnect: transition.toState === 'ending'
                     // Stop preserves an existing connected edge; teardown from
                     // startup or failure must never manufacture one.
@@ -475,6 +477,15 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     || current.state === 'disconnected' || current.state === 'ending'
                     || current.state === 'error' || current.state === 'mic_error') return current;
                 return { ...current, inUseVoice: inUseVoice ?? undefined };
+            });
+        },
+        setAgentRuntime: ({ controlSessionId, adapterId, attemptId, agentRuntime }) => {
+            patchSnapshot(current => {
+                if (current.controlSessionId !== controlSessionId || current.adapterId !== (adapterId ?? null)
+                    || (attemptId !== undefined && activeAttemptId !== attemptId)
+                    || current.state === 'disconnected' || current.state === 'ending'
+                    || current.state === 'error' || current.state === 'mic_error') return current;
+                return { ...current, agentRuntime: agentRuntime ?? undefined };
             });
         },
         setPreparedInstructionsFor: ({ controlSessionId, adapterId, attemptId, preparedInstructionsFor }) => {

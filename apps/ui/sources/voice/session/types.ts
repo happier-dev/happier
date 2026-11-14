@@ -101,6 +101,7 @@ export type VoiceSessionSnapshot = Readonly<{
   inUseVoice?: VoiceConversationInUseVoice;
   /** Exact Session instructions accepted by this attempt's supported carrier; unknown is omitted. */
   preparedInstructionsFor?: SessionAddress;
+  agentRuntime?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceAgentRuntimeProjection;
   recoveryTarget?: VoiceAttemptRecoveryTarget | null;
 }>;
 
