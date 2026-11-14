@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1,
     type DeploymentTemplateV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { prepareDeploymentTemplateInstantiationV1 } from './prepareDeploymentTemplateInstantiationV1.js';
 
 const source = { services: { db: { image: 'postgres:17', environment: { POSTGRES_PASSWORD: '${DB_PASSWORD}' },
@@ -150,7 +150,7 @@ describe('stored template preparation', () => {
                 bindings: app.generatedSecrets.map(secret => ({ purpose: 'variable', name: secret.key, phase: 'runtime',
                     source: { kind: 'generated', key: secret.key } })),
             });
-            const stored = DeploymentEnvironmentContentV1Schema.parse({ ...existing.content, bindings: prepared.bindings,
+            const stored = DeploymentEnvironmentContentV1Schema.parse({ ...existing.content, bindings: prepared.bindings.map(createDeploymentVariableBindingV1),
                 definition: { ...existing.content.definition, kind: 'stored', document: prepared.document, profiles: prepared.profiles,
                     services: prepared.services, primaryService: prepared.primaryService },
                 template: { ...prepared.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } },

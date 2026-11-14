@@ -15,6 +15,7 @@ import {
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
 } from '@happier-dev/deployment-protocol';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { mutateQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { manifest as vercelManifest } from '../../../../packages/plugins/deploy-vercel/src/manifest';
@@ -48,7 +49,7 @@ export async function runDeploymentRootProviderCoverage(input: Readonly<{
                 randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }
             : { kind, accountMode: 'plain', payload, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) });
     await runWithServerHttpBaseUrl(home.baseUrl, () => mutateQualifiedConnectedAccountCredentialV4({ token: home.token,
-        mutation: { ref: credentialRef, authenticationModeId: descriptor.authentication.defaultModeId,
+        mutation: { ref: credentialRef, authenticationModeId: PluginConnectedAccountAuthenticationV2Schema.parse(descriptor.authentication).defaultModeId,
             expectedCredentialRevision: null,
             content: seal('credential', { v: 1, values: { token } }),
             initialConfiguration: { expectedConfigurationRevision: null,

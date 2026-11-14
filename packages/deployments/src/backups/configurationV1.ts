@@ -1,6 +1,6 @@
-import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1,
+import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1, isSettledEnvironmentSecretBindingV1,
     type DeploymentBackupConfigurationV1, type DeploymentBackupRetentionV1, type DeploymentEnvironmentBackupV1,
-    type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+    type EnvironmentSecretBindingInputV1 } from '@happier-dev/deployment-protocol';
 
 type Destination = Readonly<{ ref: DeploymentBackupConfigurationV1['destinationRef']; occurrenceId: string;
     descriptor: Parameters<typeof validateDeploymentBackupDestinationConfigurationV1>[0]['descriptor'] }>;
@@ -26,7 +26,7 @@ export function createDeploymentVolumeBackupSourceIdV1(service: string, volume: 
 
 /** Configure admission consumes the selected catalog descriptor and the opened Environment bindings once. */
 export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environmentId: string; configuration: unknown;
-    destination: Destination; bindings: readonly EnvironmentSecretBindingV1[] }>): DeploymentBackupConfigurationPreparationV1 {
+    destination: Destination; bindings: readonly EnvironmentSecretBindingInputV1[] }>): DeploymentBackupConfigurationPreparationV1 {
     const raw = input.configuration;
     const withDefault = raw && typeof raw === 'object' && !Array.isArray(raw)
         ? { retention: { kind: 'keepEverything' }, ...raw } : raw;
@@ -48,7 +48,7 @@ export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environ
         .filter(entry => entry.optional !== true || configuration.credentialBindings.some(binding => binding.role === entry.role))
         .map(({ role }) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role }));
     const missingRoles = credentialBindings.map(binding => binding.role).filter(role => !input.bindings.some(binding => binding.purpose === 'backupDestination'
-        && binding.configKey === 'destination' && binding.role === role));
+        && binding.configKey === 'destination' && binding.role === role && isSettledEnvironmentSecretBindingV1(binding)));
     return { ok: true, configuration: { ...configuration, credentialBindings, occurrenceId: destination.occurrenceId },
         bindingState: missingRoles.length ? 'needsBinding' : 'bound', missingRoles };
 }

@@ -15,7 +15,7 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externa
 import { createHostActionOperationRuntime, registerActionOperationRpcHandlers } from '@/daemon/actionOperations';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
-import { registerExternalActionRpcHandler, type ExternalActionRpcRegistrationOptions } from '@/rpc/handlers/externalAction';
+import { registerExternalActionRpcHandler, type ExternalActionRpcRegistrationOptions, type ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { APPROVAL_RPC_SCOPES, collectActionSpecRpcMethodsForScopes } from '@/rpc/handlers/actionSpecRpcRegistration';
@@ -64,6 +64,18 @@ export function readS0Installation(home: DeploymentSocketHomeFixture) {
 }
 
 /** The incumbent receiving daemon ingress, shared by composed deployment journeys. */
+export type S0DeploymentDaemonIngress = Readonly<{
+    actionOperations: ReturnType<typeof createHostActionOperationRuntime>;
+    executor: ReturnType<typeof createCliActionExecutorFromCredentials>;
+    externalActionIngressOwner: ExternalActionIngressOwner;
+    machineActionDirectTargetTransport: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport']>;
+    readReceivedMethods(): readonly string[];
+    observeRecordedApprovalExecution: ReturnType<typeof createCliActionExecutorFromCredentials>['observeRecordedApprovalExecution'];
+    readIsolation(): ReturnType<typeof readAgentIsolationSnapshot> | null;
+    isolationNative: ReturnType<typeof createAgentIsolationEffectsBoundary> | null;
+    close(): Promise<void>;
+}>;
+
 export async function createS0DeploymentDaemonIngress(input: Readonly<{
     home: DeploymentSocketHomeFixture;
     createDeploymentActionDeps?(requester: RequesterAccountActionContext | undefined,
@@ -87,7 +99,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     }>): readonly string[] | Promise<readonly string[]>;
     /** Observe the actual socket frame without replacing admission or dispatch. */
     observeReceivedRequest?(request: SocketRpcRequestPayload): Promise<void>;
-}>) {
+}>): Promise<S0DeploymentDaemonIngress> {
     const { home } = input;
     if (home.encryptionMode === 'e2ee' && (!home.machineEncryptionKey || !home.encryption)) {
         throw new Error('The E2EE daemon requires its owning fixture encryption material');

@@ -618,7 +618,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             configuration: safety.configuration, ...(hasOwnServerBackupDataOperands(safety) ? { data: safety.data, restoreTargets: isOwnServerBackupRunOperands(safety) ? safety.destinations : [safety.destination] } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
                     if (prepared.source.kind !== 'upload' || prepared.repository) refuse('outcome_unknown');
                     await reviewSnapshot(prepared.destination);
-                    return { kind: 'prepared', prepared: { ...prepared, source: prepared.source } };
+                    return { kind: 'prepared', prepared: { ...prepared, source: prepared.source,
+                        ...(prepared.steps ? { steps: [...prepared.steps] } : {}),
+                        ...(prepared.safetyBackup ? { safetyBackup: { ...prepared.safetyBackup,
+                            manifests: [...prepared.safetyBackup.manifests],
+                            ...(prepared.safetyBackup.restoreCaptures ? { restoreCaptures: [...prepared.safetyBackup.restoreCaptures] } : {}) } } : {}) } };
                 } finally { if (safety && hasOwnServerBackupDataOperands(safety)) await safety.dispose(); }
             }
             if (!repositorySource) refuse('unsupported_action');
@@ -678,7 +682,13 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 data: [{ engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } }] } }) },
                         safetyOperands ? await createBackupInput(safetyOperands) : undefined);
                     await reviewSnapshot(prepared.destination);
-                    return { kind: 'prepared', prepared, configuration: capture.configuration };
+                    return { kind: 'prepared', prepared: { ...prepared, source: capture.source,
+                        sourceFormat: capture.sourceFormat, repository: capture.repository,
+                        ...(prepared.steps ? { steps: [...prepared.steps] } : {}),
+                        ...(prepared.safetyBackup ? { safetyBackup: { ...prepared.safetyBackup,
+                            manifests: [...prepared.safetyBackup.manifests],
+                            ...(prepared.safetyBackup.restoreCaptures ? { restoreCaptures: [...prepared.safetyBackup.restoreCaptures] } : {}) } } : {}) },
+                        configuration: capture.configuration };
                 }
                 if (!retained || !('configuration' in retained) || !('repository' in retained.prepared)) refuse('stale_input');
                 const prepared = retained.prepared;

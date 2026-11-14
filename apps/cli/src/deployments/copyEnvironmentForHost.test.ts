@@ -1,11 +1,40 @@
 import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { describe, expect, it } from 'vitest';
-import { DeploymentEnvironmentCreateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentBindingsSetInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 
 describe('Copy acknowledged step result', () => {
+    it('carries a pre-grant stored reference through Create to the fresh bindings Action', async () => {
+        const base = createDeploymentEnvironmentDetailV1();
+        const binding = { purpose: 'variable', name: 'DATABASE_URL', phase: 'runtime',
+            source: { kind: 'reference', environmentId: 'source', export: 'DATABASE_URL', via: 'auto' } };
+        const input = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: 'destination',
+            requestKey: 'copy', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: 'controller', contentArtifactId: base.environment.contentArtifactId,
+            contentHeaderVersion: base.environment.contentHeaderVersion, contentBodyVersion: base.environment.contentBodyVersion,
+            copyIntentCommitment: 'A'.repeat(43), copyFrom: { environmentId: 'source', expectedRevision: 7,
+                choices: { secrets: [], values: [{ kind: 'include', binding: { purpose: 'variable', name: 'DATABASE_URL', phase: 'runtime' } }], data: [] } },
+            copyPlan: { bindings: [binding] } });
+        let bound = false;
+        const result = await createEnvironmentWithCopyForHost({ input, context: { hostReviewedChild: { async invoke(request) {
+            expect(request.action).toBe('deployments.bindings.set');
+            const selection = DeploymentBindingsSetInputV1Schema.parse(request.input);
+            expect(selection.set).toEqual([binding]);
+            bound = true;
+            return { ok: true, result: { ok: true, environmentId: base.environment.id, revision: 2 } };
+        } } } }, {
+            async create() { return { ok: true, environmentId: base.environment.id, revision: 1, replayed: false }; },
+            async readEnvironment() { return { environment: { ...base.environment, revision: 1 },
+                content: { ...base.content, bindings: [] }, targetLinks: [] }; },
+        });
+        expect(result).toMatchObject({ ok: true, environmentId: base.environment.id, revision: 2 });
+        expect(bound).toBe(true);
+        expect(EnvironmentSecretBindingV1Schema.safeParse(binding).success).toBe(false);
+    });
+
     it.each(['linkRefused', 'pending', 'created', 'outcomeUnknown', 'failedWithoutEffectEvidence', 'failedBeforeEffect', 'allocationMissing', 'allocationFresh', 'allocationReplay', 'noChild'] as const)('creates managed data with fresh Action custody and retains %s outcomes', async outcome => {
         const base = createDeploymentEnvironmentDetailV1();
         const principal = { kind: 'account', accountId: 'owner',

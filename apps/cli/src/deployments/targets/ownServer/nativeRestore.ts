@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
-import type { DeploymentImageV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1, DeploymentReceiptDetailV1, DeploymentRestoreUploadFormatV1, DeploymentRestoreUploadSourceV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBackupV1, resolveDeploymentRestoreCaptureV1,
     deploymentRestoreStepProgressV1,
@@ -487,6 +487,9 @@ async function prepareNativeRestore(capture: OwnServerNativeRestorePrepareCaptur
 }
 
 /** Standalone phases own separate P42 preparations; confirmation receives a fresh input. */
+export function prepareOwnServerNativeRestore(input: OwnServerNativeUploadRestoreInput,
+    admitted: OwnServerNativeUploadRestorePrepareCapture, destinationSafetyInput?: OwnServerNativeRestoreInput):
+    Promise<OwnServerNativeRestorePrepareReceipt & Readonly<{ source: DeploymentRestoreUploadSourceV1; sourceFormat: DeploymentRestoreUploadFormatV1 }>>;
 export function prepareOwnServerNativeRestore(input: OwnServerNativeRestoreInput | OwnServerNativeUploadRestoreInput,
     admitted: OwnServerNativeRestorePrepareCapture | OwnServerNativeUploadRestorePrepareCapture, destinationSafetyInput?: OwnServerNativeRestoreInput): Promise<OwnServerNativeRestorePrepareReceipt>;
 export function prepareOwnServerNativeRestore(input: OwnServerNativeRestoreInputFactory,

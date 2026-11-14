@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentBackupConfigureActionForHost, type DeploymentBackupConfigureHost } from './backupConfigure';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+
+const currentOccurrenceId = createPluginRuntimeOccurrenceId('example.storage');
 
 const configuration: DeploymentBackupConfigurationV1 = {
     configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'local' },
@@ -37,7 +41,7 @@ function fixture() {
                 credentialRoles: [{ role: 'repositoryPassword' }], configSchema: { type: 'object' as const, properties: { path: { type: 'string' as const } },
                     required: ['path'], additionalProperties: false },
                 actions: { test: configuration.destinationRef, open: configuration.destinationRef },
-            } }] }, readPluginOccurrenceId: () => 'current',
+            } }] }, readPluginOccurrenceId: () => currentOccurrenceId,
         }, async release() {} }; },
         async executeNative() { counts.native++; return { test: nativeResult }; },
         async resolveCreationDefaults(_environment, explicit) { return resolveDeploymentCreationDefaultsV1({
@@ -109,10 +113,11 @@ describe('backup configure coordinator', () => {
 
     it.each(['save', 'initializeAndSave'] as const)('persists %s only after the native repository proof succeeds', async intent => {
         const f = fixture();
-        expect(await createDeploymentBackupConfigureActionForHost(f.host)({ ...f.input, intent }, {}))
-            .toMatchObject({ kind: 'configured', revision: f.input.expectedRevision + 1, configuration: { occurrenceId: 'current' } });
+        const result = await createDeploymentBackupConfigureActionForHost(f.host)({ ...f.input, intent }, {});
+        expect(getActionSpec('deployments.backups.configure').outputSchema?.parse(result))
+            .toMatchObject({ kind: 'configured', revision: f.input.expectedRevision + 1, configuration: { occurrenceId: currentOccurrenceId } });
         expect(f.counts).toEqual({ reads: 1, descriptors: 1, native: 1, saves: 1 });
-        expect(f.saved()).toMatchObject({ occurrenceId: 'current' });
+        expect(f.saved()).toMatchObject({ occurrenceId: currentOccurrenceId });
     });
 
     it('preserves the previous configuration when a repository is missing', async () => {
@@ -134,6 +139,15 @@ describe('backup configure coordinator', () => {
         f.environment.content.bindings = [];
         expect(await createDeploymentBackupConfigureActionForHost(f.host)({ ...f.input, intent: 'save' }, {}))
             .toMatchObject({ kind: 'needsBinding', missingRoles: ['repositoryPassword'] });
+        expect(f.counts.native).toBe(0); expect(f.counts.saves).toBe(0);
+    });
+
+    it('does not probe an incumbent secret when the replacement still requires a person choice', async () => {
+        const f = fixture();
+        const result = await createDeploymentBackupConfigureActionForHost(f.host)({ ...f.input, intent: 'save',
+            backupBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+                source: { kind: 'secret', ref: 'person_selects' } }] }, {});
+        expect(result).toMatchObject({ kind: 'needsBinding', missingRoles: ['repositoryPassword'] });
         expect(f.counts.native).toBe(0); expect(f.counts.saves).toBe(0);
     });
 
@@ -186,7 +200,7 @@ describe('backup configure coordinator', () => {
         expect(bindingRevision).toBe(f.input.expectedRevision + 1);
         expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict', effectAttempted: true,
             details: { environmentId: f.input.environmentId, revision: bindingRevision, backupBindings } });
-        expect(f.saved()).toMatchObject({ occurrenceId: 'current' });
+        expect(f.saved()).toMatchObject({ occurrenceId: currentOccurrenceId });
     });
 
     it('refuses markNotNeeded when a configuration remains active', async () => {

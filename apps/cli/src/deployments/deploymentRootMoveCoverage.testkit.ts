@@ -9,6 +9,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { DeploymentMoveToRepositoryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { PLUGIN_MANIFEST as githubManifest } from '../../../../packages/plugins/scm-github/src/manifest';
 import type { DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { mutateQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
@@ -41,7 +42,7 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
     if (home.encryptionMode !== 'e2ee' || !home.encryption) throw new Error('Move coverage requires real E2EE credential material');
     await runWithServerHttpBaseUrl(home.baseUrl, async () => {
         await mutateQualifiedConnectedAccountCredentialV4({ token: home.token, mutation: { ref: account,
-            authenticationModeId: descriptor.authentication.defaultModeId, expectedCredentialRevision: null,
+            authenticationModeId: PluginConnectedAccountAuthenticationV2Schema.parse(descriptor.authentication).defaultModeId, expectedCredentialRevision: null,
             content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee',
                 material: home.encryption!, payload: { v: 1, values: { token } },
                 randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),

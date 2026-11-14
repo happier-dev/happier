@@ -14,21 +14,21 @@ export type RepositoryFilesPullRequestHost = Readonly<{
   writeFile(input: Readonly<{ rootPath: string; path: string; content: string; expectedHash: string | null }>): Promise<unknown>;
   deleteFile(input: Readonly<{ rootPath: string; path: string; recursive: false }>): Promise<unknown>;
 }>;
-export type RepositoryFilesPullRequestInput = Readonly<{
+export type RepositoryFilesPullRequestInput<TContent extends string | null = string | null> = Readonly<{
   cwd: string; baseCommit: string; baseBranch: string; branchName: string; title: string;
-  files: readonly Readonly<{ path: string; content: string | null }>[];
+  files: readonly Readonly<{ path: string; content: TContent }>[];
 }>;
-export type RepositoryFilesPullRequestReview = Omit<RepositoryFilesPullRequestInput, 'files'> & Readonly<{
-  files: readonly Readonly<{ path: string; before: string | null; content: string | null; expectedHash: string | null }>[];
+export type RepositoryFilesPullRequestReview<TContent extends string | null = string | null> = Omit<RepositoryFilesPullRequestInput<TContent>, 'files'> & Readonly<{
+  files: readonly Readonly<{ path: string; before: string | null; content: TContent; expectedHash: string | null }>[];
 }>;
 type Worktree = Readonly<{ path: string; branchName: string }>;
 export type RepositoryFilesPullRequestPartial = ScmRepositoryFilesPullRequestPartialV1;
 export type RepositoryFilesPullRequestResult = ScmRepositoryFilesPullRequestResultV1;
 
 /** Captures immutable before/after bytes for the caller's ordinary exact-input review. */
-export async function prepareRepositoryFilesPullRequest(input: RepositoryFilesPullRequestInput,
-  host: RepositoryFilesPullRequestHost): Promise<RepositoryFilesPullRequestReview> {
-  const files: RepositoryFilesPullRequestReview['files'][number][] = [];
+export async function prepareRepositoryFilesPullRequest<TContent extends string | null>(input: RepositoryFilesPullRequestInput<TContent>,
+  host: RepositoryFilesPullRequestHost): Promise<RepositoryFilesPullRequestReview<TContent>> {
+  const files: RepositoryFilesPullRequestReview<TContent>['files'][number][] = [];
   for (const file of input.files) {
     const request = ScmFileAtRevisionRequestSchema.parse({ cwd: input.cwd, path: file.path, selector: { commit: input.baseCommit } });
     const read = ScmFileAtRevisionResponseSchema.parse(await host.executeScm('scm.file.read', request));

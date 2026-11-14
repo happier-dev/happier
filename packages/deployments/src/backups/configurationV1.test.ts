@@ -57,6 +57,11 @@ describe('backup configuration preparation', () => {
             .toEqual({ ok: true, configuration, bindingState: 'bound', missingRoles: [] });
     });
 
+    it('keeps a pending person choice unbound until the secret reference is settled', () => {
+        expect(prepare({ ...input, bindings: [{ ...bindings[0], source: { kind: 'secret', ref: 'person_selects' } }] }))
+            .toMatchObject({ ok: true, bindingState: 'needsBinding', missingRoles: ['repositoryPassword'] });
+    });
+
     it('keeps descriptor-required credential selectors when a caller omits them', () => {
         const omitted = { ...configuration, credentialBindings: [] };
         expect(prepare({ ...input, configuration: omitted, bindings: [] })).toEqual({ ok: true,

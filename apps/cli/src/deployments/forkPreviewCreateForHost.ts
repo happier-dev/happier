@@ -11,7 +11,7 @@ import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/prot
 import { readDeploymentEnvironmentArtifactV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
-import type { EnvironmentVariableBindingV1 } from '@happier-dev/protocol';
+import type { EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainInventoryForHost } from './targets/ownServer/domainRouteSelection';
 
@@ -45,7 +45,7 @@ export async function admitForkPreviewDeploymentForHost(input: Readonly<{
 /** Create owns both first creation and a new-head synchronization; Deploy remains its reviewed child. */
 export async function prepareForkPreviewCreateForHost(input: Readonly<{
     prepared: DeploymentEnvironmentCreateInputV1; content: DeploymentEnvironmentContentV1; context: ActionExecutorContext;
-    bindings?: readonly EnvironmentVariableBindingV1[];
+    bindings?: readonly EnvironmentVariableBindingInputV1[];
     domain?: Readonly<{ domainId: string; content: DeploymentDomainContentV1; url: string }>;
 }>, host: Readonly<{
     storage: Storage;

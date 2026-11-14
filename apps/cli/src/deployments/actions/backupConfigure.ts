@@ -1,6 +1,6 @@
-import type { ActionExecutorContext, EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, EnvironmentSecretBindingV1, EnvironmentSecretBindingInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, isSettledEnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
 import { prepareDeploymentBackupConfigurationV1, prepareDeploymentBackupNotNeededV1 } from '@happier-dev/deployments';
 import { resolveSshKnownHostTrust } from '@happier-dev/cli-common/systemTasks';
 import type { DeploymentBackupConfigurationNativeInputForHost, DeploymentBackupConfigurationNativeResultForHost } from '../targets/ownServer/backupConfigurationNative';
@@ -34,8 +34,8 @@ export type DeploymentBackupConfigureHost<TRegistry extends Registry = Registry>
         context: ActionExecutorContext }>): Promise<Readonly<{ ok: true; revision: number }> | ActionExecuteFailure>;
 }>;
 
-function withBackupBindings(environment: DeploymentBackupConfigurationEnvironmentForHost, bindings: readonly EnvironmentSecretBindingV1[]) {
-    const candidate = new Map(environment.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+function withBackupBindings<TBinding extends EnvironmentSecretBindingInputV1>(environment: DeploymentBackupConfigurationEnvironmentForHost, bindings: readonly TBinding[]) {
+    const candidate = new Map<string, EnvironmentSecretBindingV1 | TBinding>(environment.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
     for (const binding of bindings) candidate.set(environmentSecretBindingIdentityV1(binding), binding);
     return { ...environment, content: { ...environment.content, bindings: [...candidate.values()] } };
 }
@@ -126,7 +126,8 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                 if (!prepared.ok) return failure(prepared.code);
                 if (prepared.bindingState === 'needsBinding') return { kind: 'needsBinding', configuration: prepared.configuration,
                     missingRoles: prepared.missingRoles, ...settledSetup, ...(review ? { review } : {}) };
-                const native = await host.executeNative({ environment: candidateEnvironment, configuration: prepared.configuration,
+                const native = await host.executeNative({ environment: { ...candidateEnvironment, content: { ...candidateEnvironment.content,
+                    bindings: candidateEnvironment.content.bindings.filter(isSettledEnvironmentSecretBindingV1) } }, configuration: prepared.configuration,
                     intent: input.intent, context }, lease.registry);
                 const nativeReview = { ...review, ...(native.capacity ? { capacity: native.capacity } : {}) };
                 if (input.intent === 'test' || native.test.kind !== 'reachable') return { kind: 'tested', test: native.test,

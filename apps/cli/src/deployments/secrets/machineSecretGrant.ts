@@ -47,17 +47,16 @@ export function sealMachineSecretGrant(input: Readonly<{
     subject: MachineSecretGrantSubjectV1;
     installationPublicKey: Uint8Array;
     content: MachineSecretGrantContentV1;
-}>): ReturnType<typeof sealMachineSecretGrantEnvelopeV1> {
+}>): MachineSecretGrantV1 {
     const admitted = envelopeSchema.safeParse({ subject: input.subject, content: input.content });
     if (!admitted.success || admitted.data.subject.kind !== admitted.data.content.kind) {
         throw new PluginError({ code: 'secret_missing', message: 'Installation grant subject is unavailable' });
     }
-    const sealed = sealMachineSecretGrantEnvelopeV1({ ...admitted.data, seal: plaintext => {
+    return sealMachineSecretGrantEnvelopeV1({ ...admitted.data, seal: plaintext => {
         const recipientPublicKey = deriveBoxPublicKeyFromEd25519PublicKey(input.installationPublicKey);
         return encodeBase64(sealBoxBundle({ plaintext, recipientPublicKey,
             randomBytes: length => new Uint8Array(randomBytes(length)) }));
     } });
-    return { ...admitted.data.subject, sealedContent: sealed.sealedContent };
 }
 
 /** The exact subject is authenticated inside the sealed plaintext. */

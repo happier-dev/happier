@@ -5,7 +5,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentSecretBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema,
-  EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingV1Schema,
+  EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingStoredReadV1Schema,
   environmentSecretBindingIdentityV1, DeploymentTextV1Schema } from './storedAppInputV1.js';
 
 /** Only this non-content source/CAS reference crosses the Home storage boundary. */
@@ -55,7 +55,7 @@ export type DeploymentEnvironmentCopyFromV1 = z.infer<typeof DeploymentEnvironme
 
 /** Exact Action custody only. Fresh destination grants still belong to bindings.set. */
 export const DeploymentEnvironmentCopyPlanV1Schema = lazyZodSchema(() => z.strictObject({
-  bindings: z.array(EnvironmentSecretBindingV1Schema), sourceRuntimeTargetLinkId: z.optional(id),
+  bindings: z.array(EnvironmentSecretBindingStoredReadV1Schema), sourceRuntimeTargetLinkId: z.optional(id),
   data: z.optional(z.array(z.strictObject({ targetLinkId: id, targetId: id, targetKind: id,
     contribution: asProtocolZod(PluginContributionIdentityV1Schema), provision: DeploymentEnvironmentCopyProvisionV1Schema }))),
 }).check(z.refine(plan => new Set(plan.bindings.map(environmentSecretBindingIdentityV1)).size === plan.bindings.length,

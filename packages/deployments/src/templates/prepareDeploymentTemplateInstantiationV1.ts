@@ -1,5 +1,5 @@
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, StoredAppPresetInputV1,
-    DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
+    DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
 
 type TemplateRef = Extract<StoredAppPresetInputV1['definition'], { from: 'catalogApp' }>['templateRef'];
@@ -22,7 +22,7 @@ export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
 }>;
 export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     document: string; profiles: string[]; services: string[]; primaryService?: string;
-    bindings: EnvironmentVariableBindingV1[];
+    bindings: EnvironmentVariableBindingInputV1[];
     connectToServices: string[];
     generatedSecrets: Readonly<{ name: string; phase: 'build' | 'runtime'; key: string; profile: DeploymentTemplateSecretProfileV1 }>[];
     domains: (DeploymentTemplateV1['domains'][number] & { hostname: string })[];
@@ -219,7 +219,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     });
     const variables = new Map(template.variables.map(variable => [variable.key, variable]));
     if (input.bindings.some(binding => !variables.has(binding.name))) return refuse('template_binding_unknown');
-    const bindings: EnvironmentVariableBindingV1[] = [];
+    const bindings: EnvironmentVariableBindingInputV1[] = [];
     let generatedSecrets: PreparedDeploymentTemplateInstantiationV1['generatedSecrets'] = [];
     for (const variable of template.variables) {
         let selected = input.bindings.find(binding => binding.name === variable.key)

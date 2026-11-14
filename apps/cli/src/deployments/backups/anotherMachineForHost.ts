@@ -3,14 +3,13 @@ import { deploymentOutputValidationFailure } from '../outputValidation';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
 import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1,
-    buildMachineSetupTargetApplyInput } from '@happier-dev/protocol/machines/managed/actionsV1';
+    buildMachineSetupTargetApplyInput, type MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { BackupReceiverEndpointV1Schema } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { readMachineSetupRecipeIdentityV1, type MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { readSharedPrivateNetworkAddresses } from '@/machines/reachability/sharedPrivateNetworkAddresses';
 import { DeploymentBackupReceiverSetupOperationV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
@@ -26,7 +25,7 @@ export type BackupAnotherMachineHost = Omit<BackupSenderIdentityHostInput, 'reta
 }>;
 
 /** Preserve certified copies; the canonical Setup merger decides any preset conflict. */
-function receiverSources(sources: MachineSetupSourceV1, item: MachinePresetItemV1): MachineSetupSourceV1 {
+function receiverSources(sources: MachineSetupPlanResultV1['sources'], item: MachinePresetItemV1): MachineSetupPlanResultV1['sources'] {
     const identity = readMachineSetupRecipeIdentityV1(BACKUP_RECEIVER_RECIPE_REF_V1);
     const direct = sources.find(source => source.kind === 'direct');
     if (!direct) return [...sources, { kind: 'direct', setup: { items: [item] } }];
