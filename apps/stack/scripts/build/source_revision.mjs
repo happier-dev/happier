@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { createGzip, gunzipSync } from 'node:zlib';
 import { BuildInputDriftError } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 
@@ -19,8 +22,12 @@ import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from
  *   checkout edits and mirror lag are repaired from Git objects;
  * - untracked authored paths are dropped; ignored generated outputs stay;
  * - overlay paths keep the checkout's bytes, which must equal their declared digest.
+ *
+ * A descriptor is gzip(JSON header, "\n", raw blob bytes in header order). A
+ * server+daemon+expo revision ships ~450 MiB of blobs, past V8's ~512 MiB string
+ * limit once text-encoded, so blobs never enter a JavaScript string.
  */
-export const SOURCE_REVISION_DESCRIPTOR_VERSION = 1;
+export const SOURCE_REVISION_DESCRIPTOR_VERSION = 2;
 
 const runGit = promisify(execFile);
 
@@ -151,14 +158,16 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
     }
   }
   const blobBytes = await readGitBlobs(repoDir, [...new Set([...revisionFiles].map(path => tree[path][1]))]);
-  const blobs = Object.fromEntries([...revisionFiles].map(path => [path, blobBytes.get(tree[path][1]).toString('base64')]));
+  const blobs = [...revisionFiles].map(path => [path, blobBytes.get(tree[path][1])]);
   const untracked = nulList(await git(repoDir, ['ls-files', '-z', '-o', '--exclude-standard']))
     .filter(path => !Object.hasOwn(identity.overlay, path));
   const descriptor = { version: SOURCE_REVISION_DESCRIPTOR_VERSION, revision: identity.revision,
-    overlayDigest: identity.overlayDigest, key: identity.key, tree, untracked, overlay: identity.overlay, blobs };
+    overlayDigest: identity.overlayDigest, key: identity.key, tree, untracked, overlay: identity.overlay,
+    blobs: blobs.map(([path, bytes]) => [path, bytes.length]) };
   await mkdir(outputDir, { recursive: true });
   const descriptorPath = join(outputDir, `source-revision-${identity.key}-${randomUUID()}.json.gz`);
-  await writeFile(`${descriptorPath}.tmp`, gzipSync(JSON.stringify(descriptor), { level: 1 }));
+  await pipeline(Readable.from([Buffer.from(`${JSON.stringify(descriptor)}\n`), ...blobs.map(([, bytes]) => bytes)]),
+    createGzip({ level: 1 }), createWriteStream(`${descriptorPath}.tmp`));
   await rename(`${descriptorPath}.tmp`, descriptorPath);
   return descriptorPath;
 }
@@ -171,12 +180,20 @@ export async function resolveSourceRevision({ repoDir, rev = 'HEAD', overlay = [
 }
 
 export async function readSourceRevisionDescriptor(descriptorPath) {
-  const descriptor = JSON.parse(gunzipSync(await readFile(descriptorPath)).toString('utf8'));
+  const bytes = gunzipSync(await readFile(descriptorPath));
+  const headerEnd = bytes.indexOf(0x0a);
+  const descriptor = headerEnd < 0 ? null : JSON.parse(bytes.subarray(0, headerEnd).toString('utf8'));
   if (descriptor?.version !== SOURCE_REVISION_DESCRIPTOR_VERSION || !/^[a-f0-9]{40,64}$/.test(descriptor.revision ?? '')
-    || !descriptor.tree || !descriptor.blobs || !descriptor.overlay || !Array.isArray(descriptor.untracked)) {
+    || !descriptor.tree || !Array.isArray(descriptor.blobs) || !descriptor.overlay || !Array.isArray(descriptor.untracked)) {
     throw new Error('[source-revision] invalid revision descriptor');
   }
-  return descriptor;
+  const blobs = {};
+  let offset = headerEnd + 1;
+  for (const [path, length] of descriptor.blobs) {
+    blobs[path] = bytes.subarray(offset, offset += length);
+  }
+  if (offset !== bytes.length) throw new Error('[source-revision] invalid revision descriptor');
+  return { ...descriptor, blobs };
 }
 
 /** The identity a capture records and a selection compares. */
@@ -219,7 +236,7 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     if (bytes && gitBlobId(bytes) === entry[1]) { result.add(path); continue; }
     const blob = descriptor.blobs[path];
     if (blob === undefined) { drift.push(path); continue; }
-    await writeRevisionEntry(target, entry[0], Buffer.from(blob, 'base64'));
+    await writeRevisionEntry(target, entry[0], blob);
     result.add(path);
   }
   // Revision files the checkout deleted are absent from its walk. Admit them
@@ -229,7 +246,7 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     if (result.has(path)) continue;
     const owner = owners.find(dir => path.startsWith(dir));
     if (!owner || isWorkspaceBuildInputIgnoredPath(posix.relative(owner, path))) continue;
-    await writeRevisionEntry(join(captureDir, path), descriptor.tree[path][0], Buffer.from(blob, 'base64'));
+    await writeRevisionEntry(join(captureDir, path), descriptor.tree[path][0], blob);
     result.add(path);
   }
   if (drift.length) {
