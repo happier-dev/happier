@@ -1,5 +1,6 @@
 import { readProcessCensus, type DaemonOwnershipEnvironment, type ProcessCensusRow } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
+import { isJavaScriptRuntimeExecutable } from '@/daemon/service/runtimeTarget';
 
 export type DaemonOwnershipEnvironmentVariables = DaemonOwnershipEnvironment;
 
@@ -46,7 +47,9 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
   const name = proc.name || '';
   const normalizedCommand = cmd.replaceAll('\\', '/');
   const normalizedName = normalizeProcessName(name);
-  const isNodeHostProcess = normalizedName === 'node' || normalizedName === 'node.exe' || normalizedName === 'mainthread';
+  // Any JavaScript runtime that hosts the CLI bundle (Node, Bun, the packaged runtime): the one list
+  // the daemon's runtime target owns. A census may report Node's main thread name instead.
+  const isNodeHostProcess = isJavaScriptRuntimeExecutable(normalizedName) || normalizedName === 'mainthread';
   const isCliSourceSnapshot = isCliSourceSnapshotCommand(normalizedCommand);
   // The canonical source registration imports tsx internally, so its name need
   // not appear in argv. Recognize the CLI entrypoint for both source and builds.

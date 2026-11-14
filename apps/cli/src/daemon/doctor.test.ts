@@ -53,6 +53,17 @@ describe('classifyHappyProcess', () => {
     expect(res!.type).toBe('daemon');
   });
 
+  it('detects the Bun-hosted CLI bundle (a session host the daemon must reattach after it restarts)', () => {
+    // spawnHappyCLI launches the bundle under Bun as well as Node; a restarted daemon that does not
+    // recognize such a host cannot reattach its Sessions (host update stalled on the Bun gate).
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'bun',
+      cmd: '/home/user/.bun/bin/bun /home/user/.happier/cli/dist/index.mjs session-host',
+    });
+    expect(res?.type).toBe('user-session');
+  });
+
   it('should detect a daemon-spawned session process', () => {
     const res = classifyHappyProcess({
       pid: 123,
