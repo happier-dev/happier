@@ -871,6 +871,25 @@ describe('ProjectScriptsBody setup affordance', () => {
     expect(screen.getTextContent()).toContain('scale-1679');
   });
 
+  it('builds the found file groups near the page viewport, not the whole admitted page (QA-BREADTH B6)', async () => {
+    // 600 scripts in 120 package files (the 57k-file bed: 320 packages, 3-8 scripts each).
+    shared.inspection = {
+      definition: { basis: { kind: 'absent' }, document: null },
+      detection: { ...detection, entries: Array.from({ length: 600 }, (_, index) => ({
+        source: { ...nativeRef(`script-${index}`), file: `packages/p${Math.floor(index / 5)}/package.json` }, usage: 'script',
+      })) },
+      importCandidates: [],
+    };
+    const screen = await render('page', 'scripts.detected:0');
+    const rowInstances = () => screen.findAll(node => node.type === DetectedRow || node.type === detectedRowRenderType);
+    const mounted = rowInstances().length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(120);
+    expect(screen.findAllByTestId('scripts.detected:119')).toHaveLength(0);
+    // Nothing is dropped: all 24 file groups of the admitted page are in the list, far ones holding their place.
+    expect(new Set(screen.findAll(node => /^scripts\.detected\.group:\d+$/.test(String(node.props?.testID))).map(node => node.props.testID)).size).toBe(24);
+  });
+
   it('replaces Services navigation without rerendering 1,679 retained script rows', async () => {
     shared.inspection = {
       definition: { basis: { kind: 'absent' }, document: null },
@@ -2553,10 +2572,12 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
     expect(opened).toBeGreaterThan(0);
     expect(opened).toBeLessThanOrEqual(200);
     expect(screen.findByTestId('scripts.detected.showMore')).not.toBeNull();
+    const admittedGroups = () => mountedRows(screen, 'scripts.detected.group');
+    const groupsBefore = admittedGroups();
     await act(async () => { await screen.pressByTestIdAsync('scripts.detected.showMore'); });
-    const next = mountedRows(screen, 'scripts.detected');
-    expect(next).toBeGreaterThan(opened);
-    expect(next).toBeLessThanOrEqual(400);
+    // Show more admits the next page into the list; what mounts stays bounded by the viewport (B6).
+    expect(admittedGroups()).toBeGreaterThan(groupsBefore);
+    expect(mountedRows(screen, 'scripts.detected')).toBeLessThanOrEqual(200);
   });
 
   it('reaches the last found script through Show more, without dropping any', async () => {
@@ -2566,8 +2587,13 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
     for (let press = 0; press < 20 && screen.findByTestId('scripts.detected.showMore'); press += 1)
       await act(async () => { await screen.pressByTestIdAsync('scripts.detected.showMore'); });
     expect(screen.findByTestId('scripts.detected.showMore')).toBeNull();
-    expect(mountedRows(screen, 'scripts.detected')).toBe(230);
-    expect(screen.getTextContent()).toContain('script-229');
+    // Every script is admitted: each file's group is in the list, built near the viewport or holding its
+    // rows' height until scrolled to (B6), so none is dropped and none is a page away.
+    expect(mountedRows(screen, 'scripts.detected.group')).toBe(3);
+    const { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } = await import('@/components/ui/lists/pageRowMetrics');
+    const heldRows = screen.findAll(node => /^scripts\.detected\.group:\d+$/.test(String(node.props?.testID)) && typeof node.type === 'string')
+      .reduce((sum, node) => sum + Math.round(Number((node.props.style as { height?: number } | undefined)?.height ?? 0) / PAGE_ROW_TOUCH_MIN_HEIGHT_PX), 0);
+    expect(mountedRows(screen, 'scripts.detected') + heldRows).toBe(230);
   });
 
   it('keeps the found disclosure beside a project file bounded the same way', async () => {

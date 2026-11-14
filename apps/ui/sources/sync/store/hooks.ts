@@ -3153,7 +3153,7 @@ export { useProjectSessions } from '../domains/session/listing/useProjectSession
 export {
   useProjectScmStatus, useSessionProjectScmStatus, useProjectScmSnapshot,
   useSessionProjectScmIsRepo, useSessionProjectScmSnapshot, useSessionProjectScmSummarySnapshot, useSessionProjectScmSnapshotError,
-  useWorkspaceScmStatus, useWorkspaceScmSnapshot, useWorkspaceScmSummarySnapshot, useWorkspaceScmSnapshotError,
+  useWorkspaceScmStatus, useWorkspaceScmSnapshot, useWorkspaceScmFileSnapshot, useWorkspaceScmSummarySnapshot, useWorkspaceScmSnapshotError,
   useWorkspaceScmCommitSelectionPaths, useWorkspaceScmCommitSelectionPatches,
   useWorkspaceScmOperationLog, useWorkspaceScmInFlightOperation,
   useSessionProjectScmCommitSelectionPaths, useSessionProjectScmCommitSelectionPatches,

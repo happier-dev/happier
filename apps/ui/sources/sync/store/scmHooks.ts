@@ -129,6 +129,44 @@ export function useWorkspaceScmSnapshot(scope: WorkspaceScopeBase | null, entrie
     return useHeldScmList(scope ? tryBuildWorkspaceCacheKey(scope) : null, snapshot, entriesPageSize);
 }
 
+/** One row's page: the file view reads its own change, so it never widens a shared list's page. */
+const FILE_ROW_ENTRIES_PAGE_SIZE = 1;
+
+/**
+ * One file's change row with the workspace's repository facts (the File page). Its demand is a page,
+ * never the whole list, so a checkout with tens of thousands of changes does not ship them to open a
+ * file, nor override a co-present Changes list's viewport page. When the held rows end before the
+ * file, its row is read by path. `entryKnown` is false until that answer lands: a missing row is
+ * "not loaded yet", not "no changes". A row a later refresh drops is asked for again; an absent
+ * (unchanged) row is asked for once per change in the checkout's counts.
+ */
+export function useWorkspaceScmFileSnapshot(scope: WorkspaceScopeBase | null, path: string) {
+    const snapshot = useWorkspaceScmSnapshot(scope, FILE_ROW_ENTRIES_PAGE_SIZE);
+    const entry = React.useMemo(() => snapshot?.entries.find(row => row.path === path) ?? null, [path, snapshot]);
+    const complete = Boolean(snapshot && snapshot.entriesPage?.nextCursor == null);
+    const workspaceKey = scope ? tryBuildWorkspaceCacheKey(scope) : null;
+    const countsKey = snapshot ? JSON.stringify(snapshot.totals) : '';
+    const requestKey = workspaceKey && snapshot && !complete ? `${workspaceKey}\n${path}\n${countsKey}` : null;
+    const [answered, setAnswered] = React.useState<Readonly<{ key: string; absent: boolean }> | null>(null);
+    const knownAbsent = requestKey !== null && answered?.key === requestKey && answered.absent;
+    const needsRow = requestKey !== null && entry === null && !knownAbsent;
+    const presented = useLayoutPresentationActive();
+    const scopeRef = React.useRef(scope);
+    scopeRef.current = scope;
+    React.useEffect(() => {
+        const current = scopeRef.current;
+        if (!needsRow || !presented || !requestKey || !current) return;
+        let live = true;
+        void scmStatusSync.loadWorkspaceEntries(current, FILE_ROW_ENTRIES_PAGE_SIZE, path).finally(() => {
+            if (!live) return;
+            const rows = getStorage().getState().getWorkspaceScmSnapshot(current)?.entries;
+            setAnswered({ key: requestKey, absent: !rows?.some(row => row.path === path) });
+        });
+        return () => { live = false; };
+    }, [needsRow, presented, requestKey, path]);
+    return { snapshot, entry, entryKnown: entry !== null || complete || knownAbsent };
+}
+
 /** Counts, branch and repository facts of a workspace (headers, Checkouts): no list demand. */
 export function useWorkspaceScmSummarySnapshot(scope: WorkspaceScopeBase | null) {
     return useScmValue(scope, state => {

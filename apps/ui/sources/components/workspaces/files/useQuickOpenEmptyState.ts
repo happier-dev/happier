@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useOptionalUniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { UNIVERSAL_SEARCH_PAGE_SIZE } from '@/components/appShell/search/universalSearchResult';
 import { selectScmChangedFileByPath, selectScmChangedFiles, selectScmChangedFilesForPaths, selectScmDeletedPaths } from '@/scm/scmStatusFiles';
 import { storage, useWorkspaceScmSnapshot } from '@/sync/domains/state/storage';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
@@ -53,7 +54,10 @@ type QuickOpenEmptyStateInput = Readonly<{
 }>;
 
 export function useQuickOpenFileSources(input: QuickOpenEmptyStateInput) {
-    const snapshot = useWorkspaceScmSnapshot(input.scope);
+    // A folder's Changed rows and +/- come from one palette page of change rows, not the checkout's whole
+    // list (QA-BREADTH B4: 59k changes, 12.1 MB per open). A Session's own changes intersect its touched
+    // paths with the rows, so that scope keeps the complete list until rows can be read for a path set.
+    const snapshot = useWorkspaceScmSnapshot(input.scope, input.sessionId ? undefined : UNIVERSAL_SEARCH_PAGE_SIZE);
     // A Session's own changes are its daemon-owned turn evidence, not inferred from snapshots.
     const sessionChanges = useDerivedSessionChangeSet(input.sessionId && input.scope
         ? { serverId: input.scope.serverId, sessionId: input.sessionId } : null, snapshot?.repo.rootPath ?? null).sessionChangeSet;

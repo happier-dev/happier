@@ -5,6 +5,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPageHeader, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
+import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectExecutionChoiceV1, WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
@@ -1307,8 +1309,20 @@ function DetectedGroups(
     return [[file, shown, fileTotals.get(file) ?? entries.length] as const];
   });
   const hiddenCount = total - shownGroups.reduce((sum, [, shown]) => sum + shown.length, 0);
-  const rendered = shownGroups.map(([file, entries, fileTotal]) => (
-    <ItemGroupColumn key={file}>
+  const columns = props.page && shownGroups.length > 1 ? 2 : 1;
+  // The page builds only the file groups near its viewport (QA-BREADTH B6: 120 rows mounted ~11.5k
+  // components per visit); the rest hold a lower-bound height. Groups fill `columns` per line, so a
+  // group's lower-bound top is the sum of each earlier line's tallest group at the row minimum height.
+  let lineTop = 0;
+  let lineHeight = 0;
+  const groupBounds = shownGroups.map(([, entries], index) => {
+    if (index > 0 && index % columns === 0) { lineTop += lineHeight; lineHeight = 0; }
+    const height = entries.length * PAGE_ROW_TOUCH_MIN_HEIGHT_PX;
+    lineHeight = Math.max(lineHeight, height);
+    return { top: lineTop, height };
+  });
+  const rendered = shownGroups.map(([file, entries, fileTotal], groupIndex) => {
+    const group = (
       <ItemGroup
         title={
           <View style={styles.groupTitle}>
@@ -1343,12 +1357,24 @@ function DetectedGroups(
           />
         ))}
       </ItemGroup>
-    </ItemGroupColumn>
-  ));
+    );
+    return (
+      <ItemGroupColumn key={file}>
+        {props.page ? (
+          <NearViewportWindow id={file} testID={`${props.testID}.detected.group:${groupIndex}`}
+            // A Run in flight or its refusal keeps its rows built so their row-local state and status stay.
+            pinned={entries.some(row => props.controller.pendingKeys[row.rowKey] === true || props.controller.failure?.key === row.rowKey)}
+            estimatedTop={groupBounds[groupIndex]!.top} estimatedHeight={groupBounds[groupIndex]!.height}>
+            {group}
+          </NearViewportWindow>
+        ) : group}
+      </ItemGroupColumn>
+    );
+  });
   return (
     <>
       {/* Files sit side by side on the page (lab s-scripts FIRST); one file takes the whole column rather than leaving the second empty. */}
-      <ItemGroupColumns columns={props.page && shownGroups.length > 1 ? 2 : 1} paddingHorizontal={0} paddingVertical={0}>{rendered}</ItemGroupColumns>
+      <ItemGroupColumns columns={columns} paddingHorizontal={0} paddingVertical={0}>{rendered}</ItemGroupColumns>
       {hiddenCount > 0 && props.page ? (
         <FoundShowMore testID={`${props.testID}.detected.showMore`} hidden={hiddenCount} onPress={page.more} />
       ) : hiddenCount > 0 ? (

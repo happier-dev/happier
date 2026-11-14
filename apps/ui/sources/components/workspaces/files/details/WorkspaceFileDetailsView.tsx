@@ -114,7 +114,7 @@ import {
     useWorkspaceScmCommitSelectionPatches,
     useWorkspaceScmCommitSelectionPaths,
     useWorkspaceScmInFlightOperation,
-    useWorkspaceScmSnapshot,
+    useWorkspaceScmFileSnapshot,
 } from '@/sync/domains/state/storage';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { selectScmChangedFiles, selectScmChangedPaths, type ScmFileStatus } from '@/scm/scmStatusFiles';
@@ -708,14 +708,11 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         edgeThreshold: 1,
     });
 
-    const scmSnapshot = useWorkspaceScmSnapshot(scope);
+    // This file's own change row and the checkout's facts; never the whole changed-file list (QA-BREADTH B3).
+    const { snapshot: scmSnapshot, entry: fileEntry, entryKnown: fileEntryKnown } = useWorkspaceScmFileSnapshot(scope, filePath);
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const inFlightScmOperation = useWorkspaceScmInFlightOperation(scope);
-    const fileEntry = React.useMemo(
-        () => scmSnapshot?.entries.find((entry) => entry.path === filePath) ?? null,
-        [filePath, scmSnapshot]
-    );
     const hasConflicts = scmSnapshot?.hasConflicts === true;
     // The Review list's order, so a reviewed file's Next file is the one the list shows after it.
     const changedPaths = React.useMemo(() => scmSnapshot ? selectScmChangedPaths(scmSnapshot) : undefined, [scmSnapshot]);
@@ -1598,7 +1595,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         : mediaFacts ? mediaFacts
         : !fileEntry && !hasPendingDelta && !hasIncludedDelta && typeof fileContent?.content === 'string' && !isBinaryFile
             // "No changes" only once source control has answered, and never beside an unsaved buffer (QA-PROJECTS D7).
-            ? [...(scmSnapshot && !editorDirty ? [t('detailsSurface.file.noChanges')] : []), t('detailsSurface.file.lines', { count: fileDetails.info.lineCount ?? 0 }), ...plainTextFact]
+            ? [...(scmSnapshot && fileEntryKnown && !editorDirty ? [t('detailsSurface.file.noChanges')] : []), t('detailsSurface.file.lines', { count: fileDetails.info.lineCount ?? 0 }), ...plainTextFact]
             : null;
     const summaryFactsKey = summaryFacts ? JSON.stringify(summaryFacts) : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the facts are a function of their serialized text

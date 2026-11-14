@@ -56,6 +56,22 @@ afterEach(async () => {
     storage.setState(originalState, true);
 });
 
+describe('Go to file change rows (QA-BREADTH B4: 59k changes, 12.1 MB per open)', () => {
+    it('asks a Project checkout for one palette page of change rows, never its whole changed-file list', async () => {
+        const { hasScmEntriesDemand, readScmEntriesPageSize } = await import('@/scm/refresh/scmEntriesDemand');
+        const { UNIVERSAL_SEARCH_PAGE_SIZE } = await import('@/components/appShell/search/universalSearchResult');
+        const scope = address();
+        const slot = { kind: 'workspace' as const, scope };
+        const hook = await renderHook(() => useQuickOpenFileSources({ scope }));
+        try {
+            expect(hasScmEntriesDemand(slot)).toBe(true);
+            // Undefined here is the owner's "full list" demand: the delivery would carry every change.
+            expect(readScmEntriesPageSize(slot)).toBe(UNIVERSAL_SEARCH_PAGE_SIZE);
+        } finally { await hook.unmount(); }
+        expect(hasScmEntriesDemand(slot)).toBe(false);
+    });
+});
+
 describe('Account-owned Recent files', () => {
     it('validates twenty Recent paths without rereading the admitted listing on each open', async () => {
         const scope = address();

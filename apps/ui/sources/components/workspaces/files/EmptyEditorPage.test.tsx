@@ -7,6 +7,7 @@ import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/Uni
 import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { ScrollView, StyleSheet } from 'react-native';
 import { EmptyEditorPage } from './EmptyEditorPage';
+import { readScmSnapshotCounts } from '@/scm/refresh/scmEntriesDemand';
 
 let snapshot: unknown = null;
 
@@ -31,7 +32,8 @@ vi.mock('@expo/vector-icons', async () => {
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
   createPartialStorageModuleMock(importOriginal, {
-    useWorkspaceScmSnapshot: () => snapshot,
+    // The page reads counts through the summary owner: the counts view of the same snapshot.
+    useWorkspaceScmSummarySnapshot: () => snapshot ? readScmSnapshotCounts(snapshot as never) : null,
   }),
 );
 

@@ -11,10 +11,10 @@ import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import {
-  selectScmChangedFiles,
+  selectScmChangedFileCount,
   type ScmFileStatus,
 } from '@/scm/scmStatusFiles';
-import { useWorkspaceScmSnapshot } from '@/sync/domains/state/storage';
+import { useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 
@@ -68,9 +68,10 @@ export const EmptyEditorPage = React.memo(function EmptyEditorPage(
   // Open file… is quick open; where Search is not mounted the page offers only its lists.
   const searchAvailable = useOptionalUniversalSearchRuntime() !== null;
   // The one change-count truth (the rail badge, the Git header and quick open read it too).
-  const snapshot = useWorkspaceScmSnapshot(props.scope);
+  // Counts only: the shared summary, never the changed-file list (its rows come from quick open's page).
+  const snapshot = useWorkspaceScmSummarySnapshot(props.scope);
   const reviewCount =
-    snapshot?.repo.isRepo === true ? selectScmChangedFiles(snapshot).length : 0;
+    snapshot?.repo.isRepo === true ? selectScmChangedFileCount(snapshot) : 0;
   const changed = React.useMemo<FileRow[]>(
     () =>
       sources.changed.map((file) => ({
