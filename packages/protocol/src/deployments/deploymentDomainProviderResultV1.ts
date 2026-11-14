@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 export const DeploymentDomainProviderZoneV1Schema = lazyZodSchema(() => z.strictObject({ zoneId: text, name: text }));
 
@@ -8,5 +9,6 @@ export const DeploymentDomainProviderZoneV1Schema = lazyZodSchema(() => z.strict
 export const DeploymentDomainProviderResultV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), hostname: text, state: z.enum(['pending', 'active', 'failed', 'removed']),
     dns: z.array(z.strictObject({ type: text, name: text, value: text })),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
 }));
 export type DeploymentDomainProviderResultV1 = z.infer<typeof DeploymentDomainProviderResultV1Schema>;

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isRecord } from '@happier-dev/protocol/common/records';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
@@ -8,8 +9,10 @@ import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinat
 import type { PlatformInspectOutcome } from './platformTargetLink';
 
 /** The sheet presents the plugin's settled inspection; it never decides prerequisites. */
-export function DeploymentPlatformInspectState({ outcome, onOpenRecovery }: Readonly<{
+export function DeploymentPlatformInspectState({ outcome, refusal, onOpenRecovery }: Readonly<{
   outcome: PlatformInspectOutcome | null;
+  /** Create can need Git access before any provider resource exists. */
+  refusal?: Readonly<{ code: string; details?: unknown }>;
   /** Opens a refusal's next step through the page's one recovery router. */
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>) {
@@ -17,13 +20,17 @@ export function DeploymentPlatformInspectState({ outcome, onOpenRecovery }: Read
     <SurfaceStateCard testID="project-deployments.platform.ready" size="line" kind="success"
       title={t('projects.deployments.platformLink.ready')} />
   );
-  if (outcome?.kind === 'needsGitAccess') return (
+  const gitRefusal = refusal?.code === 'needsGitAccess' ? refusal : null;
+  const grantUrl = outcome?.kind === 'needsGitAccess' ? outcome.grantUrl
+    : isRecord(gitRefusal?.details) && typeof gitRefusal.details.grantUrl === 'string' ? gitRefusal.details.grantUrl : null;
+  if (outcome?.kind === 'needsGitAccess' || gitRefusal) return (
     <SurfaceStateCard testID="project-deployments.platform.needsGitAccess" size="line" kind="warning"
       title={t('projects.deployments.platformLink.needsGit')}
       reason={t('projects.deployments.platformLink.needsGitBody')}
-      {...(outcome.grantUrl ? { action: {
+      {...(gitRefusal ? { diagnosticCode: gitRefusal.code } : {})}
+      {...(grantUrl ? { action: {
         label: t('projects.deployments.platformLink.grant'),
-        onPress: () => { void openExternalUrl(outcome.grantUrl!); },
+        onPress: () => { void openExternalUrl(grantUrl); },
       } } : {})} />
   );
   // A refusal the shared recovery owner knows says its remedy and offers its next step.

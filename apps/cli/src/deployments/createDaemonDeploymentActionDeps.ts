@@ -1822,7 +1822,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             return { ...failure('deployment_content_unavailable'),
                                 error: 'deployment_content_unavailable (target_link.content_associate: storage_refused)' };
                         }
-                        return linked;
+                        const productionBranchOutcome = recovery?.provider.preparedNative?.productionBranchOutcome;
+                        return 'ok' in linked && linked.ok && productionBranchOutcome
+                            ? { ...linked, productionBranchOutcome } : linked;
                     }
                     return prepared;
                 } catch (error) {

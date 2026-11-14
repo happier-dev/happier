@@ -42,7 +42,7 @@ afterEach(async () => {
   standardCleanup();
 });
 
-it.each([false, true])('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
+it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfirmed'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
   const pluginId = 'com.example.create-cloud';
   const providerUrl = 'https://console.provider.test/exact-created-beta';
   const browserOpen = vi.fn();
@@ -69,6 +69,14 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
         if (raw !== null && typeof raw === 'object' && 'providerCreate' in raw) {
           const input = DeploymentTargetLinkCreateIntentInputV1Schema.parse(raw);
           creates.push(input);
+          if (ambiguous === 'git-grant') return { ok: false, error: 'needsGitAccess', details: { phase: 'link',
+            reason: 'vercel_github_app_required', grantUrl: 'https://github.com/apps/vercel/installations/new' } };
+          if (typeof ambiguous === 'string' && ambiguous.startsWith('branch-')) return { ok: true,
+            environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1,
+            productionBranchOutcome: ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
+              : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
+                ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
+                failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } } };
           if (ambiguous) return { ok: false, error: 'action_outcome_unknown' };
           const { providerCreate, ...intent } = input;
           return { ok: false, error: 'deployment_link_incomplete', recovery: { ...intent, provisioned: true,
@@ -82,7 +90,7 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
         return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1 };
       },
       failure: result => result !== null && typeof result === 'object' && 'error' in result && typeof result.error === 'string'
-        ? { errorCode: result.error, error: result.error, details: result, effectAttempted: true } : null,
+        ? { errorCode: result.error, error: result.error, details: 'details' in result ? result.details : result, effectAttempted: true } : null,
     });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment, ownerAccountId: 'owner',
@@ -103,6 +111,50 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
       createAvailable: screen.findByTestId('project-deployments.platform.create') !== null }).toEqual({ mode: 'create', controller: environment.controllerMachineId, createAvailable: true });
     expect(disclosed.find(node => node.props.testID === 'project-deployments.platform.access.principal')?.props.detail).toBeTruthy();
     await screen.pressByTestIdAsync('project-deployments.platform.create');
+    if (ambiguous === 'git-grant') {
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.platform.needsGitAccess')).not.toBeNull(); });
+      const card = screen.root.findAllByType(SurfaceStateCard)
+        .find(node => node.props.testID === 'project-deployments.platform.needsGitAccess');
+      await act(async () => { await surfaceAction(card).onPress(); });
+      expect(browserOpen.mock.calls.map(call => call[0])).toEqual(['https://github.com/apps/vercel/installations/new']);
+      expect(associations).toHaveLength(0);
+      return;
+    }
+    if (typeof ambiguous === 'string' && ambiguous.startsWith('branch-')) {
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        const card = screen.root.findAllByType(SurfaceStateCard)
+          .find(node => node.props.testID === 'project-deployments.platform.productionBranch');
+        expect(card).toBeDefined();
+        expect(card?.props.kind).toBe(ambiguous === 'branch-set' ? 'success' : 'warning');
+        expect(card?.props.reason).toContain(ambiguous === 'branch-kept' ? 'main' : 'release');
+      });
+      expect(creates).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
+      expect(screen.findByTestId('project-deployments.platform.done')).not.toBeNull();
+      const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+      const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+      const branchOutcome = ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
+        : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
+          ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
+          failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [ActionOperationSnapshotV1Schema.parse({
+        version: 1, operationId: `branch-result-${ambiguous}`, requestId: `branch-request-${ambiguous}`, revision: 2,
+        actionId: 'deployments.targets.link', state: 'succeeded', title: 'Create runtime target',
+        scope: { accountId: 'owner', machineId: environment.controllerMachineId }, createdAt: 1, startedAt: 2, settledAt: 3,
+        cancellation: 'unsupported', domainRef: { kind: 'deploymentTargetLink', serverId, environmentId: environment.id,
+          requestKey: DeploymentTargetLinkCreateIntentInputV1Schema.parse(creates[0]).requestKey, purpose: 'create' },
+        result: { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1,
+          productionBranchOutcome: branchOutcome },
+      })] }));
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.platform.productionBranch')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.platform.create')).toBeNull(); });
+      await screen.pressByTestIdAsync('project-deployments.platform.done');
+      expect(screen.findByTestId('project-deployments.platform')).toBeNull();
+      await act(async () => actionOperationStore.reset());
+      return;
+    }
     const recovery = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === (ambiguous
       ? 'project-deployments.platform.outcomeUnknown' : 'project-deployments.platform.provisioned'));
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(recovery()).toBeDefined(); });
@@ -148,10 +200,12 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
   } finally { await installed.dispose(); context.dispose(); }
 });
 
-it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevision'] as const)('recovers the latest dismissed link operation on cold return without repeating native create (%s)', async outcome => {
+it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevision', 'branchResult', 'branchResultAdvanced'] as const)('recovers the latest dismissed link operation on cold return without repeating native create (%s)', async outcome => {
   const ambiguous = outcome === 'unknown';
   const unavailable = outcome === 'unavailable';
   const missingPlugin = outcome === 'missingPlugin';
+  const branchResult = outcome === 'branchResult' || outcome === 'branchResultAdvanced';
+  const branchResultAdvanced = outcome === 'branchResultAdvanced';
   const staleRevision = outcome === 'staleRevision';
   const pluginId = 'com.example.cold-create-cloud';
   const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
@@ -164,7 +218,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
   const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
   try {
     // After Unlink, the same Environment has advanced and no runtime target; Add must offer a fresh choice.
-    const environment = createDeploymentEnvironmentHeaderV1({ id: 'cold-create-environment', revision: staleRevision ? 5 : 4, projectSourceId: 'source-app',
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'cold-create-environment', revision: branchResultAdvanced ? 6 : branchResult || staleRevision ? 5 : 4, projectSourceId: 'source-app',
       serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'current-controller', owner: { kind: 'account', accountId: 'owner' } });
     homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [] } });
     homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
@@ -179,13 +233,16 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
         target: { kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } } },
       providerIdentity: { providerAccountId: 'organization', providerResourceId: 'cold-created-beta', providerEnvironment: 'production' },
       providerEnvironment: { kind: 'production' } } };
-    const result = ambiguous ? { ok: false, error: 'outcome_unknown' }
+    const result = branchResult ? { ok: true, environmentId: environment.id, revision: 5,
+      targetLinkId: 'cold-link', targetLinkRevision: 1, productionBranchOutcome: { status: 'defaultKept', branch: 'main', requestedBranch: 'release',
+        failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } } }
+      : ambiguous ? { ok: false, error: 'outcome_unknown' }
       : { ok: false, error: 'deployment_link_incomplete', recovery };
     const full = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'cold-created-operation', revision: 2,
-      actionId: 'deployments.targets.link', state: 'failed', scope: { accountId: 'owner', machineId: 'cold-controller' },
+      actionId: 'deployments.targets.link', state: branchResult ? 'succeeded' : 'failed', scope: { accountId: 'owner', machineId: 'cold-controller' },
       title: 'Create runtime target', requestId: 'cold-created-request', createdAt: 1, startedAt: 2, settledAt: 3,
       cancellation: 'unsupported', domainRef: { kind: 'deploymentTargetLink', serverId, environmentId: environment.id, purpose: 'create', requestKey: recovery.requestKey },
-      result: ambiguous ? undefined : result, error: { errorCode: result.error, error: result.error, effectAttempted: true } });
+      result: ambiguous ? undefined : result, error: branchResult ? undefined : { errorCode: result.error, error: result.error, effectAttempted: true } });
     actionOperationStore.mergeSnapshots({ serverId, snapshots: [projectActionOperationListSnapshotV1(full)] });
     actionOperationStore.dismissOperation({ serverId, operationId: full.operationId });
     const unrelated = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'unrelated-linked-operation', requestId: 'unrelated-linked-request',
@@ -195,7 +252,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
     const failedAssociation = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'failed-association-operation', requestId: 'failed-association-request',
       state: 'failed', createdAt: 7, startedAt: 8, settledAt: 9, domainRef: { ...full.domainRef, purpose: 'associate' },
       result: undefined, error: { errorCode: 'deployment_conflict', error: 'deployment_conflict' } });
-    actionOperationStore.mergeSnapshots({ serverId, snapshots: [unrelated, failedAssociation], snapshotComplete: true });
+    actionOperationStore.mergeSnapshots({ serverId, snapshots: branchResult ? [] : [unrelated, failedAssociation], snapshotComplete: true });
     let resolveRead: ((value: unknown) => void) | undefined;
     const ownerRead = new Promise(resolve => { resolveRead = resolve; });
     receiverRpc.call.mockClear();
@@ -227,14 +284,25 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
         machineId: 'cold-controller', payload: expect.objectContaining({ operationId: full.operationId, waitForTerminal: true }) }));
     });
     await act(async () => resolveRead!(unavailable ? { error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' } : { kind: 'found', operation: full }));
-    if (staleRevision) {
+    if (staleRevision || branchResultAdvanced) {
       await waitForHomeGovernance(async () => {
         await act(async () => {});
         expect(screen.findByTestId('project-deployments.platform.create')).not.toBeNull();
       });
       expect(screen.findByTestId('project-deployments.platform.provisioned')).toBeNull();
+      expect(screen.findByTestId('project-deployments.platform.productionBranch')).toBeNull();
       expect(screen.findByTestId('project-deployments.platform.linkRefused')).toBeNull();
       expect(associations).toHaveLength(0);
+      return;
+    }
+    if (branchResult) {
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.platform.productionBranch')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.platform.done')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.platform.create')).toBeNull(); });
+      expect(associations).toHaveLength(0);
+      await screen.pressByTestIdAsync('project-deployments.platform.done');
+      expect(screen.findByTestId('project-deployments.platform')).toBeNull();
       return;
     }
     const card = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === (unavailable

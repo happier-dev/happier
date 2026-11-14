@@ -74,6 +74,30 @@ describe('deployment UI Action callbacks', () => {
     });
     afterEach(() => standardCleanup());
 
+    it('sends the selected DNS placement through the reviewed Domain Action without authoring record values', async () => {
+        const serverId = await homes.addHome({ name: 'Domain DNS', serverUrl: 'https://domain-dns.test',
+            serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const dns = { action: { pluginId: 'happier.deploy.cloudflare', localId: 'records-create' },
+            credentialRef: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'dns-account' },
+            zoneId: 'zone', ttl: 1 };
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.domains.dns.create', tokenEpoch: 0, execute: raw => {
+                expect(raw).toMatchObject({ environmentId: environment.id, expectedRevision: environment.revision,
+                    domainId: 'domain', expectedDomainRevision: 4, dns });
+                expect(raw).not.toHaveProperty('records');
+                return { ok: true, domainId: 'domain', records: [{ name: 'app.example.test', type: 'CNAME', result: { kind: 'configured' } }] };
+            } });
+        await expect(createDeploymentActions(lifetime, environment.projectSourceId).createDomainDns({
+            environmentId: environment.id, expectedRevision: environment.revision, domainId: 'domain', expectedDomainRevision: 4, dns,
+        })).resolves.toMatchObject({ ok: true, domainId: 'domain' });
+    });
+
     it.each([false, true])('prepares first-configuration defaults without publishing content (retired response: %s)', async retireOnResult => {
         const serverId = await homes.addHome({ name: 'Defaults preparation', serverUrl: 'https://defaults.test',
             serverIdentityId: `srv_${'8'.repeat(32)}`, accountId: 'owner', currentAccount: true });

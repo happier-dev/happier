@@ -31,6 +31,16 @@ export async function requestAccounts(context: DeploymentContext, query: string)
   }, 'link');
 }
 
+/** Zone-scoped DNS uses the same Account purpose and provider response owner. */
+export async function requestZone(context: DeploymentContext, zoneId: string, path: string,
+  method: HttpMethod = 'GET', payload?: unknown): Promise<Reply> {
+  return send(context, { url: `${origin}/client/v4/zones/${encodeURIComponent(zoneId)}${path}`, method, redirect: 'error',
+    credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method, headerNames: ['authorization'] },
+    ...(payload === undefined ? {} : { headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify(payload)) }),
+  }, method === 'GET' ? 'observe' : 'send');
+}
+
 /** Project-issued upload JWTs use their own header, never the Account token binding. */
 export async function requestPagesAssets(context: DeploymentContext, path: 'check-missing' | 'upload' | 'upsert-hashes', jwt: string, payload: unknown): Promise<Reply> {
   return send(context, { url: `${origin}/client/v4/pages/assets/${path}`, method: 'POST', redirect: 'error',

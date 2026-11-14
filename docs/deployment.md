@@ -196,6 +196,15 @@ reviewed children; it neither derives addresses nor keeps a DNS registry.
 Native Domains return `required_fact_unavailable` for `domain_dns_records` from
 `expected_ingress`: the token challenge above does not produce record values.
 
+The Cloudflare plugin exposes `records-create` and `records-verify` through that
+same reviewed DNS role. Its zone picker supplies the Action identity alongside
+the connected Account's zones. Creation adds missing DNS-only records and leaves
+incumbent records intact; verification reads configuration without writing. A
+lost write acknowledgement returns an unknown outcome, so inspect configuration
+before retrying. Public DNS propagation and provider activation still use the
+Domain's existing Check again operation. Other DNS hosts retain copy-records and
+verification without an automatic write path.
+
 The Route53 plugin uses the public Connected Account environment materialization
 contract for AWS access keys and an optional session token. Authentication checks
 the account's connection test hosted zone; each Domain operation selects its own
@@ -256,6 +265,14 @@ Provider tenants, permissions, stream framing and retention remain release check
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
 Provider Create, Inspect and Link Actions return the authored `sourceMethod` in the TargetLink's existing protected provider content; UI, CLI and agent callers consume that returned choice. Reopening the Environment reads that selected runtime link with the Environment's Artifact batch. UI and daemon use one resolution rule: an explicit invocation method overrides the recorded link method; links without the optional field retain the legacy Git default. Compact retries retain their already admitted method. Previously created links whose choice was lost are not inferred or backfilled: choose Upload explicitly or link the target again.
+
+Vercel Create supports Upload and GitHub integration. Git creation uses the
+reviewed repository through Vercel's existing GitHub installation; a provider
+refusal retains its typed reason and installation link. An explicitly requested
+production branch is applied within the same Create Action. If that branch
+update fails or its acknowledgement is uncertain, the created project identity is
+retained and the result shows the branch outcome and provider cause. The person
+can recover without creating the project again. This is unreleased 0.3 behavior.
 
 The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 
@@ -1096,6 +1113,17 @@ summary/chip values publish nothing. Older strict development servers refuse the
 new read operands; clients present unavailable instead of dropping the selection
 or crawling inventory. Rendered navigation and chips remain with their surface
 owners; current source and loaded-surface validation are separate evidence.
+
+### Vercel token connections (0.3 development)
+
+The existing Vercel Connected Account accepts a token with Team ID left empty.
+It reads all pages of the token's teams, connects directly when there is one,
+or offers named teams through the existing connection configuration step. That
+step continues with the staged token rather than asking for it again. A
+project-restricted token that cannot list teams retains exact Team/Project ID
+setup and the existing project probe. Invalid tokens and unavailable provider
+responses remain typed failures. Token storage is unchanged; restarting during
+the pending choice requires a new connection attempt.
 
 ### Cloudflare token connections (0.3 development)
 
@@ -4875,6 +4903,12 @@ provider's preferred (rank 1) A records for an apex or CNAME for a subdomain,
 without combining conflicting record families at the same name. A Domain is
 active only when ownership is verified and routing is configured. These are
 unreleased 0.3 source contracts.
+
+Check again asks Vercel to re-check ownership with its verification POST. This
+remains a safe, read-only role because it changes no user configuration. An
+unverified Domain retains its TXT instructions and private native failure cause
+when Vercel reports pending verification; a token denied Domain access remains
+a typed refusal. The existing private provider observation carries the cause.
 
 Cloudflare's Pages add and Workers attach responses return the Domain object,
 and a successful Cloudflare or Vercel delete acknowledges removal. The adapter consumes those

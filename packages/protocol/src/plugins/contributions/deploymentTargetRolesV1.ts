@@ -9,6 +9,7 @@ import { DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariabl
 export * from './deploymentTargetVariablesV1.js';
 import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { ScmBranchSourceRefSchema } from '../../scm/remoteNormalization.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
@@ -55,9 +56,19 @@ export const DeploymentTargetRepositoryAccessV1Schema = lazyZodSchema(() => z.di
 ]));
 export type DeploymentTargetRepositoryAccessV1 = z.infer<typeof DeploymentTargetRepositoryAccessV1Schema>;
 
+/** Native creation acknowledgment survives a separately unconfirmed production-branch update. */
+export const DeploymentTargetProductionBranchOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('set'), branch: ScmBranchSourceRefSchema }),
+    z.strictObject({ status: z.literal('defaultKept'), branch: ScmBranchSourceRefSchema,
+        requestedBranch: ScmBranchSourceRefSchema, failureCause: ActionFailureCauseV1Schema }),
+    z.strictObject({ status: z.literal('unconfirmed'), previousBranch: z.optional(ScmBranchSourceRefSchema),
+        requestedBranch: ScmBranchSourceRefSchema, failureCause: ActionFailureCauseV1Schema }),
+]));
+
 /** Captured non-secret native request operands; never re-probed by lifecycle handlers. */
 export const DeploymentTargetPreparedNativeV1Schema = lazyZodSchema(() => z.strictObject({
     projectName: id,
+    productionBranchOutcome: z.optional(DeploymentTargetProductionBranchOutcomeV1Schema),
     /** Provider-owned explanation captured with preparation and shown during approval. */
     reviewNotice: z.optional(z.string()),
     gitSource: z.optional(z.strictObject({ type: z.literal('github'), repoId: id })),

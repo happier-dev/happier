@@ -58,8 +58,8 @@ export const PLUGIN = definePlugin({
     declaration: { title: label('account'), ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
       id: 'token', title: label('token'), kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
-      setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Open Vercel access tokens',
-        checklist: ['Open [Tokens in your Vercel account settings] and enter a name for the token.', 'Choose a scope with access to the team and projects where you will create sandboxes, then choose an expiration and create the token.', 'Copy the token and paste it here; enter the matching Team ID below.'] },
+      setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Create a Vercel access token',
+        checklist: ['Create an access token in [Vercel account settings] and give it a name.', 'Choose the team you will deploy to. Select All Projects to create projects, or select an existing project to limit the token to that project. Choose an expiration and create the token.', 'Copy the token and paste it here, then connect the account.'] },
       credentialFieldKeys: { token: 'token' },
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: label('token'), description: label('tokenDescription'), schema: { type: 'string', minLength: 1 }, secret: true }],

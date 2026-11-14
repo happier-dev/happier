@@ -70,6 +70,7 @@ import {
 } from './platformTargetLink';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
+type ProductionBranchOutcome = NonNullable<Extract<Awaited<ReturnType<Actions['link']>>, { ok: true }>['productionBranchOutcome']>;
 type LinkRefusal = Extract<Awaited<ReturnType<Actions['link']>>, { ok: false }>
   | Readonly<{ ok: false; error: 'action_outcome_unknown' }>;
 export type DeploymentPlatformLinkActions = Pick<
@@ -217,11 +218,12 @@ export function DeploymentPlatformTargetEditor(
   const [mode, setMode] = React.useState<'existing' | 'create'>('existing');
   const [requestKey, setRequestKey] = React.useState<string | null>(null);
   const [linkSettlement, setLinkSettlement] = React.useState<LinkRefusal | null>(null);
+  const [createdBranchOutcome, setCreatedBranchOutcome] = React.useState<ProductionBranchOutcome | null>(null);
   const [recoveryReadRefused, setRecoveryReadRefused] = React.useState<string | null>(null);
   const provisioned = linkSettlement?.error === 'deployment_link_incomplete' ? linkSettlement.recovery : null;
   const outcomeUnknown = linkSettlement?.error === 'action_outcome_unknown';
   const duplicate = linkSettlement?.error === 'provider_scope_already_linked' ? linkSettlement : null;
-  const reviewingCreate = provisioned !== null || outcomeUnknown;
+  const reviewingCreate = provisioned !== null || outcomeUnknown || createdBranchOutcome !== null;
   const linkOperations = useDeploymentTargetLinkOperations({
     serverId: props.lifetime.scope.serverId, accountId: props.lifetime.scope.accountId,
     machineId: undefined, environmentId: props.onPrepared ? null : props.environment.id ?? null,
@@ -258,6 +260,8 @@ export function DeploymentPlatformTargetEditor(
         // A later Environment edit supersedes this exact reviewed association. Add can start a fresh choice.
         if (result && !result.ok && result.error === 'deployment_link_incomplete'
           && result.recovery.expectedRevision !== props.environment.revision) return [];
+        if (result?.ok && result.productionBranchOutcome && props.environment.revision !== undefined
+          && result.revision < props.environment.revision) return [];
         return result ? [{ operation, domain, result }] : [];
       });
       const completed = new Set(settlements.filter(entry => entry.result.ok).map(entry => entry.domain.requestKey));
@@ -269,6 +273,7 @@ export function DeploymentPlatformTargetEditor(
       if (!selected) return;
       const result = selected.result;
       setLinkSettlement(result.ok ? null : result);
+      setCreatedBranchOutcome(result.ok ? result.productionBranchOutcome ?? null : null);
       if (!result.ok && result.error === 'deployment_link_incomplete') {
         setTargetKey(`${result.recovery.source.contribution.pluginId}/${result.recovery.source.contribution.localId}`);
         setMode('create');
@@ -277,8 +282,9 @@ export function DeploymentPlatformTargetEditor(
         && operation.snapshot.domainRef.purpose === 'associate' && operation.snapshot.domainRef.requestKey === selected.domain.requestKey)
         .reduce<(typeof linkOperations)[number] | null>((latest, operation) =>
           !latest || operation.snapshot.createdAt > latest.snapshot.createdAt ? operation : latest, null) : null;
-      setLinkRefused(association?.snapshot.error?.errorCode ?? (!result.ok && result.error !== 'deployment_link_incomplete'
-        && result.error !== 'provider_scope_already_linked' && result.error !== 'action_outcome_unknown' ? result.error : null));
+      const refusedCode = association?.snapshot.error?.errorCode ?? (!result.ok && result.error !== 'deployment_link_incomplete'
+        && result.error !== 'provider_scope_already_linked' && result.error !== 'action_outcome_unknown' ? result.error : null);
+      setLinkRefused(refusedCode ? { code: refusedCode, details: association?.snapshot.error?.details } : null);
     });
     return () => { live = false; };
   }, [linkOperations, props.environment.revision]);
@@ -308,7 +314,7 @@ export function DeploymentPlatformTargetEditor(
     null,
   );
   const [busy, setBusy] = React.useState<'check' | 'link' | null>(null);
-  const [linkRefused, setLinkRefused] = React.useState<string | null>(null);
+  const [linkRefused, setLinkRefused] = React.useState<Readonly<{ code: string; details?: unknown }> | null>(null);
   // The Account's own inventory decides whether it has any account for this platform; unknown until it is read.
   const accountId = props.lifetime.scope.accountId;
   const service = form?.service ?? null;
@@ -490,7 +496,7 @@ export function DeploymentPlatformTargetEditor(
         return;
       }
       if (result.error === 'provider_scope_already_linked') setLinkSettlement(result);
-      else setLinkRefused(result.error);
+      else setLinkRefused({ code: result.error });
     } catch (error) {
       const read = readDeploymentActionError(error);
       if (read.kind === 'approval') {
@@ -498,7 +504,7 @@ export function DeploymentPlatformTargetEditor(
         onApproval(read.artifactId);
         return;
       }
-      setLinkRefused(read.kind === 'refused' ? read.code : 'unknown_error');
+      setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details } : { code: 'unknown_error' });
     } finally {
       setBusy(null);
     }
@@ -523,19 +529,23 @@ export function DeploymentPlatformTargetEditor(
           role: 'runtime', targetKind: target.targetKind, machines: [],
           source: { kind: 'plugin', contribution: { pluginId: target.pluginId, localId: target.targetId } }, providerCreate,
         });
-        if (!parsed.success) { setLinkRefused('invalid_parameters'); return; }
+        if (!parsed.success) { setLinkRefused({ code: 'invalid_parameters' }); return; }
         input = parsed.data;
       }
       const result = await actions.link(input, { confirmed: true });
       if (!shouldContinue()) return;
-      if (result.ok) { setLinkSettlement(null); onClose(); return; }
+      if (result.ok) {
+        setLinkSettlement(null);
+        if (result.productionBranchOutcome) { setCreatedBranchOutcome(result.productionBranchOutcome); return; }
+        onClose(); return;
+      }
       if (result.error === 'deployment_link_incomplete' || result.error === 'provider_scope_already_linked') setLinkSettlement(result);
-      else setLinkRefused(result.error);
+      else setLinkRefused({ code: result.error });
     } catch (error) {
       const read = readDeploymentActionError(error);
       if (read.kind === 'approval') { onClose(); onApproval(read.artifactId); return; }
       if (read.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(read.code) && !provisioned) setLinkSettlement({ ok: false, error: 'action_outcome_unknown' });
-      else setLinkRefused(read.kind === 'refused' ? read.code : 'unknown_error');
+      else setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details } : { code: 'unknown_error' });
     } finally { if (shouldContinue()) setBusy(null); }
   };
 
@@ -554,8 +564,9 @@ export function DeploymentPlatformTargetEditor(
   const disclosedProvider = provisioned?.provider ?? (outcome?.kind === 'ready' || outcome?.kind === 'needsGitAccess' ? outcome.provider : null);
   const ready = outcome?.kind === 'ready';
   const footer = (
-    <ModalCardFooterActions {...(props.onPrepared ? {} : { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null } })}>
-      {provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink ? null : <RoundButton
+    <ModalCardFooterActions {...(props.onPrepared || createdBranchOutcome ? {} : { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null } })}>
+      {createdBranchOutcome ? <RoundButton testID="project-deployments.platform.done" size="normal" title={t('common.done')} onPress={onClose} />
+        : provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink ? null : <RoundButton
         testID={
           create ? 'project-deployments.platform.create' :
           ready && !props.onPrepared
@@ -592,7 +603,14 @@ export function DeploymentPlatformTargetEditor(
         {props.onPrepared ? null : <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.platformLink.lead')}
         </Text>}
-        {reviewingCreate && !target ? null : platformsState.status === 'loading' ? (
+        {createdBranchOutcome ? <SurfaceStateCard testID="project-deployments.platform.productionBranch" size="line"
+          kind={createdBranchOutcome.status === 'set' ? 'success' : 'warning'}
+          title={t('projects.deployments.platformLink.created')}
+          reason={createdBranchOutcome.status === 'set' ? t('projects.deployments.platformLink.branchSet', createdBranchOutcome)
+            : createdBranchOutcome.status === 'defaultKept' ? t('projects.deployments.platformLink.branchDefaultKept', createdBranchOutcome)
+              : t('projects.deployments.platformLink.branchUnconfirmed', createdBranchOutcome)}
+          {...(createdBranchOutcome.status === 'set' ? {} : { diagnosticCode: createdBranchOutcome.failureCause.errorCode ?? undefined })} />
+          : reviewingCreate && !target ? null : platformsState.status === 'loading' ? (
           <SurfaceStateCard
             testID="project-deployments.platform.loading"
             size="line"
@@ -759,7 +777,7 @@ export function DeploymentPlatformTargetEditor(
               } } : {})} />}
           </>
         )}
-        {disclosedProvider ? <DeploymentPlatformCredentialDisclosure principal={disclosedProvider.credentialPrincipal}
+        {!createdBranchOutcome && disclosedProvider ? <DeploymentPlatformCredentialDisclosure principal={disclosedProvider.credentialPrincipal}
           provider={disclosedProvider.providerIdentity} platform={target?.title ?? t('projects.deployments.platformLink.platform')} scope={props.lifetime.scope}
           lifetime={props.lifetime} serverId={props.lifetime.scope.serverId} testIDPrefix="project-deployments.platform.access" /> : null}
         {unresolvedLink && recoveryReadRefused ? <SurfaceStateCard testID="project-deployments.platform.recoveryUnavailable" size="line" kind="error"
@@ -785,16 +803,18 @@ export function DeploymentPlatformTargetEditor(
             setLinkSettlement(null); setRequestKey(null); setAccount(null); resetValues(); setCursors({}); resetFrom();
           }} />
         </ItemGroup> : null}
-        {linkRefused ? (
+        {linkRefused?.code === 'needsGitAccess' ? (
+          <DeploymentPlatformInspectState outcome={null} refusal={linkRefused} />
+        ) : linkRefused ? (
           <SurfaceStateCard
             testID="project-deployments.platform.linkRefused"
             size="line"
             kind="error"
             title={t('projects.deployments.platformLink.linkRefused')}
-            reason={readDeploymentRefusal(linkRefused).reason === 'permission'
+            reason={readDeploymentRefusal(linkRefused.code).reason === 'permission'
               ? t('projects.deployments.platformLink.managersOnly')
               : t('projects.deployments.nothingChanged')}
-            diagnosticCode={linkRefused}
+            diagnosticCode={linkRefused.code}
           />
         ) : null}
         {/* Without card chrome (an embedding host), the footer ends the body. */}

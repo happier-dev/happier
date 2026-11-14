@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
   DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
@@ -7,6 +8,7 @@ import type {
 import type { HttpMethod, HttpResponse, HttpService } from '@happier-dev/plugin-sdk/http';
 
 const origin = 'https://api.vercel.com';
+const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
 type Repository = DeploymentTargetRepositoryAccessV1['repository'];
 type VercelEnvironment = Exclude<DeploymentTargetProviderEnvironmentV1, { scriptName: string }>;
 type ProjectCoordinates = Pick<DeploymentTargetProviderIdentityV1, 'providerAccountId' | 'providerResourceId'>;
@@ -33,8 +35,10 @@ export type VercelProjectPreparation = Readonly<{
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 
-function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase): DeploymentTargetRoleFailureV1 {
-  return { v: 1, code, phase, retryable: false };
+function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase, caught?: Readonly<{ error: unknown }>): DeploymentTargetRoleFailureV1 {
+  const result: DeploymentTargetRoleFailureV1 = { v: 1, code, phase, retryable: false };
+  return code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase: `deployment.vercel.${phase}`,
+    causeKind: caught ? 'native_failure' : 'not_found', error: caught?.error }) : result;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -63,7 +67,7 @@ function endpoint(path: string, accountId: string) {
 }
 
 async function send(context: VercelPlatformContext, url: string, method: HttpMethod,
-  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase) {
+  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase | 'branch') {
   context.signal.throwIfAborted();
   const response = await context.http.request({ url, method, redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
@@ -73,11 +77,14 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
   if (record(value) && record(value.error)) {
-    throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+    // Vercel owns repository access; its GitHub app is installed once outside Happier.
+    const needsGitAccess = value.error.action === 'Install GitHub App' || value.error.code === 'repo_not_found';
+    throw withActionFailureDiagnostic(new PluginError({ code: needsGitAccess ? 'needsGitAccess' : response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false,
-      ...(phase === undefined ? {} : { details: { phase } }),
+      details: { ...(phase === undefined ? {} : { phase }),
+        ...(needsGitAccess ? { reason: 'vercel_github_app_required', grantUrl: githubAppGrantUrl } : {}) },
       failureCause: { phase: phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`, errorClass: 'Error',
-        errorCode: text(value.error.code) ? value.error.code : null, httpStatus: response.status } });
+        errorCode: text(value.error.code) ? value.error.code : null, httpStatus: response.status } }), { phase: `deployment.vercel.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
   return response;
 }
@@ -120,7 +127,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
-    return failure('deployment_unavailable', 'link');
+    return failure('deployment_unavailable', 'link', { error });
   }
   const denied = rejected(response, 'link');
   if (denied) return denied;
@@ -155,7 +162,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     catch (error) {
       if (isPluginError(error)) throw error;
       context.signal.throwIfAborted();
-      return failure('deployment_unavailable', 'link');
+      return failure('deployment_unavailable', 'link', { error });
     }
     const deniedProduction = rejected(production, 'link');
     if (deniedProduction) return deniedProduction;
@@ -191,7 +198,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     catch (error) {
       if (isPluginError(error)) throw error;
       context.signal.throwIfAborted();
-      return failure('deployment_unavailable', 'link');
+      return failure('deployment_unavailable', 'link', { error });
     }
     const deniedAccess = rejected(access, 'link');
     if (deniedAccess) return deniedAccess;
@@ -211,7 +218,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     // https://vercel.com/docs/code-owners/getting-started#install-the-github-app-into-a-repository
     repositoryAccess: ready ? { status: 'ready', repository: input.repository }
       : { status: 'needsGitAccess', repository: input.repository,
-        grantUrl: 'https://github.com/apps/vercel/installations/new' },
+        grantUrl: githubAppGrantUrl },
     ...(ready && linked ? { gitSource: { type: 'github' as const, repoId: String(link.repoId) } } : {}),
   };
 }
@@ -256,7 +263,7 @@ export async function observeVercelDeployment(input: ObservationInput, context: 
   } catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
-    return failure('deployment_unavailable', 'observe');
+    return failure('deployment_unavailable', 'observe', { error });
   }
 }
 

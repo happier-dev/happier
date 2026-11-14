@@ -12,7 +12,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'preview:main' },
   providerEnvironment: { kind: 'preview', gitBranch: 'main' }, domainId: 'domain', domain: { hostname: 'app.example.test' } };
 
-it('adds the exact preview Domain, reads pending DNS without mutating, and removes only that Domain', async () => {
+it('adds, checks and removes only the exact preview Domain without changing DNS configuration', async () => {
   const requests: HttpRequest[] = [];
   let removed = false;
   const http = createPluginHttpFixture({ async request(request) {
@@ -40,7 +40,7 @@ it('adds the exact preview Domain, reads pending DNS without mutating, and remov
     await expect(kit.invokeAction('domains-remove', input)).resolves.toMatchObject({ state: 'removed' });
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
       ['POST', '/v10/projects/prj_exact/domains'], ['GET', '/v6/domains/app.example.test/config'],
-      ['GET', '/v9/projects/prj_exact/domains/app.example.test'], ['GET', '/v6/domains/app.example.test/config'],
+      ['POST', '/v9/projects/prj_exact/domains/app.example.test/verify'], ['GET', '/v6/domains/app.example.test/config'],
       ['GET', '/v9/projects/prj_exact/domains/app.example.test'],
       ['DELETE', '/v9/projects/prj_exact/domains/app.example.test'],
     ]);
@@ -105,5 +105,57 @@ it.each([
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
     await expect(kit.invokeAction('domains-read', { ...input, domain: { hostname } })).resolves.toEqual({ v: 1, hostname, state: 'pending', dns });
+  } finally { await kit.dispose(); }
+});
+
+it('requests ownership verification when the person checks the Vercel Domain again', async () => {
+  let verified = false;
+  const methods: string[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    const path = new URL(request.url).pathname;
+    methods.push(`${request.method} ${path}`);
+    if (request.method === 'POST' && path.endsWith('/verify')) verified = true;
+    const body = path.endsWith('/config') ? { misconfigured: false }
+      : { name: 'app.example.test', projectId: 'prj_exact', gitBranch: 'main', verified,
+        verification: verified ? [] : [{ type: 'TXT', domain: '_vercel.app.example.test', value: 'ownership' }] };
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    const result = await kit.invokeAction('domains-verify', input);
+    expect(methods).toContain('POST /v9/projects/prj_exact/domains/app.example.test/verify');
+    expect(result).toMatchObject({ state: 'active' });
+  } finally { await kit.dispose(); }
+});
+
+it.each([400, 403])('retains pending ownership instructions and the native verification cause after HTTP %s', async status => {
+  const http = createPluginHttpFixture({ async request(request) {
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST' && path.endsWith('/verify')) return { status, headers: {},
+      body: new TextEncoder().encode(JSON.stringify({ error: { code: 'verification_failed' } })) };
+    const body = path.endsWith('/config') ? { misconfigured: false }
+      : { name: 'app.example.test', projectId: 'prj_exact', gitBranch: 'main', verified: false,
+        verification: [{ type: 'TXT', domain: '_vercel.app.example.test', value: 'ownership' }] };
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('domains-verify', input)).resolves.toMatchObject({ state: 'pending', dns: [
+      { type: 'TXT', name: '_vercel.app.example.test', value: 'ownership' },
+    ], failureCause: { httpStatus: status, errorCode: 'verification_failed' } });
+  } finally { await kit.dispose(); }
+});
+
+it('keeps a token denied domain access as a typed refusal rather than pending ownership', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'forbidden' } })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('domains-verify', input)).rejects.toMatchObject({ code: 'deployment_access_denied',
+      data: { failureCause: { httpStatus: 403, errorCode: 'forbidden' } } });
+    expect(requests.map(request => request.method)).toEqual(['POST', 'GET']);
   } finally { await kit.dispose(); }
 });

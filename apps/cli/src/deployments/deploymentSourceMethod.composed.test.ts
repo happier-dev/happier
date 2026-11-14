@@ -18,6 +18,8 @@ import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createRuntimeTargetForHost, prepareRuntimeTargetCreateForHost } from './runtimeTargetCreateForHost';
+import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 import { prepareTargetLinkForHost } from './prepareTargetLinkForHost';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { createContributedDeploymentTargetForHost } from './targets/contributedDeploymentTargetForHost';
@@ -125,4 +127,43 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
         delete reopened.content.sourceMethod;
         expect(await prepare()).toMatchObject({ ok: true, content: { sourceMethod: 'gitIntegration' } });
     } finally { await app.close(); await mounted.dispose(); await kit.dispose(); }
+});
+
+it('returns the retained Create branch outcome after the real host association succeeds', async () => {
+    const boundary = createPlainAccountArtifactHttpBoundary();
+    const artifacts = createAccountArtifactStore({ credentials: boundary.credentials, getAccountEncryptionMode: async () => 'plain' });
+    const environment = createDeploymentEnvironmentDetailV1();
+    environment.environment.owner = { kind: 'account', accountId: 'owner' };
+    const account = { service: { pluginId: machineVercel.id, localId: 'vercel-account' }, accountId: 'profile' };
+    const productionBranchOutcome = { status: 'defaultKept' as const, branch: 'main', requestedBranch: 'release',
+        failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
+    const source = { kind: 'plugin' as const, contribution: { pluginId: vercel.manifest.id, localId: 'runtime' } };
+    const provider = { credentialPrincipal: { kind: 'account' as const, accountId: 'owner', purpose: {
+        consumer: { pluginId: vercel.manifest.id, localId: 'project-create' }, purpose: 'deploy.manage' },
+        target: { kind: 'account' as const, account } },
+        providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_created', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' as const }, sourceMethod: 'gitIntegration' as const,
+        preparedNative: { projectName: 'created-app', productionBranchOutcome } };
+    const requests: string[] = [];
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const path = new URL(request.url!).pathname;
+        requests.push(path);
+        if (path === '/v1/deployments/targets/list') return { status: 200,
+            data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
+        if (path.endsWith('/targets')) return { status: 200, data: { ok: true,
+            environmentId: environment.environment.id, revision: 2, targetLinkId: 'created-link', targetLinkRevision: 1 } };
+        if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment, targetLinks: [] } };
+        throw new Error(`Unexpected Home request: ${path}`);
+    });
+    const host = { credentials: boundary.credentials, serverId: 'home', serverHttpBaseUrl: 'https://branch-result.test', machineId: 'machine-a' };
+    const runtime = createOwnServerDeploymentRuntimeForHost({ ...host,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const deps = createDaemonDeploymentActionDeps({ ...host, accountArtifacts: artifacts, runtime,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const result = await deps.deploymentAction('deployments.targets.link', { serverId: 'home',
+        environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'branch-created',
+        targetId: 'runtime', targetKind: 'vercel', role: 'runtime', machines: [], source, provider, provisioned: true }, {});
+    expect(result, JSON.stringify({ result, requests })).toMatchObject({ ok: true, targetLinkId: 'created-link', productionBranchOutcome });
+    expect(requests.filter(path => path.endsWith('/targets'))).toHaveLength(1);
+    expect(boundary.rows.size).toBe(1);
 });

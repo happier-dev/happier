@@ -1,4 +1,4 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { withActionFailureDiagnostic, isPluginError, projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
   type JsonValue } from '@happier-dev/plugin-sdk';
@@ -11,9 +11,10 @@ const fail = (code: string): never => {
   throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.domain', causeKind: 'not_found' }) : error;
 };
 /** Project Domains v10 add/v9 get+remove and domain config v6, official API inspected 2026-11-10.
- * Verify reads only. A lost write remains unknown and the next explicit Action can recover it.
+ * Verify asks Vercel to re-check DNS; its POST changes no user configuration (owner ruling 2026-11-14).
+ * A lost configuration write remains unknown and the next explicit Action can recover it.
  */
-async function run(input: Input, ctx: PluginAccountActionContext, operation: 'add' | 'read' | 'remove'): Promise<Result> {
+async function run(input: Input, ctx: PluginAccountActionContext, operation: 'add' | 'read' | 'verify' | 'remove'): Promise<Result> {
   if (!ctx.services.http) return fail('client_required');
   const environment = input.providerEnvironment;
   if (environment.kind === 'script' || 'scriptName' in environment) return fail('unsupported_action');
@@ -26,7 +27,11 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   async function request(url: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown) {
     try { return await vercelRequest(io, url, method, body === undefined ? undefined
       : { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) }); }
-    catch { ctx.signal.throwIfAborted(); return fail(method === 'GET' ? 'provider_request_failed' : 'outcome_unknown'); }
+    catch (error) {
+      ctx.signal.throwIfAborted();
+      if (isPluginError(error)) throw error;
+      return fail(method === 'GET' || operation === 'verify' ? 'provider_request_failed' : 'outcome_unknown');
+    }
   }
   function check(response: Awaited<ReturnType<typeof request>>, mutation: boolean) {
     if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403
@@ -41,12 +46,31 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
       || typeof domain.verified !== 'boolean') return fail('target_mismatch');
   }
   let response;
+  let verificationFailure: PluginError | undefined;
   if (operation === 'add') {
     response = await request(vercelEndpoint(`/v10/projects/${encodeURIComponent(project)}/domains`, account), 'POST', {
       name: hostname, ...(environment.kind === 'preview' && environment.gitBranch ? { gitBranch: environment.gitBranch } : {}),
       ...(environment.kind === 'custom' ? { customEnvironmentId: environment.id } : {}) });
     // Repeating the person's Add can recover a prior acknowledged/ambiguous creation without moving the Domain.
     if (response.status === 400) response = await request(endpoint, 'GET');
+  } else if (operation === 'verify') {
+    async function verifyDomain() {
+      const verifyUrl = new URL(endpoint);
+      verifyUrl.pathname += '/verify';
+      try {
+        const verified = await request(verifyUrl.href, 'POST');
+        if (verified.status !== 400 && verified.status !== 403) return verified;
+        verificationFailure = new PluginError({ code: verified.status === 403 ? 'deployment_access_denied' : 'provider_request_failed',
+          failureCause: { phase: 'deployment.vercel.domain.verify', errorClass: 'Error', errorCode: null, httpStatus: verified.status } });
+      } catch (error) {
+        const cause = projectActionFailureCauseV1(error, 'deployment.vercel.domain.verify');
+        if (!isPluginError(error) || cause.httpStatus !== 400 && cause.httpStatus !== 403) throw error;
+        verificationFailure = error;
+      }
+      // Missing ownership TXT is an ordinary pending Domain. Read its existing challenge without adding it again.
+      return request(endpoint, 'GET');
+    }
+    response = await verifyDomain();
   } else if (operation === 'remove') {
     const current = await request(endpoint, 'GET');
     if (current.status === 404) return { v: 1, hostname, state: 'removed', dns: [] };
@@ -58,6 +82,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   } else response = await request(endpoint, 'GET');
   const domain = check(response, operation === 'add');
   selected(domain);
+  if (verificationFailure && domain.verified) throw verificationFailure;
   const dns: Result['dns'] = [];
   for (const value of Array.isArray(domain.verification) ? domain.verification : []) {
     if (record(value) && typeof value.type === 'string' && typeof value.domain === 'string' && typeof value.value === 'string')
@@ -83,7 +108,8 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
     const preferred = isApex ? addresses : cnames;
     dns.push(...(preferred.length ? preferred : isApex ? cnames : addresses));
   }
-  return { v: 1, hostname, state: !domain.verified || config.misconfigured ? 'pending' : 'active', dns };
+  return { v: 1, hostname, state: !domain.verified || config.misconfigured ? 'pending' : 'active', dns,
+    ...(verificationFailure ? { failureCause: projectActionFailureCauseV1(verificationFailure, 'deployment.vercel.domain.verify') } : {}) };
 }
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [], hostAccess: ['vercel-api', 'deploy.manage'],
@@ -95,7 +121,7 @@ export const domainActions = {
   'domains-read': { ...common, title: 'Read the selected Vercel Domain', dangerLevel: 'safe', readOnly: true,
     inputSchema: inputs['domains.read'].jsonSchema, run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'read') },
   'domains-verify': { ...common, title: 'Verify the selected Vercel Domain', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['domains.verify'].jsonSchema, run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'read') },
+    inputSchema: inputs['domains.verify'].jsonSchema, run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'verify') },
   'domains-remove': { ...common, title: 'Remove the selected Vercel Domain', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Remove this Domain from Vercel?' }, inputSchema: inputs['domains.remove'].jsonSchema,
     run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'remove') },

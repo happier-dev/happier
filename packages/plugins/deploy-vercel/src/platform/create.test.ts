@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { resolveEffectiveInputFields } from '@happier-dev/plugin-sdk/actions';
+import { projectCreateAction } from './create.js';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
 
@@ -90,14 +92,95 @@ it('keeps acknowledged identity when cancellation races with the response', asyn
 });
 
 
-it('refuses a Git create before any provider mutation without a proven repository grant', async () => {
+const repository = { kind: 'github', deployment: 'https://github.com', repository: 'example/app' };
+
+it('creates a Git-linked project through Vercel without a second mutation', async () => {
+  const requests: HttpRequest[] = [];
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+    http: createPluginHttpFixture({ async request(request) {
+      requests.push(request);
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+        id: 'prj_created', accountId: 'team_exact', name: 'reviewed-app' })) };
+    } }),
+  } });
+  try {
+    expect(await kit.invokeAction('project-create', { ...input, sourceMethod: 'gitIntegration', repository }))
+      .toMatchObject({ providerIdentity: { providerResourceId: 'prj_created' }, sourceMethod: 'gitIntegration' });
+    expect(requests.map(request => request.method)).toEqual(['POST']);
+    expect(JSON.parse(new TextDecoder().decode(requests[0].body))).toEqual({ name: 'reviewed-app',
+      gitRepository: { type: 'github', repo: 'example/app' } });
+  } finally { await kit.dispose(); }
+});
+
+it.each([{ code: 'repo_not_found' }, { code: 'git_integration_required', action: 'Install GitHub App' }])(
+  'retains the provider Git setup refusal and offers its one-time GitHub app grant ($code)', async error => {
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+      http: createPluginHttpFixture({ async request() {
+        return { status: 400, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error })) };
+      } }),
+    } });
+    try {
+      await expect(kit.invokeAction('project-create', { ...input, sourceMethod: 'gitIntegration', repository }))
+        .rejects.toMatchObject({ code: 'needsGitAccess', data: { details: { phase: 'link',
+          reason: 'vercel_github_app_required', grantUrl: 'https://github.com/apps/vercel/installations/new' },
+          failureCause: { errorCode: error.code, httpStatus: 400 } } });
+    } finally { await kit.dispose(); }
+  });
+
+it.each([
+  { sourceMethod: 'gitIntegration', code: 'repository_required' },
+  { sourceMethod: 'gitIntegration', repository: { ...repository, kind: 'gitlab', deployment: 'https://gitlab.com' }, code: 'unsupported_action' },
+])('refuses unsupported Git inputs before provider mutation ($code)', async sample => {
   let requests = 0;
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
     http: createPluginHttpFixture({ async request() { requests++; throw new Error('unexpected provider mutation'); } }),
   } });
   try {
-    await expect(kit.invokeAction('project-create', { ...input, sourceMethod: 'gitIntegration' }))
-      .rejects.toMatchObject({ code: 'unsupported_action' });
+    const { code, ...selection } = sample;
+    await expect(kit.invokeAction('project-create', { ...input, ...selection })).rejects.toMatchObject({ code });
     expect(requests).toBe(0);
   } finally { await kit.dispose(); }
+});
+
+it.each(['default', 'set', 'refused', 'server', 'transport', 'missing-default', 'cancelled'] as const)(
+  'retains the created project and reports the production branch outcome (%s)', async mode => {
+    const requests: HttpRequest[] = [];
+    const controller = new AbortController();
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+      http: createPluginHttpFixture({ async request(request) {
+        requests.push(request);
+        if (request.method === 'POST' && mode === 'cancelled') controller.abort();
+        if (request.method === 'POST') return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+          id: 'prj_created', accountId: 'team_exact', name: 'reviewed-app',
+          ...(mode === 'missing-default' ? {} : { link: { productionBranch: 'main' } }) })) };
+        if (mode === 'transport') throw Object.assign(new Error('connection lost'), { code: 'ECONNRESET' });
+        return { status: mode === 'refused' ? 400 : mode === 'server' ? 503 : 200, headers: {},
+          body: new TextEncoder().encode(JSON.stringify({ error: { code: 'branch_missing' } })) };
+      } }),
+    } });
+    try {
+      const requestedBranch = mode === 'default' ? 'main' : 'release';
+      const result = await kit.invokeAction('project-create', { ...input, sourceMethod: 'gitIntegration', repository,
+        productionBranch: requestedBranch }, { signal: controller.signal });
+      expect(result).toMatchObject({ providerIdentity: { providerResourceId: 'prj_created' }, sourceMethod: 'gitIntegration',
+        preparedNative: { projectName: 'reviewed-app', productionBranchOutcome: mode === 'default' || mode === 'set' || mode === 'missing-default'
+          ? { status: 'set', branch: requestedBranch }
+          : mode === 'refused' ? { status: 'defaultKept', branch: 'main', requestedBranch,
+            failureCause: { errorCode: 'branch_missing', httpStatus: 400 } }
+          : { status: 'unconfirmed', requestedBranch, failureCause: {
+            errorCode: mode === 'transport' ? 'ECONNRESET' : mode === 'server' ? 'branch_missing' : null,
+            httpStatus: mode === 'server' ? 503 : null } } } });
+      expect(requests.map(request => [request.method, request.url])).toEqual([
+        ['POST', 'https://api.vercel.com/v11/projects?teamId=team_exact'],
+        ...(mode === 'default' || mode === 'cancelled' ? [] : [['PATCH', 'https://api.vercel.com/v9/projects/prj_created/branch?teamId=team_exact']]),
+      ]);
+      if (requests[1]) expect(JSON.parse(new TextDecoder().decode(requests[1].body))).toEqual({ branch: 'release' });
+    } finally { await kit.dispose(); }
+  });
+
+it('offers an optional production branch only in the Git Create form', () => {
+  const git = resolveEffectiveInputFields(projectCreateAction, { sourceMethod: 'gitIntegration' });
+  expect(git.find(field => field.path === 'productionBranch')).toMatchObject({ visible: true, required: false });
+  const upload = resolveEffectiveInputFields(projectCreateAction, { sourceMethod: 'upload' });
+  expect(upload.some(field => field.path === 'productionBranch')).toBe(false);
 });

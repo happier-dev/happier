@@ -7,6 +7,8 @@ import { isRecord } from '@happier-dev/protocol/common/records';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { DeploymentDomainDnsInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';
 
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -29,7 +31,7 @@ type Zone = Readonly<{ zoneId: string; name: string }>;
 export type LinkedDomainZoneContext = Readonly<{ credentialRef: QualifiedConnectedAccountRef; accountId: string }>;
 type Defaults = Readonly<{ accountId?: string; connector: Readonly<{ imageRef: string; version: string }> }>;
 type ZoneRead = Readonly<{ key: string; credentialKey: string; defaults?: Defaults }> & (
-  | Readonly<{ kind: 'ready'; zones: readonly Zone[] }>
+  | Readonly<{ kind: 'ready'; zones: readonly Zone[]; dnsRecordAction?: PluginContributionIdentityV1 }>
   | Readonly<{ kind: 'unavailable'; reason: string; remedy: string; diagnosticDetail?: string }>
 );
 type TunnelRead = Readonly<{ key: string }> & (
@@ -48,6 +50,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   enabled: boolean;
   /** Present for Workers: use the runtime Link's credential and select only a zone. */
   linkedZone?: LinkedDomainZoneContext | null;
+  /** Select DNS placement for retained provider records, without tunnel configuration. */
+  dnsRecordsOnly?: boolean;
 }>) {
   const [credentialRef, setCredentialRef] = React.useState<QualifiedConnectedAccountRef | null>(null);
   const [accountId, setAccountId] = React.useState('');
@@ -60,13 +64,14 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const [tunnelChoice, setTunnelChoice] = React.useState<string | null>(null);
   const [reading, setReading] = React.useState<'zones' | 'tunnels' | null>(null);
   const [advanced, setAdvanced] = React.useState(false);
+  const [ttl, setTtl] = React.useState('1');
   // One provider read at a time, owned by this form: Cancel, closing the form, or changing the account or tunnel
   // choice aborts it through the Action's own signal (O-DEPLOY F2). There is no timeout.
   const flight = React.useRef<AbortController | null>(null);
   const [stopped, setStopped] = React.useState<Readonly<{ kind: 'zones' | 'tunnels'; key: string }> | null>(null);
-  const zonesOnly = props.linkedZone !== undefined;
-  const selectedCredential = zonesOnly ? props.linkedZone?.credentialRef ?? null : credentialRef;
-  const selectedAccountId = zonesOnly ? props.linkedZone?.accountId ?? '' : accountId.trim();
+  const zonesOnly = props.linkedZone !== undefined || props.dnsRecordsOnly === true;
+  const selectedCredential = props.linkedZone !== undefined ? props.linkedZone?.credentialRef ?? null : credentialRef;
+  const selectedAccountId = props.linkedZone !== undefined ? props.linkedZone?.accountId ?? '' : accountId.trim();
   const credentialKey = JSON.stringify(selectedCredential);
   const defaults = zones?.credentialKey === credentialKey ? zones.defaults : undefined;
   const connectorOverride = imageRef.trim() || version.trim() ? {
@@ -123,7 +128,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
         if (rows && rows.every((zone): zone is Zone => isRecord(zone) && typeof zone.zoneId === 'string' && typeof zone.name === 'string')) {
-          setZones({ key: zoneKey, ...metadata, kind: 'ready', zones: rows });
+          const dnsAction = PluginContributionIdentityV1Schema.safeParse(isRecord(value) ? value.dnsRecordAction : undefined);
+          setZones({ key: zoneKey, ...metadata, kind: 'ready', zones: rows,
+            ...(dnsAction.success ? { dnsRecordAction: dnsAction.data } : {}) });
           setZoneChoice(rows.length === 1 ? rows[0]!.zoneId : null);
         } else {
           setZones({ key: zoneKey, ...metadata, ...unavailable });
@@ -181,18 +188,22 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       action={{ label: t('common.retry'), testID: `${id}.${kind}.retry`, onPress: () => { void inspect(kind); } }} />
   ) : null;
   const selectedZone = currentZones?.kind === 'ready' ? currentZones.zones.find(zone => zone.zoneId === zoneId) : undefined;
-  return { selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined, fields: props.enabled ? (
+  const dns = DeploymentDomainDnsInputV1Schema.shape.dns.safeParse(props.dnsRecordsOnly && selectedZone && currentZones?.kind === 'ready'
+    ? { action: currentZones.dnsRecordAction, credentialRef: selectedCredential, zoneId: selectedZone.zoneId, ttl: Number(ttl) } : undefined);
+  return { selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
+    dns: props.enabled && dns.success ? dns.data : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
-      {!zonesOnly ? <>
+      {props.linkedZone === undefined ? <>
       <ConnectedAccountPurposeTargetChooser
         testID={`${id}.account`}
         localizedTextPluginId={binding.service.pluginId}
-        declaration={{ purpose: binding.purpose, service: binding.service, required: true }}
+        declaration={{ purpose: props.dnsRecordsOnly ? 'deploy.manage' : binding.purpose, service: binding.service, required: true }}
         value={credentialRef ? { kind: 'account', account: credentialRef } : null}
         onChange={target => setCredentialRef(target?.kind === 'account' ? target.account : null)}
         accountsOnly
         disabled={props.busy}
       />
+      {!props.dnsRecordsOnly ? <>
       <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
         header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
           title={t('projects.deployments.domainIngressAdvanced')} />}
@@ -211,6 +222,11 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       </FieldItem>
       </ExpandableItem>
       </> : null}
+      </> : null}
+      {props.dnsRecordsOnly ? <FieldItem label={t('projects.deployments.domainDnsTtl')}>
+        <FieldTextInput testID={`${id}.ttl`} value={ttl} onChangeText={setTtl}
+          accessibilityLabel={t('projects.deployments.domainDnsTtl')} keyboardType="number-pad" editable={!props.busy} />
+      </FieldItem> : null}
       {/* A search, not a refresh glyph: a disabled refresh arrow reads as a stuck spinner (JOURNEY-OPUS-88 F2). */}
       <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
         icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />

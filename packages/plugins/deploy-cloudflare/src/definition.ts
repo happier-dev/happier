@@ -17,6 +17,7 @@ import { workerTrafficActions } from './platform/workerTraffic.js';
 import { pagesLogsActions, workersLogsActions } from './platform/logs.js';
 import { domainActions } from './platform/domains.js';
 import { variableActions } from './platform/variables.js';
+import { dnsRecordActions } from './platform/dnsRecords.js';
 
 import { targetOptionResources, targetOptionsRead, targetOptionInputTypes } from './platform/targetOptions.js';
 import { inspect, productInspectActions } from './platform/inspect.js';
@@ -48,7 +49,7 @@ const tokenConfiguration = { ...accountConfiguration, fields: [...accountConfigu
 ] } as const;
 
 type CloudflareActionDeclarations = typeof productInspectActions & typeof tunnelActions & typeof zoneActions & typeof selectionActions
-  & typeof workerActions & typeof workerTrafficActions & typeof pagesLifecycleActions & typeof pagesTrafficActions & typeof pagesLogsActions & typeof workersLogsActions & typeof domainActions & typeof variableActions & Readonly<{
+  & typeof workerActions & typeof workerTrafficActions & typeof pagesLifecycleActions & typeof pagesTrafficActions & typeof pagesLogsActions & typeof workersLogsActions & typeof domainActions & typeof variableActions & typeof dnsRecordActions & Readonly<{
     'target-options-read': typeof targetOptionsRead;
     'targets-inspect-v1': typeof inspect;
     'pages-link': typeof pagesLink;
@@ -59,7 +60,7 @@ type CloudflareActionDeclarations = typeof productInspectActions & typeof tunnel
 const actions: Readonly<{
   [TId in keyof CloudflareActionDeclarations]: PluginActionDefinition<
     Omit<CloudflareActionDeclarations[TId], 'run' | 'observeRead'>>;
-}> = { 'target-options-read': targetOptionsRead, ...productInspectActions, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...workerTrafficActions, ...pagesLifecycleActions, ...pagesTrafficActions, ...pagesLogsActions, ...workersLogsActions, ...domainActions, ...variableActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink, 'pages-create': pagesCreate, 'workers-create': workersCreate } as const;
+}> = { 'target-options-read': targetOptionsRead, ...productInspectActions, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...workerTrafficActions, ...pagesLifecycleActions, ...pagesTrafficActions, ...pagesLogsActions, ...workersLogsActions, ...domainActions, ...variableActions, ...dnsRecordActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink, 'pages-create': pagesCreate, 'workers-create': workersCreate } as const;
 
 const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
@@ -95,6 +96,8 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   }, { id: 'cloudflare-oauth', capability: 'network', reason: 'Exchange, refresh and revoke the registered Cloudflare OAuth authorization.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://dash.cloudflare.com' }], methods: ['GET', 'POST'] },
+  }, { id: 'cloudflare-dns', capability: 'network', reason: 'Read and create the reviewed DNS records in the selected Cloudflare zone.',
+    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST'] },
   }, { id: 'deploy.manage', capability: 'connectedAccounts', reason: 'Use the selected Cloudflare deployment account.',
     scope: { serviceRefs: [CLOUDFLARE_ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] },
   }, { id: 'tunnel.manage', capability: 'connectedAccounts', reason: 'Manage the reviewed Cloudflare tunnel routes with the selected account.',

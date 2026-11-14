@@ -76,7 +76,7 @@ import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestI
   DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 
 
-import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetCreateInputV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetCreateInputV1Schema, DeploymentTargetProductionBranchOutcomeV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from './deploymentBindingPatchV1.js';
 export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1,
   DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
@@ -494,6 +494,7 @@ export const DeploymentTargetLinkProvisionedResultV1Schema = lazyZodSchema(() =>
 export type DeploymentTargetLinkProvisionedResultV1 = z.infer<typeof DeploymentTargetLinkProvisionedResultV1Schema>;
 export const DeploymentTargetLinkResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, targetLinkId: DeploymentIdentifierV1Schema, targetLinkRevision: DeploymentRevisionV1Schema,
+    productionBranchOutcome: z.optional(DeploymentTargetProductionBranchOutcomeV1Schema),
     failureObserver: z.optional(z.union([
       z.strictObject({ status: z.literal('unavailable'),
         errorCode: z.optional(ActionExecuteFailureSchema.shape.errorCode), failureCause: ActionFailureCauseV1Schema,

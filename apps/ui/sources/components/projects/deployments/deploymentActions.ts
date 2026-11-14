@@ -7,7 +7,8 @@ import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } 
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
 import { type DeploymentDataQueryInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import { DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DeploymentDomainDnsInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -313,6 +314,13 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             return DeploymentDomainMutationResultV1Schema.parse(await invoke('deployments.domains.verify', {
                 ...input, requestKey: input.requestKey ?? randomUUID(), serverId: lifetime.scope.serverId }, operation));
+        },
+        /** The controller prepares record values from the retained provider observation. */
+        async createDomainDns(input: Omit<DeploymentDomainDnsInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentActionOutputSchemasV1[DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1].parse(await invoke(
+                DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, { ...input, requestKey: input.requestKey ?? randomUUID(),
+                    serverId: lifetime.scope.serverId }, operation));
         },
         async unlink(input: Omit<DeploymentTargetUnlinkInputV1, 'serverId'>, operation?: UiActionOperation) {
             assertCurrent();

@@ -9,6 +9,7 @@ import { CloudflareProviderRefusal, cloudflareHasNextPage, cloudflareRemoteTunne
   cloudflareResponseOperation, readCloudflareResponse } from './cloudflareRoutes.js';
 import { readSelectedZone } from './zone.js';
 import { CLOUDFLARE_CONNECTOR_DEFAULTS } from './connectorDefaults.js';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 const closed = { policy: 'closed' } as const;
 const text = string({ minLength: 1 });
@@ -22,7 +23,8 @@ const selectionsInput = object({ credentialRef: QualifiedConnectedAccountRefSche
   hostname: text, connector: connectorSchema.optional() }, closed);
 const selectionsResult = union([
   object({ kind: literal('ready'), zones: array(zoneOption), options: array(selectionOption, { maxItems: 0 }),
-    defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
+    defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema,
+    dnsRecordAction: PluginContributionIdentityV1Schema.optional() }, closed),
   object({ kind: literal('ready'), options: array(selectionOption), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
   object({ kind: literal('unavailable'), options: array(selectionOption, { maxItems: 0 }), reason: text, requiredFact: text, remedy: text,
     providerStatus: number().optional(), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
@@ -170,7 +172,11 @@ const readSelections: typeof readSelectionsImpl = async (input, context, zonesOn
       remedy: typeof details.remedy === 'string' ? details.remedy : fallback.remedy } }, { cause: error });
   }
 };
-const readWorkerZones: SelectionHandler = (input, context) => readSelections(input, context, true);
+const readWorkerZones: SelectionHandler = async (input, context) => {
+  const result = await readSelections(input, context, true);
+  return result.kind === 'ready' && 'zones' in result ? { ...result,
+    dnsRecordAction: { pluginId: context.plugin.id, localId: 'records-create' } } : result;
+};
 
 export const selectionActions = {
   'workers-domain-zones-read': {

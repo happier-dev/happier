@@ -90,7 +90,8 @@ it('reads only the deliberately selected Workers Domain zone using deployment cu
   const state = await fixture();
   try {
     await expect(state.kit.invokeAction('workers-domain-zones-read', { credentialRef, accountId, hostname: input.hostname, zoneId }))
-      .resolves.toMatchObject({ kind: 'ready', zones: [{ zoneId, name: zone.name }], options: [] });
+      .resolves.toMatchObject({ kind: 'ready', zones: [{ zoneId, name: zone.name }], options: [],
+        dnsRecordAction: { pluginId: entry.manifest.id, localId: 'records-create' } });
     expect(state.requests.map(request => new URL(request.url).pathname)).toEqual([`/client/v4/zones/${zoneId}`]);
     expect(state.requests[0]!.credentialBinding).toMatchObject({ purpose: 'deploy.manage' });
   } finally { await state.kit.dispose(); }

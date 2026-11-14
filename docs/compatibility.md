@@ -11897,6 +11897,32 @@ inspected `../0.2` frontier at `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` has no
 corresponding approval Artifact header or deployment-review schema. Its approval-request paths
 have no local diff, and its released request reader is unchanged by this work.
 
+## Vercel provider outcomes (unreleased 0.3)
+
+Vercel Create's protected `preparedNative` and successful TargetLink result add
+optional `productionBranchOutcome`. Its new closed presentation union records
+`set`, `defaultKept` or `unconfirmed`, with closed SCM branch values and the
+existing closed failure cause. The host projects only this outcome after saving
+the association; it adds no server-readable branch metadata or effect authority.
+Earlier content without the field remains valid. Matching Protocol, SDK, provider
+declarations, controller and UI reload together under the unpublished 0.3 direct
+cut; older strict development readers reject the new fields. The same inspected
+0.2 frontier below has no deployment-role counterpart. No input, epoch, database
+format, compatibility adapter or additional Action is introduced.
+
+Vercel Domain provider observations add optional `failureCause` using the
+existing closed Action diagnostic schema. Pending verification retains the
+provider cause beside its ownership instructions in the existing private Domain
+Artifact; no new metadata or storage owner is introduced. Earlier observations
+without the field remain valid. The observation, Domain content and nested
+diagnostic remain closed; unknown properties are not normalized or preserved.
+Matching Protocol, SDK, provider declarations, controller and UI reload together
+under the unpublished 0.3 direct cut; older strict development readers reject
+the new field. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no deployment contract at these
+paths or scoped local changes. No wire epoch, input, capability, adapter or
+persisted envelope changes.
+
 ## Domain DNS draft verification (unreleased 0.3)
 
 The existing `deployments.domains.verify` Action adds a strict `mode: 'preview'`
