@@ -486,16 +486,19 @@ describe('useInSessionAgentPickerControls', () => {
         expect(announceAccessibilityMessage).toHaveBeenCalledTimes(1);
     });
 
-    it('omits the session mode for a target without session modes when its model changes', async () => {
-        const hook = await renderControls({ entries: [entry('claude'), entry('kimi')] });
+    it.each([
+        ['kimi', 'kimi-code/k3.1-pro'],
+        ['codex', 'gpt-5'],
+    ])('omits an absent session mode when selecting a model for %s', async (agentId, modelId) => {
+        const hook = await renderControls({ entries: [entry('claude'), entry(agentId)] });
         await openPicker(hook);
 
         await act(async () => {
             optionsOf(hook.getCurrent())[1]?.renderDetailContent?.();
             detailSelectionChangeRef.current?.({
-                modelId: 'kimi-code/k3.1-pro',
+                modelId,
                 modelLabel: 'K3.1 Pro',
-                sessionModeId: 'default',
+                sessionModeId: '',
                 configOverrides: {},
             });
         });
@@ -505,13 +508,13 @@ describe('useInSessionAgentPickerControls', () => {
             payload: {
                 v: 1,
                 sourceSessionId: 'session-1',
-                selections: [{ v: 1, agentId: 'kimi', modelId: 'kimi-code/k3.1-pro' }],
+                selections: [{ v: 1, agentId, modelId }],
             },
         }));
         expect(hook.getCurrent().armedContinuation?.selection).toEqual({
             v: 1,
-            agentId: 'kimi',
-            modelId: 'kimi-code/k3.1-pro',
+            agentId,
+            modelId,
         });
     });
 

@@ -213,9 +213,7 @@ function buildTargetSelection(
         agentId: entry.providerAgentId,
         ...(entry.target.kind === 'configuredAcpBackend' ? { backendTarget: entry.target } : {}),
         ...(selection.modelId !== 'default' ? { modelId: selection.modelId } : {}),
-        ...(selection.sessionModeId !== null && getAgentCore(entry.providerAgentId).sessionModes.kind !== 'none'
-            ? { acpSessionModeId: selection.sessionModeId }
-            : {}),
+        ...(selection.sessionModeId ? { acpSessionModeId: selection.sessionModeId } : {}),
         ...(overrides ? { sessionConfigOptionOverrides: overrides } : {}),
     };
 }
