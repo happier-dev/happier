@@ -80,7 +80,7 @@ import { join, resolve as resolvePath } from 'node:path';
 
 // This test process plays the daemon: the only caller its Session hosts admit (its published birth).
 enableLocalSessionRpcCalls();
-const trusted = { birth: null as ProcessBirthWitness | null };
+const trusted = { birth: null as ProcessBirthWitness | null, reads: 0 };
 let ownBirth: ProcessBirthWitness | null = null;
 
 function resolvePeerHelper(): string {
@@ -136,7 +136,7 @@ async function host(sessionId = SESSION, credentialToken = OWNER) {
   const retire = await registerLocalSessionRpcTarget({ sessionId, credentialToken,
     handleRequest: request => created.manager.handleRequest(request, undefined, 'local_session_channel'),
     cancelRequest: requestId => created.manager.cancelTransportRequest(requestId),
-    readTrustedCaller: async () => trusted.birth });
+    readTrustedCaller: async () => { trusted.reads += 1; return trusted.birth; } });
   return { ...created, retire };
 }
 
@@ -151,6 +151,29 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
     trusted.birth = ownBirth;
   }, 600_000);
   afterEach(() => { trusted.birth = ownBirth; });
+
+  it('publishes usable local provider input after late handler installation without a Home registration ACK', async () => {
+    const created = createHost();
+    const published = vi.fn();
+    const retire = await registerLocalSessionRpcTarget({ sessionId: SESSION, credentialToken: OWNER,
+      handleRequest: request => created.manager.handleRequest(request, undefined, 'local_session_channel'),
+      cancelRequest: requestId => created.manager.cancelTransportRequest(requestId),
+      readTrustedCaller: async () => trusted.birth, onPublished: published });
+    try {
+      expect(published).toHaveBeenCalledOnce();
+      created.manager.registerHandler(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION, async () => ({ status: 'enforced' }));
+      await expect(call(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION, {
+        action: 'enforce', serviceId: 'service', groupId: 'group', reason: 'group_unavailable',
+      })).resolves.toEqual({ status: 'enforced' });
+      expect(relay.calls).toBe(0);
+      expect(created.manager.isHandlerRegistrationAcknowledged(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION)).toBe(false);
+    } finally { await retire(); }
+    const unsupported = vi.fn();
+    const retireUnsupported = await registerLocalSessionRpcTarget({ sessionId: SESSION, credentialToken: token('acct-owner', 'api_token'),
+      handleRequest: async () => ({}), cancelRequest: () => {}, readTrustedCaller: async () => trusted.birth,
+      onPublished: unsupported });
+    try { expect(unsupported).not.toHaveBeenCalled(); } finally { await retireUnsupported(); }
+  });
 
   it('admits only the daemon that spawned or adopted the host: another same-user process is refused', async () => {
     const live = await host();
@@ -189,6 +212,17 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       trusted.birth = ownBirth;
       await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST)).resolves.toMatchObject({ runs: [] });
       expect([live.seen.length, remote.seen.length, relay.calls]).toEqual([1, 1, 1]);
+    } finally { await live.retire(); }
+  });
+
+  it('admits the daemon peer once per accepted connection: 20 calls on one kept-alive connection read the daemon state once', async () => {
+    const live = await host();
+    try {
+      trusted.reads = 0;
+      for (let index = 0; index < 20; index += 1) {
+        await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { index })).resolves.toMatchObject({ runs: [] });
+      }
+      expect([live.seen.length, relay.calls, trusted.reads]).toEqual([20, 0, 1]);
     } finally { await live.retire(); }
   });
 

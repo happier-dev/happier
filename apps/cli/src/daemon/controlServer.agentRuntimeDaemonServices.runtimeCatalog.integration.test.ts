@@ -90,8 +90,10 @@ function createRetainedAgent() {
 }
 
 describe('daemon control server: runner-scoped Agent runtime services', () => {
-  it.each(['initial authority', 'post-wake authority', 'post-dispatch authority', 'post-record authority'] as const)(
-    'retires a disconnected first-turn request during %s lookup', async (phase) => {
+  // The runner authority is read once at admission; later currentness checks read tracked state.
+  // A disconnect is retired at each remaining asynchronous phase.
+  it.each(['drain wait', 'dispatch', 'admission record'] as const)(
+    'retires a disconnected first-turn request during its %s', async (phase) => {
     const sessionId = 'session-disconnected-first-turn';
     const retainedAgent = createRetainedAgent();
     const runner = { pid: 2242, processStartTimeMs: 1_717_171_717_700,
@@ -109,14 +111,13 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false } };
     await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
     const admissionDrain = createDaemonAdmissionDrain();
-    const beforeDispatch = phase === 'initial authority' || phase === 'post-wake authority';
+    const beforeDispatch = phase === 'drain wait';
     const releaseDrain = beforeDispatch ? admissionDrain.beginTemporaryDrain() : () => {};
     const authorityEntered = createDeferred<void>();
     const authorityReply = createDeferred<number>();
     const responseClosed = createDeferred<void>();
     const handlerSettled = createDeferred<void>();
     let settled = false;
-    let holdAuthorityRead = phase === 'initial authority';
     let activeWaiters = 0;
     const subscribe = admissionDrain.subscribe;
     const subscription = vi.spyOn(admissionDrain, 'subscribe').mockImplementation(listener => {
@@ -124,26 +125,24 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       const release = subscribe(listener);
       return () => { activeWaiters--; release(); };
     });
-    // Hard-revocation storage is the asynchronous boundary. Authority parsing,
-    // drain, HTTP cancellation, turn decision and durable marker remain real.
+    // The drain, the service dispatch and the marker write are the asynchronous boundaries held
+    // open here. Authority parsing, HTTP cancellation, turn decision and durable marker remain real.
     const dispatches: string[] = [];
+    const hold = async () => { authorityEntered.resolve(); await authorityReply.promise; };
     const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'guest', admissionDrain,
       stopSession: async () => ({ status: 'not_found' as const }), spawnSession: async () => ({ type: 'success' as const, sessionId }),
       requestShutdown() {}, onHappySessionWebhook() {}, controlToken: 'control-token',
-      readPluginHardRevocationRevision: async () => {
-        if (holdAuthorityRead) { authorityEntered.resolve(); return await authorityReply.promise; }
-        return 0;
-      },
       agentRuntimeDaemonServices: { dispatch: async (request, subject) => {
         dispatches.push(request.operation.kind);
         if (request.operation.kind !== 'turn.admission.authorize') throw new Error('Unexpected operation');
-        if (phase === 'post-dispatch authority') holdAuthorityRead = true;
-        return await authorizeRunnerAgentTurnAdmission({ retainedAgent: subject.retainedAgent, witness: request.operation.witness });
+        const admitted = await authorizeRunnerAgentTurnAdmission({ retainedAgent: subject.retainedAgent, witness: request.operation.witness });
+        if (phase === 'dispatch') await hold();
+        return admitted;
       } }, recordAgentRuntimeDaemonServiceAdmission: async (session, admission) => {
         const recorded = await updateSessionMarkerActiveTurn({
           trackingKey: session.trackingKey, sessionId, activeTurnId: admission.turnId,
           agentRuntimeDaemonServiceActiveAdmission: admission });
-        if (phase === 'post-record authority') holdAuthorityRead = true;
+        if (phase === 'admission record') await hold();
         return recorded;
       }, clearAgentRuntimeDaemonServiceAdmission: (session, admission) => updateSessionMarkerActiveTurn({
         trackingKey: session.trackingKey, sessionId, activeTurnId: session.activeTurnId ?? null,
@@ -162,10 +161,9 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       client.end(JSON.stringify({ v: 1, context: { token: capabilityA, sessionId },
         operation: { kind: 'turn.admission.authorize', requestId: 'disconnected-first-turn',
           witness: { turnId: 'turn-disconnected', inputId: 'input-disconnected', userMessageSeq: 1, userMessageSeqs: [1] } } }));
-      if (phase === 'post-wake authority') {
+      if (phase === 'drain wait') {
         await vi.waitFor(() => expect(activeWaiters).toBe(1));
-        holdAuthorityRead = true;
-        releaseDrain();
+        authorityEntered.resolve();
       }
       await authorityEntered.promise;
       client.destroy();
@@ -714,7 +712,10 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
     ['adopted Provider', 'acme.provider', 'before'],
     ['adopted Provider', 'acme.provider', 'during'],
   ] as const)(
-    'refuses turn admission when the current hard-revocation revision advances for the %s %s dispatch',
+    // Plugins are trusted (ruling 2026-10-29): a hard revocation is enforced by its owner retiring the
+    // tracked runner authority (refresh clears the capability; the fence stops the runner), not by a
+    // per-request plugin-store read. The route refuses the next request and the in-flight effect.
+    'refuses turn admission when the hard revocation of the %s %s retires the tracked authority %s dispatch',
     async (_label, revokedPluginId, revocationPhase) => {
       const sessionId = `session-revocation-${revokedPluginId}`;
       const retainedAgent = createRetainedAgent();
@@ -745,12 +746,6 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         readPluginHardRevocationRevision: async (pluginId) =>
           currentRevisions.get(pluginId) ?? 0,
       });
-      if (revocationPhase === 'before') {
-        currentRevisions.set(
-          revokedPluginId,
-          (currentRevisions.get(revokedPluginId) ?? 0) + 1,
-        );
-      }
       const tracked: TrackedSession = {
         trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
         pid: runner.pid,
@@ -782,13 +777,17 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
           qualifiedDependencyIds: [],
         },
       };
-      const dispatch = vi.fn(async (request: { operation: { kind: string } }) => {
-        if (revocationPhase === 'during') {
-          currentRevisions.set(
-            revokedPluginId,
-            (currentRevisions.get(revokedPluginId) ?? 0) + 1,
-          );
+      // The revocation owner's effect on tracked state (refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority).
+      const retireRevokedAuthority = () => {
+        delete tracked.agentRuntimeDaemonServiceCapabilityHash;
+        if (revokedPluginId === 'acme.provider' && tracked.runnerManagedDependencyRetentionV1) {
+          const { adoptedManagedProviderAuthority: _retired, ...retention } = tracked.runnerManagedDependencyRetentionV1;
+          tracked.runnerManagedDependencyRetentionV1 = retention;
         }
+      };
+      if (revocationPhase === 'before') retireRevokedAuthority();
+      const dispatch = vi.fn(async (request: { operation: { kind: string } }) => {
+        if (revocationPhase === 'during') retireRevokedAuthority();
         return {
           ok: true as const,
           result: {
@@ -814,8 +813,6 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         controlToken: 'control-token',
         agentRuntimeDaemonServices: { dispatch },
         recordAgentRuntimeDaemonServiceAdmission: recordAdmission,
-        readPluginHardRevocationRevision: async (pluginId) =>
-          currentRevisions.get(pluginId) ?? 0,
       });
 
       try {
@@ -954,8 +951,6 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       onHappySessionWebhook: () => {},
       controlToken: 'control-token',
       agentRuntimeDaemonServices: { dispatch },
-      readPluginHardRevocationRevision: async (pluginId) =>
-        currentRevisions.get(pluginId) ?? 0,
     });
 
     try {

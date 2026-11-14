@@ -160,7 +160,6 @@ import type { LocalServicePreviewRoutes } from './local/services/preview/routes'
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
 import {
   readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
-  isAgentRuntimeDaemonServiceAuthorityHardRevocationCurrent,
   verifyAgentRuntimeSessionBridgeToken,
   type AgentRuntimeDaemonServiceAuthorityDocumentV2,
   type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
@@ -413,10 +412,14 @@ type TrackedAgentRuntimeDaemonServiceAuthority = Readonly<{
   invocationContext: RunnerAgentInvocationContext;
 }>;
 
+/**
+ * Admits one runner service request: the tracked runner's published authority file, bound to this
+ * runner generation and capability. Plugins are trusted code (ruling 2026-10-29): a hard-revoked
+ * plugin's runner is fenced and stopped by the revocation owner, not re-checked per request.
+ */
 export async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
   tracked: TrackedSession,
   sessionId: string,
-  readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>,
 ): Promise<TrackedAgentRuntimeDaemonServiceAuthority | null> {
   const authorityPath =
     typeof tracked.agentRuntimeDaemonServiceAuthorityFilePath === 'string'
@@ -478,14 +481,6 @@ export async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
   const adoptedManagedProviderAuthority = trackedAdoptedManagedProviderAuthority
     ? Object.freeze({ ...trackedAdoptedManagedProviderAuthority })
     : null;
-  if (!await isAgentRuntimeDaemonServiceAuthorityHardRevocationCurrent({
-    happyHomeDir: configuration.happyHomeDir,
-    authority,
-    adoptedManagedProviderAuthority,
-    readPluginHardRevocationRevision,
-  })) {
-    return null;
-  }
   return Object.freeze({
     tracked,
     authorityPath,
@@ -498,21 +493,33 @@ export async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
   });
 }
 
-function trackedAgentRuntimeDaemonServiceAuthorityMatches(
-  expected: TrackedAgentRuntimeDaemonServiceAuthority,
-  current: TrackedAgentRuntimeDaemonServiceAuthority | null,
+/**
+ * The request's admitted runner authority still holds, from the daemon's own tracked state: the
+ * same tracked runner generation, authority file and capability (a refresh or revocation rotates
+ * or clears it), source and invocation context. The authority file was read once at admission.
+ */
+function trackedAgentRuntimeDaemonServiceAuthorityRemainsCurrent(
+  admitted: TrackedAgentRuntimeDaemonServiceAuthority,
+  sessionId: string,
 ): boolean {
+  const tracked = admitted.tracked;
+  const runner = resolveTrackedSessionRunnerIdentity(tracked);
   return Boolean(
-    current
-    && current.tracked === expected.tracked
-    && current.authorityPath === expected.authorityPath
-    && current.capabilityHash === expected.capabilityHash
-    && current.invocationContext === expected.invocationContext
+    tracked.agentRuntimeRunnerRestartDisposition !== 'runner_authority_unavailable'
+    && tracked.happySessionId === sessionId
+    && tracked.agentRuntimeDaemonServiceAuthorityFilePath?.trim() === admitted.authorityPath
+    && tracked.agentRuntimeDaemonServiceCapabilityHash === admitted.capabilityHash
+    && tracked.runnerAgentInvocationContext === admitted.invocationContext
+    && runner
+    && runner.pid === admitted.runner.pid
+    && runner.processStartTimeMs === admitted.runner.processStartTimeMs
+    && runner.processCommandHash === admitted.runner.processCommandHash
+    && tracked.runnerAgentSourceCustodyV1
+    && pluginSourceCustodyV1Equal(tracked.runnerAgentSourceCustodyV1, admitted.retainedAgent.sourceCustody)
     && areRunnerManagedProviderRetainedAuthoritiesEqual(
-      current.adoptedManagedProviderAuthority,
-      expected.adoptedManagedProviderAuthority,
-    )
-    && isDeepStrictEqual(current.authority, expected.authority),
+      tracked.runnerManagedDependencyRetentionV1?.adoptedManagedProviderAuthority ?? null,
+      admitted.adoptedManagedProviderAuthority,
+    ),
   );
 }
 
@@ -773,7 +780,6 @@ export function createDaemonControlApp({
   pluginActionCurrentIntent,
   externalActionApi,
   runtimeActionExecute,
-  readPluginHardRevocationRevision,
   readPluginCatalogProjection,
   isMachineRoleActive,
 }: {
@@ -932,7 +938,6 @@ export function createDaemonControlApp({
   externalActionApi?: DaemonExternalActionApi;
   /** Canonical daemon runtime owner; session processes have already admitted their Action. */
   runtimeActionExecute?: RuntimeActionExecute;
-  readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>;
   /** The Machine's role set (one owner, P03-ROLES-POLICY); missing = every role, as today. */
   isMachineRoleActive?: (roleId: string) => boolean;
 }): FastifyInstance {
@@ -3229,7 +3234,6 @@ export function createDaemonControlApp({
       ? await requestLifetime.run(() => resolveTrackedAgentRuntimeDaemonServiceAuthority(
         authorizedTracked,
         request.body.context.sessionId,
-        readPluginHardRevocationRevision,
       ))
       : null;
     requestLifetime.signal.throwIfAborted();
@@ -3394,13 +3398,7 @@ export function createDaemonControlApp({
       ) {
         return false;
       }
-      const currentAuthority = await requestLifetime.run(() => resolveTrackedAgentRuntimeDaemonServiceAuthority(
-          current,
-          request.body.context.sessionId,
-          readPluginHardRevocationRevision,
-        ));
-      requestLifetime.signal.throwIfAborted();
-      return trackedAgentRuntimeDaemonServiceAuthorityMatches(trackedAuthorityAtDispatch, currentAuthority);
+      return trackedAgentRuntimeDaemonServiceAuthorityRemainsCurrent(trackedAuthorityAtDispatch, request.body.context.sessionId);
     };
     const isCurrent = async (): Promise<boolean> => {
       requestLifetime.signal.throwIfAborted();

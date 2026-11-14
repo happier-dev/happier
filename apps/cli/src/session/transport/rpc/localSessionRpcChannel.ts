@@ -154,6 +154,15 @@ async function observeCallerPeer(socket: Socket): Promise<CallerPeer | null> {
 }
 
 /**
+ * Connections admitted as the daemon, per daemon-generation reader. The kernel peer of a connection
+ * never changes, so the admission holds for the connection's life (owner ruling 2026-11-14 O2: the
+ * peer check runs at connect only); a recycled pid or another process opens its own connection and
+ * is checked there. Only admissions are kept: a refused connection is checked again on its next
+ * request, so a daemon that connected before publishing its state is admitted once it has.
+ */
+const admittedConnections = new WeakMap<Socket, Set<() => Promise<ProcessBirthWitness | null>>>();
+
+/**
  * The caller is the host's own daemon under this OS user: its kernel-proven pid and that pid's
  * process birth both match the daemon's published generation. Anything unprovable is refused.
  */
@@ -161,12 +170,18 @@ async function isTrustedCaller(
   owner: Readonly<{ readTrustedCaller(): Promise<ProcessBirthWitness | null> }>,
   request: IncomingMessage,
 ): Promise<boolean> {
-  const peer = peerIdentities.get(request.socket as Socket);
+  const socket = request.socket as Socket;
+  if (admittedConnections.get(socket)?.has(owner.readTrustedCaller)) return true;
+  const peer = peerIdentities.get(socket);
   if (!peer?.birth || peer.uid !== process.getuid?.()) return false;
   const trusted = await owner.readTrustedCaller().catch(() => null);
   if (!trusted || trusted.pid !== peer.pid) return false;
   const { compareProcessBirth } = await import('@/daemon/processIdentity');
-  return compareProcessBirth(trusted, { status: 'same', witness: peer.birth }).status === 'same';
+  if (compareProcessBirth(trusted, { status: 'same', witness: peer.birth }).status !== 'same') return false;
+  const admitted = admittedConnections.get(socket) ?? new Set();
+  admitted.add(owner.readTrustedCaller);
+  admittedConnections.set(socket, admitted);
+  return true;
 }
 
 function reply(response: ServerResponse, status: number, body: unknown): void {
