@@ -304,6 +304,49 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
         definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', targetLabel: 'shop.example/ready', periodMs: 300_000 }] },
     }));
+    const { plugin } = await import('../../../../../../packages/plugins/machine-services/src/manifest');
+    const { PluginAccountAvailabilityIntentReadResponseV1Schema, createPackageAssetArchiveV1 } = await import('@happier-dev/protocol/plugins/availability');
+    const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const archive = createPackageAssetArchiveV1({ manifest: plugin.manifest,
+        files: plugin.manifest.contributes.resources.filter(resource => resource.kind === 'asset')
+            .map(resource => ({ path: resource.path, bytes: new TextEncoder().encode('{}') })) });
+    if (!archive) throw new Error('Expected actual plugin assets to form a release fixture');
+    const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+        hostingCapability: { enabled: false },
+        intent: { pluginId: plugin.manifest.id, desiredVersion: plugin.manifest.version, enabled: true,
+            offlineUiHosting: 'disabled', writableCollections: [], revision: 'health-kinds' },
+        release: { ref: { pluginId: plugin.manifest.id, version: plugin.manifest.version },
+            archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: plugin.manifest, collectionContracts: [], uiSlots: [],
+            packageAssetArchive: archive.descriptor },
+        packageAssets: [], uiArtifacts: [] });
+    await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+        intentReads: [{ pluginId: plugin.manifest.id, response }], materializations: [], snapshots: [] } }));
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
+        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', name: 'HTTP' }] },
+    }));
+    const { PluginMachineMaterializationV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const materialization = PluginMachineMaterializationV1Schema.parse({ serverIdentityId: 'srv_inventory_check_facts',
+        machineId: 'observer', materializationId: 'health-installation', pluginId: plugin.manifest.id, version: plugin.manifest.version,
+        sourceClass: 'localPath', portableRelease: false, declaredManifest: plugin.manifest, uiArtifacts: [],
+        enabled: true, trustState: 'trusted', observedAt: 1 });
+    const peer = PluginMachineMaterializationV1Schema.parse({ ...materialization, machineId: 'other-observer',
+        declaredManifest: { ...plugin.manifest, contributes: { ...plugin.manifest.contributes,
+            healthCheckKinds: plugin.manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, title: 'Other Machine check' })) } } });
+    await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 2,
+        intentReads: [{ pluginId: plugin.manifest.id, response: { ...response, intent: null, release: null } }],
+        materializations: [peer, materialization], snapshots: [peer, materialization].map(row => ({
+            serverIdentityId: row.serverIdentityId, machineId: row.machineId, materializations: [row] })) } }));
+    // No observer has been assigned yet; another Machine's descriptor cannot name this source.
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
+        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', name: 'Shop availability' }] },
+    }));
+    await act(async () => storage.setState({ automations: { a: createAutomationDefinitionFromDetail({ ...detail,
+        triggers: detail.triggers.map(trigger => trigger.kind === 'pluginEvent' ? { ...trigger,
+            observation: { kind: 'checkpointedPull', watcher: { machineId: 'observer', machineInstallationId: 'observer-installation',
+                pluginId: plugin.manifest.id, materializationId: 'health-installation' } } } : trigger) }) } }));
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
+        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', name: 'HTTP' }] },
+    }));
     const lifetime = captureActiveServerAccountScopeLifetime();
     expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(true);
     const ownedReads = () => account.home.requests.filter(request => request.path.startsWith('/v3/automations')

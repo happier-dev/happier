@@ -69,6 +69,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 ? readPluginEventAutomationPrivateDetail(definition, trigger.id, opened.access) : null;
             return [{ key: configuredCheckDefinitionKey(definition.id, trigger.id),
                 source: privateDetail?.storedDefinition ?? null,
+                observation: privateDetail?.trigger.observation ?? null,
                 loading: definition.detail.kind === 'unloaded' || opened?.lifetime !== lifetime }];
         }));
     }, [presented, lifetime, automations, opened]);
@@ -82,11 +83,19 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
     const domains = domainPage.snapshot.value?.items ?? NO_DOMAINS;
     const byTrigger = React.useMemo(() => {
         const declarations = reader?.readCurrentAccountExecutionDeclarations() ?? [];
+        const installed = reader?.readInstalledPlugins();
         const projection = reader?.readAccountUiProjection();
         return new Map<string, ConfiguredCheckDefinitionFacts>(base.map(entry => {
             if (!entry.source) return [entry.key, entry.loading ? CONFIGURED_CHECK_DEFINITION_LOADING : UNAVAILABLE];
+            const observer = entry.observation?.kind === 'durablePush' ? entry.observation.endpointMaterializationRef
+                : entry.observation?.watcher;
             const checks = readServiceCheckDefinitions(entry.source, { domains, kindName: kind => {
-                const declaration = declarations.find(candidate => candidate.manifest.id === kind.pluginId)?.manifest.contributes?.healthCheckKinds?.[kind.localId];
+                const manifest = declarations.find(candidate => candidate.manifest.id === kind.pluginId)?.manifest
+                    ?? (observer && installed?.kind === 'available' ? installed.plugins.find(plugin => plugin.pluginId === kind.pluginId)
+                        ?.installations.find(({ materialization }) => materialization.machineId === observer.machineId
+                            && materialization.pluginId === observer.pluginId && materialization.materializationId === observer.materializationId)
+                        ?.contributorDeclaration : null);
+                const declaration = manifest?.contributes.healthCheckKinds?.find(candidate => candidate.id === kind.localId);
                 return declaration ? resolvePluginLocalizedText({ projection, pluginId: kind.pluginId, value: declaration.title }) : null;
             } });
             return [entry.key, checks ? { kind: 'available', checks: checks.map(({ checkId, name, targetLabel, periodMs, domainId }) =>
