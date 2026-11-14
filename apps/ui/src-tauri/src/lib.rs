@@ -306,8 +306,18 @@ mod app_updates {
         app: AppHandle,
         pending_update: State<'_, PendingUpdate>,
     ) -> Result<Option<UpdateMetadata>, String> {
-        let update = app
-            .updater()
+        let updater = app.updater_builder();
+        #[cfg(target_os = "windows")]
+        let updater = {
+            let app = app.clone();
+            updater.on_before_exit(move || {
+                // The Windows installer exits the process without RunEvent::Exit.
+                crate::window_chrome::flush_main_window_frame(&app);
+                app.cleanup_before_exit();
+            })
+        };
+        let update = updater
+            .build()
             .map_err(|e| e.to_string())?
             .check()
             .await

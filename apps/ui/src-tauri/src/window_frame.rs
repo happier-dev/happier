@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::PathBuf,
-    sync::{
-        mpsc,
-        Arc, Mutex,
-    },
+    sync::{mpsc, Arc, Mutex},
     time::Duration,
 };
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent};
@@ -55,7 +52,7 @@ pub(crate) fn load(path: &PathBuf) -> Option<SavedFrame> {
     }
 }
 
-fn save(path: &PathBuf, frame: &SavedFrame) {
+fn save(path: &PathBuf, frame: &SavedFrame) -> bool {
     let result = (|| -> Result<(), String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -63,8 +60,12 @@ fn save(path: &PathBuf, frame: &SavedFrame) {
         let bytes = serde_json::to_vec(frame).map_err(|error| error.to_string())?;
         fs::write(path, bytes).map_err(|error| error.to_string())
     })();
-    if let Err(error) = result {
-        log::warn!("could not save main-window frame: {error}");
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!("could not save main-window frame: {error}");
+            false
+        }
     }
 }
 
@@ -96,8 +97,7 @@ pub(crate) fn usable_frame(saved: SavedFrame, monitors: &[MonitorArea]) -> Optio
 
 /// Applies the saved frame to a window that has not been shown yet. Returns the frame that was
 /// applied, or `None` when there was nothing usable to restore.
-pub(crate) fn restore(window: &WebviewWindow, path: &PathBuf) -> Option<SavedFrame> {
-    let saved = load(path)?;
+fn restore(window: &WebviewWindow, saved: SavedFrame) -> Option<SavedFrame> {
     let monitors: Vec<MonitorArea> = window
         .available_monitors()
         .unwrap_or_default()
@@ -110,11 +110,12 @@ pub(crate) fn restore(window: &WebviewWindow, path: &PathBuf) -> Option<SavedFra
         })
         .collect();
     let frame = usable_frame(saved, &monitors)?;
-    if let Err(error) = window.set_size(PhysicalSize::new(frame.width, frame.height)) {
-        log::warn!("failed to restore main-window size: {error}");
-    }
+    // On Windows, moving first selects the destination monitor's DPI before restoring size.
     if let Err(error) = window.set_position(PhysicalPosition::new(frame.x, frame.y)) {
         log::warn!("failed to restore main-window position: {error}");
+    }
+    if let Err(error) = window.set_size(PhysicalSize::new(frame.width, frame.height)) {
+        log::warn!("failed to restore main-window size: {error}");
     }
     if frame.maximized {
         if let Err(error) = window.maximize() {
@@ -131,103 +132,120 @@ struct Shared {
 }
 
 impl Shared {
+    fn record(&self, normal: Option<SavedFrame>, maximized: bool) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        let mut frame = normal.unwrap_or(state.0);
+        if frame.width < MIN_SIZE_PX || frame.height < MIN_SIZE_PX {
+            return false;
+        }
+        frame.maximized = maximized;
+        if frame == state.0 {
+            return false;
+        }
+        *state = (frame, true);
+        true
+    }
+
     fn flush(&self) {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        if state.1 {
-            save(&self.path, &state.0);
+        if state.1 && save(&self.path, &state.0) {
             state.1 = false;
         }
     }
 }
 
-/// Keeps the saved frame current; managed as app state so the exit path can flush it.
+/// One app-lifetime owner survives main-window destruction and recreation in tray mode.
 pub(crate) struct FrameTracker {
     shared: Arc<Shared>,
+    wake: mpsc::Sender<()>,
 }
 
 impl FrameTracker {
-    /// Writes a pending frame now. Called when the app exits, which can happen inside the
-    /// debounce window.
+    pub(crate) fn new(path: PathBuf) -> Self {
+        let initial = load(&path).unwrap_or_default();
+        let shared = Arc::new(Shared {
+            path,
+            state: Mutex::new((initial, false)),
+        });
+        // The app and every attached window share one worker and the same pending frame.
+        let (wake, events) = mpsc::channel::<()>();
+        let worker = Arc::clone(&shared);
+        std::thread::spawn(move || {
+            while events.recv().is_ok() {
+                while events.recv_timeout(SAVE_DEBOUNCE).is_ok() {}
+                worker.flush();
+            }
+        });
+        Self { shared, wake }
+    }
+
+    /// Restores and attaches a newly created, still hidden main window to the existing owner.
+    pub(crate) fn track(&self, window: &WebviewWindow) {
+        let saved = self.shared.state.lock().ok().map(|state| state.0);
+        if saved.and_then(|frame| restore(window, frame)).is_none() {
+            // This window's default geometry is the initial normal frame when saved geometry
+            // is absent or its monitor is disconnected. Never initialize from a maximized rect.
+            if let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                if let Ok(mut state) = self.shared.state.lock() {
+                    *state = (
+                        SavedFrame {
+                            x: position.x,
+                            y: position.y,
+                            width: size.width,
+                            height: size.height,
+                            maximized: false,
+                        },
+                        false,
+                    );
+                }
+            }
+        }
+
+        let shared = Arc::clone(&self.shared);
+        let wake = self.wake.clone();
+        let window_for_events = window.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                shared.flush();
+                return;
+            }
+            if !matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                return;
+            }
+            let window = &window_for_events;
+            // These are temporary presentation modes, not a new normal or maximized frame.
+            if window.is_minimized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+                return;
+            }
+            let maximized = window.is_maximized().unwrap_or(false);
+            let normal = if maximized {
+                None
+            } else {
+                match (window.outer_position(), window.inner_size()) {
+                    (Ok(position), Ok(size)) => Some(SavedFrame {
+                        x: position.x,
+                        y: position.y,
+                        width: size.width,
+                        height: size.height,
+                        maximized: false,
+                    }),
+                    _ => return,
+                }
+            };
+            if shared.record(normal, maximized) {
+                let _ = wake.send(());
+            }
+        });
+    }
+
+    /// Flushes the same owner on actual app exit, including after window recreation.
     pub(crate) fn flush(&self) {
         self.shared.flush();
     }
-}
-
-/// Starts tracking the window. `restored` is what `restore` applied; without it the window's
-/// current (default, not yet maximized) geometry is the known normal frame. While maximized,
-/// minimized or fullscreen the last normal size and position are kept, so un-maximizing after a
-/// restart returns to the previous frame.
-pub(crate) fn track(
-    window: &WebviewWindow,
-    path: PathBuf,
-    restored: Option<SavedFrame>,
-) -> FrameTracker {
-    let initial = restored.unwrap_or_else(|| {
-        match (window.outer_position(), window.inner_size()) {
-            (Ok(position), Ok(size)) => SavedFrame {
-                x: position.x,
-                y: position.y,
-                width: size.width,
-                height: size.height,
-                maximized: false,
-            },
-            _ => SavedFrame::default(),
-        }
-    });
-    let shared = Arc::new(Shared {
-        path,
-        state: Mutex::new((initial, false)),
-    });
-    // One worker debounces every burst of move/resize events into a single write.
-    let (wake, events) = mpsc::channel::<()>();
-    let worker = Arc::clone(&shared);
-    std::thread::spawn(move || {
-        while events.recv().is_ok() {
-            while events.recv_timeout(SAVE_DEBOUNCE).is_ok() {}
-            worker.flush();
-        }
-    });
-
-    let tracker = FrameTracker {
-        shared: Arc::clone(&shared),
-    };
-    let window_for_events = window.clone();
-    window.on_window_event(move |event| {
-        if !matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
-            return;
-        }
-        let window = &window_for_events;
-        if window.is_minimized().unwrap_or(false) {
-            return;
-        }
-        let maximized = window.is_maximized().unwrap_or(false);
-        let fullscreen = window.is_fullscreen().unwrap_or(false);
-        {
-            let Ok(mut state) = shared.state.lock() else {
-                return;
-            };
-            let frame = &mut state.0;
-            // Record `maximized` only on top of a known normal frame; otherwise the file would
-            // hold zero geometry and be rejected on the next launch.
-            if maximized && (frame.width < MIN_SIZE_PX || frame.height < MIN_SIZE_PX) {
-                return;
-            }
-            frame.maximized = maximized;
-            if !maximized && !fullscreen {
-                if let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) {
-                    frame.x = position.x;
-                    frame.y = position.y;
-                    frame.width = size.width;
-                    frame.height = size.height;
-                }
-            }
-            state.1 = true;
-        }
-        let _ = wake.send(());
-    });
-    tracker
 }
 
 #[cfg(test)]
@@ -259,10 +277,7 @@ mod tests {
 
     #[test]
     fn frame_on_a_secondary_monitor_with_negative_origin_is_kept() {
-        let left = MonitorArea {
-            x: -1920,
-            ..SCREEN
-        };
+        let left = MonitorArea { x: -1920, ..SCREEN };
         let saved = frame(-1800, 50, 1000, 700);
         assert_eq!(usable_frame(saved, &[left, SCREEN]), Some(saved));
     }
@@ -282,9 +297,60 @@ mod tests {
 
     #[test]
     fn minimized_sentinel_position_and_tiny_sizes_are_dropped() {
-        assert_eq!(usable_frame(frame(-32000, -32000, 800, 600), &[SCREEN]), None);
+        assert_eq!(
+            usable_frame(frame(-32000, -32000, 800, 600), &[SCREEN]),
+            None
+        );
         assert_eq!(usable_frame(frame(0, 0, 10, 10), &[SCREEN]), None);
         assert_eq!(usable_frame(SavedFrame::default(), &[SCREEN]), None);
+    }
+
+    #[test]
+    fn maximized_state_preserves_the_normal_frame_and_equal_events_do_not_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("frame.json");
+        let normal = frame(10, 20, 900, 700);
+        let shared = Shared {
+            path: path.clone(),
+            state: Mutex::new((normal, false)),
+        };
+        assert!(!shared.record(Some(normal), false));
+        shared.flush();
+        assert!(!path.exists());
+
+        assert!(shared.record(None, true));
+        shared.flush();
+        assert_eq!(
+            load(&path),
+            Some(SavedFrame {
+                maximized: true,
+                ..normal
+            })
+        );
+
+        let restored = frame(30, 40, 1000, 750);
+        assert!(shared.record(Some(restored), false));
+        shared.flush();
+        assert_eq!(load(&path), Some(restored));
+    }
+
+    #[test]
+    fn failed_flush_is_retried_after_storage_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("window-state");
+        fs::write(&parent, b"blocks the state directory").unwrap();
+        let path = parent.join("main-window-frame.json");
+        let saved = frame(10, 20, 900, 700);
+        let shared = Shared {
+            path: path.clone(),
+            state: Mutex::new((saved, true)),
+        };
+
+        shared.flush();
+        fs::remove_file(&parent).unwrap();
+        shared.flush();
+
+        assert_eq!(load(&path), Some(saved));
     }
 
     #[test]

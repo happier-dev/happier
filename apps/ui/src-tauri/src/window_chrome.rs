@@ -395,12 +395,8 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
     // macOS autosaves its own frame in `configure_main_window`; elsewhere restore it while the
     // window is still hidden so it never flashes at the default size first.
     #[cfg(not(target_os = "macos"))]
-    if let Ok(dir) = app.path().app_config_dir() {
-        let frame_path = dir.join("window-state/main-window-frame.json");
-        let restored = window_frame::restore(&window, &frame_path);
-        let tracker = window_frame::track(&window, frame_path, restored);
-        // A recreated main window (tray Open) replaces the previous tracker's state.
-        app.manage(tracker);
+    if let Some(tracker) = app.try_state::<window_frame::FrameTracker>() {
+        tracker.track(&window);
     }
     configure_main_window(app, &window);
     Ok(window)
@@ -539,6 +535,15 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
         preferences::WindowChromePreferences::default()
     };
     app.manage(DesktopWindowChromeState(std::sync::Mutex::new(preferences)));
+    #[cfg(not(target_os = "macos"))]
+    match app.path().app_config_dir() {
+        Ok(dir) => {
+            app.manage(window_frame::FrameTracker::new(
+                dir.join("window-state/main-window-frame.json"),
+            ));
+        }
+        Err(error) => log::warn!("could not initialize main-window frame persistence: {error}"),
+    }
     if crate::menu_bar::launched_in_menu_bar_mode(app.handle()) {
         return Ok(());
     }
