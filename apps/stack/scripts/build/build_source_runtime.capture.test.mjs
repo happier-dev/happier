@@ -230,8 +230,14 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
     'apps/server/sources/main.light.ts': 'export { version } from "../../../packages/protocol/src/shared";',
     'packages/protocol/src/shared.ts': 'export const version = "committed";',
     'packages/protocol/src/kept.ts': 'export const kept = "committed";',
+    'packages/protocol/src/late-edit.ts': 'export const late = "committed";',
+    'packages/protocol/src/late-delete.ts': 'export const deleted = "committed";',
+    'apps/cli/assets/bundled-plugin-manifests/example.json': '{"version":"committed"}',
   };
-  for (const [path, text] of Object.entries(committed)) await writeFile(join(repoDir, path), text);
+  for (const [path, text] of Object.entries(committed)) {
+    await mkdir(dirname(join(repoDir, path)), { recursive: true });
+    await writeFile(join(repoDir, path), text);
+  }
   await gitIn('add', '-A');
   await gitIn('commit', '--quiet', '-m', 'rev');
   // Another lane's half edits in the shared checkout: a modified, an untracked and a deleted source.
@@ -245,6 +251,10 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await mkdir(join(repoDir, 'packages/protocol/src/generated'));
   await writeFile(join(repoDir, 'packages/protocol/src/generated/out.ts'), 'export const generated = true;');
   const revision = await resolveSourceRevision({ repoDir, overlay: [overlayPath], outputDir: fixture.path('revisions') });
+  // These paths were clean when described, then changed before either host captured.
+  await writeFile(join(repoDir, 'packages/protocol/src/late-edit.ts'), 'export const late = "other-lane";');
+  await rm(join(repoDir, 'packages/protocol/src/late-delete.ts'));
+  await writeFile(join(repoDir, 'apps/cli/assets/bundled-plugin-manifests/example.json'), '{"version":"other-lane"}');
   const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), revision });
   const expected = { ...committed, [overlayPath]: overlayText, 'packages/protocol/src/other-lane.ts': null,
     'packages/protocol/src/generated/out.ts': 'export const generated = true;' };
@@ -260,4 +270,13 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
     assert.equal(captured.revision?.revision, revision.revision);
     assert.equal(captured.revision?.overlayDigest, revision.overlayDigest);
   }
+  // Direct captures (including mirror hosts without Git) use the same descriptor.
+  const direct = await captureSourceWebBuildInputs({ repoDir, component: 'daemon',
+    outputDir: fixture.path('direct'), revision });
+  assert.equal(await readFile(join(direct.repoDir, 'packages/protocol/src/late-edit.ts'), 'utf8'),
+    committed['packages/protocol/src/late-edit.ts']);
+  // Declared overlays remain exact inputs, rather than silently falling back to Git.
+  await writeFile(join(repoDir, overlayPath), 'export const version = "changed-overlay";');
+  await assert.rejects(captureSourceRuntimeSharedInputs({ repoDir,
+    outputDir: fixture.path('overlay-drift'), revision }), { code: 'BUILD_INPUTS_CHANGED' });
 });

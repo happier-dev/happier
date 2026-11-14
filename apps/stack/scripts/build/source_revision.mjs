@@ -15,8 +15,8 @@ import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from
  * Git exists only on the controller: execution-host mirrors carry no `.git`.
  * The controller therefore describes the revision once, and every host applies
  * that description to the capture it already makes from its own checkout:
- * - tracked paths must equal the revision's blob; changed paths are restored
- *   from the shipped blob, and an unexplained difference (mirror lag) is drift;
+ * - every tracked capture input has its revision blob shipped, so later
+ *   checkout edits and mirror lag are repaired from Git objects;
  * - untracked authored paths are dropped; ignored generated outputs stay;
  * - overlay paths keep the checkout's bytes, which must equal their declared digest.
  */
@@ -123,9 +123,9 @@ export function sourceRevisionKey({ revision, overlayDigest }) {
 }
 
 /**
- * Describe a resolved revision for capture on any host. Restored blobs cover
- * only the changed paths these components' capture can contain (their input
- * walk, plus revision files the checkout deleted inside their owners).
+ * Describe a resolved revision for capture on any host. Ship blobs for every
+ * tracked input, including files clean now that can change before capture,
+ * plus revision files the checkout deleted inside the component owners.
  * The descriptor is a finite request input: callers delete it after use.
  * @returns {Promise<string>} the descriptor path
  */
@@ -143,15 +143,15 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
     for (const file of inputs.files) files.add(file);
     for (const dir of inputs.workspaceDirs) if (dir) owners.add(`${dir.replaceAll('\\', '/')}/`);
   }
-  const changed = [];
+  const revisionFiles = new Set([...files].filter(path => Object.hasOwn(tree, path) && !Object.hasOwn(identity.overlay, path)));
   for (const path of nulList(await git(repoDir, ['diff', '--name-only', '-z', '--no-renames', identity.revision, '--']))) {
     if (!Object.hasOwn(tree, path) || Object.hasOwn(identity.overlay, path)) continue;
     if (files.has(path) || ([...owners].some(owner => path.startsWith(owner)) && await readCheckoutBytes(join(repoDir, path)) === null)) {
-      changed.push(path);
+      revisionFiles.add(path);
     }
   }
-  const blobBytes = await readGitBlobs(repoDir, [...new Set(changed.map(path => tree[path][1]))]);
-  const blobs = Object.fromEntries(changed.map(path => [path, blobBytes.get(tree[path][1]).toString('base64')]));
+  const blobBytes = await readGitBlobs(repoDir, [...new Set([...revisionFiles].map(path => tree[path][1]))]);
+  const blobs = Object.fromEntries([...revisionFiles].map(path => [path, blobBytes.get(tree[path][1]).toString('base64')]));
   const untracked = nulList(await git(repoDir, ['ls-files', '-z', '-o', '--exclude-standard']))
     .filter(path => !Object.hasOwn(identity.overlay, path));
   const descriptor = { version: SOURCE_REVISION_DESCRIPTOR_VERSION, revision: identity.revision,
@@ -229,7 +229,6 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     if (result.has(path)) continue;
     const owner = owners.find(dir => path.startsWith(dir));
     if (!owner || isWorkspaceBuildInputIgnoredPath(posix.relative(owner, path))) continue;
-    if (await readCheckoutBytes(join(sourceDir, path)) !== null) continue;
     await writeRevisionEntry(join(captureDir, path), descriptor.tree[path][0], Buffer.from(blob, 'base64'));
     result.add(path);
   }
