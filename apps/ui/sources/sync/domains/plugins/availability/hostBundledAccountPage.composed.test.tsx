@@ -976,9 +976,14 @@ it.each(['bundledSource', 'materialization', 'retainedMetadata', 'automaticDevel
 });
 
 it('renders a cold bundled Account page with shared state across navigation chrome changes and no daemon calls', async () => {
+    const { CurrentUiContextProvider } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { resolvePluginPageLaunchAuthorities } = await import('@/components/plugins/pages/pluginPageNavigation');
     const { resolvePluginPages } = await import('@/components/plugins/pages/pluginPages');
     await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    const credentials = await TokenStorage.getCredentials();
     packaged.machineRpc.mockClear();
     const scope = storage.getState().profileScope!;
     replacePluginAccountAvailabilityProjection({ scope, snapshot: {
@@ -987,11 +992,17 @@ it('renders a cold bundled Account page with shared state across navigation chro
     function Page() {
         const shell = useAppShellPluginUiProjection();
         const placement = shell.pluginUiProjection?.surfacePlacementsById['surfacePlacement:happier.fixture:account-page'];
-        return placement ? <PluginSurfacePlacementHost placement={placement} pluginUiProjection={shell.pluginUiProjection}
+        return placement ? <PluginSurfacePlacementHost placement={{ ...placement,
+            renderer: { ...placement.renderer, requiredHostMethods: ['executeAction', 'publishCurrentUiContext'] },
+        }} pluginUiProjection={shell.pluginUiProjection}
             machineId={null} serverId={null} platform="web" projectionInteractionEnabled={shell.interactionEnabled} /> : null;
     }
     const renderPage = (showsBack: boolean) => <NavigationTitleChromeProvider showsTitle={showsBack} showsBack={showsBack}>
-        <AppShellPluginUiProjectionProvider><Page /></AppShellPluginUiProjectionProvider>
+        <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><AppShellPluginUiProjectionProvider>
+                <CurrentUiContextProvider><Page /></CurrentUiContextProvider>
+            </AppShellPluginUiProjectionProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>
     </NavigationTitleChromeProvider>;
     const reactErrors = vi.spyOn(console, 'error');
     const screen = await renderWithAppProviders(renderPage(false));
