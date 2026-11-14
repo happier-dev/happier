@@ -8,6 +8,8 @@ export type {
   AgentCliInstallPlan,
   AgentCliInstallPlanResult,
   AgentCliUpdateTarget,
+  AgentCliTargetRelease,
+  InstallAgentCliForTargetResult,
 } from './install.js';
 export type {
   AgentCliInstallSource,
@@ -24,6 +26,7 @@ export {
 export {
   installAgentCli,
   installAgentCliForRuntime,
+  installAgentCliForTarget,
   planAgentCliInstall,
   planAgentCliInstallForRuntime,
   resolvePlatformFromNodePlatform,
@@ -35,6 +38,7 @@ export type {
   AgentCliResolutionSource,
   AgentCliRuntimeDescriptor,
   AgentCliSourcePolicy,
+  AgentCliTargetPlatform,
 } from './resolution.js';
 export type {
   ManagedAgentCliPreparation,

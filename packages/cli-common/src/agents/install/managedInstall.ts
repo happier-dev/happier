@@ -26,6 +26,7 @@ import {
   resolveAgentCliManagedCommandRelativePathForRuntime,
   resolveAgentCliManagedInstallRootForRuntime,
   type AgentCliRuntimeDescriptor,
+  type AgentCliTargetPlatform,
 } from '../resolution.js';
 
 export type ManagedInstallDeps = Readonly<{
@@ -63,13 +64,17 @@ type GitHubReleasePayload = Readonly<{
 function resolveManagedAgentCommandPathInInstallDir(
   runtimeSpec: AgentCliRuntimeDescriptor,
   installDir: string,
-  env: NodeJS.ProcessEnv,
+  platform: AgentCliInstallPlatform,
 ): string {
-  return join(installDir, resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec));
+  return join(installDir, resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec, platform));
 }
 
-async function prepareManagedAgentInstallRoot(runtimeSpec: AgentCliRuntimeDescriptor, env: NodeJS.ProcessEnv): Promise<string> {
-  const installRoot = resolveAgentCliManagedInstallRootForRuntime(runtimeSpec, { processEnv: env });
+async function prepareManagedAgentInstallRoot(
+  runtimeSpec: AgentCliRuntimeDescriptor,
+  env: NodeJS.ProcessEnv,
+  target?: AgentCliTargetPlatform,
+): Promise<string> {
+  const installRoot = resolveAgentCliManagedInstallRootForRuntime(runtimeSpec, { processEnv: env, ...(target ? { target } : {}) });
   await mkdir(installRoot, { recursive: true });
   // Secure scratch creation makes recursive ancestors private. Only this
   // runtime-code namespace is public; .tmp and install logs remain private.
@@ -171,7 +176,7 @@ export async function installManagedPackageAgentCli(params: Readonly<{
   try {
     const candidateDir = join(scratchDir, 'candidate');
     const workspaceDir = join(candidateDir, 'workspace');
-    const launcherPath = resolveManagedAgentCommandPathInInstallDir(params.runtimeSpec, candidateDir, params.env);
+    const launcherPath = resolveManagedAgentCommandPathInInstallDir(params.runtimeSpec, candidateDir, params.platform);
     const launcherWorkspaceDir = join(installRoot, 'current', 'workspace');
     const runtimePathEntries = resolveJavaScriptRuntimePathEntries({
       processEnv: params.env,
@@ -252,6 +257,7 @@ export async function installManagedPackageAgentCli(params: Readonly<{
 async function resolveManagedBinaryAsset(params: Readonly<{
   managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
   platform: AgentCliInstallPlatform;
+  arch: string;
   deps: ManagedInstallDeps;
   signal?: AbortSignal;
   env: NodeJS.ProcessEnv;
@@ -279,16 +285,16 @@ async function resolveManagedBinaryAsset(params: Readonly<{
 
   const assets = normalizeGitHubReleaseAssets(release);
   const declaredAssetName = params.managedInstall.assetNameByPlatform
-    ? params.managedInstall.assetNameByPlatform[params.platform][resolveManagedAssetArch(process.arch)]
+    ? params.managedInstall.assetNameByPlatform[params.platform][resolveManagedAssetArch(params.arch)]
     : null;
   const selected = (declaredAssetName
     ? [declaredAssetName]
-    : preferredGitHubReleaseAssetNames(params.managedInstall.binaryName))
+    : preferredGitHubReleaseAssetNames(params.managedInstall.binaryName, params.platform, params.arch))
     .map((name) => assets.find((asset) => asset.name === name))
     .find(Boolean);
   if (!selected) {
     throw new Error(
-      `No ${params.managedInstall.binaryName} release asset found for ${params.platform}/${process.arch}`,
+      `No ${params.managedInstall.binaryName} release asset found for ${params.platform}/${params.arch}`,
     );
   }
   if (!selected.digest) {
@@ -326,8 +332,8 @@ function normalizeGitHubReleaseAssets(release: unknown): GitHubReleaseAsset[] {
   return assets;
 }
 
-function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
-  if (process.platform === 'darwin' && process.arch === 'arm64') {
+function preferredGitHubReleaseAssetNames(binaryName: string, platform: AgentCliInstallPlatform, arch: string): string[] {
+  if (platform === 'darwin' && arch === 'arm64') {
     return [
       `${binaryName}-darwin-arm64`,
       `${binaryName}-darwin-arm64.tar.gz`,
@@ -338,7 +344,7 @@ function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
       `${binaryName}-aarch64-apple-darwin.zip`,
     ];
   }
-  if (process.platform === 'darwin' && process.arch === 'x64') {
+  if (platform === 'darwin' && arch === 'x64') {
     return [
       `${binaryName}-darwin-x64`,
       `${binaryName}-darwin-x64.tar.gz`,
@@ -349,7 +355,7 @@ function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
       `${binaryName}-x86_64-apple-darwin.zip`,
     ];
   }
-  if (process.platform === 'linux' && process.arch === 'arm64') {
+  if (platform === 'linux' && arch === 'arm64') {
     return [
       `${binaryName}-linux-arm64`,
       `${binaryName}-linux-arm64.tar.gz`,
@@ -361,7 +367,7 @@ function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
       `${binaryName}-aarch64-unknown-linux-gnu.tar.xz`,
     ];
   }
-  if (process.platform === 'linux' && process.arch === 'x64') {
+  if (platform === 'linux' && arch === 'x64') {
     return [
       `${binaryName}-linux-x64`,
       `${binaryName}-linux-x64.tar.gz`,
@@ -373,27 +379,29 @@ function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
       `${binaryName}-x86_64-unknown-linux-gnu.tar.xz`,
     ];
   }
-  if (process.platform === 'win32' && process.arch === 'arm64') {
+  if (platform === 'win32' && arch === 'arm64') {
     return [
       `${binaryName}-windows-arm64.exe`,
       `${binaryName}-windows-arm64.zip`,
       `${binaryName}-aarch64-pc-windows-msvc.exe.zip`,
     ];
   }
-  if (process.platform === 'win32' && process.arch === 'x64') {
+  if (platform === 'win32' && arch === 'x64') {
     return [
       `${binaryName}-windows-x64.exe`,
       `${binaryName}-windows-x64.zip`,
       `${binaryName}-x86_64-pc-windows-msvc.exe.zip`,
     ];
   }
-  throw new Error(`Unsupported managed GitHub release platform: ${process.platform}/${process.arch}`);
+  throw new Error(`Unsupported managed GitHub release platform: ${platform}/${arch}`);
 }
 
 export async function installManagedBinaryAgentCli(params: Readonly<{
   runtimeSpec: AgentCliRuntimeDescriptor;
   managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
   platform: AgentCliInstallPlatform;
+  /** Another platform's CPU architecture (a Session target): staged in its own root, never this Machine's CLI. */
+  target?: AgentCliTargetPlatform;
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: ManagedInstallDeps;
@@ -402,10 +410,12 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
   onProgress?: AgentInstallProgressCallback;
 }>): Promise<void> {
   params.signal?.throwIfAborted();
-  const installRoot = await prepareManagedAgentInstallRoot(params.runtimeSpec, params.env);
+  const platform = params.target?.platform ?? params.platform;
+  const installRoot = await prepareManagedAgentInstallRoot(params.runtimeSpec, params.env, params.target);
   const asset = await resolveManagedBinaryAsset({
     managedInstall: params.managedInstall,
-    platform: params.platform,
+    platform,
+    arch: params.target?.arch ?? process.arch,
     deps: params.deps,
     env: params.env,
     signal: params.signal,
@@ -418,12 +428,8 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
     const archivePath = join(scratchDir, asset.name);
     const extractDir = join(scratchDir, 'extract');
     const candidateDir = join(scratchDir, 'candidate');
-    const candidateBinPath = resolveManagedAgentCommandPathInInstallDir(
-      params.runtimeSpec,
-      candidateDir,
-      params.env,
-    );
-    const archiveEntries = params.managedInstall.archiveEntriesByPlatform?.[params.platform];
+    const candidateBinPath = resolveManagedAgentCommandPathInInstallDir(params.runtimeSpec, candidateDir, platform);
+    const archiveEntries = params.managedInstall.archiveEntriesByPlatform?.[platform];
 
     await (params.deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset)({
       url: asset.url,
@@ -464,7 +470,8 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
       signal: params.signal,
       candidatePath: candidateDir,
       reportWarning: (message) => params.appendLogLine(params.logPath, `# ${message}`),
-      activateVersionedRelease: params.platform !== 'win32',
+      // Promotion is a filesystem operation of this Machine (versioned `active` links need a POSIX host).
+      activateVersionedRelease: process.platform !== 'win32',
     });
   } finally {
     await removeHappierTempDirAsync(scratchDir);

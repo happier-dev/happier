@@ -6,14 +6,21 @@ import {
 } from '@happier-dev/agents/cli/runtime';
 import { resolveAgentSetupHostPlatform } from '@happier-dev/protocol/agents/setup';
 
-import type { ManagedInstallDeps } from './install/managedInstall.js';
+import { existsSync } from 'node:fs';
+
+import { installManagedBinaryAgentCli, type ManagedInstallDeps } from './install/managedInstall.js';
+import { buildRuntimeInstallFailureResult } from './install/runtimeInstallFailureHandling.js';
+import { createRuntimeInstallLifecycleContext, disposeRuntimeInstallLifecycleContext } from './install/runtimeInstallLifecycleContext.js';
 import { updateInstalledAgentCli } from './install/nativeUpdateInstall.js';
 import { runRuntimeInstallCoordinator } from './install/runtimeInstallCoordinator.js';
 import { runRuntimeInstallPreflight } from './install/runtimeInstallPreflight.js';
 import {
+  resolveAgentCliManagedCommandPathForRuntime,
+  resolveAgentCliManagedCommandRelativePathForRuntime,
   type AgentCliResolutionSource,
   type AgentCliRuntimeDescriptor,
   type AgentCliSourcePolicy,
+  type AgentCliTargetPlatform,
 } from './resolution.js';
 import { classifyAgentCliInstall } from './update.js';
 import type { AgentInstallProgressCallback } from './installProgress.js';
@@ -298,6 +305,67 @@ export async function installAgentCliForRuntime(params: Readonly<{
     sourcePolicy: params.sourcePolicy,
     deps,
   });
+}
+
+/** An Agent CLI release staged on this Machine for another platform: every declared file, relative to `installDir`. */
+export type AgentCliTargetRelease = Readonly<{ command: string; installDir: string; files: ReadonlyArray<string> }>;
+
+export type InstallAgentCliForTargetResult =
+  | (Readonly<{ ok: true; alreadyInstalled: boolean }> & AgentCliTargetRelease)
+  | Extract<InstallAgentCliResult, { ok: false }>;
+
+/**
+ * The managed release of an Agent CLI for another platform (a Session target of
+ * another OS or CPU architecture), staged on this Machine through the same
+ * GitHub-release installer, asset declaration and digest verification as this
+ * Machine's own managed install, under `tools/targets/<platform>-<arch>/`. It is
+ * never resolved as this Machine's CLI. Detection is the same managed command
+ * path: an existing staged release is reused (a pinned `releaseTag` names one
+ * release). Only `github_release_binary` installs can be staged for another
+ * platform (a vendor recipe or managed package runs on the platform itself).
+ */
+export async function installAgentCliForTarget(params: Readonly<{
+  runtimeSpec: AgentCliRuntimeDescriptor;
+  target: AgentCliTargetPlatform;
+  env?: NodeJS.ProcessEnv;
+  logDir?: string | null;
+  signal?: AbortSignal;
+  onProgress?: AgentInstallProgressCallback;
+  deps?: InstallAgentCliDeps;
+}>): Promise<InstallAgentCliForTargetResult> {
+  params.signal?.throwIfAborted();
+  const { runtimeSpec, target } = params;
+  const env = params.env ?? process.env;
+  const planned = planAgentCliInstallForRuntime({ runtimeSpec, platform: target.platform });
+  if (!planned.ok || planned.plan.managedInstall?.kind !== 'github_release_binary') {
+    return { ok: false, errorCode: 'no-recipe', plan: planned.ok ? planned.plan : null, logPath: null,
+      errorMessage: `No managed release of ${runtimeSpec.id} can be staged for ${target.platform}-${target.arch}.` };
+  }
+  const managedInstall = planned.plan.managedInstall;
+  const release = (): AgentCliTargetRelease => {
+    const command = resolveAgentCliManagedCommandPathForRuntime(runtimeSpec, { processEnv: env, target });
+    const commandRelativePath = resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec, target.platform);
+    const installDir = command.slice(0, command.length - commandRelativePath.length - 1);
+    const declared = managedInstall.archiveEntriesByPlatform?.[target.platform]?.map(entry => entry.destinationPath) ?? [];
+    const files = [...new Set([commandRelativePath.split('\\').join('/'), ...declared])].sort();
+    return { command, installDir, files };
+  };
+  const staged = release();
+  if (existsSync(staged.command)) return { ok: true, alreadyInstalled: true, ...staged };
+
+  const lifecycleContext = await createRuntimeInstallLifecycleContext({
+    runtimeSpec, plan: planned.plan, env, logDir: params.logDir, onProgress: params.onProgress });
+  try {
+    await installManagedBinaryAgentCli({ runtimeSpec, managedInstall, platform: target.platform, target, env,
+      logPath: lifecycleContext.logPath, deps: params.deps ?? {}, signal: params.signal,
+      onProgress: lifecycleContext.onProgress, appendLogLine: lifecycleContext.appendLogLine });
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    return buildRuntimeInstallFailureResult({ error, plan: planned.plan, lifecycleContext }) as Extract<InstallAgentCliResult, { ok: false }>;
+  } finally {
+    await disposeRuntimeInstallLifecycleContext(lifecycleContext);
+  }
+  return { ok: true, alreadyInstalled: false, ...release() };
 }
 
 export async function installAgentCli(params: Readonly<{

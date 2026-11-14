@@ -9,6 +9,7 @@ import {
 import {
   getAgentCliRuntimeSpec,
   type AgentCliRuntimeSpec,
+  type AgentCliInstallPlatform,
   type AgentCliManagedInstallSpec,
   type AgentCliSourcePreference,
 } from '@happier-dev/agents/cli/runtime';
@@ -155,17 +156,32 @@ export function readBackendCliSourcePreference(
   );
 }
 
-function resolveManagedCommandBasename(spec: AgentCliManagedInstallSpec): string {
-  if (process.platform !== 'win32') return spec.binaryName;
+function resolveManagedCommandBasename(spec: AgentCliManagedInstallSpec, platform: string): string {
+  if (platform !== 'win32') return spec.binaryName;
   return spec.kind === 'github_release_binary' ? `${spec.binaryName}.exe` : `${spec.binaryName}.cmd`;
 }
 
-export function resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec: AgentCliRuntimeDescriptor): string {
+/**
+ * A platform an Agent CLI is installed for other than this Machine's own: a
+ * Session target (container, VM) of another OS or CPU architecture. Its managed
+ * install is staged on this Machine under `tools/targets/<platform>-<arch>/` and
+ * never resolved as this Machine's CLI.
+ */
+export type AgentCliTargetPlatform = Readonly<{ platform: AgentCliInstallPlatform; arch: 'arm64' | 'x64' }>;
+
+function isHostTargetPlatform(target: AgentCliTargetPlatform | undefined): boolean {
+  return !target || (target.platform === process.platform && target.arch === process.arch);
+}
+
+export function resolveAgentCliManagedCommandRelativePathForRuntime(
+  runtimeSpec: AgentCliRuntimeDescriptor,
+  platform: string = process.platform,
+): string {
   const managedInstall = runtimeSpec.managedInstall;
   if (!managedInstall) {
     throw new Error(`Agent ${runtimeSpec.id} does not define a managed CLI install path`);
   }
-  return join('bin', resolveManagedCommandBasename(managedInstall));
+  return join('bin', resolveManagedCommandBasename(managedInstall, platform));
 }
 
 export function resolveAgentCliOverrideEnvKey(agentId: string): string {
@@ -221,24 +237,31 @@ function resolveAgentCliOverride(runtimeSpec: AgentCliRuntimeDescriptor, process
 }
 
 export function resolveAgentCliManagedInstallRootForRuntime(
-  runtimeSpec: Pick<AgentCliRuntimeDescriptor, 'id'>,
-  opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
+  runtimeSpec: Pick<AgentCliRuntimeDescriptor, 'id'> & Partial<Pick<AgentCliRuntimeDescriptor, 'managedInstall'>>,
+  opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv; target?: AgentCliTargetPlatform }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
   const env = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
     ? { ...processEnv, HAPPIER_HOME_DIR: opts.happyHomeDir.trim() }
     : processEnv;
   // On-disk layout contract: tools/providers/<agentId> is where existing managed installs live (kept in R.16).
+  // Another platform's install (a Session target) is staged beside it; this Machine's own platform is the one root.
+  // A pinned release names its own root there, so a catalog pin change stages that release instead of reusing the old one.
+  if (!isHostTargetPlatform(opts.target)) {
+    const root = join(resolveManagedToolsRoot(env), 'targets', `${opts.target!.platform}-${opts.target!.arch}`, 'providers', runtimeSpec.id);
+    const releaseTag = runtimeSpec.managedInstall?.kind === 'github_release_binary' ? runtimeSpec.managedInstall.releaseTag : undefined;
+    return releaseTag ? join(root, releaseTag) : root;
+  }
   return join(resolveManagedToolsRoot(env), 'providers', runtimeSpec.id);
 }
 
 export function resolveAgentCliManagedCommandPathForRuntime(
   runtimeSpec: AgentCliRuntimeDescriptor,
-  opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
+  opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv; target?: AgentCliTargetPlatform }> = {},
 ): string {
   if (!runtimeSpec.managedInstall) throw new Error(`Agent ${runtimeSpec.id} does not define a managed CLI install path`);
   const installRoot = resolveAgentCliManagedInstallRootForRuntime(runtimeSpec, opts);
-  const commandRelativePath = resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec);
+  const commandRelativePath = resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec, opts.target?.platform);
   const activeCommandPath = join(installRoot, 'active', commandRelativePath);
   // Legacy runner snapshots keep resolving current; new POSIX promotions retain it and atomically switch active.
   if (process.platform !== 'win32' && existsSync(activeCommandPath)) return activeCommandPath;
