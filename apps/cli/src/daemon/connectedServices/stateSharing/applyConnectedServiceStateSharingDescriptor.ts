@@ -751,7 +751,7 @@ export async function applyConnectedServiceStateSharingDescriptor(
       const sourcePath = join(resolve(resolveStateSourceRoot(entryName)), entryName);
       const destinationPath = join(targetRoot, entryName);
       if (descriptorEntry.createIfMissing === 'directory') {
-        await mkdir(sourcePath, { recursive: true });
+        await mkdir(sourcePath, { recursive: true, mode: 0o700 });
       }
       if (descriptorEntry.mode === 'env_redirect') {
         await mkdir(destinationPath, { recursive: true });
@@ -769,7 +769,10 @@ export async function applyConnectedServiceStateSharingDescriptor(
       if (descriptorEntry.requiresRealDirectory) {
         const sourceStat = await tryStatConnectedServiceHomeEntry(sourcePath);
         if (sourceStat) await copyConnectedServiceHomeEntry(sourcePath, destinationPath);
-        else await mkdir(destinationPath, { recursive: true });
+        else await mkdir(destinationPath, { recursive: true, mode: 0o700 });
+        // Native private-state readers verify the copied root without repairing it.
+        // Restrict only the materialized entry, never the source or its descendants.
+        if (process.platform !== 'win32') await chmod(destinationPath, 0o700);
         stateEntries.push(entryName);
         continue;
       }

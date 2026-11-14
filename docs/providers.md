@@ -271,7 +271,10 @@ layout used by FX revision `481104fdbc24`. V2 continuity retains the selected
 session's log, lock and directory, including referenced blobs, through the existing
 native state importer. Both `.fx/sessions` and `.fx/session-files` are materialized
 as real directories: FX 0.0.16 rejects a symlinked companion directory during
-ACP load, even when the v2 journal is present.
+ACP load, even when the v2 journal is present. The shared materializer creates
+missing native state directories privately and sets real-directory destination
+roots to `0700` on POSIX when importing them, including on rematerialization;
+it does not recursively change existing native homes.
 
 In 0.3 development, FX Provider bindings also use a private
 `HOME/.fx/settings.json` to select an `openai-chat-completions` endpoint and model.
