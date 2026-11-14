@@ -55,6 +55,33 @@ describe('runSessionChangesSyncOnConnect', () => {
     vi.clearAllMocks();
   });
 
+  it('reads one changes page for concurrent Session clients of one Account wake and applies it to each', async () => {
+    fetchChanges.mockResolvedValue({ status: 'ok', response: { nextCursor: 4, changes: [
+      { cursor: 4, kind: 'session', entityId: 's2', changedAt: 100, hint: { kind: 'workflow-run-delivery', runId: 'run-1', revision: 2 } },
+    ] } });
+    const contexts: string[] = [];
+    const cursors: string[] = [];
+    // A session host's Sessions share one Account update connection: one wake reaches all of them.
+    await Promise.all(['s1', 's2', 's3'].map(sessionId => runSessionChangesSyncOnConnect({
+      reason: 'live', token: 'token-1', sessionId, lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1', readChangesCursor: async () => 3,
+      writeChangesCursor: async () => { cursors.push(sessionId); },
+      catchUpSessionMessages: async () => {}, syncSessionSnapshotFromServer: async () => true,
+      onSessionFollowInvalidated: () => { contexts.push(sessionId); }, onDebug: vi.fn(),
+    })));
+    expect(fetchChanges).toHaveBeenCalledTimes(1);
+    expect(contexts).toEqual(['s2']);
+    expect(cursors.sort()).toEqual(['s1', 's2', 's3']);
+    // A later wake reads again: only an in-flight read is shared.
+    await runSessionChangesSyncOnConnect({
+      reason: 'live', token: 'token-1', sessionId: 's1', lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1', readChangesCursor: async () => 4,
+      writeChangesCursor: async () => {}, catchUpSessionMessages: async () => {}, syncSessionSnapshotFromServer: async () => true,
+      onDebug: vi.fn(),
+    });
+    expect(fetchChanges).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['s1', 'another-session'])('wakes context only for its own durable Session changes (%s)', async entityId => {
     fetchChanges.mockResolvedValueOnce({ status: 'ok', response: { nextCursor: 4, changes: [
       { cursor: 4, kind: 'session', entityId, changedAt: 100, hint: { kind: 'workflow-run-delivery', runId: 'run-1', revision: 2 } },

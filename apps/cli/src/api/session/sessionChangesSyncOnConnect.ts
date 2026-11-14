@@ -1,5 +1,6 @@
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { fetchChanges } from '../changes';
+import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { readSessionTranscriptChangeHintV1 } from '@happier-dev/protocol/changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
@@ -30,6 +31,24 @@ function reportReconnectCatchUpFailure(params: { onDebug: (message: string, data
 
 function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect' | 'live'): SessionSnapshotRefreshReason {
     return reason === 'live' ? 'explicit-drain' : reason;
+}
+
+type ChangesPage = Awaited<ReturnType<typeof fetchChanges>>;
+const inFlightChangesPages = new Map<string, Promise<ChangesPage>>();
+
+/**
+ * One Account wake reaches every Session client of a session host at once (one shared Account
+ * update connection). Clients at the same cursor share the one in-flight page read; each still
+ * applies the page to its own Session and cursor. Only in-flight reads are shared (no cache), and
+ * a read settles on its own request timeout.
+ */
+function fetchSessionChangesPage(request: Readonly<{ token: string; after: number; limit: number }>): Promise<ChangesPage> {
+    const key = `${resolveServerHttpBaseUrl()}\n${request.token}\n${request.after}\n${request.limit}`;
+    const existing = inFlightChangesPages.get(key);
+    if (existing) return existing;
+    const read = fetchChanges(request).finally(() => { inFlightChangesPages.delete(key); });
+    inFlightChangesPages.set(key, read);
+    return read;
 }
 
 export async function runSessionChangesSyncOnConnect(params: {
@@ -63,7 +82,7 @@ export async function runSessionChangesSyncOnConnect(params: {
 
     const CHANGES_PAGE_LIMIT = 200;
     const after = await params.readChangesCursor(accountId);
-    const result = await fetchChanges({ token: params.token, after, limit: CHANGES_PAGE_LIMIT });
+    const result = await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT });
     if (result.status === 'cursor-gone') {
         params.onSessionFollowInvalidated?.();
         let transcriptCatchUpSucceeded = true;
