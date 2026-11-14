@@ -775,7 +775,11 @@ describe('dispatchActivityNotificationAsync', () => {
     let release: (() => void) | undefined;
     const entered = new Promise<void>(resolve => { started = resolve; });
     const held = new Promise<void>(resolve => { release = resolve; });
-    const get = vi.spyOn(axios, 'get').mockImplementation(async () => {
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const pathname = new URL(url).pathname;
+      if (pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, []) };
+      if (pathname.startsWith('/v1/artifacts/')) return { status: 404, data: {} };
+      if (pathname !== '/v1/account/encryption') throw new Error(`Unexpected GET path: ${pathname}`);
       started?.(); await held;
       return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     });

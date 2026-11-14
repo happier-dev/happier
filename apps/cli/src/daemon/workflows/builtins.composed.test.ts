@@ -545,7 +545,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       v: 1, serverId: 'foreign-home', discussionId: 'discussion', messageSeq: 2, hasMoreOlder: false, incomplete: false, messages: [],
     }) });
     await expect(h.run(builtin('debate'), { question: 'Compare', participants, rounds: 2 }))
-      .rejects.toThrow('workflow_discussion_context_unavailable');
+      .resolves.toEqual({ state: 'interrupted', reason: 'workflow_discussion_context_unavailable' });
     expect(h.store.list().find(row => row.blockId === 'context')).toMatchObject({ lifecycle: 'failed',
       reason: 'workflow_discussion_context_unavailable' });
     expect(h.sessionInputs).toHaveLength(0);
@@ -673,7 +673,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     // A caller-supplied id without the corresponding claim must still fail,
     // even after the legitimate trigger has gone.
     await expect(h.run(builtin('keep-going'), { triggerId: 'unrelated-trigger' }, true, 'coalesced-occurrence'))
-      .rejects.toThrow('run_access_denied');
+      .resolves.toEqual({ state: 'interrupted', reason: 'run_access_denied' });
     expect(removals).toEqual([firing.triggerId]);
   });
   it('FIX75 completes the Happier-owned configured-Agent Goal before detaching its firing trigger', async () => {

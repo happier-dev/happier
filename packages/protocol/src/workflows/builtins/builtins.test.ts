@@ -115,7 +115,7 @@ describe('built-in workflow catalog', () => {
       'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes', 'triage-an-issue', 'morning-digest', 'deploy-on-push',
       'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
       'check-for-drift', 'run-a-job-on-a-schedule',
-      'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
+      'backup-verify', 'nightly-backups', 'deployment-move', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
     ]);
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
