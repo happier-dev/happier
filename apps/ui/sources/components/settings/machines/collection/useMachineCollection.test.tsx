@@ -182,14 +182,14 @@ it('keeps 113 hydrated rows with zero skeleton re-entries when one unread Machin
         const arriving = createMachineFixture({ id: 'arriving', metadata: null, availability: undefined });
         await act(async () => { storage.getState().applyMachines([arriving], false, { sourceServerId: HOME }); });
         expect(collection!.firstAnswerPending).toBe(false);
-        expect(screen.tree.findAll(node => node.type === 'row')).toHaveLength(113);
-        expect(screen.tree.findAll(node => node.type === 'skeleton')).toHaveLength(1);
+        expect(screen.tree.findAll(node => String(node.type) === 'row')).toHaveLength(113);
+        expect(screen.tree.findAll(node => String(node.type) === 'skeleton')).toHaveLength(1);
         expect([...counters.entries()].filter(([key]) => key !== `machine:${HOME}:arriving`)
             .reduce((sum, [, counter]) => sum + counter.read().renders, 0)).toBe(0);
         const ready = createMachineFixture({ id: 'arriving', metadataVersion: arriving.metadataVersion + 1 });
         await act(async () => { storage.getState().applyMachines([ready], false, { sourceServerId: HOME }); });
-        expect(screen.tree.findAll(node => node.type === 'row')).toHaveLength(114);
-        expect(screen.tree.findAll(node => node.type === 'skeleton')).toHaveLength(0);
+        expect(screen.tree.findAll(node => String(node.type) === 'row')).toHaveLength(114);
+        expect(screen.tree.findAll(node => String(node.type) === 'skeleton')).toHaveLength(0);
     } finally { await connection.dispose(); }
 });
 

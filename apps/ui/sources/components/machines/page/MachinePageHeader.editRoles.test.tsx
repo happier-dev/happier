@@ -17,7 +17,7 @@ it.each([
     { roles: ['broker'], editRoles: true },
     { roles: undefined, editRoles: false },
 ])('offers Edit roles only when the Machine has Sessions off ($roles)', async ({ roles, editRoles }) => {
-    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-roles.test', accountId: 'owner', currentAccount: true }] });
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-roles.test', accountId: 'owner', currentAccount: true }], route: () => undefined });
     const serverId = homes.homes.a!.id;
     const store = getStorage();
     const previous = store.getState();

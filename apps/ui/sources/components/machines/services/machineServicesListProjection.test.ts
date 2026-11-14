@@ -3,11 +3,13 @@ import { MachineServiceRowV1Schema, MachineServicesListResultV1Schema } from '@h
 import { machineServicesListProjection } from './machineServicesListProjection';
 
 function snapshot(names: readonly string[]) {
-    return MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: names.map(name => MachineServiceRowV1Schema.parse({
+    const result = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: names.map(name => MachineServiceRowV1Schema.parse({
         serviceId: name, name, authority: 'machine', lifecyclePurpose: 'development', state: 'running',
         generation: 'generation-a', watchId: name, watchRevision: 'revision-a',
         capabilities: { exec: true, start: true, stop: true, restart: true, logs: true, accounting: true },
     })) });
+    if (result.kind !== 'snapshot') throw new Error('Expected a Services snapshot');
+    return result;
 }
 function decode(value: ReturnType<typeof MachineServicesListResultV1Schema.parse>, previous?: ReturnType<typeof machineServicesListProjection.decode>) {
     return machineServicesListProjection.decode({ bytes: new TextEncoder().encode(JSON.stringify(value)) }, previous);

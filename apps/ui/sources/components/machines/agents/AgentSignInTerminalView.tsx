@@ -157,7 +157,7 @@ function SignInFailureLine(props: Readonly<{ agentTitle: string; failure: string
     const message = (() => {
         const decision = props.failure ? formatApprovalDecisionFailureLabel(props.failure) : null;
         if (decision) return decision;
-        const terminalFailure = resolveTerminalErrorCopy(props.failure);
+        const terminalFailure = resolveTerminalErrorCopy(props.failure ?? null);
         if (terminalFailure) return t(terminalFailure.bodyKey);
         switch (props.failure) {
             case 'action_disabled': return t('common.disabled');

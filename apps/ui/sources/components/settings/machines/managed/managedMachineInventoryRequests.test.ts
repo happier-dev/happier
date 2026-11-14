@@ -200,8 +200,8 @@ it('shares one active/archive inventory and ignores unrelated socket and consume
         }
         const beforeSettings = { lists: requests(), exact: exactReads(), admissions };
         for (let index = 1; index <= 4; index += 1) {
-            await act(async () => publishHomeAccountChangeWake(serverId,
-                { t: 'account-settings-changed', settingsVersion: index }, 'socket'));
+            await act(async () => { publishHomeAccountChangeWake(serverId,
+                { t: 'account-settings-changed', settingsVersion: index }, 'socket'); });
             const plan = planSyncActionsFromChanges([{ kind: 'account', entityId: 'self', cursor: index, changedAt: 0,
                 hint: { settingsVersion: index } }]);
             await act(async () => publishHomeAccountChange(serverId, ['self'], {

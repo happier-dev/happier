@@ -128,13 +128,15 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
         rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
     }
-    if (input.savedLaunchPresentation) {
+    // Saved launch choices are an object of field values; any other JSON shape has no field to present.
+    const savedChoices = input.launch.choices;
+    if (input.savedLaunchPresentation && savedChoices !== null && typeof savedChoices === 'object' && !Array.isArray(savedChoices)) {
         const hints = deriveActionInputHints(input.savedLaunchPresentation.schema, input.savedLaunchPresentation.inputHints);
         const options = buildSessionActionFieldOptionsResolver({});
-        for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, input.launch.choices)) {
-            const savedValue = readInputPath(input.launch.choices, field.path);
+        for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, savedChoices)) {
+            const savedValue = readInputPath(savedChoices, field.path);
             if (savedValue === undefined || savedValue === null) continue;
-            const presentation = resolveActionFieldPresentationForInput(field, input.launch.choices);
+            const presentation = resolveActionFieldPresentationForInput(field, savedChoices);
             if (!presentation || presentation.kind === 'text' && presentation.secure) continue;
             const value = presentation.kind === 'text' ? presentation.value : presentation.kind === 'toggle'
                 ? t(presentation.value ? 'common.yes' : 'common.no')

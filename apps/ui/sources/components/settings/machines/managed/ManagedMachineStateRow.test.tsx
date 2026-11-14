@@ -21,7 +21,8 @@ afterEach(() => standardCleanup());
 const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
 // Pages render under the app shell, which owns the Account's one Investigate owner (D5).
 const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
-const renderScreen: typeof renderTestScreen = (element, options = {}) => renderTestScreen(element, { ...options, wrapper: AccountNoticeInvestigationBoundary });
+const renderScreen: typeof renderTestScreen = (element, options = {}) => renderTestScreen(element, { ...options,
+    wrapper: ({ children }) => <AccountNoticeInvestigationBoundary>{children}</AccountNoticeInvestigationBoundary> });
 
 describe('managed lifecycle presentation', () => {
   it.each(['newer-unknown', 'no-observation', 'older-observation', 'same-time-observation', 'confirmed-absent', 'absent-without-operation', 'newer-clear'] as const)(
@@ -422,6 +423,7 @@ describe('created machine resource rows (UIR5)', () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const { t } = await import('@/text');
     const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } });
+    if (!machine.controller) throw new Error('Expected a bound controller');
     const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
       snapshot: { version: 1 as const, operationId: 'policy-stop', revision: 3, actionId: 'machines.managed.power.set', state: 'running' as const,
         scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Stop', createdAt: 1, startedAt: 2,

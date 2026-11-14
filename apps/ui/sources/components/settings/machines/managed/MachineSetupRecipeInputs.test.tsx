@@ -30,7 +30,7 @@ const recipe = { id: 'example.host/journal', pluginId: ref.pluginId, pluginVersi
 it('keeps managed creation incomplete until the saved preset inputs are edited', async () => {
     const onConfirm = vi.fn();
     const onEditSetup = vi.fn();
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     await act(async () => { showManagedCreationReview({ name: 'Host', server: { title: 'Host', spec: 'Server', mark: null },
         preset: { name: 'Security', revision: 1 }, scope: null, confirmLabel: 'Create', onConfirm, onEditSetup,
         projection: { ...EMPTY_PLUGIN_UI_PROJECTION, machineRecipesById: { [recipe.id]: recipe } },
@@ -48,12 +48,13 @@ it('collects required selected recipe inputs before the first effects Plan and c
     const requests: unknown[] = [];
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         requests.push(input);
+        const single = 'targets' in input ? null : input;
         return MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0,
-            sources: input.sources ?? [{ kind: 'direct', setup: {} }], support: [], exclusions: [],
-            ...(input.mode === 'effects' ? { recipePlans: [] } : {}),
+            sources: single?.sources ?? [{ kind: 'direct', setup: {} }], support: [], exclusions: [],
+            ...(single?.mode === 'effects' ? { recipePlans: [] } : {}),
         });
     } }));
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     let prepared: Awaited<ReturnType<typeof prepareMachineSetupPresetApplyInput>> | undefined;
     let pending: Promise<void>;
     await act(async () => { pending = prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
@@ -83,7 +84,7 @@ it('cancels input review without planning or changing the preset', async () => {
         return MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], support: [], exclusions: [] });
     } }));
     const preset = { id: 'preset', revision: 1, setup: { items: [{ kind: 'setupRecipe' as const, selection: { ref, inputs: {} } }] } };
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     let pending: ReturnType<typeof prepareMachineSetupPresetApplyInput>;
     await act(async () => { pending = prepareMachineSetupPresetApplyInput({ executeAction: executor.execute,
         context: { surface: 'ui' }, homeId: 'home', machineId: 'machine', preset, isCurrent: () => true }); });

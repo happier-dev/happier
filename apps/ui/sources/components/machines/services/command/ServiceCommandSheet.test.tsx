@@ -141,8 +141,10 @@ function answerExec(
             includeInvocation: true,
           })
         : null;
+      // A plain Account sends the readable V1 envelope.
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
       received.push({
-        envelope: request.envelope,
+        envelope,
         confirmedActionId:
           requester?.invocation?.presentUserConfirmation?.actionId ?? null,
       });
@@ -150,8 +152,8 @@ function answerExec(
         body: {
           v: 1,
           actionId,
-          requestId: request.envelope.requestId,
-          execution: { ok: true, result: reply(request.envelope) },
+          requestId: envelope.requestId,
+          execution: { ok: true, result: reply(envelope) },
         },
       };
     },

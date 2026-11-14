@@ -13,7 +13,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequ
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, buildDeferredDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonProjectionSectionBodyResponseSchema, buildDeferredDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -288,7 +288,7 @@ describe('managed provisioner credential purposes', () => {
         const options = createDeferred<void>();
         harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { respondAfter: options.promise, body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+            return { respondAfter: options.promise, body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
                 execution: { ok: true, result: createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: 2 }]) } } };
         } });
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -331,14 +331,16 @@ describe('managed provisioner credential purposes', () => {
             provisioner.credentialPurposes![1]!,
         ] };
         const families = projectionReply.projection.familiesById;
-        const serviceDefinition = families.connectedAccounts.entriesById[buildQualifiedPluginContributionKey(cloud.service)]!;
-        const machineDefinition = families.machineProvisioners.entriesById[buildQualifiedPluginContributionKey(contribution)]!;
+        const { connectedAccounts, machineProvisioners } = families;
+        if (!connectedAccounts || !machineProvisioners) throw new Error('Expected the connected-account and provisioner families');
+        const serviceDefinition = connectedAccounts.entriesById[buildQualifiedPluginContributionKey(cloud.service)]!;
+        const machineDefinition = machineProvisioners.entriesById[buildQualifiedPluginContributionKey(contribution)]!;
         projectionReply = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ ...projectionReply, projection: {
             ...projectionReply.projection, familiesById: { ...families,
-                connectedAccounts: { ...families.connectedAccounts, entriesById: { ...families.connectedAccounts.entriesById,
+                connectedAccounts: { ...connectedAccounts, entriesById: { ...connectedAccounts.entriesById,
                     [buildQualifiedPluginContributionKey(service)]: { ...serviceDefinition, pluginId: service.pluginId,
                         id: service.localId, serviceId: service.localId, title: serviceTitle } } },
-                machineProvisioners: { ...families.machineProvisioners, entriesById: { ...families.machineProvisioners.entriesById,
+                machineProvisioners: { ...machineProvisioners, entriesById: { ...machineProvisioners.entriesById,
                     [buildQualifiedPluginContributionKey(contribution)]: { ...machineDefinition, connectedAccountPurposes: [
                         { purpose: cloudPurpose.purpose, serviceRefs: [service] },
                         { purpose: cuaPurpose.purpose, serviceRefs: [cua.service] },
@@ -397,7 +399,7 @@ describe('managed provisioner credential purposes', () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><ConnectedServiceConnectRoute /></InjectedAuthProvider>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('connect-sheet:account')).not.toBeNull());
         expect(screen.findAllByType(ConnectedServicesSettingsView)).toHaveLength(1);
-        const modal = vi.mocked(Modal.show).mock.calls.findLast(([config]) => config.chrome?.testID === 'connect-sheet')![0];
+        const modal = [...vi.mocked(Modal.show).mock.calls].reverse().find(([config]) => config.chrome?.testID === 'connect-sheet')![0];
         expect(modal.props?.request).toMatchObject({ service: cloud.service,
             ...(ingress === 'reconnect' ? { account: cloud, intent: 'reconnect' } : {}) });
         await act(async () => {
@@ -416,7 +418,7 @@ describe('managed provisioner credential purposes', () => {
     it('keeps Machine demand absent until the setup controller reports it and retires it when the target changes', async () => {
         await setupHome();
         const { useConnectAccountSheetModel } = await import('@/components/settings/connectedServices/setup/useConnectAccountSheetModel');
-        const hook = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service }, () => undefined));
+        const hook = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service, intent: 'link' }, () => undefined));
         expect(hook.getCurrent().machineRequired).toBe(false);
         await act(async () => hook.getCurrent().onMachineRequirementChange(true));
         expect(hook.getCurrent().machineRequired).toBe(true);
@@ -428,7 +430,7 @@ describe('managed provisioner credential purposes', () => {
     it('restricts saved accounts to the service selected from the generic Connect catalog', async () => {
         await setupHome();
         const { useConnectAccountSheetModel } = await import('@/components/settings/connectedServices/setup/useConnectAccountSheetModel');
-        const hook = await renderHook(() => useConnectAccountSheetModel({}, () => undefined));
+        const hook = await renderHook(() => useConnectAccountSheetModel({ intent: 'link' }, () => undefined));
         expect(hook.getCurrent().target.kind).toBe('catalog');
         await act(async () => hook.getCurrent().setTarget({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(cloud.service) }));
         expect(hook.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cloud, otherCloud]);
@@ -436,7 +438,7 @@ describe('managed provisioner credential purposes', () => {
         expect(hook.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cua]);
         expect(hook.getCurrent().preselected).toEqual(cua);
         await hook.unmount();
-        const explicit = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service, account: cloud }, () => undefined));
+        const explicit = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service, account: cloud, intent: 'link' }, () => undefined));
         await act(async () => explicit.getCurrent().setTarget({ kind: 'catalog' }));
         await act(async () => explicit.getCurrent().setTarget({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(cua.service) }));
         expect(explicit.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cua]);
@@ -484,7 +486,7 @@ describe('managed provisioner credential purposes', () => {
             const { sectionRead } = payload;
             const response = framed.read(sectionRead.digest, sectionRead.offset, sectionRead.includeDigests);
             // The transport batches requested sibling bodies in the primary reply.
-            sectionReads.push(sectionRead.digest, ...(response && 'bodies' in response ? response.bodies.map(body => body.digest) : []));
+            sectionReads.push(sectionRead.digest, ...(response ? DaemonProjectionSectionBodyResponseSchema.parse(response).bodies ?? [] : []).map(body => body.digest));
             return response;
         });
         const { presentConnectSheet } = await import('../../connectedServices/setup/ConnectedServiceSetupModal');

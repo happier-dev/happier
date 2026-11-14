@@ -72,7 +72,7 @@ it.each(['own', 'shared'] as const)('routes %s Machine adoption to the daemon Ac
   const boundary = await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'machines.services.adopt',
     requesterInvocation: ownership === 'shared' ? 'credentials' : 'none',
     tokenEpoch: 0, ...(ownership === 'shared' ? { custodian: { accountId: 'another-owner', displayName: 'Another owner' } } : {}),
-    execute: input => adoptionTransport({ payload: input }) });
+    execute: (input: unknown) => adoptionTransport({ payload: input }) });
   const boundaryFailures: string[] = [];
   const handle = boundary.handle.bind(boundary);
   boundary.handle = async (...args) => {

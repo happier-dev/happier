@@ -69,19 +69,19 @@ describe('Network row facts', () => {
     externalInterfaces: ['eth0'], privateInterfaces: [], retainedSshEndpoints: [] });
 
   it('has nothing observed before the Machine publishes its reachability', () => {
-    expect(presentNetworkRowFacts({ posture: null, selections: null, observation: null }, null))
+    expect(presentNetworkRowFacts({ posture: null, selections: null, observation: null }))
       .toEqual({ observed: false, headline: null, sshClosed: false, firewall: null });
   });
 
   it("reads SSH and Happier's firewall table from the published observation", () => {
     expect(presentNetworkRowFacts({ posture: null, selections: null,
-      observation: observation('closed', available('absent')) }, null))
+      observation: observation('closed', available('absent')) }))
       .toEqual({ observed: true, headline: null, sshClosed: true, firewall: 'absent' });
     expect(presentNetworkRowFacts({ posture: null, selections: null,
-      observation: observation('unknown', { status: 'unavailable', requiredFact: 'nftables' }) }, null))
+      observation: observation('unknown', { status: 'unavailable', requiredFact: 'nftables' }) }))
       .toEqual({ observed: true, headline: null, sshClosed: false, firewall: 'unreadable' });
     // An older Machine that publishes no firewall fact says nothing about it.
-    expect(presentNetworkRowFacts({ posture: null, selections: null, observation: observation('unknown') }, null).firewall)
+    expect(presentNetworkRowFacts({ posture: null, selections: null, observation: observation('unknown') }).firewall)
       .toBeNull();
   });
 });

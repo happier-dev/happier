@@ -412,7 +412,7 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
             open: pickerOpen,
             onOpenChange: setPickerOpen,
             label: groupTitle,
-            valueLabel: props.selection.state.kind === 'unavailable' && !hasChoice ? null : current.titleParts?.name ?? current.title,
+            valueLabel: props.selection.state.kind === 'unavailable' && !hasChoice ? undefined : current.titleParts?.name ?? current.title,
             ...(current.titleParts?.hint ? { valueQualifier: current.titleParts.hint } : {}),
             // Picked for the viewer: named like a choice, with one quiet word that it was picked, so an
             // explicit pin (no word) and an unavailable pin (the offline dot) each read as themselves.

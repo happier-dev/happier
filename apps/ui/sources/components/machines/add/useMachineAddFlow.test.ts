@@ -68,7 +68,7 @@ describe('machine add flow lifetime', () => {
         const manual = createManualSystemTaskRunner('tauri');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        const features = createRootLayoutFeaturesResponse({ features: { remoteHosts: { management: { enabled: true } } } });
+        const features = createRootLayoutFeaturesResponse({ features: { remoteHosts: { management: { enabled: true }, secretMaterial: { enabled: false } } } });
         const catalogPath = '/v1/account/entity-rows/remote-hosts';
         vi.stubGlobal('isTauri', true);
         let unmount: (() => Promise<void>) | undefined;

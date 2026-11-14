@@ -114,7 +114,7 @@ describe('provisioner picker demand', () => {
     const sshAvailability = vi.spyOn(nativeSsh, 'getNativeSshAvailability');
     onTestFinished(() => sshAvailability.mockRestore());
     vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'native');
-    onTestFinished(() => vi.unstubAllEnvs());
+    onTestFinished(() => { vi.unstubAllEnvs(); });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     // Before an authenticated catalog can create the shared Action executor, the real
     // authoring scope must leave this computer's native runner cold. Add still observes it.

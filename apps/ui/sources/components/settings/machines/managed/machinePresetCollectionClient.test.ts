@@ -110,8 +110,8 @@ describe('preset collection and history through Actions', () => {
         const archived = { ...created, revision: 2, archivedAt: 42 };
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, archived] } });
         // Secondary Homes publish their existing socket receipt directly.
-        await act(async () => publishHomeAccountChangeWake(serverId, { t: 'account-change',
-            entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'));
+        await act(async () => { publishHomeAccountChangeWake(serverId, { t: 'account-change',
+            entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'); });
         await waitForHomeGovernance(() => expect(reopened.getCurrent().presetsByServerId[serverId]).toEqual([preset, archived]));
         expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 2);
         await reopened.unmount();
@@ -382,8 +382,8 @@ describe('preset collection and history through Actions', () => {
             await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
             const before = harness.requestsFor('/v1/machines/presets/list').length;
             for (let version = 1; version <= 3; version++) {
-                await act(async () => publishHomeAccountChangeWake(serverId,
-                    { t: 'account-settings-changed', settingsVersion: version }, 'socket'));
+                await act(async () => { publishHomeAccountChangeWake(serverId,
+                    { t: 'account-settings-changed', settingsVersion: version }, 'socket'); });
                 await flushHookEffects({ cycles: 30 });
             }
             expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
@@ -592,8 +592,8 @@ describe('preset collection and history through Actions', () => {
             const updated = { ...preset, revision: preset.revision + 1 };
             harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
             harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: updated } });
-            await act(async () => publishHomeAccountChangeWake(serverId, { t: 'account-change',
-                entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'));
+            await act(async () => { publishHomeAccountChangeWake(serverId, { t: 'account-change',
+                entityIds: [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], changeKinds: ['account'] }, 'socket'); });
             await waitForHomeGovernance(() => {
                 expect(hook.getCurrent().collection.presetsByServerId[serverId]).toEqual([updated]);
                 expect(hook.getCurrent().detail.state.value?.preset.revision).toBe(updated.revision);
@@ -628,7 +628,7 @@ describe('preset collection and history through Actions', () => {
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const { MachineProvisionerContributionV1Schema } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
         const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
-        const provisioner = { contribution: preset.launch.provider, occurrenceId: 'retry-occurrence',
+        const provisioner = { contribution: preset.launch.provider, occurrenceId: 'retry-occurrence', acquireExecutionTarget: 'daemon' as const,
             descriptor: MachineProvisionerContributionV1Schema.parse({ id: 'native', title: 'Native', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
                 launchSchema: { type: 'object', properties: {}, additionalProperties: false },
                 resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
@@ -685,7 +685,7 @@ describe('preset collection and history through Actions', () => {
         const { useMachinePresetConfiguration } = await import('./useMachinePresets');
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const { MachineProvisionerContributionV1Schema } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
-        const provisioner = { contribution: preset.launch.provider, occurrenceId: 'retained-occurrence',
+        const provisioner = { contribution: preset.launch.provider, occurrenceId: 'retained-occurrence', acquireExecutionTarget: 'daemon' as const,
             descriptor: MachineProvisionerContributionV1Schema.parse({ id: 'native', title: 'Native', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
                 launchSchema: { type: 'object', properties: {}, additionalProperties: false },
                 resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],

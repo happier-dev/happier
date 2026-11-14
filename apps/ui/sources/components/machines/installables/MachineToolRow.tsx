@@ -209,9 +209,9 @@ export const MachineToolRow = React.memo(function MachineToolRow(
               <Switch
                 value={policy.autoInstallWhenNeeded}
                 disabled={!props.canManage}
-                onValueChange={(next) =>
-                  props.canManage && onPolicyChange(entry.key, { autoInstallWhenNeeded: next })
-                }
+                onValueChange={(next) => {
+                  if (props.canManage) onPolicyChange(entry.key, { autoInstallWhenNeeded: next });
+                }}
               />
             }
             showChevron={false}

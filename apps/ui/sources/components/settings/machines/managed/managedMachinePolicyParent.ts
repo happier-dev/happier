@@ -1,4 +1,4 @@
-import type { ManagedMachineV1, ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -56,7 +56,7 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
         && row.descriptor.schemaVersion === machine.launch.schemaVersion);
     if (!provisioner) return { kind: 'failed', code: 'managed_parent_unavailable' };
     const nativeInput = { homeId: machine.homeId, controller, contribution: machine.launch.provider,
-        ...(machine.launch.credentials ? { credentials: machine.launch.credentials.map(({ configurationRevision: _basis, ...credential }) => credential) } : {}) };
+        ...(machine.launch.credentials ? { credentials: projectRetainedManagedCredentialSelectionsV1(machine.launch.credentials) } : {}) };
     let selected: ManagedConfiguratorDraft['selected'] = null;
     let effectReview: DevcontainerEffectReviewV1 | undefined;
     const optionsAction = provisioner.descriptor.actions.options;

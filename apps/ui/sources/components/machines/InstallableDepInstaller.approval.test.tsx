@@ -71,7 +71,7 @@ describe('install and Computer repair share configurable Action approval', () =>
             installLabels={{ install: 'Install', update: 'Update', reinstall: 'Reinstall' }}
             installModal={{ installTitle: 'Install', updateTitle: 'Update', reinstallTitle: 'Reinstall', description: 'Native driver' }}
             refreshStatus={refresh} />) : null;
-        const modalScreen = policy === 'Ask-first' ? await renderScreen(<ModalProvider />) : null;
+        const modalScreen = policy === 'Ask-first' ? await renderScreen(<ModalProvider>{null}</ModalProvider>) : null;
         await flushHookEffects({ cycles: 4 });
         await act(async () => { if (screen) screen.pressRowByTitle('Install'); else hook.getCurrent().repair.repair(); });
         expect(boundary.confirm).not.toHaveBeenCalled();

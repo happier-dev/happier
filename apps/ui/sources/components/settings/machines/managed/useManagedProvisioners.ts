@@ -149,7 +149,7 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     const visible = !enabled ? { provisioners: EMPTY_PROVISIONERS, error: null, loading: false }
         : sameAccount && binding?.isCurrent() && state.binding === binding && state.requestKey === requestKey ? state
         : sameAccount ? { provisioners: state.provisioners, error: null, loading: true } : {
-        provisioners: [], error: resolution.kind === 'resolving' || resolution.kind === 'bound' ? null : resolution.kind,
+        provisioners: EMPTY_PROVISIONERS, error: resolution.kind === 'resolving' || resolution.kind === 'bound' ? null : resolution.kind,
         loading: resolution.kind === 'resolving' || resolution.kind === 'bound',
     };
     const settledCurrent = enabled && sameAccount && homeId !== null && binding?.isCurrent() === true

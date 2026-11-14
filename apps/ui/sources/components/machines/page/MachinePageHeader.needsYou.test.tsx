@@ -34,7 +34,7 @@ it('keeps the action row the same size when a machine comes to need you: the ter
     const store = getStorage();
     const previous = store.getState();
     const machine = createMachineFixture({ id: 'pressed', active: true, activeAt: Date.now(), isShared: false,
-        metadata: { ...createMachineFixture({ id: 'pressed' }).metadata, homeDir: '/home/qa' },
+        metadata: { ...createMachineFixture({ id: 'pressed' }).metadata!, homeDir: '/home/qa' },
         daemonState: { resources: { ...calm, attention: pressure } } });
     store.getState().applyMachines([machine], true);
     const target = { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine, online: true,

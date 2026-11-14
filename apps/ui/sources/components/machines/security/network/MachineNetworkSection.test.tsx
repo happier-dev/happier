@@ -138,7 +138,7 @@ describe('Machine → Network page', () => {
         reason: 'required_fact_unavailable', requiredFact: 'caddyContainer', errorCode: 'ENOENT' }, remedy },
     }) };
     const screen = await render(model({ kind: 'settled' }, true), true,
-      { kind: 'failed', failure, ...(applying ? { plan } : {}) });
+      { kind: 'failed', failure, plan: applying ? plan : null });
     expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
       .toBe(remedy);
   });

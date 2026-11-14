@@ -1,4 +1,4 @@
-import type { ManagedMachineV1, ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -38,7 +38,7 @@ export async function readManagedMachineMoveCandidates(input: Readonly<{
             && candidate.descriptor.schemaVersion === machine.launch.schemaVersion && candidate.descriptor.billing.location === 'cloud');
         if (!provisioner) return unavailable;
         const checked = await client.read('machines.provisioners.check', { homeId: machine.homeId, controller,
-            contribution: machine.launch.provider, credentials: machine.launch.credentials.map(({ configurationRevision: _basis, ...credential }) => credential) }, options);
+            contribution: machine.launch.provider, credentials: projectRetainedManagedCredentialSelectionsV1(machine.launch.credentials) }, options);
         return { id: row.id, controller, reachable: current() && checked.kind === 'succeeded' && checked.value.available };
     }));
 }

@@ -28,7 +28,7 @@ it.each([
     { refusal: 'roleInactive', reasonKey: 'machineDetailPage.startUnavailable.sessionsOff' },
 ] as const)('keeps the canonical $refusal reason on an offline Machine at first render and after retained updates', async ({ refusal, reasonKey }) => {
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-readiness.test',
-        accountId: 'owner', currentAccount: true }] });
+        accountId: 'owner', currentAccount: true }], route: () => undefined });
     const serverId = homes.homes.a!.id;
     const store = getStorage();
     const previous = store.getState();
@@ -67,7 +67,7 @@ it.each([
 
 it('keeps unobserved presence unknown, then follows offline and ready activity answers', async () => {
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-presence-answer.test',
-        accountId: 'owner', currentAccount: true }] });
+        accountId: 'owner', currentAccount: true }], route: () => undefined });
     const serverId = homes.homes.a!.id;
     const store = getStorage();
     const previous = store.getState();
@@ -107,7 +107,7 @@ it('keeps unobserved presence unknown, then follows offline and ready activity a
 it.each(['use', 'manage', 'owner', 'unknown'] as const)('shows Machine administration controls only with Manage: %s', async role => {
     const allowed = role === 'manage' || role === 'owner';
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-access.test',
-        accountId: role === 'owner' ? 'owner' : 'viewer', currentAccount: true }] });
+        accountId: role === 'owner' ? 'owner' : 'viewer', currentAccount: true }], route: () => undefined });
     const serverId = homes.homes.a!.id;
     const store = getStorage();
     const previous = store.getState();

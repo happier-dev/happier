@@ -51,7 +51,7 @@ describe('managed Machine inventory', () => {
         const reviewedFacts = buildManagedConfigurationFactsV1({
             choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema), launch, provisioner,
             optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
-            retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            retentionCapabilities: provisioner.retention,
         });
         const machines = Array.from({ length: 16 }, (_, index) => ManagedMachineV1Schema.parse({
             id: `managed-${index}`, homeId, custodianAccountId: 'owner', enrolledMachineId: `guest-${index}`,
@@ -316,7 +316,7 @@ describe('managed Machine inventory', () => {
         }
         const screen = await renderScreen(React.createElement(Rail));
         const detail = await renderHook(() => useManagedMachineInventory(ids, managed.id));
-        const rows = () => screen.tree.findAll(node => node.type === 'row').map(node => node.props.row as MachineCollectionRow);
+        const rows = () => screen.tree.findAll(node => String(node.type) === 'row').map(node => node.props.row as MachineCollectionRow);
         try {
             await waitForHomeGovernance(() => {
                 expect(detail.getCurrent().entries[serverId]?.status).toBe('ready');

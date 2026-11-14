@@ -28,6 +28,7 @@ import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -83,7 +84,7 @@ describe('mounted provisioner repair', () => {
         const isCrabbox = scenario === 'crabbox';
         const contribution = isCrabbox ? { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox' } : { pluginId: 'custom.compute', localId: 'native' };
         const action = { pluginId: contribution.pluginId, localId: isCrabbox ? 'install' : 'repair' };
-        const repairInput = isCrabbox ? {} : { tool: 'native-vm' };
+        const repairInput: PluginJsonValueV2 = isCrabbox ? {} : { tool: 'native-vm' };
         let crabboxCheck: unknown;
         if (isCrabbox) {
             const handlers = new Map<string, ActionHandler>();
