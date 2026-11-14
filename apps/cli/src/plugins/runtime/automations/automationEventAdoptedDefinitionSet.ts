@@ -423,6 +423,13 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   resolveAccountEncryption(
     signal?: AbortSignal,
   ): Promise<AvailableAutomationAccountEncryptionV1 | null>;
+  /**
+   * Event admission seals or posts payloads: it needs a fresh server
+   * observation, never a borrowed one. Defaults to `resolveAccountEncryption`.
+   */
+  resolveAdmissionAccountEncryption?(
+    signal?: AbortSignal,
+  ): Promise<AvailableAutomationAccountEncryptionV1 | null>;
   readStoredDefinitions(params: Readonly<{
     caller: PluginMachineMaterializationRefV1;
     input: AutomationEventSourcesListInputV1;
@@ -483,11 +490,12 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   async function readCurrentAccountEncryption(
     signal: AbortSignal,
     expected?: AutomationAccountCurrentnessWitnessV1,
+    resolve: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1 | null> = params.resolveAccountEncryption,
   ): Promise<AvailableAutomationAccountEncryptionV1 | null> {
     if (!await isCallerCurrent(signal)) return null;
     let encryption: AvailableAutomationAccountEncryptionV1 | null;
     try {
-      encryption = await params.resolveAccountEncryption(signal);
+      encryption = await resolve(signal);
     } catch {
       return null;
     }
@@ -1220,6 +1228,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       const accountEncryption = await readCurrentAccountEncryption(
         signal,
         snapshot.accountCurrentness,
+        params.resolveAdmissionAccountEncryption ?? params.resolveAccountEncryption,
       );
       if (accountEncryption === null) return null;
 

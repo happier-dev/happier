@@ -34,7 +34,7 @@ import { formatSessionInputMentionMarkerV1 } from '@happier-dev/protocol/session
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildMentionRefForKindV1, MENTION_BOUNDS, MENTION_KIND_V1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { fetchSessionSnapshotsBatch } from '@/session/transport/http/sessionsHttp';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 type DiscussionParticipantMention = Extract<ReturnType<typeof readDiscussionMessagePartsV1>[number], { t: 'mention' }>['participant'];
 
@@ -120,7 +120,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
           const [snapshots, currentness] = await Promise.all([
             fetchSessionSnapshotsBatch({ token: input.credentials.token, serverUrl: binding.serverUrl,
               sessionIds: peerSessionIds, signal }),
-            fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, signal }),
+            readAccountEncryptionCurrentnessForRead({ credentials: input.credentials, token: input.credentials.token, signal }),
           ]);
           for (const sessionId of peerSessionIds) {
             const detail = snapshots.get(sessionId)?.detail;

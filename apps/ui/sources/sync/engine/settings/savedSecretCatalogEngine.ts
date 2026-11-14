@@ -70,7 +70,7 @@ const loader = createScopedSnapshotLoader<Target>({
                     captured.assertCurrent();
                     const mode = await captured.resolveAccountMode();
                     const assertCurrentMode = async () => {
-                        const currentMode = (await fetchAccountEncryptionMode(captured.credentials, { request: captured.request })).mode;
+                        const currentMode = (await fetchAccountEncryptionMode(captured.credentials, { request: captured.request, usage: 'identity' })).mode;
                         captured.assertCurrent();
                         if (currentMode !== mode) throw new Error('account-mode-mismatch');
                     };

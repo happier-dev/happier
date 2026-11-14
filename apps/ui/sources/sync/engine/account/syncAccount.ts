@@ -46,6 +46,7 @@ import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accoun
 import { parseToken } from '@/utils/auth/parseToken';
 import { createServerRequestForExplicitServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { captureAccountEncryptionObservationForHome } from '@/sync/http/accountEncryptionObservationBinding';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
@@ -157,8 +158,12 @@ export async function fetchHomeNotificationSettings(
             serverUrl: home.serverUrl,
             ...(home.runtimeOrigin ? { runtimeOrigin: home.runtimeOrigin } : {}),
             token: credentials.token,
+            // A read: borrow this Home's admitted socket observation when one is held.
+            accountEncryptionObservation: captureAccountEncryptionObservationForHome({
+                serverId: resolveServerProfileScopeId(home), endpointUrl: home.serverUrl, credentials,
+            }),
         });
-        const encryptionMode = await fetchAccountEncryptionMode(credentials, { request });
+        const encryptionMode = await fetchAccountEncryptionMode(credentials, { request, usage: 'identity' });
         const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
         const encryption = accountMode === 'e2ee'
             ? await createEncryptionFromAuthCredentials(credentials)

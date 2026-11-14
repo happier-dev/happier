@@ -8,7 +8,8 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, AutomationEventActionHttpCallerV1, AutomationEventDeclarationReleaseV1, AutomationEventStoredDefinitionProjectionV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginJsonSchemaValidator, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
@@ -220,7 +221,14 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
         && params.isOccurrenceCurrent()
       ),
     }).read;
+  // Opening stored definitions is a read: borrow the held Account observation.
   const resolveAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
+    ?? (async (signal?: AbortSignal) => await readAccountEncryptionCurrentnessForRead({
+      credentials: params.credentials, token: params.credentials.token,
+      ...(signal ? { signal } : {}),
+    }));
+  // Event admission seals or posts payloads: always a fresh server observation.
+  const resolveAdmissionAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
     ?? (async (signal?: AbortSignal) => await fetchAccountEncryptionCurrentness({
       credentials: params.credentials, token: params.credentials.token,
       ...(signal ? { signal } : {}),
@@ -228,17 +236,19 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
   const resolveAccountEncryptionMaterial = params.resolveAccountEncryptionMaterial
     ?? (async (_signal?: AbortSignal) =>
       createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials));
-  // One Account crypto/currentness owner for every boundary this set has.
-  const resolveAccountEncryption = async (
-    signal?: AbortSignal,
-  ): Promise<AvailableAutomationAccountEncryptionV1 | null> => {
+  // One Account crypto/currentness owner for every boundary this set has;
+  // only the currentness source differs between reads and admission.
+  const resolveAccountEncryptionFrom = (
+    readCurrentness: typeof resolveAccountEncryptionCurrentness,
+  ) => async (signal?: AbortSignal): Promise<AvailableAutomationAccountEncryptionV1 | null> => {
     const accountEncryption = await resolveValidatedAutomationAccountEncryptionV1({
       signal: signal ?? createEmptySignal(),
-      resolveAccountEncryptionCurrentness,
+      resolveAccountEncryptionCurrentness: readCurrentness,
       resolveAccountEncryptionMaterial,
     });
     return accountEncryption.kind === 'available' ? accountEncryption : null;
   };
+  const resolveAccountEncryption = resolveAccountEncryptionFrom(resolveAccountEncryptionCurrentness);
 
   return createAutomationEventAdoptedDefinitionSetV1({
     caller: params.caller,
@@ -248,6 +258,7 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
     onAdopted: params.onAdopted,
     revalidateCallerMaterialization: params.revalidateCallerMaterialization,
     resolveAccountEncryption,
+    resolveAdmissionAccountEncryption: resolveAccountEncryptionFrom(resolveAdmissionAccountEncryptionCurrentness),
     readStoredDefinitions: async (request) => await readStoredDefinitions({
       ...request,
       caller: {

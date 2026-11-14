@@ -199,7 +199,8 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       expect(pending, 'all selected originals still reach Pending admission').toHaveLength(32);
       expect(posts.filter(path => path.endsWith('/occurrence-routes'))).toHaveLength(32);
       expect(posts.filter(path => path === '/v1/account/project-rows/list')).toHaveLength(1);
-      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(1);
+      // P03 R3: Project row reads borrow the held Account observation (0 mode reads).
+      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(0);
       const settledPosts = posts.length;
       for (let index = 0; index < 10; index++) await pass();
       expect(posts.length - settledPosts, 'idle passes cannot re-probe or re-admit settled originals').toBe(0);
@@ -216,7 +217,7 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       await pass();
       expect(pending).toHaveLength(32);
       expect(posts.filter(path => path === '/v1/account/project-rows/list')).toHaveLength(2);
-      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(2);
+      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(0);
       const missedPosts = posts.length;
       for (let index = 0; index < 10; index++) await pass();
       expect(posts.length - missedPosts, 'zero candidates settle this original for this receiver').toBe(0);
@@ -227,7 +228,7 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       expect(pending, 'a changed rule snapshot must prepare its new tag facts before continuing').toHaveLength(64);
       expect(gets.filter(path => path === '/v2/session-organization')).toHaveLength(1);
       expect(posts.filter(path => path === '/v1/account/project-rows/list')).toHaveLength(4);
-      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(4);
+      expect(gets.filter(path => path === '/v1/account/encryption')).toHaveLength(0);
       // A distinct committed original is real demand even while older Pending
       // originals remain unconsumed. Admission failure then waits for push.
       const row = { ...rows[0]!, id: 'held-original', localId: 'held-original', seq: 65 };
@@ -413,7 +414,8 @@ it('prepares no private rule or source facts for refused occurrences and reads f
         requestEvidence: [{ requestId: 'question', evidence: { v: 1, ownerAccountId: 'account-1',
           event: { kind: 'needs_you', type: 'decision' }, facts: { serverId: 'home', kind: 'session' } } }] }));
       expect(reads.slice(readsBeforeQuestion).sort(), 'request freshness needs one exact source, but no refused rule/fact preparation')
-        .toEqual(['/v1/account/encryption/currentness', `/v2/sessions/${sourceSessionId}`].sort());
+        // P03 R3: the encryption witness is borrowed from the held Account observation.
+        .toEqual([`/v2/sessions/${sourceSessionId}`]);
     } finally { store.dispose(); }
     lifetime.abort();
     await dispatcher.dispatch(occurrence(23));

@@ -832,15 +832,18 @@ independent admission checks. A failed fresh read never becomes Plain authority.
 
 Observed encryption identity does not contain `version` or `settingsVersion`.
 The former is the Account-wide sequence, not an encryption-only revision.
-Outside plugin Account Data admission below, UI exact cursor witnesses, sealing, mutation, cleanup-before-write and Saved
-Secret plaintext disclosure keep a fresh server observation point; mode/storage
+Outside plugin Account Data admission below, UI exact cursor witnesses, sealing, mutation and cleanup-before-write
+keep a fresh server observation point; mode/storage
 readers identify that phase with `usage:'fresh-authority'`. They do not join an
 earlier identity bootstrap or wait for a socket update. A read-only catalog or
 row read (Profiles, Prompt Library, MCP, ACP, Provider connections, Connected
 Accounts, Connected metadata, Notification channels, Remote hosts, Session follow
-rules) makes one cheap still-active check before disclosing what it read to the
-same Account: `resolveAccountStorageContextForDisclosure`, which borrows the
-connection's admitted observation (identity usage). An unsettled or withdrawn
+rules and Follow preview/get/list disclosure, Saved Secret catalog loads and
+plaintext disclosure to the same Account, a Home's notification Settings read,
+MCP list/tool Actions)
+makes one cheap still-active check before disclosing what it read to the
+same Account: `resolveAccountStorageContextForDisclosure` (or mode reads with
+`usage:'identity'`), which borrows the connection's admitted observation. An unsettled or withdrawn
 observation, another credential or a retired Account re-admits over the read's
 own HTTP request. A mode, key or credential change committed but not yet
 delivered takes effect at the next boundary: the delivered socket push, a
@@ -849,7 +852,16 @@ admitted mode, so a mismatched row still fails closed. Socket delivery withdraws
 or changes an identity in that dispatch; no TTL, polling interval or additional
 revocation grace period is introduced. Actual HTTP/RPC authentication and
 captured Home/lifetime checks remain independent of the observed identity. CLI
-catalog stores still take their final read-only check with fresh authority.
+catalog stores still take their final read-only check with fresh authority. CLI
+read-only consumers (adopted Automation definition sets, Session follow source
+facts, follow rule reads, discussion follow labels, Project row snapshot reads)
+use `readAccountEncryptionCurrentnessForRead` or mode `usage:'identity'`: they
+borrow the held observation for that exact credential and Home and read fresh
+only when none is held. Write-sealing sites keep their fresh read until P03 R2
+moves them under the server's write fence: Follow rule sealing (`follow.set`),
+Follow personal receiver traversal/progress, Automation event admission (it seals
+or posts the payload; adopted-set refreshes still borrow), and the requester
+Session admission Settings floor.
 
 A finite CLI requester Account admission takes one fresh observation for the
 binding's requester Account. Concurrent admissions each issue their own fresh
@@ -872,8 +884,8 @@ An in-flight plain admission can send one plaintext write after a plain→E2EE
 switch; the server refuses it and stores no content. The next admission observes
 the changed mode.
 
-UI storage acquisition defaults to identity usage; outside plugin Account Data, sealing, mutation, Saved
-Secret plaintext disclosure and local-only identity/digest operations request
+UI storage acquisition defaults to identity usage; outside plugin Account Data, sealing, mutation
+and local-only identity/digest operations request
 fresh authority explicitly. Workflow list projection borrows validated caller material from
 that identity, while the server's admitted Run census supplies the content mode,
 recipient envelope and owner witness. The list-only material type carries no

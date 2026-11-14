@@ -1,13 +1,12 @@
 import axios from '@/api/client/credentialAxios';
 import { ListSessionFollowRulesResponseV1Schema, SESSION_FOLLOW_RULES_ROUTE_V1, type ListSessionFollowRulesResponseV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { createAutomationAccountEncryptionMaterialSnapshotV1, isAvailableE2eeAutomationAccountEncryptionV1, resolveValidatedAutomationAccountEncryptionV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import type { StoredCredentials } from '@/persistence';
 import { createSessionFollowRuleCache, type SessionFollowRuleInvalidation } from './sessionFollowRuleCache';
 import { SESSION_FOLLOW_HTTP_PATHS_V1, SessionAutoFollowPreferencesResponseSchema } from '@happier-dev/protocol/sessions/follow/api';
 import { projectAccountEncryptionIdentity, sameAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
-import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { acquireRequesterAccountEncryptionCurrentness, readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { logger } from '@/ui/logger';
 import type { OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { createSessionFollowOriginalWork } from './sessionFollowOriginalWork';
@@ -105,8 +104,10 @@ export function createAccountSessionFollowRuleCache(input: Readonly<{
       if (!await current()) return null;
       let identity: AccountEncryptionIdentity | null = null;
       const encryption = await resolveValidatedAutomationAccountEncryptionV1({ signal: input.signal,
+        // A read: borrow the held observation for this credential and Home (ours
+        // after the first read); read fresh only when none is held.
         resolveAccountEncryptionCurrentness: async signal => {
-          const fact = await fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token,
+          const fact = await readAccountEncryptionCurrentnessForRead({ credentials: input.credentials, token: input.credentials.token,
             serverBaseUrl: input.serverHttpBaseUrl, signal });
           identity = projectAccountEncryptionIdentity(fact);
           return fact;

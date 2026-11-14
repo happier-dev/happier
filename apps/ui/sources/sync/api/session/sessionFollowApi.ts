@@ -217,12 +217,15 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
                     assertCurrent: () => { if (!isCurrent()) throw new Error('scope-retired'); },
                 });
                 if (census) {
-                    const current = await readStorage();
+                    // Same-Account disclosure borrows the held observation (P03 R3 amendment b).
+                    const current = await readStorage('identity');
                     if (current.mode !== census.mode) return UNAVAILABLE;
                 }
                 return { kind: 'ok', value: parseSessionFollowActionResponse(actionId, input, payload) };
             }
-            const account = ruleTarget && actionId !== 'follow.remove' ? await readStorage() : null;
+            // Only follow.set seals: it keeps a fresh read until P03 R2; get/list/preview borrow.
+            const sealUsage = actionId === 'follow.set' ? 'fresh-authority' : 'identity';
+            const account = ruleTarget && actionId !== 'follow.remove' ? await readStorage(sealUsage) : null;
             const authored = ruleTarget && actionId === 'follow.set' ? FollowRuleSetActionInputV1Schema.parse(input) : null;
             const ruleContent = authored && account && ruleTarget ? sealSessionFollowRuleContentV1({ ruleId: authored.source.ruleId,
                 receiver: ruleTarget.receiver, definition: SessionFollowRuleDefinitionV1Schema.parse({ ...authored.ruleDefinition, policy: authored.policy }),
@@ -235,7 +238,7 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
                 const rule = actionId === 'follow.get' ? GetSessionFollowRuleResponseV1Schema.parse(payload).rule
                     : SetSessionFollowRuleResponseV1Schema.parse(payload).rule;
                 if (rule && (rule.ruleId !== ruleTarget.ruleId || !equalFollowRuleReceiverV1(rule.receiver, ruleTarget.receiver))) return UNAVAILABLE;
-                const current = await readStorage();
+                const current = await readStorage(sealUsage);
                 if (current.mode !== account.mode) return UNAVAILABLE;
                 const opened = rule ? openSessionFollowRuleContentV1({ ...rule, mode: current.mode, material: current.material }) : null;
                 if (opened && opened.status !== 'opened') return UNAVAILABLE;
@@ -250,7 +253,8 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
                 const receiver = FollowReceiverRefV1Schema.parse(list.receiver);
                 const census = list.cursor === undefined && list.sourceKinds === undefined ? await readRules() : null;
                 if (census) {
-                    const current = await readStorage();
+                    // Same-Account disclosure borrows the held observation (P03 R3 amendment b).
+                    const current = await readStorage('identity');
                     if (current.mode !== census.mode) return UNAVAILABLE;
                 }
                 const rows = receiver.kind === 'account'

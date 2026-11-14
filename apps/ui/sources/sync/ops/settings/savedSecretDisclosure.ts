@@ -3,7 +3,7 @@ import { SavedSecretDisclosureRecordResultV1Schema, SavedSecretDisclosureHistory
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { readSavedSecretReferenceInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 
 type DisclosureInput = ReturnType<typeof SavedSecretDisclosureRecordV1Schema.parse>;
@@ -27,9 +27,9 @@ export async function isSavedSecretDisclosureStorageCurrentInContext(context: La
     accountMode: 'plain' | 'e2ee', resourceMode: 'plain' | 'e2ee' | null): Promise<boolean> {
     context.assertCurrent();
     const mode = resourceMode === 'e2ee'
-        ? (await resolveAccountStorageContext(context.credentials, { encryption: (await context.resolveAccountEncryption()).encryption,
-            request: context.request, usage: 'fresh-authority' })).mode
-        : (await fetchAccountEncryptionMode(context.credentials, { request: context.request, usage: 'fresh-authority' })).mode;
+        ? (await resolveAccountStorageContextForDisclosure(context.credentials, { encryption: (await context.resolveAccountEncryption()).encryption,
+            request: context.request })).mode
+        : (await fetchAccountEncryptionMode(context.credentials, { request: context.request, usage: 'identity' })).mode;
     context.assertCurrent();
     return mode === accountMode;
 }

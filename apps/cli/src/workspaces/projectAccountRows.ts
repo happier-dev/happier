@@ -254,13 +254,17 @@ function cryptoMaterial(credentials: StoredCredentials) {
     ? { type: 'legacy' as const, secret: encryption.secret }
     : { type: 'dataKey' as const, machineKey: encryption.machineKey };
 }
-async function readMode(input: ReadInput): Promise<'plain' | 'e2ee'> {
+/**
+ * `identity` (snapshot reads only) borrows the held Account observation; mutations keep the
+ * default fresh read until their seal moves under the server write fence (P03 R2).
+ */
+async function readMode(input: ReadInput, usage: 'identity' | 'fresh-authority' = 'fresh-authority'): Promise<'plain' | 'e2ee'> {
   await assertRequesterCurrent(input);
   if (input.authorization) {
     return input.authorization.requesterAccountProjection!.accountEncryptionMode;
   }
   const result = await readAccountEncryptionModeOnce({
-    credentials: input.credentials,
+    credentials: input.credentials, usage,
     ...(input.credentials ? { scope: { token: input.credentials.token, serverBaseUrl: baseUrl(input), signal: input.signal } } : {}),
     request: () => axios.get(`${baseUrl(input)}/v1/account/encryption`, {
     headers: headers(input.credentials), validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}),
@@ -440,7 +444,7 @@ export async function readProjectAccountRowsObservation(input: ProjectAccountRow
     ? { value: selectedProjection(active, bound.selection) } : null;
   const observation = await runWithServerHttpBaseUrl(baseUrl(bound), () => withSnapshotReadFailurePolicy(bound, async () => {
       input.signal?.throwIfAborted();
-      const mode = await timeWebLatencyPhase('projectRows.mode', () => trace('project_rows.mode', () => readMode(bound)));
+      const mode = await timeWebLatencyPhase('projectRows.mode', () => trace('project_rows.mode', () => readMode(bound, 'identity')));
       // Only a complete installed baseline can consume incremental hints.
       // Connect/reconnect, withdrawn state and a changed Account still recover.
       if (bound.changedKeys && (bound.publication !== 'installed' || !canPublish(bound) || bound.selection)) {

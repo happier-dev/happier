@@ -10,7 +10,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { readMcpServerCatalogInContext, mutateMcpServerCatalogInContext, classifyMcpServerCatalogReadFailure } from '@/sync/api/account/apiMcpServerCatalog';
 import { observeMcpServerCatalog, refreshMcpServerCatalog } from '@/sync/engine/settings/mcpServerCatalogEngine';
 import { getMcpServerCatalogSnapshot } from '@/sync/store/settings/mcpServerCatalogSnapshot';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { LazyActionAccountContext } from './actionAccountContext';
@@ -108,12 +108,12 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                         releaseCatalog ??= observeMcpServerCatalog(scope);
                         try {
                             const { encryption } = await account.resolveAccountEncryption();
-                            const admitted = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
+                            const admitted = await resolveAccountStorageContextForDisclosure(account.credentials, { encryption, request: account.request });
                             assertCurrent();
                             let snapshot = getMcpServerCatalogSnapshot(scope);
                             if ((snapshot.status !== 'ready' && snapshot.status !== 'partial') || snapshot.stale || !snapshot.value) {
                                 await refreshMcpServerCatalog(scope);
-                                const checked = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
+                                const checked = await resolveAccountStorageContextForDisclosure(account.credentials, { encryption, request: account.request });
                                 assertCurrent();
                                 if (checked.mode !== admitted.mode) return { status: 'unavailable', reason: 'account-mode-mismatch' };
                                 snapshot = getMcpServerCatalogSnapshot(scope);

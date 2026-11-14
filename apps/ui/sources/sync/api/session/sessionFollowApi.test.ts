@@ -158,7 +158,7 @@ describe('Follow exact Home Action transport', () => {
     it.each([
         { changeBeforeDisclosure: false, supplied: false }, { changeBeforeDisclosure: true, supplied: false },
         { changeBeforeDisclosure: false, supplied: true }, { changeBeforeDisclosure: true, supplied: true },
-    ])('checks preview authority after the held Session query ($changeBeforeDisclosure, supplied census: $supplied)', async ({ changeBeforeDisclosure, supplied }) => {
+    ])('borrows preview authority after the held Session query; an undelivered change applies at the next boundary ($changeBeforeDisclosure, supplied census: $supplied)', async ({ changeBeforeDisclosure, supplied }) => {
         const homes = createHomeGovernanceHarness();
         await homes.reset();
         installHomeGovernanceBoundaries(homes);
@@ -215,13 +215,13 @@ describe('Follow exact Home Action transport', () => {
             const readsBeforeQueryRelease = authorityReads;
             committedChange = changeBeforeDisclosure;
             releaseQuery.resolve(undefined);
-            if (changeBeforeDisclosure) await expect(reading).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
-            else await expect(reading).resolves.toMatchObject({ kind: 'ok', value: { matchCount: 1,
+            // P03 R3 amendment (b): preview disclosure to the same Account borrows the
+            // held observation; a committed change not yet delivered applies at the
+            // next boundary (socket delivery, reconnect or next read), as catalog reads do.
+            await expect(reading).resolves.toMatchObject({ kind: 'ok', value: { matchCount: 1,
                 overlaps: [{ ruleId: 'private-other-rule', matches: [{ serverId, source: { kind: 'session', sessionId: session.id } }] }] } });
-            expect(authorityReads - readsBeforeQueryRelease).toBe(1);
-            // Captured identity may reuse a current observation; the final fresh
-            // check above is mandatory and must not add redundant authority reads.
-            expect(authorityReads).toBeLessThanOrEqual(supplied ? 3 : 2);
+            expect(authorityReads - readsBeforeQueryRelease).toBe(0);
+            expect(authorityReads).toBe(0);
         } finally {
             releaseQuery.resolve(undefined);
             await pending;
@@ -230,7 +230,7 @@ describe('Follow exact Home Action transport', () => {
             installDisconnectedServerSocketBoundary();
         }
     });
-    it('reuses captured identity for the initial private census but refreshes before disclosure and rule sealing', async () => {
+    it('reuses captured identity for the private census and list disclosure but refreshes before rule sealing', async () => {
         const env = await setup();
         const { executeSessionFollowAction } = await import('./sessionFollowApi');
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
@@ -293,9 +293,9 @@ describe('Follow exact Home Action transport', () => {
                 expect(authorityReads - before).toBe(0);
                 committedChange = changeBeforeDisclosure;
                 bodyReady.resolve(undefined);
-                if (changeBeforeDisclosure) await expect(reading).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
-                else await expect(reading).resolves.toMatchObject({ kind: 'ok', value: { rules: [{ ruleId: 'rule', definition }] } });
-                expect(authorityReads - before).toBe(1);
+                // P03 R3 amendment (b): list disclosure borrows the held observation.
+                await expect(reading).resolves.toMatchObject({ kind: 'ok', value: { rules: [{ ruleId: 'rule', definition }] } });
+                expect(authorityReads - before).toBe(0);
                 if (!changeBeforeDisclosure) {
                     writerStartedAt = authorityReads;
                     await expect(executeSessionFollowAction('follow.set', { receiver, source: { kind: 'rule', ruleId: 'rule' },

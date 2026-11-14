@@ -17,7 +17,7 @@ import type { SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/pe
 import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionFollowRelationWitnessesV1Schema, type SessionFollowRelationWitnessV1, type SessionFollowSourceOccurrenceWitnessV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
 import { SessionFollowSourceTurnV1Schema, SessionFollowStalledOccurrenceV1Schema, isSessionFollowStalledOccurrenceCurrentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import { readCliSessionListFilterFactsV1 } from '@/cli/output/session/sessionListFilterFacts';
@@ -418,7 +418,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         const [accountEncryption, source] = sourceTransport
           ? [sourceTransport.accountEncryptionCurrentness, sourceTransport.rawSession] as const
           : await Promise.all([
-          fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
+          readAccountEncryptionCurrentnessForRead({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
           fetchSessionById({ reason: 'follow-occurrence', token: input.credentials.token, sessionId: occurrence.sourceSessionId,
             serverUrl: input.serverHttpBaseUrl, signal: input.signal }),
         ]);
@@ -1154,7 +1154,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         const unresolved = known.filter(candidate => candidate.match === 'unavailable').map(candidate => candidate.rule);
         if (unresolved.length) {
           const [encryption, source] = await Promise.allSettled([
-            fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
+            readAccountEncryptionCurrentnessForRead({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
             fetchSessionById({ reason: 'follow-occurrence', token: input.credentials.token, sessionId: sourceSessionId,
               serverUrl: input.serverHttpBaseUrl, signal: input.signal }),
           ]);

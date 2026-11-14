@@ -402,6 +402,8 @@ describe('SavedSecret catalog captured request boundary', () => {
         resetSavedSecretCatalogSnapshotsForTests();
         const materialReadBaseline = reads.get('/v1/account/saved-secrets/resources/materials') ?? 0;
         const sourceReadBaseline = reads.get('/v2/account/settings') ?? 0;
+        const modeReadPaths = ['/v1/account/encryption/currentness', '/v1/account/encryption'];
+        const modeReadBaseline = modeReadPaths.map(path => reads.get(path) ?? 0);
         const releases = Array.from({ length: 32 }, () => observeSavedSecretCatalog(scope));
         const release = () => releases.forEach(dispose => dispose());
         try {
@@ -414,6 +416,8 @@ describe('SavedSecret catalog captured request boundary', () => {
             // Passive discovery reuses the settled Sync document; mutation
             // admission still reads the Settings authority.
             expect((reads.get('/v2/account/settings') ?? 0) - sourceReadBaseline).toBe(0);
+            // P03 R3: a material load on a connected Home borrows the held Account observation.
+            expect(modeReadPaths.map((path, index) => (reads.get(path) ?? 0) - modeReadBaseline[index]!)).toEqual([0, 0]);
             const before = getSavedSecretCatalogSnapshot(scope);
             const machineChanges = planSyncActionsFromChanges([{ cursor: 1, kind: 'machine', entityId: 'machine-a', changedAt: 1 }]);
             for (let index = 0; index < 20; index += 1) publishHomeAccountChange(scope.serverId, ['machine-a'], {
@@ -460,6 +464,7 @@ describe('SavedSecret catalog captured request boundary', () => {
             // The resource wake reuses the settled Settings source and mode proof.
             expect(readCounts()[0]! - beforeResourceReads[0]!).toBe(0);
             const directChangeReads = readCounts().map((count, index) => count - beforeResourceReads[index]!);
+            expect(directChangeReads[1]).toBe(0);
             expect(directChangeReads[2]).toBe(1);
             expect(directChangeReads[3]).toBe(0);
             const beforeSourceReads = readCounts();
@@ -509,7 +514,8 @@ describe('SavedSecret catalog captured request boundary', () => {
             await vi.waitFor(() => {
                 expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
                     legacyImport: { status: 'complete' } });
-                expect(readCounts()[1]! - focusedReads[1]!).toBe(2);
+                // P03 R3: catalog projections borrow the held Account observation.
+                expect(readCounts()[1]! - focusedReads[1]!).toBe(0);
                 expect(readCounts()[3]! - focusedReads[3]!).toBe(0);
             });
             expect(readCounts()[0]! - focusedReads[0]!).toBe(0);

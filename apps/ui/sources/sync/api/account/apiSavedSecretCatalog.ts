@@ -9,7 +9,7 @@ import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/accou
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { requestHomeDomain, type HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
@@ -241,11 +241,12 @@ export async function readSavedSecretContentsInContext(
                 : null,
         });
         assertCurrent();
-        // Opening private material cannot authorize its later disclosure: the
-        // server may have committed revocation before the socket delivers it.
+        // Disclosure is to this same Account: the held observation (withdrawn or
+        // changed by socket delivery) decides the mode; the server already
+        // authorized this credential's material read.
         const currentMode = needsAccountEncryption
-            ? (await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' })).mode
-            : (await fetchAccountEncryptionMode(context.credentials, { request: context.request, usage: 'fresh-authority' })).mode;
+            ? (await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request })).mode
+            : (await fetchAccountEncryptionMode(context.credentials, { request: context.request, usage: 'identity' })).mode;
         assertCurrent();
         if (currentMode !== accountMode) return { ok: false, reason: 'unavailable' };
         const contents = new Map<string, Readonly<{ content: SavedSecretResourceContentV1; revision: number; entry: SavedSecretCatalogEntryV1 }>>();

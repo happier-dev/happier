@@ -38,6 +38,9 @@ import {
   createAutomationEventStoredDefinitionsHttpTransportV1,
 } from './automationEventAdoptedDefinitionSetHost';
 import { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 const credentials = {
   token: 'token_test',
@@ -1240,5 +1243,51 @@ describe('adopted definition set Account-currentness cost', () => {
     releaseAuthority();
     await expect(cachedPage).resolves.toEqual({ kind: 'unavailable' });
     expect(transportMocks.get).toHaveBeenCalledTimes(1);
+  });
+
+  // P03 R3 / review F1: refreshes borrow the held observation, but event
+  // admission seals or posts payloads and must observe a committed switch.
+  it('refuses event admission after a plain-to-E2EE switch the held observation has not yet received', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const serverBaseUrl = 'https://f1-admission.test';
+    const plainCredentials = { token: credentials.token, encryption: null };
+    let currentness = await plainCurrentness();
+    let currentnessReads = 0;
+    transportMocks.get.mockReset().mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) { currentnessReads += 1; return { status: 200, data: currentness }; }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const holder = acquireRequesterAccountEncryptionCurrentness({ accountId: 'account-1', token: credentials.token, serverBaseUrl });
+    try {
+      await runWithServerHttpBaseUrl(serverBaseUrl, async () => {
+        await holder.read();
+        const owner = createAutomationEventAdoptedDefinitionSetHostV1({
+          credentials: plainCredentials, caller, occurrenceId, sourceCustody,
+          transport: { kind: 'checkpointedPull' }, occurrenceSignal: new AbortController().signal,
+          isOccurrenceCurrent: () => true, revalidateCallerMaterialization: async () => true,
+          revalidateCallerOccurrence: async () => true,
+          readStoredDefinitions: async () => ({ kind: 'page', revision: '7', eventDeclarationRelease,
+            definitions: [storedDefinition()], nextCursor: null }),
+        });
+        const readsBeforeRefresh = currentnessReads;
+        await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
+        expect(currentnessReads - readsBeforeRefresh).toBe(0);
+        // The Home commits plain→E2EE; its socket publication has not arrived.
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: credentials.encryption.secret } });
+        currentness = { ...currentness, mode: 'e2ee', version: 8, signingKeyFingerprint: 'aemk1_signing',
+          contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint),
+          updatedAt: 8, recipientEnvelopeReadiness: { status: 'available' } };
+        const prepared = await owner.prepareAdmission({
+          caller: actionCaller,
+          input: { eventRef: { pluginId: caller.pluginId, localId: 'repository-event' }, occurrenceId: 'delivery-1',
+            occurredAt: 1, observationReceivedAt: 2, payload: { action: 'opened' },
+            definitions: [{ automationId: 'automation-1', triggerId, triggerRevision, sourceSelectorId }] },
+          accountId: 'account-1', randomBytes: length => new Uint8Array(length), signal: new AbortController().signal,
+        });
+        const sent = prepared === null ? [] : await collectPreparedAdmissionRequests(prepared);
+        expect(sent).toEqual([]);
+      });
+    } finally { await holder.dispose(); await channel.close(); }
   });
 });
