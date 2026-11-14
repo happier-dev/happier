@@ -1,6 +1,5 @@
 import type { Settings } from '@/persistence';
 import type { TrackedSession } from '@/daemon/types';
-import { resolveTrackedSessionActiveTurn } from '@/daemon/sessions/trackedSessionActiveTurn';
 
 import type { SessionRunnerEntrypointIdentity } from '../sessionRunnerRuntime/types';
 import { restartAllSessionRunnersOnCurrentRuntime } from './restartSessionRunnerOnCurrentRuntime';
@@ -46,20 +45,12 @@ export async function restartStaleSessionRunnersAfterDaemonStart(input: Readonly
     if (input.isShuttingDown()) return { status: 'shutting_down' };
 
     const trackedSessions = input.trackedSessions();
-    // A fresh daemon has not observed turn lifecycle events for reattached runners yet, so the
-    // in-memory activity gate reads them as idle. An unattended restart must also honor the
-    // active turn persisted in the runner's session marker.
-    const hasPersistedActiveTurn = (sessionId: string): boolean => trackedSessions.some(
-      (tracked) => tracked.happySessionId === sessionId && resolveTrackedSessionActiveTurn(tracked) !== null,
-    );
     const result = await restartAllSessionRunnersOnCurrentRuntime({
       ...REQUEST,
       currentIdentity: input.resolveCurrentIdentity(),
       trackedSessions,
       requestRestart: input.requestRestart,
-      resolveActivityDisabledReason: (sessionId) =>
-        input.resolveActivityDisabledReason?.(sessionId)
-        ?? (hasPersistedActiveTurn(sessionId) ? 'turn_in_progress' : null),
+      resolveActivityDisabledReason: input.resolveActivityDisabledReason,
       ...(input.refreshTrackedSessionRuntimeSnapshot
         ? { refreshTrackedSessionRuntimeSnapshot: input.refreshTrackedSessionRuntimeSnapshot }
         : {}),

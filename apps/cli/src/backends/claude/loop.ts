@@ -140,7 +140,6 @@ interface LoopOptions {
             providerTasks: SessionRuntimeActivityContributionHandle;
             isCurrentRuntime: () => boolean;
         }>>;
-        turnActivityContributionHandle?: SessionRuntimeActivityContributionHandle | null;
     }>
     initialClaudeUnifiedTerminalMode?: EnhancedMode
     expectedExistingTerminalHostAttachmentId?: string
@@ -161,18 +160,8 @@ export async function loop(opts: LoopOptions): Promise<number> {
     // Get log path for debug display
     const logPath = logger.logFilePath;
     logger.infoFile('[CLAUDE_STARTUP] stage=provider_activity_binding_started');
-    const activatedRuntimeActivityContributions =
+    const runtimeActivityContributions =
         await opts.runtimeActivityContributions?.activateProviderTasks();
-    const turnActivityContributionHandle =
-        opts.runtimeActivityContributions?.turnActivityContributionHandle ?? null;
-    const sessionRuntimeActivityContributions =
-        activatedRuntimeActivityContributions === undefined && turnActivityContributionHandle === null
-            ? undefined
-            : {
-                providerTasks: activatedRuntimeActivityContributions?.providerTasks ?? null,
-                isCurrentRuntime: activatedRuntimeActivityContributions?.isCurrentRuntime,
-                turnActivity: turnActivityContributionHandle,
-            };
     logger.infoFile('[CLAUDE_STARTUP] stage=provider_activity_binding_completed');
     let session = new Session({
         client: opts.session,
@@ -195,7 +184,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         observeClaudePermissionTranscript: opts.observeClaudePermissionTranscript,
         precomputedMcpBridge: opts.precomputedMcpBridge ?? null,
         reportSessionMetadataToDaemon: opts.reportSessionMetadataToDaemon ?? null,
-        runtimeActivityContributions: sessionRuntimeActivityContributions,
+        runtimeActivityContributions,
     });
     session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
     session.claudeCodeIncludeInNativeHistory = opts.claudeCodeIncludeInNativeHistory === true;

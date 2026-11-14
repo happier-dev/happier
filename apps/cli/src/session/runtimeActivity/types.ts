@@ -1,7 +1,7 @@
 import type { SessionRuntimeActivitySnapshot } from '@happier-dev/protocol';
 
 export type RuntimeActivityApplicability = 'supported' | 'unavailable' | 'not_applicable';
-export type RuntimeActivitySlot = 'agentRuntime' | 'executionRuns' | 'turnActivity';
+export type RuntimeActivitySlot = 'agentRuntime' | 'executionRuns';
 
 export { SessionRuntimeActivitySnapshotSchema as SessionRuntimeActivityContributionSchema } from '@happier-dev/protocol';
 
@@ -23,7 +23,6 @@ export type SessionRuntimeActivity = Readonly<{
     applicability: RuntimeActivityApplicability;
     agentRuntimeContributionHandle: SessionRuntimeActivityContributionHandle | null;
     executionRunsContributionHandle: SessionRuntimeActivityContributionHandle;
-    turnActivityContributionHandle: SessionRuntimeActivityContributionHandle;
     bindPublisher(publisher: SessionRuntimeActivitySnapshotPublisher): Promise<void>;
     dispose(): Promise<void>;
 }>;

@@ -133,9 +133,13 @@ are mid-turn or running background work are skipped, as are runners whose backgr
 from the server; restart them later with `hdev daemon restart-session-runners`. The setting is off by default, is read
 when the daemon starts, and is turned off again with `--on-update off`.
 
-Turn checks use the daemon's observed turn state. A turn that starts while the daemon is down, or whose turn
-notification fails, can be missed and interrupted by the automatic restart. Leave the setting off and restart runners
-manually when you are ready if you want to avoid this unattended interruption risk.
+In development source, runner restart commands and previews also honor an active turn restored from the runner's
+persisted session marker after daemon restart. This protection applies even with `--force-current-cli`, which selects
+the CLI version rather than overriding turn safety. A matching turn completion releases the protection.
+
+Turn checks still depend on the daemon's observed state and persisted marker. A turn that starts while the daemon is
+down, or whose turn notification fails, can be missed. Leave automatic runner restarts off if you need to avoid that
+unattended interruption risk.
 
 ### Side-by-side installs (stable vs preview vs dev)
 

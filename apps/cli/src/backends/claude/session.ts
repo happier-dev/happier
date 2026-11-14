@@ -37,7 +37,6 @@ import {
     createClaudeProviderActivityLedger,
 } from './providerActivity/createClaudeProviderActivityLedger';
 import type { SessionRuntimeActivityContributionHandle } from '@/session/runtimeActivity/types';
-import { createTurnActivityReporter } from '@/session/runtimeActivity/turnActivityReporter';
 import { createClaudeProviderRuntimeActivityAdapter } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
 import {
     isSidechainSessionHook,
@@ -313,7 +312,6 @@ export class Session {
     readonly logPath: string;
     readonly client: SessionClientPort;
     private readonly providerTaskRuntimeActivityAdapter: ReturnType<typeof createClaudeProviderRuntimeActivityAdapter> | null;
-    private readonly turnActivityReporter: ReturnType<typeof createTurnActivityReporter> | null;
     private readonly providerTaskActivityLedger: ReturnType<typeof createClaudeProviderActivityLedger> | null;
     pushSender: PushNotificationClient | null;
     accountSettings: AccountSettings | null;
@@ -438,7 +436,6 @@ export class Session {
         runtimeActivityContributions?: Readonly<{
             providerTasks?: SessionRuntimeActivityContributionHandle | null;
             isCurrentRuntime?: () => boolean;
-            turnActivity?: SessionRuntimeActivityContributionHandle | null;
         }>,
     }) {
         this.path = opts.path;
@@ -458,16 +455,6 @@ export class Session {
                 isCurrentRuntime: opts.runtimeActivityContributions?.isCurrentRuntime,
             })
             : null;
-        const turnActivityContributionHandle = opts.runtimeActivityContributions?.turnActivity ?? null;
-        this.turnActivityReporter = turnActivityContributionHandle
-            ? createTurnActivityReporter({
-                contributionHandle: turnActivityContributionHandle,
-                // Same turn-truth contract as isProviderIdleForExit: the display flag OR the
-                // canonical turn lifecycle, with a missing canonical accessor never idle.
-                isTurnActive: () => this.thinking || this.client.hasActiveCanonicalTurn?.() !== false,
-            })
-            : null;
-        void this.turnActivityReporter?.publishCurrent('claude-turn-activity-startup').catch(() => {});
         this.pushSender = opts.pushSender ?? null;
         this.accountSettings = opts.accountSettings ?? null;
         this.accountSettingsSecretsReadKeys = opts.accountSettingsSecretsReadKeys ?? [];
@@ -836,12 +823,7 @@ export class Session {
         this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(thinking, this.mode);
         this.scheduleNextKeepAlive();
-        this.publishTurnActivityCurrent('claude-thinking-changed');
         return wasThinking !== thinking;
-    }
-
-    private publishTurnActivityCurrent = (reason: string): void => {
-        void this.turnActivityReporter?.publishCurrent(reason).catch(() => {});
     }
 
     setThinkingWithoutTaskLifecycle = (thinking: boolean) => {
@@ -864,7 +846,6 @@ export class Session {
             const id = randomUUID();
             this.currentTaskId = id;
             this.client.sendAgentMessage('claude', { type: 'task_started', id });
-            this.publishTurnActivityCurrent('claude-task-started');
             return;
         }
 
@@ -875,10 +856,6 @@ export class Session {
         const id = this.currentTaskId;
         this.currentTaskId = null;
         this.client.sendAgentMessage('claude', { type: 'task_complete', id });
-        // The canonical turn settles only after the task_complete send (the active-turn observer
-        // clears on that message); applyThinkingState's earlier publish read a still-open turn and
-        // deduped to active. Re-read after settlement so a finished turn publishes idle.
-        this.publishTurnActivityCurrent('claude-task-complete');
     }
 
     abortCurrentTaskTurn = () => {
@@ -888,9 +865,6 @@ export class Session {
         this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(false, this.mode);
         this.client.sendAgentMessage('claude', { type: 'turn_aborted', id });
-        // Same settlement ordering as onThinkingChange: publish after the abort send so the
-        // canonical-turn read sees the turn closed.
-        this.publishTurnActivityCurrent('claude-turn-aborted');
     }
 
     onModeChange = (mode: 'local' | 'remote') => {

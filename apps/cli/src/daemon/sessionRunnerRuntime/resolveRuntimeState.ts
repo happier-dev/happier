@@ -7,6 +7,7 @@ import {
 } from './resolveRunnerEntrypointIdentity';
 import { readSessionRunnerStartingModeFromProcessCommand } from './readSessionRunnerStartingMode';
 import { resolveSessionRunnerRestartEligibility } from './resolveRestartEligibility';
+import { resolveSessionRunnerActivityDisabledReason } from './resolveActivityDisabledReason';
 import type {
   SessionRunnerEntrypointIdentity,
   SessionRunnerRestartDisabledReason,
@@ -88,6 +89,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
   const disabledReason =
     resolveDisabledReason(tracked) ??
     resolveIdentityDisabledReason({ runnerIdentity, currentIdentity: params.currentIdentity }) ??
+    resolveSessionRunnerActivityDisabledReason(sessionId, {}, tracked) ??
     (sessionId ? params.resolveActivityDisabledReason?.(sessionId) ?? null : null);
 
   return {
