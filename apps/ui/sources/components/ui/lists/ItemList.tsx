@@ -53,6 +53,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     containedGutter: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
     },
+    // A page's bottom run-out is for a scrolled page; in a card the footer follows, so the list ends one inset above it.
+    containedBottom: {
+        paddingBottom: HAPPIER_PAGE_METRICS.sheetInsetPx,
+    },
 }));
 
 function setForwardedRef<T>(ref: React.ForwardedRef<T>, value: T | null) {
@@ -135,7 +139,8 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         ...(pageOnWheel ? ({ onWheel: pageOnWheel } as any) : {}),
     };
     const listContent = presentation === 'page' ? (
-        <PageFrame column={pageColumn} content="sections" testID="page-frame" style={fill ? styles.fill : undefined}>
+        <PageFrame column={pageColumn} content="sections" testID="page-frame"
+            style={[fill ? styles.fill : null, page.contained ? styles.containedBottom : null]}>
             <RoundButtonSizeScope size="normal">{children}</RoundButtonSizeScope>
         </PageFrame>
     ) : children;

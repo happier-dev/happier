@@ -191,9 +191,17 @@ describe('Projects → All deployments', () => {
     phoneWindow.on = true;
     const { controller } = controllerFor(() => page([]));
     const screen = await render(controller, 'all-deployments.empty');
-    await screen.pressByTestIdAsync('all-deployments.empty.deployApp');
-    // On a phone the flow is its pushed page; on a computer the same screen opens as a dialog.
-    expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/projects/new-app' }));
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show');
+    routerMock.spies.push.mockClear();
+    try {
+      await screen.pressByTestIdAsync('all-deployments.empty.deployApp');
+      // One flow everywhere (lab f1src / f1srcp): a dialog over the page, a sheet over it on a phone; no page push.
+      expect(show).toHaveBeenCalledWith(expect.objectContaining({
+        chrome: expect.objectContaining({ testID: 'newApp.dialog', phonePresentation: 'sheet' }),
+      }));
+      expect(routerMock.spies.push).not.toHaveBeenCalled();
+    } finally { show.mockRestore(); }
     controller.retire();
   });
 

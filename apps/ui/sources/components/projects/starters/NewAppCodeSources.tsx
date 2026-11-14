@@ -17,8 +17,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-/** The first repository Projects shown as tiles (lab f1src "Your code"); the rest stay one search away in a menu. */
-const SHOWN = 3;
+/** The first repository Projects shown as tiles (lab f1src "Your code", two per line); the rest stay one search away in a menu. */
+const SHOWN = 4;
 /** Above this many Projects the menu offers search, as the Project field does. */
 const SEARCH_FROM = 8;
 const NO_ROWS: readonly ProjectSourceV1[] = Object.freeze([]);
@@ -33,6 +33,8 @@ export function NewAppCodeSources(
     scope: ServerAccountScope;
     value: string | null;
     onChange: (projectSourceId: string | null) => void;
+    /** Two per line in the dialog (owner 11-14); one on a phone (rows rule). */
+    columns: 1 | 2;
     /** Lines the section up with the gallery beneath it inside the dialog card. */
     insetStyle: React.ComponentProps<typeof View>['style'];
   }>,
@@ -84,7 +86,8 @@ export function NewAppCodeSources(
         <SelectionTiles
           testIdPrefix="newApp.code"
           accessibilityLabel={t('newApp.yourCode')}
-          maximumColumns={1}
+          density="compact"
+          maximumColumns={props.columns}
           subtitleLines={1}
           value={props.value}
           onChange={props.onChange}

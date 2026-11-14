@@ -34,7 +34,7 @@ const { waitForHomeGovernance } =
   await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { NewAppScreen } = await import('./NewAppScreen');
 
-it('runs an app that already exists from the Store catalog, stepping aside first (lab s1 ways)', async () => {
+it('runs an app that already exists: Already built opens the stored-definition draft, Browse opens the catalog (lab f1src)', async () => {
   // An admitted Home Account with no starter source: the repository-free ways stay available.
   const fixture = await createPlainPromptLibraryCatalogHomeFixture(
     'https://new-app-ways.test',
@@ -53,13 +53,21 @@ it('runs an app that already exists from the Store catalog, stepping aside first
     const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
     await waitForHomeGovernance(() =>
       expect(
-        screen.findByTestId('newApp.fromCatalog'),
-        'the ways row renders for the Account',
+        screen.findByTestId('newApp.built.compose'),
+        'Already built renders for the Account',
       ).toBeTruthy(),
     );
-    // The Store's own repository-free entries sit beside it.
-    expect(screen.findByTestId('store.kind.app.pasteCompose')).toBeTruthy();
-    expect(screen.findByTestId('store.kind.app.runImage')).toBeTruthy();
+    // Nothing chosen: Continue waits for a choice instead of disappearing.
+    expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(true);
+    await screen.pressByTestIdAsync('newApp.built.compose');
+    await screen.pressByTestIdAsync('newApp.continue');
+    expect(onClose).toHaveBeenCalledOnce();
+    // The draft asks which Project it belongs to, so the dialog no longer does.
+    expect(routerMock.spies.push).toHaveBeenCalledWith(
+      `/deployments/new?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=compose`,
+    );
+    onClose.mockClear();
+    routerMock.spies.push.mockClear();
     await screen.pressByTestIdAsync('newApp.fromCatalog');
     expect(onClose).toHaveBeenCalledOnce();
     expect(routerMock.spies.push).toHaveBeenCalledWith(

@@ -10,7 +10,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
@@ -58,9 +58,13 @@ import {
   type StarterCreateInput,
 } from './newAppDraft';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
-import { StarterPreview, resolveStarterPreviewShape } from './StarterPreview';
-import { StoreAppDefinitionEntriesFor } from '@/components/store/StoreAppDefinitionEntries';
-import { buildDeploymentRepositoryDraftHref } from '@/components/projects/deployments/deploymentNavigation';
+import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
+import { useOpenStoreListing } from '@/components/store/StoreListing';
+import {
+  buildDeploymentNewDefinitionHref,
+  buildDeploymentRepositoryDraftHref,
+  type DeploymentNewDefinitionKind,
+} from '@/components/projects/deployments/deploymentNavigation';
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -71,8 +75,11 @@ const NewAppMachineSetup = React.lazy(() => import('./NewAppMachineSetup').then(
 
 type Step = 'start' | 'describe' | 'create';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
-// The lab's starter tile: a sketch about twice as wide as it is tall (s1 gallery, desktop and phone).
-const STARTER_PREVIEW_ASPECT_RATIO = 1.8;
+/** Already built (a stored definition the Project draft picks a Project for) or a catalog app's listing. */
+type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}`;
+/** The lab's From the catalog row: three apps, the rest one press away in the Store. */
+const CATALOG_TILES = 3;
+const catalogDoor = (item: RegistryCatalogItemSummary): Door => `catalog:${JSON.stringify([item.sourceId, item.itemId])}`;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
@@ -145,14 +152,46 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   );
   // Deploy an app → Your code: a repository Project, chosen instead of a starter (lab f1src). One choice at a time.
   const [codeSourceId, setCodeSourceId] = React.useState<string | null>(null);
+  // Already built and From the catalog (lab f1src): a way that continues outside this dialog, chosen like the others.
+  const [door, setDoor] = React.useState<Door | null>(null);
   const chooseCode = React.useCallback((next: string | null) => {
     setCodeSourceId(next);
-    if (next) setStarterId(null);
+    if (next) {
+      setStarterId(null);
+      setDoor(null);
+    }
   }, []);
   const chooseStarter = React.useCallback((next: string | null) => {
     setStarterId(next);
-    if (next) setCodeSourceId(null);
+    if (next) {
+      setCodeSourceId(null);
+      setDoor(null);
+    }
   }, []);
+  const chooseDoor = React.useCallback((next: Door | null) => {
+    setDoor(next);
+    if (next) {
+      setStarterId(null);
+      setCodeSourceId(null);
+    }
+  }, []);
+  // The catalog's first apps, read only while the person is choosing a way in.
+  const appCatalog = useRegistryItems({ kind: 'app' }, step === 'start');
+  const catalogApps = React.useMemo(() => appCatalog.items.slice(0, CATALOG_TILES), [appCatalog.items]);
+  const openStoreListing = useOpenStoreListing();
+  const builtTiles = React.useMemo((): Array<SelectionTile<Door>> => [
+    { id: 'built:image', testID: 'newApp.built.image', icon: 'image',
+      title: t('newApp.builtImage'), subtitle: t('newApp.builtImageSubtitle') },
+    { id: 'built:compose', testID: 'newApp.built.compose', icon: 'file-text',
+      title: t('newApp.builtCompose'), subtitle: t('newApp.builtComposeSubtitle') },
+  ], []);
+  const catalogTiles = React.useMemo((): Array<SelectionTile<Door>> => catalogApps.map((item) => ({
+    id: catalogDoor(item),
+    testID: `newApp.catalog.${item.itemId}`,
+    title: item.title,
+    ...(item.description ? { subtitle: item.description } : {}),
+    mark: <StoreItemMark facts={{ kind: item.kind, title: item.title, brand: item.brandMark }} size={ICON_SIZE.md} />,
+  })), [catalogApps]);
   const [description, setDescription] = React.useState('');
   const [name, setName] = React.useState('');
   const [machineId, setMachineId] = React.useState<string | null>(props.machine?.machineId ?? null);
@@ -242,6 +281,26 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const stepAside = React.useCallback(() => {
     props.onClose?.();
   }, [props.onClose]);
+
+  // Already built opens the stored-definition draft, which asks for the Project (lab f1cfg); a catalog app opens its
+  // Store listing; Browse shows the whole catalog. Each steps aside first.
+  const continueThroughDoor = (chosen: Door) => {
+    if (!scope) return;
+    if (chosen === 'built:image' || chosen === 'built:compose') {
+      stepAside();
+      router.push(buildDeploymentNewDefinitionHref({ serverId: scope.serverId, kind: chosen === 'built:image' ? 'image' : 'compose' }) as never);
+      return;
+    }
+    const item = catalogApps.find((candidate) => catalogDoor(candidate) === chosen);
+    if (!item) return;
+    stepAside();
+    openStoreListing({ type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId,
+      ...(item.version === undefined ? {} : { version: item.version }) });
+  };
+  const browseCatalog = () => {
+    stepAside();
+    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
+  };
 
   const connectGithub = React.useCallback(() => {
     void (async () => {
@@ -366,12 +425,16 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const stepIndex = STEPS.indexOf(step);
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
-  const primary = addingMachine || (step === 'start' && starters.length === 0 && codeSourceId === null) ? null :
+  const primary = addingMachine ? null :
     step === 'start'
       ? {
           title: t('common.continue'),
-          disabled: !starter && codeSourceId === null,
+          disabled: !starter && codeSourceId === null && door === null,
           onPress: () => {
+            if (door !== null) {
+              continueThroughDoor(door);
+              return;
+            }
             if (codeSourceId !== null && scope) {
               stepAside();
               router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: codeSourceId,
@@ -413,7 +476,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
-    step === 'start' && !starter && codeSourceId === null && starters.length > 0
+    step === 'start' && !starter && codeSourceId === null && door === null
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
@@ -428,53 +491,21 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   primaryRef.current = primary;
   const backRef = React.useRef(back);
   backRef.current = back;
+  const closeRef = React.useRef(close);
+  closeRef.current = close;
 
-  const dialogChrome = React.useMemo(
-    () =>
-      dialog
-        ? {
-            kind: 'card' as const,
-            footer: (
-              <ModalCardFooterActions note={footerNote}>
-                {showBack ? (
-                  <RoundButton
-                    testID="newApp.back"
-                    size="small"
-                    display="inverted"
-                    title={t('common.back')}
-                    onPress={() => backRef.current()}
-                  />
-                ) : null}
-                {primary ? (
-                  <RoundButton
-                    testID={primary.testID}
-                    size="small"
-                    title={primary.title}
-                    disabled={primary.disabled}
-                    onPress={() => primaryRef.current?.onPress()}
-                  />
-                ) : null}
-              </ModalCardFooterActions>
-            ),
-          }
-        : null,
-    [
-      dialog,
-      footerNote,
-      primary?.disabled,
-      primary?.testID,
-      primary?.title,
-      step,
-      showBack,
-    ],
-  );
-  useModalCardChrome(props.setChrome, dialogChrome);
 
-  const header = (title: string, descriptionText: string) => (
-    <NavigationBackChromeProvider control={dialog || machineOwnsExit ? null : pageBack}>
-      <PageHeader title={title} description={descriptionText} alwaysShowTitle />
-    </NavigationBackChromeProvider>
-  );
+  // In the dialog the card's own title band carries each step's title, purpose and step dots (lab f1src): one title,
+  // no second heading under it. As a page, the page header does.
+  let heading: Readonly<{ title: string; description: string }> | null = null;
+  const header = (title: string, descriptionText: string) => {
+    heading = { title, description: descriptionText };
+    return dialog ? null : (
+      <NavigationBackChromeProvider control={machineOwnsExit ? null : pageBack}>
+        <PageHeader title={title} description={descriptionText} alwaysShowTitle />
+      </NavigationBackChromeProvider>
+    );
+  };
 
 
   let body: React.ReactNode;
@@ -497,14 +528,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       <>
         {header(t('newApp.startTitle'), t('newApp.startDescription'))}
         {scope ? (
-          <View style={dialog ? styles.dialogInset : null}>
-            <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode}
+          <View>
+            <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
               insetStyle={dialog ? styles.dialogInset : null} />
           </View>
         ) : null}
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
-        <View style={dialog ? styles.dialogInset : null}>
+        <View>
         <ItemGroup surface="none" title={t('newApp.startNew')} description={t('newApp.startNewDescription')}>
         <View style={dialog ? styles.dialogInset : null}>
         {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
@@ -546,40 +577,57 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
           <SurfaceStateCard kind="empty" layout="inline" title={t('capabilities.store.emptyTitle')} />
         ) : null}
-            <SelectionTiles
-              testIdPrefix="newApp.starter"
-              variant="visual"
-              tileSizing="fill"
-              maximumColumns={3}
-              previewAspectRatio={STARTER_PREVIEW_ASPECT_RATIO}
-              accessibilityLabel={t('newApp.startTitle')}
-              value={starterId}
-              onChange={chooseStarter}
-              labelLines={3}
-              options={starters.map((candidate) => starterTile(candidate))}
-            />
+            {starters.length > 0 ? (
+              <SelectionTiles
+                density="compact"
+                testIdPrefix="newApp.starter"
+                maximumColumns={3}
+                subtitleLines={2}
+                accessibilityLabel={t('newApp.startNew')}
+                value={starterId}
+                onChange={chooseStarter}
+                options={starters.map((candidate) => starterTile(candidate))}
+              />
+            ) : null}
           </View>
         </ItemGroup>
         </View>
-        {/* Lab s1 `ways`: an app that already exists runs without a repository, through the Store's own entries. */}
+        {/* Lab f1src Already built and From the catalog: an app that already exists runs without a repository. */}
         {scope ? (
-          <View testID="newApp.ways" style={styles.ways}>
-            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
-              {t('newApp.runExisting')}
-            </Text>
-            <View style={styles.waysEntries}>
-              <RoundButton
-                testID="newApp.fromCatalog"
-                size="small"
-                display="secondary"
-                title={t('newApp.fromCatalog')}
-                onPress={() => {
-                  stepAside();
-                  router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
-                }}
-              />
-              <StoreAppDefinitionEntriesFor scope={scope} onNavigate={stepAside} />
-            </View>
+          <View>
+            <ItemGroup testID="newApp.built" surface="none" title={t('newApp.alreadyBuilt')}>
+              <View style={dialog ? styles.dialogInset : null}>
+                <SelectionTiles
+                  density="compact"
+                  maximumColumns={2}
+                  subtitleLines={2}
+                  accessibilityLabel={t('newApp.alreadyBuilt')}
+                  value={door}
+                  onChange={chooseDoor}
+                  options={builtTiles}
+                />
+              </View>
+            </ItemGroup>
+            <ItemGroup
+              testID="newApp.catalog"
+              surface="none"
+              title={t('newApp.fromCatalog')}
+              action={<TextLinkButton testID="newApp.fromCatalog" size="meta" label={t('newApp.browseCatalog')} onPress={browseCatalog} />}
+            >
+              {catalogTiles.length > 0 ? (
+                <View style={dialog ? styles.dialogInset : null}>
+                  <SelectionTiles
+                    density="compact"
+                    maximumColumns={3}
+                    subtitleLines={2}
+                    accessibilityLabel={t('newApp.fromCatalog')}
+                    value={door}
+                    onChange={chooseDoor}
+                    options={catalogTiles}
+                  />
+                </View>
+              ) : null}
+            </ItemGroup>
           </View>
         ) : null}
         {props.onClone ? (
@@ -804,17 +852,69 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     );
   }
 
+  const settledHeading = heading as Readonly<{ title: string; description: string }> | null;
+  const headingTitle = settledHeading?.title ?? t('newApp.title');
+  const headingDescription = settledHeading?.description ?? null;
+  const dialogChrome = React.useMemo(
+    () =>
+      dialog
+        ? {
+            kind: 'card' as const,
+            title: headingTitle,
+            subtitle: headingDescription,
+            actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={STEPS.length} />,
+            footer: (
+              <ModalCardFooterActions note={footerNote}>
+                {step === 'start' && !addingMachine ? (
+                  <RoundButton
+                    testID="newApp.cancel"
+                    size="small"
+                    display="inverted"
+                    title={t('common.cancel')}
+                    onPress={() => closeRef.current()}
+                  />
+                ) : null}
+                {showBack ? (
+                  <RoundButton
+                    testID="newApp.back"
+                    size="small"
+                    display="inverted"
+                    title={t('common.back')}
+                    onPress={() => backRef.current()}
+                  />
+                ) : null}
+                {primary ? (
+                  <RoundButton
+                    testID={primary.testID}
+                    size="small"
+                    title={primary.title}
+                    disabled={primary.disabled}
+                    onPress={() => primaryRef.current?.onPress()}
+                  />
+                ) : null}
+              </ModalCardFooterActions>
+            ),
+          }
+        : null,
+    [
+      dialog,
+      footerNote,
+      primary?.disabled,
+      primary?.testID,
+      primary?.title,
+      step,
+      showBack,
+      addingMachine,
+      stepIndex,
+      headingTitle,
+      headingDescription,
+    ],
+  );
+  useModalCardChrome(props.setChrome, dialogChrome);
+
   return (
     <View testID="newApp" style={styles.root}>
       <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" enabled={step === 'start'} />
-      {dialog ? (
-        <View style={styles.dots}>
-          <WizardStepDots
-            currentStepIndex={stepIndex}
-            stepCount={STEPS.length}
-          />
-        </View>
-      ) : null}
       <ItemList testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>
@@ -849,14 +949,13 @@ function starterTile(starter: RegistryCatalogItemSummary) {
     id: starter.itemId,
     title: starter.title,
     subtitle: starter.description,
-    preview: <StarterPreview shape={resolveStarterPreviewShape(starter.appMetadata?.tags)} />,
+    icon: 'sparkle' as const,
   };
 }
 
 const styles = StyleSheet.create((theme) => ({
   root: { flex: 1 },
   list: { flex: 1 },
-  dots: { paddingTop: theme.space.s4, paddingBottom: theme.space.s8 },
   haveCode: {
     flexDirection: 'row',
     alignItems: 'center',

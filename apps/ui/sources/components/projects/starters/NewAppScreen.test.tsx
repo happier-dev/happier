@@ -41,7 +41,8 @@ describe('New app registry gallery', () => {
   it('renders safely and cannot advance without an available starter selection', async () => {
     // A fresh client without a registry supplier has no bundled synchronous fallback.
     const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
-    expect(screen.findByTestId('newApp.continue')).toBeNull();
+    // Continue waits for a choice; the other ways in (Already built, the catalog) keep it on the dialog.
+    expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(true);
     expect(screen.findByTestId('newApp.description')).toBeNull();
     expect(screen.findByTestId('newApp.create')).toBeNull();
   });
@@ -145,7 +146,7 @@ it('makes an unavailable starter supplier visible instead of an empty gallery', 
   try {
     const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.catalogFailure:starter-catalog')).toBeTruthy());
-    expect(screen.findByTestId('newApp.continue')).toBeNull();
+    expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(true);
     expect(screen.findByTestId('newApp.loading')).toBeNull();
   } finally {
     await standardCleanup();

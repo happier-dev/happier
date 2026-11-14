@@ -1685,7 +1685,6 @@
     "sources/components/projects/sources/ProjectSourceDetail.tsx",
     "sources/components/projects/sources/ProjectSourcesBackHeader.tsx",
     "sources/components/projects/sources/ProjectSourcesScreen.tsx",
-    "sources/components/projects/starters/projectStarterPreviewAssets.ts",
     "sources/components/projects/useProjectNewSessionAction.tsx",
     "sources/components/projects/useProjectsListModel.ts",
     "sources/components/projects/useProjectsSourcesComposition.ts",
