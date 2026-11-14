@@ -644,8 +644,9 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         });
         handle.process.exit.then(
             async (result) => {
-                await cleanup().catch(() => undefined);
+                // Observable before cleanup settles: a retained idle query is never reused once its process exited.
                 this.exitResult = result;
+                await cleanup().catch(() => undefined);
                 const failure = formatProcessExitFailure(result);
                 this.closePromptSubmissions(failure ?? createClaudeSdkNoResultError(result));
                 this.config.onProcessExited?.(result);

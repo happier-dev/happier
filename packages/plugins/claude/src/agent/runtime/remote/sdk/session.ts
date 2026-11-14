@@ -852,7 +852,7 @@ export function createClaudeAgentSdkTurnOperations(
     // The adopted Agent's query until a turn or a prompt claims it.
     let adoptedQuery: ClaudeSdkQuery | null = null;
     let disposeQuery: ClaudeSdkQuery | null = null;
-    let retainedInterruptedQuery: Readonly<{ query: ClaudeSdkQuery; unpublishedLaunchEffort: string | null }> | null = null;
+    let retainedIdleQuery: Readonly<{ query: ClaudeSdkQuery; unpublishedLaunchEffort: string | null }> | null = null;
     let activeProviderTask: Readonly<{ taskId: string; ownerScope?: object }> | null = null;
     const cancelledQueries = new WeakMap<ClaudeSdkQuery, string>();
     let activeCompletion: DeferredCompletion | null = null;
@@ -872,13 +872,32 @@ export function createClaudeAgentSdkTurnOperations(
     let currentEffort: string | null = supportsEffort ? readString(params.initialEffort) : null;
     let currentUltracode = supportsEffort && params.initialUltracode === true;
 
-    async function invalidateInterruptedQueryReuse(): Promise<void> {
-        if (adoptedQuery && adoptedQuery === retainedInterruptedQuery?.query) adoptedQuery = null;
+    /** Keeps a settled query's live process for the next prompt; only the newest live query qualifies. */
+    function retainIdleQueryForNextTurn(query: ClaudeSdkQuery, unpublishedLaunchEffort: string | null): boolean {
+        if (runtimeDisposed || disposeQuery !== query || query.readExitResult() !== null) return false;
+        // A cancellation belonged to the settled turn; the next turn on this process starts clean.
+        cancelledQueries.delete(query);
+        retainedIdleQuery = { query, unpublishedLaunchEffort };
+        return true;
+    }
+
+    /** The retained idle query while its process lives; an exited one is retired here. */
+    function readLiveRetainedQuery(): ClaudeSdkQuery | null {
+        const retained = retainedIdleQuery;
+        if (!retained || retained.query.readExitResult() === null) return retained?.query ?? null;
+        retainedIdleQuery = null;
+        if (adoptedQuery === retained.query) adoptedQuery = null;
+        void retained.query.dispose().catch(() => undefined);
+        return null;
+    }
+
+    async function invalidateRetainedQueryReuse(): Promise<void> {
+        if (adoptedQuery && adoptedQuery === retainedIdleQuery?.query) adoptedQuery = null;
         // disposeQuery is also the existing eligibility witness for a trailing cancellation
         // result. Clear it so an old query cannot become reusable after this setting change.
         disposeQuery = null;
-        const retained = retainedInterruptedQuery;
-        retainedInterruptedQuery = null;
+        const retained = retainedIdleQuery;
+        retainedIdleQuery = null;
         await retained?.query.dispose();
     }
 
@@ -1401,7 +1420,8 @@ export function createClaudeAgentSdkTurnOperations(
     async function withControlQuery<T>(operation: (query: ClaudeSdkQuery) => Promise<T>): Promise<T | null> {
         // A second Agent launch would replace the held one the host keeps for the next runner.
         if (heldAgentAdoption) await heldAgentAdoption;
-        const reusableQuery = activeQuery ?? compactionControl.readQuery() ?? adoptedQuery;
+        const retainedQuery = readLiveRetainedQuery();
+        const reusableQuery = activeQuery ?? compactionControl.readQuery() ?? adoptedQuery ?? retainedQuery;
         if (reusableQuery) return await operation(reusableQuery);
         const contextUsageProviderSessionId = params.enableSessionResumability === true
             ? resumableProviderSessionId ?? pendingResumeProviderSessionId
@@ -1477,6 +1497,7 @@ export function createClaudeAgentSdkTurnOperations(
             },
             onObservationLost(reason) {
                 inference = null;
+                if (retainedIdleQuery?.query === turnQuery) retainedIdleQuery = null;
                 providerActivityLedger.noteObservationLost(turnQuery);
                 reconcileProviderTaskRuntimeActivityForCurrentQuery(reason);
                 if (reason === 'dispose_failed') {
@@ -1487,6 +1508,10 @@ export function createClaudeAgentSdkTurnOperations(
                 config.onObservationLost?.(reason);
             },
             onProcessExited(result) {
+                if (retainedIdleQuery?.query === turnQuery) {
+                    retainedIdleQuery = null;
+                    void turnQuery.dispose().catch(() => undefined);
+                }
                 if (result.providerStopped === true) {
                     providerActivityLedger.noteProviderStopped(turnQuery);
                     if (activeProviderTask?.ownerScope === turnQuery) reconcileActiveProviderTask();
@@ -2151,15 +2176,21 @@ export function createClaudeAgentSdkTurnOperations(
                     // Native persistence can settle after SessionStart without another hook.
                     // Publish the existing candidate's durable proof before completing this turn.
                     await resumeIdentityOwner?.settleCurrentCandidate();
+                    // One Claude process serves the Session (streaming input, as 0.2 did). Retain it
+                    // before the turn settles so the next prompt is written into it, unless a newer
+                    // query superseded it or a launch-only setting change invalidates it
+                    // (`invalidateRetainedQueryReuse`).
+                    if (!shouldContinueForBackgroundTasks) {
+                        retainQueryForNextTurn = retainIdleQueryForNextTurn(turnQuery, unpublishedLaunchEffort);
+                    }
                     completeSuccessfulTurn(resultTurn, publishTerminal);
                     foregroundCompleted = true;
                     if (shouldContinueForBackgroundTasks) {
                         backgroundQueries.add(turnQuery);
                         continue;
                     }
-                    // Returning from a `for await` loop calls the iterator's return(), which
-                    // disposes the SDK query. Keep the control channel alive until the turn-end
-                    // context request settles, without delaying the already-resolved turn.
+                    // Keep the control channel alive until the turn-end context request settles,
+                    // without delaying the already-resolved turn.
                     await turnEndContextUsageRefresh;
                 } else {
                     sawResult = true;
@@ -2179,10 +2210,7 @@ export function createClaudeAgentSdkTurnOperations(
                         // The local cancellation already ended this turn, so a next prompt may have
                         // opened a newer query before this trailing result landed. Only the newest
                         // query may be retained; an already-superseded one is disposed below.
-                        if (disposeQuery === turnQuery) {
-                            retainedInterruptedQuery = { query: turnQuery, unpublishedLaunchEffort };
-                            retainQueryForNextTurn = true;
-                        }
+                        retainQueryForNextTurn = retainIdleQueryForNextTurn(turnQuery, unpublishedLaunchEffort);
                         return;
                     }
                     if (activeQuery === turnQuery) activeQuery = null;
@@ -2240,7 +2268,8 @@ export function createClaudeAgentSdkTurnOperations(
                     reconcileProviderTaskRuntimeActivityForCurrentQuery('turn-finally');
                 }
             }
-            if (activeQuery === turnQuery) activeQuery = null;
+            // A retained query may already run the next turn: only its own completion is cleared.
+            if (activeQuery === turnQuery && !retainQueryForNextTurn) activeQuery = null;
             if (activeCompletion === completion) {
                 activeCompletion = null;
                 turnInFlight = false;
@@ -2249,6 +2278,34 @@ export function createClaudeAgentSdkTurnOperations(
                 await turnQuery.dispose().catch(() => undefined);
             }
         }
+    }
+
+    /** Session-level observation for a query that serves Session turns (launched per prompt or adopted). */
+    function observeSessionQueryMessage(query: ClaudeSdkQuery, message: SDKMessage): void {
+        const nativeSessionId = readClaudeProviderIdentityValue(message.session_id);
+        const establishesIdentity = isSdkSystemMessage(message)
+            && (message.subtype === 'init' || message.subtype === 'compact_boundary');
+        if (activeQuery === query && isClaudePrimaryNativeActivity(message)
+            && (establishesIdentity || !nativeSessionId || !providerSessionId || nativeSessionId === providerSessionId)) {
+            if (params.enableSessionResumability !== true
+                && ((isSdkSystemMessage(message) && message.subtype !== 'hook_response')
+                    || isSdkResultMessage(message))) {
+                observeProviderSessionId(message.session_id);
+            }
+        }
+        if (!sessionContext) return;
+        const primaryFailure = readProviderFailureEvidence(message)
+            ?? (isSdkResultMessage(message)
+                && (message.subtype !== 'success' || message.is_error === true)
+                && shouldSurfaceClaudeAgentSdkRuntimeFailure(message)
+                ? buildResultFailureEvidence(message, null) : null);
+        void recordClaudeRuntimeProviderAccountUsageSnapshot({
+            ctx: sessionContext,
+            evidence: message,
+            sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
+            launchEnv: params.launchEnv,
+            ...(primaryFailure?.usageLimit ? { policyDisposition: 'evidence_only' } as const : {}),
+        });
     }
 
     /**
@@ -2270,6 +2327,8 @@ export function createClaudeAgentSdkTurnOperations(
         const query = createOwnedQuery({
             prompt: createIdlePromptStream(idle.signal),
             options: { ...options, ...(resume ? { resume } : {}) },
+            // The adopted Agent keeps serving this Session's later turns.
+            onMessageReceived: message => observeSessionQueryMessage(query, message),
             onObservationLost: () => {
                 idle.abort();
                 if (adoptedQuery === query) adoptedQuery = null;
@@ -2280,7 +2339,7 @@ export function createClaudeAgentSdkTurnOperations(
         const held = await query.readHeldAgentTurn();
         if (runtimeDisposed || adoptedQuery !== query) return;
         if (held !== 'turn') {
-            retainedInterruptedQuery = { query, unpublishedLaunchEffort: launchEffort };
+            retainedIdleQuery = { query, unpublishedLaunchEffort: launchEffort };
             return;
         }
         adoptedQuery = null;
@@ -2322,7 +2381,7 @@ export function createClaudeAgentSdkTurnOperations(
             ? resumableProviderSessionId ?? pendingResumeProviderSessionId
             : providerSessionId ?? pendingResumeProviderSessionId,
         async launch(prompt, resume, signal) {
-            await invalidateInterruptedQueryReuse();
+            await invalidateRetainedQueryReuse();
             const hookPluginDir = await ensureSessionHookPluginDir();
             const uuid = await reserveHostPromptEcho();
             if (signal.aborted || runtimeDisposed) throw new Error('Claude compact query was cancelled before launch.');
@@ -2371,12 +2430,12 @@ export function createClaudeAgentSdkTurnOperations(
             options?.signal?.throwIfAborted();
             const nextSkills = { ...request.skills, nativeDisables: params.skills?.nativeDisables ?? [] };
             if (nextSkills.pluginRoot !== currentSkills?.pluginRoot) {
-                await invalidateInterruptedQueryReuse();
+                await invalidateRetainedQueryReuse();
             }
             currentSkills = nextSkills;
             // A fresh query loads currentSkills at launch. Reload only the live
             // query; an idle refresh needs no additional Claude process.
-            const query = activeQuery ?? retainedInterruptedQuery?.query;
+            const query = activeQuery ?? retainedIdleQuery?.query;
             if (query) await query.reloadSkills(options);
             return { kind: 'applied' };
         },
@@ -2651,56 +2710,44 @@ export function createClaudeAgentSdkTurnOperations(
                 if (submission.cancelled || runtimeDisposed) {
                     throw new Error('Claude Agent SDK turn was cancelled before provider submission.');
                 }
-                const interrupted = retainedInterruptedQuery;
-                if (interrupted) {
-                    if (adoptedQuery === interrupted.query) adoptedQuery = null;
-                    const interruptedQuery = interrupted.query;
-                    const transportOutcome = await interruptedQuery.sendUserMessage(promptContent, nativeUserMessageId);
+                readLiveRetainedQuery();
+                const retained = retainedIdleQuery;
+                if (retained) {
+                    if (adoptedQuery === retained.query) adoptedQuery = null;
+                    const retainedQuery = retained.query;
+                    const transportOutcome = await retainedQuery.sendUserMessage(promptContent, nativeUserMessageId);
                     const outcome = projectPromptTransportOutcome(transportOutcome);
-                    publishTransportOutcome(outcome);
-                    if (outcome.kind === 'rejected_before_effect') {
-                        turnInFlight = false;
+                    if (outcome.kind !== 'rejected_before_effect') {
+                        publishTransportOutcome(outcome);
+                        if (retainedIdleQuery === retained) retainedIdleQuery = null;
+                        activeCompletion = completion;
+                        activeQuery = retainedQuery;
                         if (pendingSubmission === submission) pendingSubmission = null;
+                        disposeQuery = retainedQuery;
+                        void consumeTurnMessages(retainedQuery, completion, submittedTurnId, retained.unpublishedLaunchEffort);
+                        // A retained process emits no new SessionStart, which is where a relaunch
+                        // retried an unacquired ordered-source baseline; retry it at this prompt instead.
+                        const pendingSource = orderedSourceBinding;
+                        if (pendingSource && !pendingSource.handle && !pendingSource.acquisition) {
+                            void bindOrderedSourceHistory(pendingSource.providerSessionId, {}, true).catch(error => {
+                                params.ctx.logger.warn('[ClaudeAgentSdk] ordered source transcript baseline failed', { error });
+                            });
+                        }
                         return outcome;
                     }
-                    retainedInterruptedQuery = null;
-                    activeCompletion = completion;
-                    activeQuery = interruptedQuery;
-                    if (pendingSubmission === submission) pendingSubmission = null;
-                    disposeQuery = interruptedQuery;
-                    void consumeTurnMessages(interruptedQuery, completion, submittedTurnId, interrupted.unpublishedLaunchEffort);
-                    return outcome;
+                    // The retained process refused the prompt before any effect (it closed or
+                    // exited while idle): retire it and launch a process for this prompt.
+                    if (retainedIdleQuery === retained) retainedIdleQuery = null;
+                    await retainedQuery.dispose().catch(() => undefined);
+                    if (submission.cancelled || runtimeDisposed) {
+                        throw new Error('Claude Agent SDK turn was cancelled before provider submission.');
+                    }
                 }
                 const { options, launchEffort } = buildQueryLaunchOptions(hookPluginDir);
                 const turnQuery = createOwnedQuery({
                     prompt: createPromptStream(promptContent, nativeUserMessageId),
                     options: { ...options, ...(resumeProviderSessionId ? { resume: resumeProviderSessionId } : {}) },
-                    onMessageReceived(message) {
-                        const nativeSessionId = readClaudeProviderIdentityValue(message.session_id);
-                        const establishesIdentity = isSdkSystemMessage(message)
-                            && (message.subtype === 'init' || message.subtype === 'compact_boundary');
-                        if (activeQuery === turnQuery && isClaudePrimaryNativeActivity(message)
-                            && (establishesIdentity || !nativeSessionId || !providerSessionId || nativeSessionId === providerSessionId)) {
-                            if (params.enableSessionResumability !== true
-                                && ((isSdkSystemMessage(message) && message.subtype !== 'hook_response')
-                                    || isSdkResultMessage(message))) {
-                                observeProviderSessionId(message.session_id);
-                            }
-                        }
-                        if (!sessionContext) return;
-                        const primaryFailure = readProviderFailureEvidence(message)
-                            ?? (isSdkResultMessage(message)
-                                && (message.subtype !== 'success' || message.is_error === true)
-                                && shouldSurfaceClaudeAgentSdkRuntimeFailure(message)
-                                ? buildResultFailureEvidence(message, null) : null);
-                        void recordClaudeRuntimeProviderAccountUsageSnapshot({
-                            ctx: sessionContext,
-                            evidence: message,
-                            sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
-                            launchEnv: params.launchEnv,
-                            ...(primaryFailure?.usageLimit ? { policyDisposition: 'evidence_only' } as const : {}),
-                        });
-                    },
+                    onMessageReceived: message => observeSessionQueryMessage(turnQuery, message),
                 }, () => currentTurnId);
                 activeCompletion = completion;
                 activeQuery = turnQuery;
@@ -2826,8 +2873,8 @@ export function createClaudeAgentSdkTurnOperations(
                 if (turnInFlight || pendingSubmission || backgroundQueries.size > 0) {
                     return { status: 'requires_restart' as const, reason: 'role_policy_restart_required' };
                 }
-                const previousQuery = disposeQuery !== retainedInterruptedQuery?.query ? disposeQuery : null;
-                await invalidateInterruptedQueryReuse();
+                const previousQuery = disposeQuery !== retainedIdleQuery?.query ? disposeQuery : null;
+                await invalidateRetainedQueryReuse();
                 await previousQuery?.dispose();
                 currentWorkspaceWrites = update.workspaceWrites;
                 launchSettingsChanged = true;
@@ -2853,9 +2900,11 @@ export function createClaudeAgentSdkTurnOperations(
             const permissionMode = readString(update.permissionMode);
             if (permissionMode) {
                 const updatePermissionMode = permissionModeUpdate.then(async (): ReturnType<ClaudeRuntimeTurnOperations['updateProviderConfiguration']> => {
+                    // Live processes run the current mode already (launched with it or set after it was applied).
+                    if (permissionMode === currentPermissionMode) return;
                     const liveQueries = new Set([
                         activeQuery,
-                        retainedInterruptedQuery?.query ?? null,
+                        readLiveRetainedQuery(),
                         ...backgroundQueries,
                     ].filter((query): query is ClaudeSdkQuery => query !== null));
                     try {
@@ -2907,7 +2956,7 @@ export function createClaudeAgentSdkTurnOperations(
                 currentUltracode && isClaudeUltracodeSupportedModelId(currentModelId, currentProviderModel)
             );
             if (launchSettingsChanged) {
-                await invalidateInterruptedQueryReuse();
+                await invalidateRetainedQueryReuse();
             }
             // Launch controls describe the next query even when the requested value is unchanged.
             if (launchSettingsChanged || modelId !== undefined || fallbackModel !== undefined
@@ -2938,14 +2987,14 @@ export function createClaudeAgentSdkTurnOperations(
                         queriesToDispose.add(activeQuery);
                     }
                     if (disposeQuery) queriesToDispose.add(disposeQuery);
-                    if (retainedInterruptedQuery) queriesToDispose.add(retainedInterruptedQuery.query);
+                    if (retainedIdleQuery) queriesToDispose.add(retainedIdleQuery.query);
                     for (const queryToDispose of backgroundQueries) {
                         queriesToDispose.add(queryToDispose);
                     }
                     activeQuery = null;
                     adoptedQuery = null;
                     disposeQuery = null;
-                    retainedInterruptedQuery = null;
+                    retainedIdleQuery = null;
                     activeProviderTask = null;
                     activeCompletion = null;
                     lastTurnCompletionFailure = null;

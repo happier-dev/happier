@@ -500,12 +500,9 @@ describe('SDK workflow hook resumption', () => {
       sourceAvailable = true;
       operations.beginProviderTurn('follow-acquire-next-turn');
       await operations.sendProviderTurnPrompt('reply OK again');
-      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(2));
-      const nextHook = sessionHooks.service.startServer.mock.calls.at(-1)?.[0]?.onSessionHook;
-      if (!nextHook) throw new Error('Next Session hook server was not started');
-      await nextHook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
-        source: 'resume', transcript_path: transcriptPath });
-      expect(followSource).toHaveBeenCalledTimes(2);
+      // The same process takes the next prompt (no new SessionStart); the prompt retries the baseline.
+      expect(exec.spawnClient).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(followSource).toHaveBeenCalledTimes(2));
       await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'OK.',
         session_id: providerSessionId, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
       await expect(operations.waitForProviderTurnCompletion()).resolves.toBeUndefined();

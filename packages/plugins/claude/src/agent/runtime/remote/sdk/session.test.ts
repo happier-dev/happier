@@ -1236,6 +1236,53 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
+  it('keeps one Claude process for consecutive successful turns of a Session', async () => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+      exec: exec.service, sessionHooks: createSessionHooksFixture().service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx, directory: '/tmp/claude-project', launchEnv: {}, permissionMode: 'default',
+      happierSessionId: 'happy-long-lived-process', initialModelId: 'claude-opus-4-8',
+    });
+    const success = { type: 'result', subtype: 'success', is_error: false, session_id: 'native-long-lived',
+      result: 'done', num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 };
+    try {
+      for (const prompt of ['turn one', 'turn two', 'turn three']) {
+        operations.beginProviderTurn();
+        await expect(operations.sendProviderTurnPrompt(prompt)).resolves.toEqual({ kind: 'accepted' });
+        await exec.emit({ type: 'system', subtype: 'init', session_id: 'native-long-lived' });
+        await exec.emit(success);
+        await operations.waitForProviderTurnCompletion({ timeoutMs: 1_000 });
+      }
+      expect(exec.spawnClient).toHaveBeenCalledTimes(1);
+      expect(exec.processes[0].written.filter(record => Reflect.get(record as object, 'type') === 'user')
+        .map(record => Reflect.get(Reflect.get(record as object, 'message') as object, 'content')))
+        .toEqual(['turn one', 'turn two', 'turn three']);
+
+      // A launch setting the live process cannot take restarts it once, resuming the same conversation.
+      await expect(operations.updateProviderConfiguration({ modelId: 'claude-sonnet-4-6' }))
+        .resolves.toEqual({ status: 'applied', timing: 'before_next_prompt' });
+      operations.beginProviderTurn();
+      await expect(operations.sendProviderTurnPrompt('after model change')).resolves.toEqual({ kind: 'accepted' });
+      expect(exec.spawnClient).toHaveBeenCalledTimes(2);
+      expect(exec.spawnClient.mock.calls[1]?.[0].launch.args).toEqual(expect.arrayContaining([
+        '--resume', 'native-long-lived', '--model', 'claude-sonnet-4-6',
+      ]));
+      await exec.processes[1].emit(success);
+      await operations.waitForProviderTurnCompletion({ timeoutMs: 1_000 });
+
+      // An idle process that exits is not reused: the next prompt starts a new one.
+      await exec.processes[1].exitWith({ exitCode: 1, signal: null });
+      operations.beginProviderTurn();
+      await expect(operations.sendProviderTurnPrompt('after idle exit')).resolves.toEqual({ kind: 'accepted' });
+      expect(exec.spawnClient).toHaveBeenCalledTimes(3);
+      expect(exec.spawnClient.mock.calls[2]?.[0].launch.args).toEqual(expect.arrayContaining(['--resume', 'native-long-lived']));
+    } finally {
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('writes an exact steer into the active Agent SDK query instead of starting a second turn', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
@@ -1706,6 +1753,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       await exec.emit({ type: 'result', subtype: 'success', is_error: false,
         session_id: 'native-complete-permission', result: 'Complete', queued_turn_count: 0 });
       await operations.waitForProviderTurnCompletion();
+      // The retained idle process exits; its client must not receive the later permission write.
+      await exec.processes[0]!.exitWith({ exitCode: 0, signal: null });
       await handle.client.closed;
       const previousWrites = exec.written.length;
       await operations.updateProviderConfiguration({ permissionMode: 'yolo' });
@@ -3071,6 +3120,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         duration_api_ms: 8,
       });
       await runtime.waitForTurnCompletion();
+      // Continuity is chosen when a new process launches: here the idle one has exited.
+      await exec.processes[0]!.exitWith({ exitCode: 0, signal: null });
 
       await runtime.sendTurnPrompt('second prompt');
 
@@ -3150,6 +3201,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         duration_api_ms: 8,
       });
       await runtime.waitForTurnCompletion();
+      // Resume is decided when a new process launches: here the idle one has exited.
+      await exec.processes[0]!.exitWith({ exitCode: 0, signal: null });
       await expect(runtime.updateSessionRuntimeConfig({
         configOption: { id: 'context_usage_refresh', value: 1 },
       })).resolves.toMatchObject({ status: 'unsupported' });
@@ -3315,7 +3368,11 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
 
       await expect(runtime.sendTurnPrompt('second prompt')).resolves.toEqual({ kind: 'accepted' });
 
-      expect(exec.spawnClient).toHaveBeenCalledTimes(2);
+      // The released turn's process takes the next prompt.
+      expect(exec.spawnClient).toHaveBeenCalledTimes(1);
+      expect(exec.processes[0]!.written).toContainEqual(expect.objectContaining({
+        type: 'user', message: { role: 'user', content: 'second prompt' },
+      }));
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -3445,6 +3502,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         duration_api_ms: 8,
       });
       await runtime.waitForTurnCompletion();
+      // Resume is decided when a new process launches: here the idle one has exited.
+      await exec.processes[0]!.exitWith({ exitCode: 0, signal: null });
 
       await runtime.sendTurnPrompt('second prompt');
       await vi.waitFor(() => {

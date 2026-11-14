@@ -47,6 +47,8 @@ describe('Claude SDK turn/control launch parity', () => {
         await exec.emit({ type: 'system', subtype: 'init', session_id: 'native-parity' });
         await exec.emit({ type: 'result', subtype: 'success', session_id: 'native-parity', is_error: false });
         await operations.waitForProviderTurnCompletion({ timeoutMs: null });
+        // The Session's process stays for the next turn; once it has exited, a control request resumes in a new one.
+        await exec.processes[0]!.exitWith({ exitCode: 0, signal: null });
         const refresh = operations.updateProviderConfiguration({ configOption: { id: 'context_usage_refresh', value: 1 } });
         await vi.waitFor(() => expect(exec.processes).toHaveLength(2));
         const process = exec.processes[1]!;

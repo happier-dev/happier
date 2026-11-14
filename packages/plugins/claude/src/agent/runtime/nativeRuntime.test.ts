@@ -703,7 +703,8 @@ describe('createClaudeNativeRuntime', () => {
           })));
           const control = sdk.written.find((record): record is { type: 'control_request'; request_id: string } =>
             record !== null && typeof record === 'object' && 'type' in record && record.type === 'control_request'
-            && 'request_id' in record && typeof record.request_id === 'string');
+            && 'request_id' in record && typeof record.request_id === 'string'
+          && Reflect.get(Reflect.get(record, 'request') as object, 'subtype') === 'set_permission_mode');
           expect(control).toBeDefined();
           await sdk.emit({ type: 'control_response', response: {
             subtype: 'error', request_id: control!.request_id, error: 'Permission change refused',
@@ -714,16 +715,21 @@ describe('createClaudeNativeRuntime', () => {
           expect(conversationEvents.some(event => 'turnId' in event && event.turnId === 'refused-turn')).toBe(false);
           return;
         }
-        const result = await conversation.send({ inputIds: ['detached-input-2'], input: { text: 'Continue in this conversation' },
+        const send = conversation.send({ inputIds: ['detached-input-2'], input: { text: 'Continue in this conversation' },
           delivery: { kind: 'newTurn', turnId: 'turn-2' } }, { permissionIntent: 'read-only' });
-        expect(result).toMatchObject({ status: 'admitted' });
-        expect(launches[1]?.launch.args).toEqual(expect.arrayContaining([
-          '--permission-mode', 'plan', '--resume', 'detached-native',
-        ]));
-        expect(launches[1]?.launch.args).toEqual(expect.arrayContaining(['--permission-prompt-tool', 'stdio']));
-        expect(launches[1]?.launch.args).not.toContain('mcp__external__approve');
-        expect(launches[1]?.launch.args.filter(arg => arg === '--permission-mode')).toHaveLength(1);
-        expect(launches[1]?.launch.args.filter(arg => arg === '--permission-prompt-tool')).toHaveLength(1);
+        // The conversation's live process takes the stricter mode before the next prompt.
+        await vi.waitFor(() => expect(sdk.written).toContainEqual(expect.objectContaining({ type: 'control_request',
+          request: { subtype: 'set_permission_mode', mode: 'plan' },
+        })));
+        const control = sdk.written.find((record): record is { type: 'control_request'; request_id: string } =>
+          record !== null && typeof record === 'object' && 'type' in record && record.type === 'control_request'
+          && 'request_id' in record && typeof record.request_id === 'string'
+          && Reflect.get(Reflect.get(record, 'request') as object, 'subtype') === 'set_permission_mode');
+        await sdk.emit({ type: 'control_response', response: { subtype: 'success', request_id: control!.request_id, response: {} } });
+        await expect(send).resolves.toMatchObject({ status: 'admitted' });
+        expect(launches).toHaveLength(1);
+        expect(sdk.written).toContainEqual(expect.objectContaining({ type: 'user',
+          message: { role: 'user', content: 'Continue in this conversation' } }));
         await sdk.emit({ type: 'control_request', request_id: 'write-under-read-only',
           request: { subtype: 'can_use_tool', tool_name: 'Write',
             input: { file_path: '/tmp/native-read-only.txt', content: 'must not write' }, tool_use_id: 'write-1' },
