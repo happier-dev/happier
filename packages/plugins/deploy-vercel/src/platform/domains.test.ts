@@ -18,6 +18,9 @@ it('adds the exact preview Domain, reads pending DNS without mutating, and remov
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     if (removed) throw new Error('DELETE already acknowledged removal');
+    if (new URL(request.url).pathname.endsWith('/config')) {
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ misconfigured: false })) };
+    }
     if (request.method === 'DELETE') {
       removed = true;
       return { status: 200, headers: {}, body: new TextEncoder().encode('"removed"') };
@@ -36,7 +39,8 @@ it('adds the exact preview Domain, reads pending DNS without mutating, and remov
     }
     await expect(kit.invokeAction('domains-remove', input)).resolves.toMatchObject({ state: 'removed' });
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
-      ['POST', '/v10/projects/prj_exact/domains'], ['GET', '/v9/projects/prj_exact/domains/app.example.test'],
+      ['POST', '/v10/projects/prj_exact/domains'], ['GET', '/v6/domains/app.example.test/config'],
+      ['GET', '/v9/projects/prj_exact/domains/app.example.test'], ['GET', '/v6/domains/app.example.test/config'],
       ['GET', '/v9/projects/prj_exact/domains/app.example.test'],
       ['DELETE', '/v9/projects/prj_exact/domains/app.example.test'],
     ]);
@@ -52,5 +56,54 @@ it('retains an ambiguous remote mutation without retrying or reporting absence',
   try {
     await expect(kit.invokeAction('domains-add', input)).rejects.toMatchObject({ code: 'outcome_unknown' });
     expect(requests.map(request => request.method)).toEqual(['POST']);
+  } finally { await kit.dispose(); }
+});
+
+
+it('returns routing records with ownership challenges and stays pending until both are satisfied', async () => {
+  let verified = false;
+  let misconfigured = true;
+  const http = createPluginHttpFixture({ async request(request) {
+    const config = new URL(request.url).pathname.endsWith('/config');
+    const body = config ? { misconfigured, recommendedCNAME: [{ rank: 1, value: 'project.vercel-dns.example' }] }
+      : { name: 'app.example.test', projectId: 'prj_exact', gitBranch: 'main', verified,
+        verification: verified ? [] : [{ type: 'TXT', domain: '_vercel.app.example.test', value: 'ownership' }] };
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('domains-read', input)).resolves.toMatchObject({ state: 'pending', dns: [
+      { type: 'TXT', name: '_vercel.app.example.test', value: 'ownership' },
+      { type: 'CNAME', name: 'app.example.test', value: 'project.vercel-dns.example' },
+    ] });
+    misconfigured = false;
+    await expect(kit.invokeAction('domains-read', input)).resolves.toMatchObject({ state: 'pending', dns: [
+      { type: 'TXT', name: '_vercel.app.example.test', value: 'ownership' },
+    ] });
+    verified = true;
+    await expect(kit.invokeAction('domains-read', input)).resolves.toEqual({ v: 1, hostname: 'app.example.test', state: 'active', dns: [] });
+    misconfigured = true;
+    await expect(kit.invokeAction('domains-read', input)).resolves.toMatchObject({ state: 'pending', dns: [
+      { type: 'CNAME', name: 'app.example.test', value: 'project.vercel-dns.example' },
+    ] });
+  } finally { await kit.dispose(); }
+});
+
+
+it.each([
+  ['example.test', [{ type: 'A', name: 'example.test', value: '192.0.2.1' }]],
+  ['app.example.test', [{ type: 'CNAME', name: 'app.example.test', value: 'preferred.vercel-dns.example' }]],
+])('offers only the preferred, non-conflicting routing records for %s', async (hostname, dns) => {
+  const http = createPluginHttpFixture({ async request(request) {
+    const config = new URL(request.url).pathname.endsWith('/config');
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(config ? {
+      misconfigured: true,
+      recommendedCNAME: [{ rank: 2, value: 'secondary.vercel-dns.example' }, { rank: 1, value: 'preferred.vercel-dns.example' }],
+      recommendedIPv4: [{ rank: 2, value: ['192.0.2.2'] }, { rank: 1, value: ['192.0.2.1'] }],
+    } : { name: hostname, apexName: 'example.test', projectId: 'prj_exact', gitBranch: 'main', verified: true })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('domains-read', { ...input, domain: { hostname } })).resolves.toEqual({ v: 1, hostname, state: 'pending', dns });
   } finally { await kit.dispose(); }
 });

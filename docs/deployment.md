@@ -4854,6 +4854,13 @@ tunnels or choose a zone from list order. Pages Preview and Workers Preview
 custom domains return `unsupported_action`; neither request changes the
 Production target. These are unreleased 0.3 source contracts.
 
+Vercel Domain observations keep ownership and routing separate. Pending ownership
+retains its TXT challenge alongside any routing instructions. Routing uses the
+provider's preferred (rank 1) A records for an apex or CNAME for a subdomain,
+without combining conflicting record families at the same name. A Domain is
+active only when ownership is verified and routing is configured. These are
+unreleased 0.3 source contracts.
+
 Cloudflare's Pages add and Workers attach responses return the Domain object,
 and a successful Cloudflare or Vercel delete acknowledges removal. The adapter consumes those
 responses directly. It does not re-read its own writes to demand a stronger

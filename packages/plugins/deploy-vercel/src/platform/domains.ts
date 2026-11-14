@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
   type JsonValue } from '@happier-dev/plugin-sdk';
@@ -5,7 +6,10 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { vercelEndpoint, vercelRequest } from './operations.js';
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const fail = (code: string): never => { throw new PluginError({ code }); };
+const fail = (code: string): never => {
+  const error = new PluginError({ code });
+  throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.domain', causeKind: 'not_found' }) : error;
+};
 /** Project Domains v10 add/v9 get+remove and domain config v6, official API inspected 2026-11-10.
  * Verify reads only. A lost write remains unknown and the next explicit Action can recover it.
  */
@@ -59,19 +63,27 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
     if (record(value) && typeof value.type === 'string' && typeof value.domain === 'string' && typeof value.value === 'string')
       dns.push({ type: value.type, name: value.domain, value: value.value });
   }
-  if (!domain.verified) return { v: 1, hostname, state: 'pending', dns };
   const configUrl = new URL(vercelEndpoint(`/v6/domains/${encodeURIComponent(hostname)}/config`, account));
   configUrl.searchParams.set('projectIdOrName', project);
   const config = check(await request(configUrl.href, 'GET'), false);
   if (!record(config) || typeof config.misconfigured !== 'boolean') return fail('provider_response_invalid');
   if (config.misconfigured) {
-    for (const row of Array.isArray(config.recommendedCNAME) ? config.recommendedCNAME : [])
-      if (record(row) && typeof row.value === 'string') dns.push({ type: 'CNAME', name: hostname, value: row.value });
-    for (const row of Array.isArray(config.recommendedIPv4) ? config.recommendedIPv4 : [])
-      if (record(row) && Array.isArray(row.value)) for (const value of row.value)
-        if (typeof value === 'string') dns.push({ type: 'A', name: hostname, value });
+    // Vercel ranks alternatives; A and CNAME cannot coexist on the same name.
+    // Follow its apex A / subdomain CNAME guidance using the preferred rank.
+    const cname = (Array.isArray(config.recommendedCNAME) ? config.recommendedCNAME : [])
+      .find(row => record(row) && row.rank === 1);
+    const ipv4 = (Array.isArray(config.recommendedIPv4) ? config.recommendedIPv4 : [])
+      .find(row => record(row) && row.rank === 1);
+    const cnames: Result['dns'] = record(cname) && typeof cname.value === 'string'
+      ? [{ type: 'CNAME', name: hostname, value: cname.value }] : [];
+    const addresses: Result['dns'] = record(ipv4) && Array.isArray(ipv4.value)
+      ? ipv4.value.filter((value): value is string => typeof value === 'string')
+        .map(value => ({ type: 'A', name: hostname, value })) : [];
+    const isApex = domain.apexName === hostname;
+    const preferred = isApex ? addresses : cnames;
+    dns.push(...(preferred.length ? preferred : isApex ? cnames : addresses));
   }
-  return { v: 1, hostname, state: config.misconfigured ? 'pending' : 'active', dns };
+  return { v: 1, hostname, state: !domain.verified || config.misconfigured ? 'pending' : 'active', dns };
 }
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [], hostAccess: ['vercel-api', 'deploy.manage'],
