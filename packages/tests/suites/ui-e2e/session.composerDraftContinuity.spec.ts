@@ -620,7 +620,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
             pendingEnqueueUrl(new URL(response.url())) && response.request().method() === 'POST'
         ));
         releaseResponse();
-        await enqueueResponse;
+        expect((await enqueueResponse).ok()).toBe(true);
         await expect(send).toBeEnabled({ timeout: 60_000 });
         await expect(reopened).toHaveValue(newer, { timeout: 60_000 });
         expect(await focusedElsewhere.evaluate((element) => document.activeElement === element)).toBe(true);
