@@ -363,7 +363,7 @@ export function applyConnectedAccountConfigurationFields(
         configuration: { ...configuration, fields: [
             ...configuration.fields.map(field => replacements.get(field.id) ?? field),
         ] },
-        ...(mode.postAuthenticationFieldIds === undefined ? {} : {
+        ...(mode.kind !== 'oauthAuthorizationCode' || mode.postAuthenticationFieldIds === undefined ? {} : {
             postAuthenticationFieldIds: mode.postAuthenticationFieldIds.filter(id => !replacements.has(id)),
         }),
     };
