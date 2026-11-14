@@ -263,7 +263,7 @@ function buildTargetSelection(
         ...(selection.modelSelection?.ref.providerConnectionId
             ? { providerConnectionId: selection.modelSelection.ref.providerConnectionId }
             : {}),
-        ...(selection.sessionModeId !== null ? { acpSessionModeId: selection.sessionModeId } : {}),
+        ...(selection.sessionModeId ? { acpSessionModeId: selection.sessionModeId } : {}),
         ...(overrides ? { sessionConfigOptionOverrides: overrides } : {}),
     };
 }

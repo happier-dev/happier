@@ -4389,6 +4389,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                         await screen.pressByTestIdAsync(modelOptionId);
                         await vi.waitFor(() => expect(observedAgentPicker.current?.armedContinuation?.selection)
                             .toMatchObject({ agentId: 'pi', modelId }));
+                        expect(observedAgentPicker.current?.armedContinuation?.selection).not.toHaveProperty('acpSessionModeId');
                         if (!screen.findByTestId('agent-input-chip-picker.top-selector')) {
                             await screen.pressByTestIdAsync('agent-input-agent-chip');
                         }

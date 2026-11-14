@@ -11,6 +11,8 @@ import { runSessionAgentTransition } from './sessionAgentTransitionCoordinator';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { buildSpawnResumeUnreachableErrorResult } from '@/daemon/connectedServices/buildSpawnResumeUnreachableErrorResult';
 import { ConnectedServiceSpawnResumeUnreachableError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
   buildTransitionRequest,
   createTransitionDepsHarness,
@@ -203,6 +205,24 @@ describe('section 7.5 recovery projection', () => {
       code: 'target_start_failed',
       errorDetail: { kind: 'launch_error', code: 'agent_signed_out',
         failureCause: { requestId: TEST_LOCAL_ID, failureReason: 'authentication_required' } },
+    });
+  });
+
+  it('retains the Provider model-selection refusal through target resume', async () => {
+    const failure = buildProviderSpawnErrorResult(createProviderErrorV1('model_selection_required'));
+    const harness = createTransitionDepsHarness({
+      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
+        fromAgentId: 'claude', toAgentId: 'codex',
+      })) as never,
+      requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
+        machineRpcTransport: async () => failure,
+      }),
+    });
+    harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
+
+    expect(await runTransition(harness)).toMatchObject({
+      type: 'partially_applied', applied: 'current_view_committed', code: 'target_start_failed',
+      errorDetail: { kind: 'launch_error', code: 'model_selection_required' },
     });
   });
 

@@ -216,13 +216,17 @@ describe('Session launch cause transport', () => {
         serviceId: 'acme.agent/account', profileId: 'revoked', retryable: false },
     } });
   });
-  it('preserves a safe Provider refusal through the daemon control producer and consumer', async () => {
-    const failure = buildProviderSpawnErrorResult(createProviderErrorV1('provider_connection_invalid', {
+  it.each(['provider_connection_invalid', 'model_selection_required'] as const)('preserves the typed %s refusal through daemon control and public launch projection', async code => {
+    const failure = buildProviderSpawnErrorResult(createProviderErrorV1(code, {
       connectionId: 'pc_gateway', machineId: 'machine-a',
     }));
     const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
     expect(response.errorDetail).toEqual(failure.errorDetail);
     expect(normalizeSpawnSessionErrorDetail(response.errorDetail)).toEqual(failure.errorDetail);
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code } });
     expect(SpawnSessionControlErrorResponseSchema.safeParse({
       ...response,
       errorDetail: { ...failure.errorDetail, secret: 'must-not-cross-control-transport' },

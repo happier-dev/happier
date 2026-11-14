@@ -644,7 +644,8 @@ async function activateTargetAndAdmitInput(params: Readonly<{
     }).catch(() => null);
     if (!resumed?.ok) {
       const failure = resumed?.errorDetail ? projectSessionSpawnFailure({
-        errorCode: resumed.code, errorMessage: resumed.message, errorDetail: resumed.errorDetail, requestId: localId,
+        errorCode: resumed.spawnErrorCode ?? resumed.code,
+        errorMessage: resumed.message, errorDetail: resumed.errorDetail, requestId: localId,
       }) : undefined;
       return committed.committed('target_start_failed',
         failure && 'launchError' in failure ? failure.launchError : undefined);
