@@ -16,7 +16,7 @@ import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrant
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
-import { projectDeploymentListRow } from './deploymentListProjection';
+import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { projectDeploymentReceiptHeader } from './deploymentService';
 import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { readDeploymentPendingContent } from './deploymentPendingService';
@@ -375,7 +375,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         items.push(environment);
         // Source admission already loaded this exact name. Preserve its existing
         // disclosed-metadata contract, not a copy in Environment metadata/storage.
-        projectSources.set(row.projectSourceId, { id: source.admission.source.id, name: source.admission.source.name });
+        projectSources.set(row.projectSourceId, projectDeploymentSourcePresentation(source.admission.source));
         for (const receipt of row.deployments ?? []) {
             const projected = projectDeploymentListRow(() => projectDeploymentReceiptHeader(receipt));
             if (projected) currentDeployments.push(projected);

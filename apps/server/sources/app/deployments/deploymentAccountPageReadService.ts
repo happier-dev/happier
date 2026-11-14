@@ -15,7 +15,7 @@ import { projectArtifactHttpRead } from '@/app/artifacts/artifactHttpRead';
 import { deploymentFailure, projectDeploymentSourceAdmission, type DeploymentAuthentication, type DeploymentFailure } from './deploymentAdmission';
 import { projectDeploymentEnvironmentHeader, type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { projectDeploymentDomainHeader } from './deploymentDomainService';
-import { projectDeploymentListRow } from './deploymentListProjection';
+import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { admitDeploymentStoredContentsInTx, projectDeploymentStoredContentAuthority, projectDeploymentStoredContentRevision, type DeploymentContentReference } from './deploymentStoredContent';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 
@@ -120,6 +120,7 @@ async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kin
     if (serverIdentity !== input.serverId) return deploymentFailure('deployment_unavailable');
     const artifacts = new Map<string, ReturnType<typeof projectArtifactHttpRead>>();
     const domains: { domain: ReturnType<typeof projectDeploymentDomainHeader>; environment: ReturnType<typeof projectDeploymentEnvironmentHeader> }[] = [];
+    const projectSources = new Map<string, ReturnType<typeof projectDeploymentSourcePresentation>>();
     const data: { environment: ReturnType<typeof projectDeploymentEnvironmentHeader> }[] = [];
     let partial = false;
     for (const row of candidates.slice(0, limit)) {
@@ -156,14 +157,18 @@ async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kin
         const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row.environment, input.serverId, admission));
         const domain = row.domain ? projectDeploymentListRow(() => projectDeploymentDomainHeader(row.domain!)) : null;
         if (!environment || row.domain && !domain) { partial = true; continue; }
-        if (domain) domains.push({ domain, environment });
+        if (domain) {
+            domains.push({ domain, environment });
+            projectSources.set(admission.source.id, projectDeploymentSourcePresentation(admission.source));
+        }
         else data.push({ environment });
         for (const artifact of opened) artifacts.set(artifact.id, artifact);
     }
     const page = { artifacts: [...artifacts.values()],
         nextCursor: candidates.length > limit ? sealDeploymentReadCursor(actorAccountId, cursorInput, candidates[limit - 1]!.key) : null,
         coverage: partial ? 'partial' as const : 'complete' as const };
-    return kind === 'domains' ? { ok: true as const, items: domains, ...page } : { ok: true as const, items: data, ...page };
+    return kind === 'domains' ? { ok: true as const, items: domains, projectSources: [...projectSources.values()], ...page }
+        : { ok: true as const, items: data, ...page };
 }
 
 export function listDeploymentDomainPageInTx(tx: Tx, actorAccountId: string, input: DeploymentDomainPageInputV1, authentication: DeploymentAuthentication = {}) {

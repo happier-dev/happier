@@ -26,6 +26,13 @@ function failure(code: string, retryable = false): Extract<DeploymentReadResultV
     return { ok: false, failure: { code, retryable } };
 }
 
+function readEnvironmentPresentation(environment: DeploymentEnvironmentCollectionV1['items'][number]['environment'],
+    artifact: Parameters<typeof readDeploymentEnvironmentArtifactV1>[1], sourceNames: ReadonlyMap<string, string>) {
+    const opened = readDeploymentEnvironmentArtifactV1(environment, artifact);
+    const label = opened.ok ? opened : readDeploymentEnvironmentArtifactHeaderV1(environment, artifact);
+    return { opened, label, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null };
+}
+
 async function readArtifactsByRow<T>(artifactIds: readonly string[], read: (ids: string[]) => Promise<T[]>): Promise<(T | undefined)[]> {
     const ids = [...new Set(artifactIds)];
     const results = await read(ids);
@@ -97,13 +104,20 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 && areServerProfileIdentifiersEquivalent(environment.serverId, scope.serverId))) return failure('invalid_response');
             const opened = await account.openArtifactContents(page.artifacts, { signal: options.signal });
             const byId = new Map(page.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
+            const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const items = [];
             let coverage = page.coverage;
             for (const { domain, environment } of page.items) {
                 const artifact = byId.get(domain.contentArtifactId);
                 const row = readDeploymentDomainArtifactV1(domain, artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; continue; }
-                items.push({ domain, environment, title: row.title, content: row.content });
+                const environmentArtifact = byId.get(environment.contentArtifactId);
+                const presentation = readEnvironmentPresentation(environment,
+                    environmentArtifact?.status === 'fulfilled' ? environmentArtifact.value : null, sourceNames);
+                if (!presentation.label.ok) { coverage = 'partial'; continue; }
+                if (!presentation.opened.ok) coverage = 'partial';
+                items.push({ domain, environment, title: row.title, content: row.content,
+                    environmentTitle: presentation.label.title, projectSourceName: presentation.projectSourceName });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
@@ -202,8 +216,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const read = contents[index];
                 if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const artifact = read.value;
-                const opened = readDeploymentEnvironmentArtifactV1(environment, artifact);
-                const label = opened.ok ? opened : readDeploymentEnvironmentArtifactHeaderV1(environment, artifact);
+                const { opened, label, projectSourceName } = readEnvironmentPresentation(environment, artifact, sourceNames);
                 if (!label.ok) { coverage = 'partial'; continue; }
                 if (!opened.ok) coverage = 'partial';
                 const current = currentByEnvironment.get(environment.id);
@@ -216,7 +229,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     else coverage = 'partial';
                 }
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
-                items.push({ environment, title: label.title, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null,
+                items.push({ environment, title: label.title, projectSourceName,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined } : {}),

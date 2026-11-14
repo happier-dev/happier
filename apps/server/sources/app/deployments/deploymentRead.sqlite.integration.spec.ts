@@ -22,6 +22,7 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { listDeploymentEnvironmentsInTx } from './deploymentReadService';
+import { listDeploymentDomainPageInTx } from './deploymentAccountPageReadService';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx, readArtifactRecipientCensusInTx,
@@ -613,6 +614,33 @@ describe('deployment detail admission cost', () => {
                 expectedRevision: restored.source.revision, patch: { audience: [] } }))).toMatchObject({ ok: true });
             for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(200);
         });
+    });
+
+    it('returns admitted Project Source names on the Account Domains page', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Saved domain Project', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
+        const content = async (kind: string) => {
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(), kind: `v1:other:${kind}`,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Account page' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const environment = await db.deploymentEnvironment.create({ data: { id: randomUUID(), projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machine.id, ...await content('deployment-environment.v1') } });
+        const target = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+            createdByAccountId: owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+            targetKind: 'ownServer', state: 'configured', ...await content('deployment-target-link.v1') } });
+        await db.deploymentDomain.create({ data: { id: randomUUID(), environmentId: environment.id,
+            targetLinkId: target.id, createdByAccountId: owner.id, state: 'pending', ...await content('deployment-domain.v1') } });
+        const page = await inTx(tx => listDeploymentDomainPageInTx(tx, owner.id, { serverId }));
+        expect(page).toMatchObject({ ok: true, projectSources: [{ id: source.source.id, name: source.source.name }],
+            items: [{ environment: { id: environment.id } }] });
     });
 
 });

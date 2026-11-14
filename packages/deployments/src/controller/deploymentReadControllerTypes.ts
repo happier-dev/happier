@@ -91,7 +91,9 @@ export type DeploymentDomainReadItemV1 = Readonly<{
     healthUnavailableReason?: string;
 }>;
 export type DeploymentAccountPageQueryV1 = Readonly<{ cursor?: string | undefined; limit?: number }>;
-export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{ environment: DeploymentEnvironmentHeaderV1 }>;
+export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{
+    environment: DeploymentEnvironmentHeaderV1; environmentTitle: string; projectSourceName: string | null;
+}>;
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
     databaseSizes?: readonly DeploymentDatabaseSizeV1[];

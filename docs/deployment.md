@@ -137,6 +137,14 @@ leases retain the controller's demand, invalidation and explicit continuation;
 they do not acquire per-Environment health observers. Surface composition remains
 separate from these nonvisual readers.
 
+The Account Domains page carries the same admitted `projectSources:[{id,name}]`
+projection as the Environments inventory. Its opened items expose
+`environmentTitle` and `projectSourceName` through the shared Environment
+presentation reader: private titles come from the bundled mode-aware Environment
+Artifact, while Source names retain their existing disclosed-metadata contract.
+Legacy responses without Source presentation yield a null name. No row requires
+another Environment, Artifact or Source request.
+
 `useManagedInventory` accepts optional `kinds`: omission retains the complete
 inventory, an empty list acquires no families, and requested families retain their
 native coverage and continuation. Configured backups borrow the App page without

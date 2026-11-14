@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { projectArtifactBoundaryReadRow } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -16,7 +17,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
-import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 
 const homes = createHomeGovernanceHarness();
@@ -34,6 +35,50 @@ const pageItems = (result: unknown) => (result as Readonly<{ value: Readonly<{ i
 describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it.each(['plain', 'e2ee'] as const)('opens %s Account Domain labels from the bundled page without detail fanout', async mode => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(11);
+        const serverId = await homes.addHome({ name: 'Domain labels', serverUrl: 'https://domain-labels.test',
+            accountId: 'account-owner', accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token, secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint),
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+        } });
+        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+        const domain = { v: 1, id: 'domain-label', environmentId: detail.environment.id, targetLinkId: detail.targetLinks[0]!.targetLink.id,
+            revision: 1, state: 'active', contentArtifactId: 'domain-label-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
+            createdByAccountId: 'account-owner', createdAtMs: 1000, updatedAtMs: 1000 };
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Private Environment title' }, body: JSON.stringify(detail.content) });
+            await account.createArtifactDocument({ artifactId: domain.contentArtifactId,
+                header: { kind: 'deployment-domain.v1', title: 'Application domain' }, body: JSON.stringify({ hostname: 'app.test',
+                    target: { service: 'app', containerPort: 80 }, healthCheck: { path: '/', expectStatus: 200 } }) });
+        } finally { account.dispose(); }
+        const artifacts = [detail.environment.contentArtifactId, domain.contentArtifactId].map(id => {
+            const stored = homes.artifacts(serverId).read(id);
+            if (!stored) throw new Error('The Account writer did not create the page Artifact');
+            return projectArtifactBoundaryReadRow(stored);
+        });
+        const response = DeploymentDomainPageSuccessV1Schema.parse({ ok: true, items: [{ domain, environment: detail.environment }],
+            projectSources: [{ id: detail.environment.projectSourceId, name: 'Saved Project name' }], artifacts, nextCursor: null });
+        homes.answer(serverId, '/v1/deployments/domains', { body: response });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const before = homes.requests.length;
+        const page = await createDeploymentReadTransport(lifetime).listDomainPage!(lifetime.scope, {}, { signal: new AbortController().signal });
+        expect(page).toMatchObject({ ok: true, value: { items: [{ title: 'Application domain', environmentTitle: 'Private Environment title',
+            projectSourceName: 'Saved Project name', environment: detail.environment }], nextCursor: null } });
+        const paths = homes.requests.slice(before).map(request => request.path.split('?')[0]);
+        expect(paths.filter(path => path.startsWith('/v1/deployments/'))).toEqual(['/v1/deployments/domains']);
+        expect(paths).not.toContain('/v1/artifacts/read');
+    });
 
     it.each(['plain', 'e2ee'] as const)('reads %s Activity through the existing mode-aware receipt transport', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;

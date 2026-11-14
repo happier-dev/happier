@@ -612,13 +612,14 @@ export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictOb
   inProgressOnly: z.optional(z.literal(true)),
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
 }));
+const deploymentProjectSourcePresentationV1Schema = lazyZodSchema(() => z.pick(ProjectSourceV1Schema, { id: true, name: true }));
 export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), items: z.array(z.extend(DeploymentEnvironmentHeaderV1Schema, {
     /** Private display title opened by the Action host; never plaintext Home metadata. */
     name: z.optional(z.string()),
   })),
     /** Exact admitted Source presentation; its existing metadata contract owns name disclosure. */
-    projectSources: z.optional(z.array(z.pick(ProjectSourceV1Schema, { id: true, name: true }))),
+    projectSources: z.optional(z.array(deploymentProjectSourcePresentationV1Schema)),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
     currentDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
     activity: z.optional(z.strictObject({ running: z.boolean(), failed: z.boolean(),
@@ -647,6 +648,7 @@ export const DeploymentDomainPageSuccessV1Schema = lazyZodSchema(() => z.strictO
   ok: z.literal(true), items: z.array(z.strictObject({
     domain: DeploymentDomainHeaderV1Schema, environment: DeploymentEnvironmentHeaderV1Schema,
   })), artifacts: z.array(ArtifactHttpReadV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+  projectSources: z.optional(z.array(deploymentProjectSourcePresentationV1Schema)),
   coverage: z.optional(z.enum(['complete', 'partial'])),
 }));
 export const DeploymentDataPageSuccessV1Schema = lazyZodSchema(() => z.strictObject({
