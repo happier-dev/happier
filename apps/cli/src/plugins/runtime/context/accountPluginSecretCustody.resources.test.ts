@@ -25,6 +25,9 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/c
 import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -67,11 +70,13 @@ describe('plugin resource custody through real Account and resource wiring', () 
         const repairedEnvelopes: ReturnType<typeof SavedSecretResourceEnvelopeRepairInputV1Schema.parse>[] = [];
         const stored = () => material ? { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material,
             payload: raw, randomBytes: length => new Uint8Array(length).fill(8) }) } : { t: 'plain' as const, v: raw };
-        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: {}, capabilities: {} })));
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_fixture_home' } } })));
         vi.mocked(axios.get).mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption/currentness' && currentnessUnavailable) throw new Error('Fixture Home unavailable');
             if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
+            // Resource delete re-reads the Account profile for its connected-credential reference census.
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'plugin-owner', connectedAccountsV4: [] }) };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, updatedAt: 1, version: 1, settingsVersion: version,
                 signingKeyFingerprint: null, contentKeyFingerprint: material ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
                     createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null,
@@ -126,6 +131,9 @@ describe('plugin resource custody through real Account and resource wiring', () 
                 resources.delete(input.resourceId);
                 return { status: 200, data: { resourceId: input.resourceId } };
             }
+            // Resource delete classifies opaque managed-preset references; this Home has none.
+            if (path === machinePresetActionEndpointPathV1('machines.presets.list')) return { status: 200, data: { kind: 'listed', presets: [] } };
+            if (path === managedMachineActionEndpointPathV1('machines.managed.list')) return { status: 200, data: { machines: [] } };
             if (path === '/v1/account/saved-secrets/resources/envelopes/repair') {
                 const input = SavedSecretResourceEnvelopeRepairInputV1Schema.parse(body);
                 repairedEnvelopes.push(input);
