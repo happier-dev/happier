@@ -596,6 +596,8 @@ describe('fetchAndApplyMachines request override', () => {
             expect(encryption.decryptMetadata).toHaveBeenCalledTimes(rows.length);
             for (const row of rows) {
                 expect(store.getState().machineDisplayById[row.id]?.metadata?.displayName).toBe(row.id);
+                // Machines reads inventory facts; Projects can use the display projection.
+                expect(store.getState().machines[row.id]?.metadata?.displayName).toBe(row.id);
                 expect(store.getState().machines[row.id]?.daemonState).toBeNull();
                 expect(store.getState().machines[row.id]?.daemonStateVersion).toBe(0);
                 expect(readMachineInventoryRowReadiness(store.getState().machines[row.id]!)).toBe('pending');
