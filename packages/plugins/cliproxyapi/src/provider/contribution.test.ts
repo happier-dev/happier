@@ -189,7 +189,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
-        sourceRegistryVersion: 'v8.0.61:header-facts-families-v4',
+        sourceRegistryVersion: 'v8.0.61:header-facts-families-v5',
         probes: [{
           endpointTemplateId: 'cliproxyapi-openai-responses',
           path: '/v1/models',

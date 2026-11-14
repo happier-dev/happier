@@ -6,6 +6,8 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { CLIPROXYAPI_STATIC_MODELS } from '../../../../cliproxyapi/src/provider/staticModels.generated.js';
+import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV, CodexProviderBindingEngineConfigV1Schema, codexNativeUpstreamConfigOverrides } from './runtimeConfig.js';
 import {
   CODEX_PROVIDER_BINDING_ADAPTER_V1,
   CODEX_PROVIDER_BINDING_ENGINE_CONFIG_FIELDS_V1,
@@ -65,6 +67,23 @@ function materializeInput(
 }
 
 describe('Codex provider-binding adapter V1', () => {
+  it('carries the declared Muse window through materialization, decoding and native overrides', async () => {
+    const model = CLIPROXYAPI_STATIC_MODELS.meta.find((entry) => entry.id === 'muse-spark-1.3');
+    if (!model) throw new Error('Missing declared Muse Spark model');
+    const input = materializeInput();
+    const result = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      binding: { ...input.binding, selection: { ...input.binding.selection, model } },
+    });
+    if (result.kind !== 'engineConfig') throw new Error('Expected engine config');
+    expect(result.engineConfig).toMatchObject({ config: { model_context_window: 1_048_576 } });
+    const config = CodexProviderBindingEngineConfigV1Schema.parse(result.engineConfig);
+    expect(codexNativeUpstreamConfigOverrides({ [CODEX_NATIVE_UPSTREAM_CONFIG_ENV]: JSON.stringify(config) }, model.id))
+      .toContain('model_context_window=1048576');
+    const undeclared = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput());
+    if (undeclared.kind !== 'engineConfig') throw new Error('Expected engine config');
+    expect(undeclared.engineConfig).toMatchObject({ config: expect.not.objectContaining({ model_context_window: expect.anything() }) });
+  });
+
   it('declares exact Responses support that agrees with the executable adapter', () => {
     const requirements = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
 

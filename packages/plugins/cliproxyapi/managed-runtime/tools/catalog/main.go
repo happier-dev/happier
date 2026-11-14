@@ -21,10 +21,11 @@ import (
 const sdkModule = "github.com/router-for-me/CLIProxyAPI/v8"
 
 type model struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Capabilities map[string]string `json:"capabilities"`
-	ModelOptions []modelOption     `json:"modelOptions,omitempty"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	ContextWindowTokens int               `json:"contextWindowTokens,omitempty"`
+	Capabilities        map[string]string `json:"capabilities"`
+	ModelOptions        []modelOption     `json:"modelOptions,omitempty"`
 }
 
 type modelOption struct {
@@ -42,6 +43,7 @@ type optionValue struct {
 
 type sdkModel struct {
 	ID             string `json:"id"`
+	ContextLength  int    `json:"context_length"`
 	ToolRoundTrips string `json:"-"`
 	Thinking       *struct {
 		Levels []string `json:"levels"`
@@ -215,7 +217,7 @@ func generateRows(moduleDir string, families []familyRow) (map[string][]model, e
 			}
 			// The existing OpenAI probe consumes id/name only. The SDK emits
 			// display_name, not name, so the existing catalog falls back to id.
-			row := model{ID: id, Name: id, Capabilities: map[string]string{
+			row := model{ID: id, Name: id, ContextWindowTokens: entry.ContextLength, Capabilities: map[string]string{
 				"toolRoundTrips": "unknown", "reasoningControls": "unknown",
 			}}
 			if entry.ToolRoundTrips != "" {

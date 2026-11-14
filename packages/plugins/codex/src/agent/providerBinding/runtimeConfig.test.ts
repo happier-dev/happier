@@ -18,6 +18,23 @@ const custom = {
 } as const;
 
 describe('Codex provider-binding runtime config', () => {
+  it('accepts positive model windows only at their native config key', () => {
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({ ...custom,
+      config: { ...custom.config, model_context_window: 1_048_576 },
+    }).success).toBe(true);
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({ v: 1, modelProvider: 'ollama',
+      config: { model_context_window: 32_768 },
+    }).success).toBe(true);
+    for (const window of [0, -1, 1.5, '1048576']) {
+      expect(CodexProviderBindingEngineConfigV1Schema.safeParse({ ...custom,
+        config: { ...custom.config, model_context_window: window },
+      }).success).toBe(false);
+    }
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({ ...custom,
+      config: { ...custom.config, arbitrary_limit: 1_048_576 },
+    }).success).toBe(false);
+  });
+
   it('accepts exact custom and reserved adapter outputs', () => {
     expect(CodexProviderBindingEngineConfigV1Schema.parse(custom)).toEqual(custom);
     expect(CodexProviderBindingEngineConfigV1Schema.safeParse({

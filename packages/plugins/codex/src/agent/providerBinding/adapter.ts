@@ -195,12 +195,14 @@ function buildOwnedEnvironment(secretValue: string | null): ProviderBindingEnvOv
   }));
 }
 
-function buildModelReasoningConfig(
+function buildModelConfig(
   input: AgentProviderBindingMaterializeInput,
-): Readonly<{ model_reasoning_effort?: 'none' }> {
-  return input.binding.selection.model.capabilities?.reasoningControls === 'unsupported'
-    ? { model_reasoning_effort: 'none' }
-    : {};
+): Readonly<{ model_reasoning_effort?: 'none'; model_context_window?: number }> {
+  const model = input.binding.selection.model;
+  return {
+    ...(model.capabilities?.reasoningControls === 'unsupported' ? { model_reasoning_effort: 'none' as const } : {}),
+    ...(model.contextWindowTokens === undefined ? {} : { model_context_window: model.contextWindowTokens }),
+  };
 }
 
 async function materializeCodexProviderBindingV1(
@@ -230,7 +232,7 @@ async function materializeCodexProviderBindingV1(
       engineConfig: {
         v: 1,
         modelProvider: adapterBindingKey,
-        config: buildModelReasoningConfig(input),
+        config: buildModelConfig(input),
       },
     };
   }
@@ -258,7 +260,7 @@ async function materializeCodexProviderBindingV1(
       v: 1,
       modelProvider: adapterBindingKey,
       config: {
-        ...buildModelReasoningConfig(input),
+        ...buildModelConfig(input),
         [`model_providers.${adapterBindingKey}`]: providerFields,
       },
     },

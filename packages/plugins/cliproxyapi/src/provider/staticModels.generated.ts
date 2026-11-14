@@ -8,6 +8,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-6-thinking",
       "name": "claude-opus-4-6-thinking",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -16,6 +17,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-5-5-high",
       "name": "claude-opus-5-5-high",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -46,6 +48,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-4-6",
       "name": "claude-sonnet-4-6",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -54,6 +57,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-5-5-high",
       "name": "claude-sonnet-5-5-high",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -84,6 +88,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-3-flash",
       "name": "gemini-3-flash",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -144,6 +149,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-3.1-flash-lite",
       "name": "gemini-3.1-flash-lite",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -178,6 +184,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-3.5-flash-lite",
       "name": "gemini-3.5-flash-lite",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -212,6 +219,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-3.8-flash-high",
       "name": "gemini-3.8-flash-high",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -242,6 +250,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-4-argon-high",
       "name": "gemini-4-argon-high",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -272,6 +281,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-oss-120b-medium",
       "name": "gpt-oss-120b-medium",
+      "contextWindowTokens": 114000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -282,6 +292,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-3-5-haiku-20241022",
       "name": "claude-3-5-haiku-20241022",
+      "contextWindowTokens": 128000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -290,6 +301,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-3-7-sonnet-20250219",
       "name": "claude-3-7-sonnet-20250219",
+      "contextWindowTokens": 128000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -298,6 +310,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-fable-5",
       "name": "claude-fable-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -336,6 +349,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-fable-5-1",
       "name": "claude-fable-5-1",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -374,6 +388,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-haiku-4-5-20251001",
       "name": "claude-haiku-4-5-20251001",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -382,6 +397,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-haiku-5-5",
       "name": "claude-haiku-5-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -420,6 +436,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-1-20250805",
       "name": "claude-opus-4-1-20250805",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -428,6 +445,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-20250514",
       "name": "claude-opus-4-20250514",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -436,6 +454,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-5-20251101",
       "name": "claude-opus-4-5-20251101",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -444,6 +463,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-6",
       "name": "claude-opus-4-6",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -478,6 +498,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-7",
       "name": "claude-opus-4-7",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -516,6 +537,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-4-8",
       "name": "claude-opus-4-8",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -554,6 +576,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-5",
       "name": "claude-opus-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -592,6 +615,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-opus-5-5",
       "name": "claude-opus-5-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -630,6 +654,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-4-20250514",
       "name": "claude-sonnet-4-20250514",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -638,6 +663,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-4-5-20250929",
       "name": "claude-sonnet-4-5-20250929",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -646,6 +672,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-4-6",
       "name": "claude-sonnet-4-6",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -680,6 +707,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-5",
       "name": "claude-sonnet-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -718,6 +746,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "claude-sonnet-5-5",
       "name": "claude-sonnet-5-5",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -758,6 +787,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "codex-auto-review",
       "name": "codex-auto-review",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -792,6 +822,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-5.6-luna",
       "name": "gpt-5.6-luna",
+      "contextWindowTokens": 921000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -830,6 +861,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-5.6-sol",
       "name": "gpt-5.6-sol",
+      "contextWindowTokens": 921000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -868,6 +900,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-5.6-terra",
       "name": "gpt-5.6-terra",
+      "contextWindowTokens": 921000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -906,6 +939,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6-astra",
       "name": "gpt-6-astra",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -944,6 +978,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6-chat-thinking",
       "name": "gpt-6-chat-thinking",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -982,6 +1017,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6-luna",
       "name": "gpt-6-luna",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1020,6 +1056,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6-sol",
       "name": "gpt-6-sol",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1058,6 +1095,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6.1-sol",
       "name": "gpt-6.1-sol",
+      "contextWindowTokens": 272000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1096,6 +1134,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gpt-6.1-terra",
       "name": "gpt-6.1-terra",
+      "contextWindowTokens": 500000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1494,6 +1533,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-3.8-flash",
       "name": "gemini-3.8-flash",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1524,6 +1564,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "gemini-4-argon",
       "name": "gemini-4-argon",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1556,6 +1597,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2",
       "name": "kimi-k2",
+      "contextWindowTokens": 131072,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -1564,6 +1606,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2-thinking",
       "name": "kimi-k2-thinking",
+      "contextWindowTokens": 131072,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1590,6 +1633,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.5",
       "name": "kimi-k2.5",
+      "contextWindowTokens": 262144,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1616,6 +1660,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.6",
       "name": "kimi-k2.6",
+      "contextWindowTokens": 262144,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1642,6 +1687,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.7-code",
       "name": "kimi-k2.7-code",
+      "contextWindowTokens": 262144,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1668,6 +1714,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.7-code-highspeed",
       "name": "kimi-k2.7-code-highspeed",
+      "contextWindowTokens": 262144,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1694,6 +1741,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.8",
       "name": "kimi-k2.8",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1724,6 +1772,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k2.8-code",
       "name": "kimi-k2.8-code",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1754,6 +1803,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k3",
       "name": "kimi-k3",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1784,6 +1834,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k3-256k",
       "name": "kimi-k3-256k",
+      "contextWindowTokens": 262144,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1814,6 +1865,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k3.1-pro",
       "name": "kimi-k3.1-pro",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1844,6 +1896,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "kimi-k3.1-pro-highspeed",
       "name": "kimi-k3.1-pro-highspeed",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1876,6 +1929,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-spark-1.1",
       "name": "muse-spark-1.1",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1910,6 +1964,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-spark-1.2",
       "name": "muse-spark-1.2",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1948,6 +2003,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-spark-1.2-contributor",
       "name": "muse-spark-1.2-contributor",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -1986,6 +2042,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-spark-1.3",
       "name": "muse-spark-1.3",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2028,6 +2085,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-spark-1.3-contributor",
       "name": "muse-spark-1.3-contributor",
+      "contextWindowTokens": 1048576,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2070,6 +2128,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-wonder-1.0",
       "name": "muse-wonder-1.0",
+      "contextWindowTokens": 1007997,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2112,6 +2171,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-wonder-1.0-contributor",
       "name": "muse-wonder-1.0-contributor",
+      "contextWindowTokens": 1007997,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2154,6 +2214,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-wonder-full-1.0",
       "name": "muse-wonder-full-1.0",
+      "contextWindowTokens": 1007997,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2196,6 +2257,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "muse-wonder-full-1.0-contributor",
       "name": "muse-wonder-full-1.0-contributor",
+      "contextWindowTokens": 1007997,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2240,6 +2302,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-3-mini",
       "name": "grok-3-mini",
+      "contextWindowTokens": 131072,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2270,6 +2333,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-3-mini-fast",
       "name": "grok-3-mini-fast",
+      "contextWindowTokens": 131072,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2300,6 +2364,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.20-0309-non-reasoning",
       "name": "grok-4.20-0309-non-reasoning",
+      "contextWindowTokens": 2000000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -2308,6 +2373,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.20-0309-reasoning",
       "name": "grok-4.20-0309-reasoning",
+      "contextWindowTokens": 2000000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -2316,6 +2382,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.20-multi-agent-0309",
       "name": "grok-4.20-multi-agent-0309",
+      "contextWindowTokens": 2000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2346,6 +2413,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.3",
       "name": "grok-4.3",
+      "contextWindowTokens": 1000000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2380,6 +2448,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.5",
       "name": "grok-4.5",
+      "contextWindowTokens": 500000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2410,6 +2479,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.6",
       "name": "grok-4.6",
+      "contextWindowTokens": 500000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2444,6 +2514,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.7",
       "name": "grok-4.7",
+      "contextWindowTokens": 500000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2478,6 +2549,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-4.7-build-fast",
       "name": "grok-4.7-build-fast",
+      "contextWindowTokens": 500000,
       "capabilities": {
         "reasoningControls": "supported",
         "toolRoundTrips": "unknown"
@@ -2512,6 +2584,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-build-0.1",
       "name": "grok-build-0.1",
+      "contextWindowTokens": 256000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
@@ -2520,6 +2593,7 @@ export const CLIPROXYAPI_STATIC_MODELS = {
     {
       "id": "grok-composer-2.5-fast",
       "name": "grok-composer-2.5-fast",
+      "contextWindowTokens": 200000,
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"

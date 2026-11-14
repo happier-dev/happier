@@ -3343,6 +3343,18 @@ External third-party Provider authoring is experimental until a packed plugin co
 
 ## Validation map
 
+In 0.3 development, the CLIProxyAPI static catalog generator preserves the
+pinned SDK's declared `context_length` as `contextWindowTokens`. Managed catalog
+enrichment supplies it when a live model row omits the window, making the same
+descriptor available to every Agent. Codex provider materialization writes that
+descriptor's window as `model_context_window` for app-server configuration and
+native CLI overrides; undeclared windows leave the native default unchanged.
+Happier does not set a separate auto-compaction threshold. Codex 0.162.1 clamps
+this override to its native model's `max_context_window`, including the 272,000
+fallback maximum for unknown models. Supplying the override alone therefore
+does not establish an effective larger native window or reduced compaction.
+See the [pinned native override implementation](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/models-manager/src/model_info.rs).
+
 In 0.3 development, accounting distinguishes a witnessed native model source
 from a Provider connection with `providerSource`. Request-bound attribution is
 captured from the accepted host runtime binding or the Agent's actual native

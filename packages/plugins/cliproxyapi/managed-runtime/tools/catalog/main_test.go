@@ -36,9 +36,10 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rows map[string][]struct {
-		ID           string            `json:"id"`
-		Capabilities map[string]string `json:"capabilities"`
-		ModelOptions []struct {
+		ID                  string            `json:"id"`
+		ContextWindowTokens int               `json:"contextWindowTokens"`
+		Capabilities        map[string]string `json:"capabilities"`
+		ModelOptions        []struct {
 			ID      string `json:"id"`
 			Options []struct {
 				Value string `json:"value"`
@@ -51,6 +52,11 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	}
 	if len(rows["meta"]) == 0 {
 		t.Fatal("managed Meta family is missing its pinned SDK compatibility catalog")
+	}
+	for _, row := range rows["meta"] {
+		if strings.HasPrefix(row.ID, "muse-spark-") && row.ContextWindowTokens != 1048576 {
+			t.Errorf("%s context window = %d, want declared 1048576", row.ID, row.ContextWindowTokens)
+		}
 	}
 	for provider, models := range rows {
 		for _, model := range models {

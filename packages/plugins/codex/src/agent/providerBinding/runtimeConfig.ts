@@ -21,7 +21,7 @@ export function codexNativeUpstreamConfigOverrides(environment: Readonly<Record<
   if (!config) return [];
   return [...(modelId && modelId !== 'default' ? [`model=${JSON.stringify(modelId)}`] : []),
     `model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(config.config).flatMap(([path, value]) =>
-    typeof value === 'string' ? [`${path}=${JSON.stringify(value)}`]
+    typeof value === 'string' || typeof value === 'number' ? [`${path}=${JSON.stringify(value)}`]
       : Object.entries(value).map(([key, field]) => `${path}.${key}=${JSON.stringify(field)}`))];
 }
 
@@ -85,7 +85,7 @@ const CodexProviderInfoV1Schema = z.strictObject({
 export type CodexProviderBindingEngineConfigV1 = {
   v: 1;
   modelProvider: string;
-  config: Record<string, 'none' | {
+  config: Record<string, 'none' | number | {
     name: 'Happier provider';
     base_url: string;
     wire_api: 'responses';
@@ -103,6 +103,7 @@ export const CodexProviderBindingEngineConfigV1Schema: z.ZodMiniType<CodexProvid
   config: z.record(z.string(), z.union([
     CodexProviderInfoV1Schema,
     z.literal('none'),
+    z.int().check(z.gt(0)),
   ])),
 }).check(z.superRefine((value, ctx) => {
   const keys = Object.keys(value.config);
@@ -115,8 +116,11 @@ export const CodexProviderBindingEngineConfigV1Schema: z.ZodMiniType<CodexProvid
         message: 'Codex reasoning disablement is valid only at model_reasoning_effort',
       });
     }
+    if ((key === 'model_context_window') !== (typeof field === 'number')) {
+      ctx.addIssue({ code: 'custom', path: ['config', key], message: 'Codex context window is valid only at model_context_window' });
+    }
   }
-  const providerKeys = keys.filter((key) => key !== CODEX_MODEL_REASONING_EFFORT_KEY);
+  const providerKeys = keys.filter((key) => key !== CODEX_MODEL_REASONING_EFFORT_KEY && key !== 'model_context_window');
   if (RESERVED_CODEX_PROVIDER_KEYS.has(value.modelProvider)) {
     if (providerKeys.length > 0) {
       ctx.addIssue({ code: 'custom', path: ['config'], message: 'Reserved Codex providers cannot be overridden' });
