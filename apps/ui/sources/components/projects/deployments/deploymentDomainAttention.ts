@@ -48,6 +48,19 @@ export function deploymentDomainAttention(
   return state ?? credentialState(missing) ?? health;
 }
 
+/**
+ * Which of the Services count line's needs an address adds to (lab svcDom "1 waiting for DNS · 1 not reachable"):
+ * its DNS record is still missing, or the outside check finds it not answering. A certificate that needs renewing
+ * still answers, so it is neither.
+ */
+export function deploymentDomainNeedKind(
+  item: Pick<DomainItem, 'health'> & Readonly<{ domain: Pick<DomainItem['domain'], 'dnsHealth'> }>,
+): 'waitingForDns' | 'notReachable' | null {
+  if (projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state === 'missing') return 'waitingForDns';
+  const cause = item.health?.needsYou?.cause;
+  return cause !== undefined && cause !== 'certificate' ? 'notReachable' : null;
+}
+
 /** The native DNS check's verdict (SOS-GAP-DOMAINS): only a missing record or a name that reaches elsewhere needs the person. */
 function dnsState(dnsHealth: DomainItem['domain']['dnsHealth']): DomainAttention | null {
   const { state } = projectDeploymentDomainDnsReadinessV1(dnsHealth);

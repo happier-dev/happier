@@ -179,15 +179,18 @@ async function renderDomains(
   return { screen, controller, settle };
 }
 
-it('offers the shared investigation on a Domain needing attention and keeps a healthy Domain quiet', async () => {
+it('offers the shared investigation beside a failed Domain only; one that needs a look says so and stays quiet (G5)', async () => {
   const detail = createDeploymentEnvironmentDetailV1();
   const healthy = domain('healthy-domain', 'healthy.example.test');
-  const failing = domain('attention-domain', 'attention.example.test');
-  const attention = { ...failing, domain: { ...failing.domain, state: 'warning' as const } };
-  const { screen, controller, settle } = await renderDomains(detail, [healthy, attention], domainActions(detail));
+  const warning = domain('attention-domain', 'attention.example.test');
+  const failing = domain('failed-domain', 'failed.example.test');
+  const attention = { ...warning, domain: { ...warning.domain, state: 'warning' as const } };
+  const failed = { ...failing, domain: { ...failing.domain, state: 'failed' as const } };
+  const { screen, controller, settle } = await renderDomains(detail, [healthy, attention, failed], domainActions(detail));
   try {
-    await settle('project-deployments.environment.domains.attention-domain');
-    expect(screen.findByTestId('project-deployments.environment.domains.attention-domain.investigate')).not.toBeNull();
+    await settle('project-deployments.environment.domains.failed-domain');
+    expect(screen.findByTestId('project-deployments.environment.domains.failed-domain.investigate')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.environment.domains.attention-domain.investigate')).toBeNull();
     expect(screen.findByTestId('project-deployments.environment.domains.healthy-domain.investigate')).toBeNull();
   } finally { await screen.unmount(); controller.retire(); }
 });

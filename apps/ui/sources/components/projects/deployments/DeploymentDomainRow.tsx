@@ -274,7 +274,9 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
     <RoundButton testID={`${id}.checkAgain`} size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')}
       disabled={context.disabled} onPress={() => verify(item)} />
   ) : null;
-  const investigate = attention && (attention.variant === 'attention' || attention.variant === 'danger') ? (
+  // Only a failed address carries the investigation beside it (lab svcDom: a row says its state; G5); the
+  // investigation keeps its own outcome and placement line, so it stays in the row rather than a menu.
+  const investigate = attention?.variant === 'danger' ? (
     <FailureInvestigationActions subject={{ kind: 'domain', serverId: context.serverId,
       environmentId: item.domain.environmentId, domainId: item.domain.id }} serverId={context.serverId}
       controllerMachineId={item.domain.operationAddress?.machineId} compact emphasis="secondary" testID={`${id}.investigate`} />

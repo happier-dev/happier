@@ -232,7 +232,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       lifetime={props.lifetime ?? null} onCount={setViewCount} />
   ) : view === 'domains' && props.controller && serverId ? (
     <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
-      accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} />
+      accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} onCount={setViewCount} />
   ) : view === 'checks' && props.checks ? (
     <ServicesChecksView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible}
       selectedKey={props.checks.selectedKey} onSelect={props.checks.onSelect} onSelectedRow={props.checks.onSelectedRow}

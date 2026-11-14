@@ -24,6 +24,7 @@ import { t } from '@/text';
 
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import { DeploymentDomainsList } from './DeploymentDomainRow';
+import { deploymentDomainNeedKind } from './deploymentDomainAttention';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
@@ -289,10 +290,24 @@ export function ServicesDomainsView(
     serverId: string;
     accountId: string;
     phone: boolean;
+    onCount: (count: ServicesViewCount) => void;
   }>,
 ) {
   const read = useDeploymentDomainPage(props.controller, props.demand);
   const items = read.snapshot.value?.items ?? NO_ITEMS;
+  // The page head's count line (lab svcDom): how many addresses, then the ones that need the person, by their need.
+  const countParts = React.useMemo(() => {
+    if (!read.snapshot.value) return null;
+    const needs = items.map(deploymentDomainNeedKind);
+    const waiting = needs.filter((need) => need === 'waitingForDns').length;
+    const unreachable = needs.filter((need) => need === 'notReachable').length;
+    return [
+      items.length > 0 ? t('projects.deployments.editors.domainsCount', { count: items.length }) : null,
+      waiting > 0 ? t('projects.deployments.editors.domainsWaitingForDns', { count: waiting }) : null,
+      unreachable > 0 ? t('projects.deployments.editors.domainsNotReachable', { count: unreachable }) : null,
+    ];
+  }, [items, read.snapshot.value]);
+  useReportViewCount('domains', countParts, props.onCount);
   if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
