@@ -236,9 +236,10 @@ admission and unknown failures still fail the operation.
 
 During managed enrollment, isolation Set's admission preview retains the signed
 Set effect on its exact Machine installation. It is a read within that admission,
-not another independently authorized Action. The retained creation policy still
-must verify; failure returns `managed_enrollment_policy_unverified`. Enrollment
-copies the ready preview's metadata version into Set, including a new Machine's
+not another independently authorized Action. Home admits the retained creation's
+exact guest and controller scope; the receiver verifies the signed child input
+and consumes that admission without reading private enrollment policy from Home.
+Enrollment copies the ready preview's metadata version into Set, including a new Machine's
 version zero. Stale versions settle as a conflict before approval.
 
 Preparation refusals before native CHECK carry `status.prerequisite` with a

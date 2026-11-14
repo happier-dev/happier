@@ -42,8 +42,9 @@ export function createInstalledMachineRpcDatabaseBoundary(input: Readonly<{
         dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
         active: true, revokedAt: null as Date | null, replacedByMachineId: null as string | null,
         operationProtocolCapabilities: null, operationProtocolCapabilitiesRevision: 0,
-        accountGrants: (input.members ?? []).map(member => ({ ...member,
-            account: { id: member.accountId, status: 'active' } })), teamGrants: [], groupGrants: [] };
+        grants: (input.members ?? []).map(member => ({ ...member, principalKind: 'account' as const,
+            teamId: null, teamGroupId: null, account: { id: member.accountId, status: 'active' },
+            team: null, teamGroup: null })) };
     const matches = (query: DatabaseQuery) => (!query.where?.id || (typeof query.where.id === 'string'
         ? query.where.id === machine.id : query.where.id.in.includes(machine.id)))
         && (!query.where?.accountId || query.where.accountId === machine.accountId);

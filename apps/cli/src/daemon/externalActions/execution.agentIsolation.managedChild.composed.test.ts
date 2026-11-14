@@ -13,6 +13,7 @@ import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/d
 import { dispatchManagedMachineAgentIsolation } from '@/api/externalActionExecutionAuthorization';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protocol';
@@ -163,7 +164,7 @@ it.each([
         agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' }, rolesV1: { active: [] } } });
 }, 120_000);
 
-it.each([true, false])('preserves Home Manage and retained enrollment policy for first isolation set (enabled=%s)', async enabled => {
+it.each([true, false])('preserves Home Manage and signed enrollment input for first isolation set (untampered=%s)', async enabled => {
     onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
     const homeId = 'srv_managed_isolation', serverId = 'managed-isolation-home', serverUrl = 'https://session-home.test';
     const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
@@ -218,7 +219,7 @@ it.each([true, false])('preserves Home Manage and retained enrollment policy for
         serverId: homeId, machineId: 'machine', enabled: true, memberProvisioning: 'linuxUsersV1',
     }, { rpcContext: { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } }));
     if (preview.kind !== 'ready') throw new Error(`Expected fresh native plan: ${JSON.stringify(preview)}`);
-    const childInput = { serverId: homeId, machineId: 'machine', enabled, memberProvisioning: 'linuxUsersV1' as const,
+    const childInput = { serverId: homeId, machineId: 'machine', enabled: true, memberProvisioning: 'linuxUsersV1' as const,
         expectedMetadataVersion: preview.metadataVersion, expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest };
     const input = ManagedAcquireInputV1Schema.parse({
         enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
@@ -254,14 +255,21 @@ it.each([true, false])('preserves Home Manage and retained enrollment policy for
                 target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
                 managedContinuation: { ...body.managedContinuation, controller: managed.controller, acquireRequestEnvelopeDigest: controllerAuthorization.binding.requestEnvelopeDigest },
             } });
-            const result = await executeExternalAction({ ...owner, actionId, envelope: body.envelope,
+            if (!enabled) expect(body.envelope.v).toBe(1);
+            const envelope = !enabled && body.envelope.v === 1 ? { ...body.envelope,
+                input: normalizeStrictJsonValue({ ...childInput, enabled: false }) } : body.envelope;
+            const result = await executeExternalAction({ ...owner, actionId, envelope,
                 executionAuthorization: childAuthorization,
                 principal: { accountId: 'requester', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 0 } },
                 currentMachineId: 'machine', currentAccountId: 'requester', currentInstallationId: h.f.installation.installationId,
                 externalActionMachineRequestPrivateKey: Buffer.from(h.f.installation.privateKey, 'base64url'),
                 verifyExecutionAuthorization: async () => true, machineAdmission: admission,
             });
-            if (result.kind !== 'response') throw new Error(`Child ingress refused: ${result.errorCode}`);
+            if (result.kind !== 'response') {
+                expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+                const refusal = projectExternalActionHttpError('action_not_admitted', 'creation');
+                return { status: refusal.statusCode, data: refusal.payload };
+            }
             return { status: 200, data: result.response };
         }
         return writeHome(...args);
@@ -288,18 +296,18 @@ it.each([true, false])('preserves Home Manage and retained enrollment policy for
         }) });
     const childResult = await reviewed.invoke({ action: actionId, role: actionId, input: normalizeStrictJsonValue(childInput) });
     if (!enabled) {
-        expect(childResult).toMatchObject({ ok: false, errorCode: 'managed_enrollment_policy_unverified' });
+        expect(childResult).toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
         expect(native.mutations).toHaveLength(0);
-        if (childResult.ok) throw new Error('Retained policy must refuse the child');
+        if (childResult.ok) throw new Error('Signed input must refuse the changed child');
         const operations = createHostActionOperationRuntime({ machineId: 'controller',
             resolveAccountId: async () => 'requester', generateOperationId: () => 'first-set-refusal' });
         await expect(operations.observeExecution({ actionId: 'machines.managed.acquire', input,
             actionRequestId: 'creation', execute: async () => {
                 throw ManagedMachineControllerError.fromActionFailure(childResult, actionId);
-            } })).rejects.toMatchObject({ code: 'managed_enrollment_policy_unverified' });
+            } })).rejects.toMatchObject({ code: 'action_not_admitted' });
         expect(await operations.handlers.getV2({ operationId: 'first-set-refusal', waitForTerminal: true }))
             .toMatchObject({ kind: 'found', operation: { state: 'failed',
-                error: { errorCode: 'managed_enrollment_policy_unverified' } } });
+                error: { errorCode: 'action_not_admitted' } } });
         return;
     }
     expect(childResult, JSON.stringify(childResult)).toMatchObject({ ok: true, result: { kind: 'accepted' } });

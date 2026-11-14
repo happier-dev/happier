@@ -3,7 +3,6 @@ import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machine
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
-import { verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolationInput, verifyManagedCreationRolesInput } from '@/api/externalActionExecutionAuthorization';
 import { executeCapturedMachineAction } from '@/api/machine/capturedMachineAction';
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
@@ -296,12 +295,6 @@ export function createCliMachineResourceActionDeps(
         const policyRequest = actionId === 'machines.agentIsolation.status' ? null
           : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
         const request = policyRequest ?? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.status'].parse(input);
-        if (policyRequest && actionId !== 'machines.agentIsolation.status' && !await verifyManagedCreationAgentIsolationInput({ actionId,
-          request: policyRequest, context,
-          serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
-          privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
-          return { ok: false as const, errorCode: 'managed_enrollment_policy_unverified', error: 'managed_enrollment_policy_unverified' };
-        }
         const assertCurrent = async () => {
           signal?.throwIfAborted();
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
@@ -458,13 +451,6 @@ export function createCliMachineResourceActionDeps(
       const denied = await projectAccountAdmission(serverId, context);
       if (denied) return denied;
       return withProjectHome(async () => {
-        if (actionId === 'machines.setup.adminAccess.set') {
-          if (!await verifyManagedCreationAdminAccessInput({ request: input, context,
-            serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
-            privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
-            return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-          }
-        }
         return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
           signal?.throwIfAborted();
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
@@ -526,12 +512,7 @@ export function createCliMachineResourceActionDeps(
         if (!await current()) return { status: 'unavailable' };
         if (actionId === 'machines.roles.set') {
           const request = MACHINE_ROLES_ACTION_INPUT_SCHEMAS[actionId].parse(input);
-          // A managed creation child may only seed its reviewed install-type default.
-          if (!await verifyManagedCreationRolesInput({ request, context,
-            serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
-            privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
-            return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-          }
+          // Ingress admitted the exact signed creation-child input; the target owns field comparison.
           return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
             signal?.throwIfAborted();
             if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
