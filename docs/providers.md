@@ -1312,6 +1312,11 @@ and finite Runs. It does not create a saved Provider connection. Their shared
 Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplies
 the Muse client identity. The adopted source is omitted from native credential
 materialization and follows the existing managed endpoint custody lifecycle.
+Managed-purpose launch requires an explicit model selection when the selected
+source does not supply a native startup model. A missing selection returns
+`model_selection_required` with the existing `choose_model` recovery; an explicit
+selection absent from the source catalog remains `provider_model_not_found`.
+Admission does not choose an arbitrary catalog model.
 
 In unreleased 0.3 development, the shared Session model picker and
 `agents.models.list` send selected Account or Pool bindings through

@@ -71,7 +71,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   const refuse = (code: Parameters<typeof createProviderErrorV1>[0], cause?: unknown) => ({ ok: false as const,
     error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}, cause) });
   if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) return refuse('provider_feature_disabled');
-  if (!input.selection) return refuse('provider_model_not_found');
+  if (!input.selection) return refuse('model_selection_required');
   const selectedTarget = input.resolveSelectionTarget();
   if (!selectedTarget) return refuse('provider_incompatible_with_agent');
   const { agentTargetKey, selection: canonicalSelection } = selectedTarget;

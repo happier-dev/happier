@@ -5,9 +5,12 @@ import {
 } from '@happier-dev/protocol';
 import type { SavedSecretOperationAdmissionFailureReasonV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
+const MODEL_SELECTION_GUIDANCE = 'Choose an available Provider model.';
+
 const ERROR_SUMMARIES = {
   connected_service_credential_reconnect_required: 'The selected Connected Account needs reconnecting. Reconnect the profile, or ask its source owner to reconnect it.',
   model_not_granted: 'The selected model is not included in the access grant.',
+  model_selection_required: MODEL_SELECTION_GUIDANCE,
   permission_mode_not_granted: 'The requested permission mode is not included in the access grant.',
   provider_feature_disabled: 'Provider features are unavailable.',
   provider_connection_not_found: 'The Provider connection was not found.',
@@ -74,7 +77,7 @@ const RECOVERY_GUIDANCE = {
   review_connection: 'Review the Provider connection and try again.',
   retry: 'Reload current Provider state and try again.',
   replace_secret: 'Replace the Saved Secret and try again.',
-  choose_model: 'Choose an available Provider model.',
+  choose_model: MODEL_SELECTION_GUIDANCE,
   load_model: 'Load the Provider model and try again.',
   review_and_restart: 'Review the Provider connection and restart the session.',
   restart_probe: 'Test the Provider connection again.',

@@ -13,7 +13,7 @@ import {
 
 export const ProviderErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
-  'model_not_granted', 'permission_mode_not_granted',
+  'model_not_granted', 'model_selection_required', 'permission_mode_not_granted',
   'provider_feature_disabled', 'provider_connection_not_found', 'provider_connection_changed', 'provider_contribution_unavailable', 'provider_connection_disabled',
   'provider_account_grant_stale', 'provider_account_scope_required', 'provider_not_enabled_on_machine', 'provider_machine_grant_stale',
   'provider_incompatible_with_agent', 'provider_compatibility_unverified', 'provider_secret_missing', 'provider_secret_unavailable',
@@ -57,6 +57,7 @@ export type ProviderRecoveryActionV1 = z.infer<typeof ProviderRecoveryActionV1Sc
 const ERROR_DEFAULTS = {
   [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired]: [false, 'review_connection'],
   model_not_granted: [false, 'choose_model'],
+  model_selection_required: [false, 'choose_model'],
   permission_mode_not_granted: [false, 'review_account_grant'],
   provider_feature_disabled: [false, 'review_features'],
   provider_connection_not_found: [false, 'choose_connection'],

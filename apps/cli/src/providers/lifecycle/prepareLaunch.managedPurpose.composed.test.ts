@@ -232,8 +232,8 @@ describe('Agent managed Connected Account purpose launch', () => {
           'acme.shared-registry/accounts': kind === 'session'
             ? { source: 'connected' as const, profileId: 'upstream-account' }
             : { source: 'connected' as const, selection: 'group' as const, groupId: 'source-pool' } } };
-        const launch = (modelId: string, featureEnabled = true) => prepareProviderLaunch({
-          selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId } },
+        const launch = (modelId: string | undefined, featureEnabled = true) => prepareProviderLaunch({
+          selection: modelId === undefined ? undefined : { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId } },
           backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
           machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
           connectedServices,
@@ -242,6 +242,8 @@ describe('Agent managed Connected Account purpose launch', () => {
             resolveManagedPurposeBindingIntentSelection: async request => { selections++; return await fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection(request); } },
         });
         expect(await launch('native/example', false)).toMatchObject({ ok: false, error: { code: 'provider_feature_disabled' } });
+        expect(selections).toBe(0);
+        expect(await launch(undefined)).toMatchObject({ ok: false, error: { code: 'model_selection_required' } });
         expect(selections).toBe(0);
         expect(await launch('native/missing')).toMatchObject({ ok: false, error: { code: 'provider_model_not_found' } });
         const admitted = await launch('native/example');
