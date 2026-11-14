@@ -655,7 +655,7 @@ export function WorkspaceProvider(props: Readonly<{
                 // No departure guard: the editor keeps its identity, local state and dirty baseline.
                 // Promotion prevents a later preview open from retiring that retained draft.
                 retainCurrent();
-                runtime.adapter.openHref(resolved, { mode: 'newTab', groupId: group.id });
+                runtime.adapter.openHref(resolved, { mode: 'newTab', groupId: group.id, reuseExisting: true });
             },
             replace: (href) => navigate(href, true),
             redirect: (href) => navigate(href, true, true),

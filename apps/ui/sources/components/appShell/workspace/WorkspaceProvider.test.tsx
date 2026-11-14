@@ -2447,6 +2447,25 @@ describe('consumed workspace navigation owner', () => {
         expect(hrefForDestinationRef(catalog, page.target)).toBe('/session/A1/template?serverId=home-a&artifactId=private-draft');
         expect(after.tabs[sessionTabId]).toMatchObject({ target: before.tabs[sessionTabId].target, preview: false });
     });
+    it('reopens the same review once while retaining its editor and permits a distinct review', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => React.createElement('WorkspaceOwner', { navigation })}</WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const initial = navigation().state;
+        const editor = initial.groups[initial.focusedGroupId].activeTabId;
+        const open = (id: string) => navigation().navigationForTab(editor).pushRetainingCurrent!(`/inbox/approvals/${id}?serverId=home-a`);
+        await act(async () => { open('request-a'); });
+        const first = navigation().state;
+        const review = first.groups[first.focusedGroupId].activeTabId;
+        await act(async () => { open('request-a'); });
+        const reopened = navigation().state;
+        expect(reopened.groups[reopened.focusedGroupId].activeTabId).toBe(review);
+        expect(Object.keys(reopened.tabs)).toHaveLength(Object.keys(first.tabs).length);
+        expect(reopened.tabs[editor]).toMatchObject({ preview: false });
+        await act(async () => { open('request-b'); });
+        expect(Object.keys(navigation().state.tabs)).toHaveLength(Object.keys(first.tabs).length + 1);
+    });
+
     it('closes a batch under one discard decision and preserves pinned tabs', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
         const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => React.createElement('WorkspaceOwner', { navigation })}</WorkspaceProvider>);

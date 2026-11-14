@@ -6,7 +6,7 @@ const catalog = { title: 'Dokploy templates', url: 'https://templates.dokploy.co
 describe('appListingCatalogFacts', () => {
   it.each(['860e786', 'sha256:659211bcb2a6fc35a35da769d185715b96e6be03ba37dce2ddf703a20640f14d'])(
     'never shows a catalog pin as the App version (%s)', (version) => {
-      expect(appListingCatalogFacts({ version, catalog }).version).toBeNull();
+      expect(appListingCatalogFacts({ version, catalog })).toMatchObject({ version: null, catalogPin: version });
     });
 
   it('keeps a real version', () => {

@@ -1,4 +1,4 @@
-/** A catalog pin is a commit or a content digest: it names the template catalog's state, which no one can act on. */
+/** A catalog pin identifies template content rather than an App release. */
 const CATALOG_PIN = /^(?:sha\d+:)?[0-9a-f]{7,}$/i;
 
 /**
@@ -12,7 +12,8 @@ export function appListingCatalogFacts(input: Readonly<{
 }>) {
   const version = input.version && !CATALOG_PIN.test(input.version) ? input.version : null;
   const repository = input.repository && input.repository !== input.catalog?.url ? input.repository : null;
-  return { version, repository, sourceTitle: input.catalog?.title ?? null };
+  return { version, catalogPin: input.version && CATALOG_PIN.test(input.version) ? input.version : null,
+    repository, sourceTitle: input.catalog?.title ?? null };
 }
 
 /** The identity header holds one sentence at two lines; a summary that wouldn't fit reads in full in the body instead. */

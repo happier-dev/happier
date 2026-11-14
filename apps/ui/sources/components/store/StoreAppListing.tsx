@@ -203,10 +203,10 @@ export function StoreAppListing(
   }, [app, summary.license]);
 
   // A catalog App's summary version pins its template catalog, not the App's own release: it belongs in Versions
-  // with that note, never beside the App's name, and only a real version shows.
+  // with that note rather than being mistaken for the App's own release.
   const catalogSource = useRegistrySources('app').sources.find((source) => source.id === summary.sourceId);
   const catalogFacts = appListingCatalogFacts({ version: summary.version, repository: summary.links?.repository, catalog: catalogSource });
-  const catalogPin = catalogFacts.version;
+  const catalogPin = catalogFacts.catalogPin ?? catalogFacts.version;
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
   const glyph = (icon: IconName) => (
@@ -268,7 +268,7 @@ export function StoreAppListing(
                     t('capabilities.store.kindWord.app'),
                     summary.publisher?.name,
                     catalogFacts.sourceTitle,
-                    catalogPin,
+                    catalogFacts.version,
                   ].filter((fact): fact is string => Boolean(fact)),
                 }}
               />
