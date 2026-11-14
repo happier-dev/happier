@@ -39,7 +39,7 @@ import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolve
 import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -2074,8 +2074,9 @@ describe('usage query captured Resource adapter', () => {
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness, witness], branchEvidence: [] }));
+    // Private Coach checks consume accounting rows (b67931869cc); this compact Work summary excludes Coach.
     const summary = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, projects: ['historical-project'], includeWorkEvidence: true, workProjection: 'summary',
-      includeSessionEvidence: true, includeTranscriptEvidence, includeQuotaHistory: false, includeActivity: true,
+      includeSessionEvidence: true, includeCoach: false, includeTranscriptEvidence, includeQuotaHistory: false, includeActivity: true,
       includeComparison: false, includeSeries: false, includeInsights: false, includeLeaders: false,
       includeModelTimeline: false, includeMessageStats: false });
     const profile = normalizeUsageQuery({ ...summary, projects: [], population: 'public_eligible_personal', activityResolution });
@@ -5078,7 +5079,7 @@ describe('usage query captured Resource adapter', () => {
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) : undefined);
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true,
       serverId: captured.accountLifetime.scope.serverId, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
-    storage.getState().applyMachines([createMachineFixture({ id: 'work-machine' })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
     scmTransport.mockImplementation(async request => held ? work.promise : workBatch(request, { status: 'unsupported' }));
     const query = normalizeUsageQuery({ ...(explicit ? { session: 'work-session' } : {}), period: { startMs: 0, endMs: 1000 } });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -6096,7 +6097,7 @@ describe('usage query captured Resource adapter', () => {
     });
     storage.getState().applySessions([createSessionFixture({ id: 'staged-session', active: true,
       serverId: captured.accountLifetime.scope.serverId, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
-    storage.getState().applyMachines([createMachineFixture({ id: 'work-machine' })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
     scmTransport.mockImplementation(() => work.promise);
     const query = normalizeUsageQuery({ session: 'staged-session', period: { startMs: 0, endMs: 1000 } });
     const entry = getUsageQueryResourceStore(captured)
@@ -8114,7 +8115,7 @@ describe('usage query Work composition', () => {
       serverId: captured.accountLifetime.scope.serverId, metadata: {
         machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test',
       } })]);
-    storage.getState().applyMachines([createMachineFixture({ id: 'work-machine' })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness] }));
     storage.setState({ settings: { ...storage.getState().settings, scmGitRepoPreferredBackend: 'sapling' } });
     const result = await readUiUsageQueryBatch(captured, { queries: [query, other, workOnly, accountingOnly] });
@@ -8185,7 +8186,7 @@ describe('usage query Work composition', () => {
     expect(transcriptDemands()).toHaveLength(admittedTranscripts.length);
     expect(transcriptDemands()).toEqual(expect.arrayContaining(admittedTranscripts));
     const machine = createMachineFixture({ id: 'work-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine } });
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [machine]);
     const hostEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [workOnly] }) });
     const release = hostEntry.subscribe(() => {}, true);
