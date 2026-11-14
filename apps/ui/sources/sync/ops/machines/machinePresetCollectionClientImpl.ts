@@ -462,11 +462,11 @@ async function withManagedMachinePresetSavedSecretPromotionReader<T>(context: Ma
     }
 }
 
-/** Capture the structural opaque-reference census required before source deletion. */
-export async function captureManagedMachinePresetSavedSecretReferencesInContext(params: ManagedMachinePresetSavedSecretCaptureContext) {
+/** Open captured private rows through Account custody before classifying delete references. */
+export async function captureManagedMachinePresetSavedSecretReferencesInContext(params: ManagedMachinePresetSavedSecretCaptureContext & Readonly<{ resourceRef: string }>) {
     try {
         const result = await withManagedMachinePresetSavedSecretPromotionReader(params,
-            async reader => await captureManagedMachinePresetSavedSecretReferencesV1({ homeId: params.homeId, reader, signal: params.signal }));
+            async reader => await captureManagedMachinePresetSavedSecretReferencesV1({ homeId: params.homeId, resourceRef: params.resourceRef, reader, signal: params.signal }));
         return result ?? { kind: 'unavailable' as const };
     } catch (error) {
         const reason = classifyAccountStorageReadFailure(error, params.signal);

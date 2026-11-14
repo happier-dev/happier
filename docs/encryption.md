@@ -1602,7 +1602,10 @@ use their existing content-replacement owner. The same transaction admits each
 source write and CASes each captured revision or exact retained carrier before
 removing the personal source. Missing material or authority refuses promotion
 before cleanup. The server neither discovers private references nor parses them.
-The UI's delete reference census covers its captured readable rows; generic
+The UI's delete reference census opens captured Presets and retained snapshots
+through Account custody and reports only bindings to the secret being deleted.
+Unrelated Presets do not prevent deletion; an unreadable captured body refuses
+the capture. The census covers its captured readable rows; generic
 deletion cannot promise a global census of sealed content. An unavailable
 reference is refused by the daemon's secret-acquisition owner at use.
 

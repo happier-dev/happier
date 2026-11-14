@@ -126,14 +126,35 @@ async function captureSavedSecretPromotionInventoryV1(params: Readonly<{
   return references.success ? { presets, activeRows, archivedRows, opaquePresetReferences: references.data } : null;
 }
 
-/** Capture delete-census ids without acquiring a key or reading plaintext. */
+/** Classify delete references at the keyholding caller; Home cannot inspect sealed bodies. */
 export async function captureManagedMachinePresetSavedSecretReferencesV1(params: Readonly<{
   homeId: string;
-  reader: ManagedMachinePresetSavedSecretReferenceReaderV1;
+  resourceRef: string;
+  reader: Pick<ManagedMachinePresetSavedSecretPromotionReaderV1, 'accountId' | 'listPresets' | 'listManaged' | 'open'>;
   signal?: AbortSignal;
 }>): Promise<ManagedMachinePresetSavedSecretReferenceCaptureV1> {
   const inventory = await captureSavedSecretPromotionInventoryV1(params);
-  return inventory ? { kind: 'ready', opaquePresetReferences: inventory.opaquePresetReferences } : unavailable();
+  if (!inventory) return unavailable();
+  const references: SavedSecretOpaquePresetReferencesV1 = { presets: [], snapshots: [] };
+  const usesSecret = (content: ManagedMachinePresetContentV1) =>
+    Object.values(content.setup?.secretRefs?.bindings ?? {}).some(binding => binding.ref === params.resourceRef);
+  for (const preset of inventory.presets) {
+    const projection = projectSourcePreset(preset, params.reader.accountId);
+    if (!projection) return unavailable();
+    const content = await params.reader.open({ presetId: preset.id, mode: preset.contentEncryptionMode, projection });
+    throwIfAborted(params.signal);
+    if (!content) return unavailable();
+    if (usesSecret(content)) references.presets.push({ presetId: preset.id });
+  }
+  for (const read of [...inventory.activeRows, ...inventory.archivedRows]) {
+    if (!isManagedOpaquePresetReadV1(read)) continue;
+    const content = await params.reader.open({ presetId: read.machine.preset.id,
+      mode: read.machine.preset.contentEncryptionMode, projection: read.presetContent });
+    throwIfAborted(params.signal);
+    if (!content) return unavailable();
+    if (usesSecret(content)) references.snapshots.push({ managedId: read.machine.id, presetId: read.machine.preset.id });
+  }
+  return { kind: 'ready', opaquePresetReferences: references };
 }
 
 function recipientCensusInput(preset: ManagedMachinePresetV1): ManagedMachinePresetRecipientCensusInputV1 {

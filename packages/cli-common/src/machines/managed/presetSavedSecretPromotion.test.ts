@@ -20,7 +20,7 @@ function presetContent(name: string, ref = 'personal-token') {
   return ManagedMachinePresetContentV1Schema.parse({
     v: 1,
     name,
-    setup: { secretRefs: { v: 1, bindings: { TOKEN: { ref } } } },
+    setup: { secretRefs: { v: 1, bindings: { TOKEN: { ref, ...(ref.startsWith('happier:shared-secret:') ? { revision: 1 } : {}) } } } },
   });
 }
 
@@ -56,27 +56,39 @@ function snapshot(managedId: string, presetId: string, content = presetContent('
 }
 
 describe('managed preset Saved Secret promotion capture', () => {
-  it('captures the complete current-Home opaque reference census without opening private content', async () => {
+  it.each(['none', 'source', 'snapshot'] as const)('captures only presets that reference the deleted secret: %s', async target => {
     const source = sourcePreset();
-    const retained = snapshot('managed-retained', source.id);
-    let opens = 0;
+    const secretRef = 'happier:shared-secret:v1:deleted-secret';
+    if (target === 'source') source.content = { t: 'plain', v: presetContent('Saved source', secretRef) };
+    const retained = snapshot('managed-retained', source.id,
+      presetContent('Retained snapshot', target === 'snapshot' ? secretRef : 'another-secret'));
 
     const result = await captureManagedMachinePresetSavedSecretReferencesV1({
       homeId: 'home',
+      resourceRef: secretRef,
       reader: {
+        accountId: 'owner',
         listPresets: async () => ({ presets: [source] }),
         listManaged: async archived => archived ? [] : [retained],
+        open: ({ projection }) => projection.content.t === 'plain' ? ManagedMachinePresetContentV1Schema.parse(projection.content.v) : null,
       },
     });
 
     expect(result).toEqual({
       kind: 'ready',
       opaquePresetReferences: {
-        presets: [{ presetId: source.id }],
-        snapshots: [{ managedId: retained.machine.id, presetId: source.id }],
+        presets: target === 'source' ? [{ presetId: source.id }] : [],
+        snapshots: target === 'snapshot' ? [{ managedId: retained.machine.id, presetId: source.id }] : [],
       },
     });
-    expect(opens).toBe(0);
+  });
+
+  it('refuses delete capture when a sealed preset cannot be opened', async () => {
+    expect(await captureManagedMachinePresetSavedSecretReferencesV1({
+      homeId: 'home', resourceRef: 'happier:shared-secret:v1:deleted-secret',
+      reader: { accountId: 'owner', listPresets: async () => ({ presets: [sourcePreset()] }),
+        listManaged: async () => [], open: () => null },
+    })).toEqual({ kind: 'unavailable' });
   });
 
   it('fresh-seals changed source presets, same-DEK rewrites retained snapshots, and reads one current-Home inventory', async () => {

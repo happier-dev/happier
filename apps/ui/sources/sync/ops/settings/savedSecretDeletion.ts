@@ -76,6 +76,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
                         scope: params.scope,
                         homeId: context.serverIdentityId,
                         account: context,
+                        resourceRef,
                     })
                     : { kind: 'unavailable' as const };
                 if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable' };
