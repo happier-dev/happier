@@ -373,13 +373,19 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     publishMessage(event);
   };
   const retryProgress = createOpenCodeRetryProgress({ state, scope: params.scope, publish: publishRuntimeEvent });
-  const observeNativeModel = (info: Readonly<Record<string, unknown>> | null): boolean => {
+  const observeNativeModel = (info: Readonly<Record<string, unknown>> | null, fromHistory = false): boolean => {
     if (!info || info.role !== 'assistant' || info.summary === true
       || readNonBlankOpaqueIdentifier(info.sessionID) !== state.providerSessionId) return false;
     const providerId = readNonBlankOpaqueIdentifier(info.providerID);
     const modelId = readNonBlankOpaqueIdentifier(info.modelID);
     if (!providerId || !modelId) return false;
     const currentModelId = `${providerId}/${modelId}`;
+    // A rebound server resumes the transcript with a new private model. Its
+    // prior turns cannot prove drift in the replacement runtime. Stop at this
+    // newest assistant; an older matching turn is not current evidence either.
+    // Live events and the current turn still expose contradictory native models.
+    if (fromHistory && !state.turnInFlight && params.providerModelId
+      && currentModelId !== params.providerModelId) return true;
     if (currentModelId !== modelCatalog.currentModelId) {
       const observedAt = Date.now();
       modelCatalog = { ...modelCatalog, currentModelId, observedAt };
@@ -393,7 +399,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     for (let index = messages.length - 1; index >= 0; index--) {
       const info = asRecord(asRecord(messages[index])?.info);
       if (state.turnInFlight && readNonBlankOpaqueIdentifier(info?.parentID) !== state.currentTurnProviderUserMessageId) continue;
-      if (observeNativeModel(info)) return;
+      if (observeNativeModel(info, true)) return;
     }
   };
   const paidUsageFingerprints = new Map<string, Readonly<{ fingerprint: string; turnId?: string }>>();

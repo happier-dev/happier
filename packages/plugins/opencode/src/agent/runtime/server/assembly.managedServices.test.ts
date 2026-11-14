@@ -1020,6 +1020,66 @@ describe('OpenCode server managed-service assembly', () => {
     }
   });
 
+  it.each(['same-binding', 'replaced-binding'] as const)('does not report pre-restart model history as replacement runtime evidence (%s)', async binding => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-opencode-rebound-'));
+    const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+    const connectionId = ProviderConnectionIdSchema.parse('pc_restart');
+    const model = { id: 'muse-spark-1.3-contributor', name: 'Contributor' };
+    const prepared = OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, connectionId, agentTargetKey });
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({ v: 1, prepared,
+      binding: { v: 1, agentTargetKey, selection: { connectionId, model }, contributionKey: 'fixture/provider',
+        endpoint: { endpointTemplateId: 'chat', protocol: 'openai-chat', normalizedUrl: 'http://127.0.0.1:49199/v1', publicHeaders: {} },
+        runtimeCredentialTransport: null, compatibilityFingerprint: 'pcf1:restart' }, credential: { kind: 'none' } });
+    if (output.kind !== 'configFile') throw new Error('Expected config-file materialization');
+    for (const file of output.files) {
+      await mkdir(dirname(join(rootPath, file.relativePath)), { recursive: true });
+      await writeFile(join(rootPath, file.relativePath), file.utf8);
+    }
+    const providerID = prepared.adapterBindingKey!;
+    let events: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const snapshots: AgentSessionModelsSnapshot[] = [];
+    let historyReads = 0;
+    const ctx = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49199', managedServerRequest: async input => {
+      const path = input.pathAndQuery.split('?')[0]!;
+      if (path === '/event') return { ok: true, status: 200, headers: { 'content-type': 'text/event-stream' },
+        body: new ReadableStream<Uint8Array>({ start(controller) {
+          events = controller;
+          input.signal?.addEventListener('abort', () => controller.close(), { once: true });
+        } }) };
+      const info = { id: 'old-assistant', role: 'assistant', sessionID: 'oc-rebound', parentID: 'old-user',
+        providerID: binding === 'same-binding' ? providerID : 'previous_private_binding', modelID: 'muse-spark-1.2',
+        finish: 'stop', time: { created: 1, completed: 2 } };
+      if (path.endsWith('/message')) historyReads += 1;
+      const body = path.endsWith('/message') ? [
+        { info: { ...info, id: 'older-matching-assistant', providerID, modelID: model.id }, parts: [] },
+        { info, parts: [] },
+      ]
+        : path === '/agent' ? [{ name: 'build', mode: 'primary' }] : { id: 'oc-rebound' };
+      return { ok: true, status: 200, headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(body)).body };
+    } });
+    let assembly: Awaited<ReturnType<typeof createOpenCodeServerRuntimeAssembly>> | undefined;
+    try {
+      assembly = await createOpenCodeServerRuntimeAssembly({ ctx, directory: '/repo', happierSessionId: 'happy-rebound',
+        endpoint: { mode: 'managed-spawn' }, models: { bind(source) {
+          snapshots.push(source.read()); return source.subscribe(snapshot => snapshots.push(snapshot));
+        } }, request: { kind: 'resume', sessionId: 'happy-rebound', providerSessionId: 'oc-rebound', cwd: '/repo',
+          providerBinding: { connectionId, model, materialization: { v: 1, kind: 'configFile', rootPath,
+            relativePaths: output.files.map(file => file.relativePath) } } } });
+      await vi.waitFor(() => expect(events).toBeDefined());
+      events!.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'));
+      await vi.waitFor(() => expect(historyReads).toBeGreaterThan(0));
+      expect(snapshots.at(-1)?.currentModelId).toBeNull();
+      // Live native evidence still reaches the host, including a contradictory model.
+      await vi.waitFor(() => expect(events).toBeDefined());
+      for (const modelID of [model.id, 'unexpected-live-model']) {
+        events!.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'message.updated', properties: {
+          info: { id: 'live-assistant', role: 'assistant', sessionID: 'oc-rebound', providerID, modelID },
+        } })}\n\n`));
+        await vi.waitFor(() => expect(snapshots.at(-1)?.currentModelId).toBe(modelID === model.id ? model.id : `${providerID}/${modelID}`));
+      }
+    } finally { await assembly?.dispose(); await rm(rootPath, { recursive: true, force: true }); }
+  });
+
   it('fails closed when a Provider binding cannot be applied to an external server', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-opencode-provider-'));
     const relativePath = 'opencode/opencode.json';
