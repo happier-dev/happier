@@ -139,14 +139,9 @@ export function useSessionAudienceContext(addresses: readonly SessionAddress[]) 
         presentationsRef.current = result;
         return result;
     }, [groupDisplayNames, snapshots]);
-    const labelsVersion = React.useMemo(() => JSON.stringify([...presentationsBySessionKey]
-        .map(([key, audience]) => [key, audience?.label ?? null])), [presentationsBySessionKey]);
-    const labelsBySessionKey = React.useMemo(() => new Map<string, string | null>(JSON.parse(labelsVersion)), [labelsVersion]);
     return React.useMemo(() => ({
         credentialBindingsByServerId,
         scopes,
-        labelsVersion,
-        labelsBySessionKey,
         presentationsBySessionKey,
-    }), [credentialBindingsByServerId, scopes, labelsVersion, labelsBySessionKey, presentationsBySessionKey]);
+    }), [credentialBindingsByServerId, scopes, presentationsBySessionKey]);
 }

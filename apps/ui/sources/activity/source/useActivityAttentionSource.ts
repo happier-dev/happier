@@ -183,8 +183,7 @@ function useActivityAttentionSourceContext(includeSessionMessages: boolean, deta
     return React.useMemo(() => ({
         ...summarySource,
         audienceScopes: audience.scopes,
-        audienceLabelsVersion: audience.labelsVersion,
         audiencePresentationsBySessionKey: audience.presentationsBySessionKey,
         serverProfilesById,
-    }), [audience.presentationsBySessionKey, audience.labelsVersion, audience.scopes, serverProfilesById, summarySource]);
+    }), [audience.presentationsBySessionKey, audience.scopes, serverProfilesById, summarySource]);
 }

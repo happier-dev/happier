@@ -1,10 +1,10 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 
 type SessionAudienceContextValue = Readonly<{
     scopes: ReadonlyMap<string, ServerAccountScope>;
-    labelsVersion: string;
-    labelsBySessionKey: ReadonlyMap<string, string | null>;
+    presentationsBySessionKey: ReadonlyMap<string, SessionAudiencePresentation | null>;
 }>;
 
 /**
@@ -37,8 +37,7 @@ export function createSessionAudienceContextModuleMock(options?: Readonly<{
                 cachedKey = key;
                 cachedValue = {
                     scopes,
-                    labelsVersion: key,
-                    labelsBySessionKey: new Map<string, string | null>(),
+                    presentationsBySessionKey: new Map<string, SessionAudiencePresentation | null>(),
                 };
             }
             return cachedValue;

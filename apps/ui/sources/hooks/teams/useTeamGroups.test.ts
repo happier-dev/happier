@@ -204,7 +204,7 @@ describe('Session audience surface binding', () => {
             applyTeamGroupProjection({ scope: { serverId, accountId: 'account' }, address: { serverId, teamId: 'team-1' },
                 group: group('g1', 'New audience'), observedAt: Date.now() });
             act(() => storage.setState({ sessionListRowsByServerId: { [serverId]: { ...rows, [session.id]: { ...session, presence: 'online' } } } }));
-            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]!))).toBe('New audience'));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]!))?.label ?? null).toBe('New audience'));
         } finally {
             await hook.unmount();
             storage.setState(storage.getInitialState(), true);
@@ -236,8 +236,8 @@ describe('Session audience surface binding', () => {
         const hook = await renderHook(() => useSessionAudienceContext(addresses));
         try {
             await waitForHomeGovernance(() => {
-                expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
-                expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe('B group');
+                expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]))?.label ?? null).toBe('A group');
+                expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[1]))?.label ?? null).toBe('B group');
             });
             const audience = hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]));
             expect(audience).toEqual({ kind: 'group', label: 'A group' });
@@ -247,16 +247,16 @@ describe('Session audience surface binding', () => {
             expect(storage.getState().sessions[session.id]?.access?.audienceContext).toEqual(hydrated.access.audienceContext);
             act(() => applyTeamGroupProjection({ scope: scopes[1], address: { serverId: homeB, teamId: 'team-1' },
                 group: group('g1', 'Renamed group'), observedAt: Date.now() }));
-            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe('Renamed group'));
-            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[1]))?.label ?? null).toBe('Renamed group'));
+            expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]))?.label ?? null).toBe('A group');
             act(() => applyTeamGroupProjection({ scope: scopes[1], address: { serverId: homeB, teamId: 'team-1' },
                 group: teamGroupFixture({ id: 'g1', name: { kind: 'available', label: {
                     content: { t: 'encrypted', c: 'opaque-private-group-ciphertext' }, recipientEnvelope: null,
                 } } }), observedAt: Date.now() }));
-            await waitForHomeGovernance(() => expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBe(t('common.unavailable')));
-            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[0]))).toBe('A group');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[1]))?.label ?? null).toBe(t('common.unavailable')));
+            expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[0]))?.label ?? null).toBe('A group');
             act(() => clearTeamsSnapshotsForServer(homeB));
-            expect(hook.getCurrent().labelsBySessionKey.get(sessionAddressKey(addresses[1]))).toBeNull();
+            expect(hook.getCurrent().presentationsBySessionKey.get(sessionAddressKey(addresses[1]))).toBeNull();
         } finally {
             await hook.unmount();
             storage.setState(storage.getInitialState(), true);

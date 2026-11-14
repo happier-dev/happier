@@ -17,7 +17,6 @@ export type ActivityReceiverRuleEvaluationByServerId = Readonly<Record<string, S
 
 export type ActivityAttentionSource = Readonly<{
     audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
-    audienceLabelsVersion?: string;
     audiencePresentationsBySessionKey?: ReadonlyMap<string, SessionAudiencePresentation | null>;
     isDataReady: boolean;
     personalFollowRulesByServerId?: Readonly<Record<string, SessionFollowRulesSnapshot>>;
