@@ -1218,29 +1218,6 @@ describe('deployment children retain their controller Action authority', () => {
                         headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
                 } });
             expect(mismatched).toBe(401);
-            const foreign = await fixture('account', 'account', { readableEnvironment: true });
-            const foreignStatuses = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
-                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
-                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
-                child: { action, role: 'deployment.reference', input: { serverId, environmentId: foreign.environment.id } },
-                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: foreign.environment.id,
-                execute: async (_input, context) => {
-                    const responses = [];
-                    for (const path of [`/v1/deployments/environments/${foreign.environment.id}?serverId=${serverId}`,
-                        `/v1/artifacts/${foreign.environment.contentArtifactId}`]) {
-                        const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
-                            effectActionId: action, method: 'GET', path });
-                        responses.push(await app.inject({ method: 'GET', url: path,
-                            headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } }));
-                    }
-                    return responses;
-                } });
-            if (!Array.isArray(foreignStatuses)) throw new Error('Expected reference read results');
-            for (const response of foreignStatuses) {
-                expect([403, 404], response.body).toContain(response.statusCode);
-                expect(response.json()).not.toHaveProperty('environment');
-                expect(response.json()).not.toHaveProperty('artifact');
-            }
             // Exercise the real saved-reference producer as well as its private
             // issuer. HTTP is the substituted boundary; Home still decides scope.
             const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
@@ -1287,6 +1264,43 @@ describe('deployment children retain their controller Action authority', () => {
                         headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
                 } });
             expect(settled).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it('refuses another Account saved-reference Environment and Artifact without content custody', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const target = f.authorization.binding.target;
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+            installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected admitted root HTTP projection');
+        const action = 'deployments.environments.get';
+        // The signed reference pins a read operand, never accepted-content custody.
+        // Ordinary resource access must refuse another Account even with a valid child proof.
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const foreign = await fixture('account', 'account', { readableEnvironment: true });
+            const foreignStatuses = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input: { serverId, environmentId: foreign.environment.id } },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: foreign.environment.id,
+                execute: async (_input, context) => {
+                    const responses = [];
+                    for (const path of [`/v1/deployments/environments/${foreign.environment.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${foreign.environment.contentArtifactId}`]) {
+                        const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                            effectActionId: action, method: 'GET', path });
+                        responses.push(await app.inject({ method: 'GET', url: path,
+                            headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } }));
+                    }
+                    return responses;
+                } });
+            if (!Array.isArray(foreignStatuses)) throw new Error('Expected reference read results');
+            for (const response of foreignStatuses) {
+                expect([403, 404], response.body).toContain(response.statusCode);
+                expect(response.json()).not.toHaveProperty('environment');
+                expect(response.json()).not.toHaveProperty('artifact');
+            }
         }, { authentication: 'real' });
     });
 
