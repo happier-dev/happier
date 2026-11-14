@@ -36,6 +36,7 @@ import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedO
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actionIdsV1.js';
 import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
 import { ActionRequestAttributionV1Schema, materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
@@ -360,8 +361,10 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
   workflowActionOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'];
 }>): boolean {
   const actionId = ActionIdSchema.safeParse(binding.actionId);
+  const spec = actionId.success ? getActionSpec(actionId.data) : undefined;
   return isReviewedMachineSetupCodecV1(binding)
-    || actionId.success && getActionSpec(actionId.data).originalExecution?.requesterCredentials === 'none'
+    || spec?.originalExecution?.requesterCredentials === 'none'
+    || spec?.sideEffectClass === 'read' && MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.some(id => id === binding.actionId)
     || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry'
     || isManagedCreationMutationActionIdV1(binding.actionId)

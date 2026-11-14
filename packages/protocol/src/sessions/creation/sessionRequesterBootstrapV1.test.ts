@@ -256,7 +256,8 @@ describe('requester bootstrap installation confidentiality', () => {
       recipientSecretKey: ed25519.utils.toMontgomerySecret(installation.secretKey.subarray(0, 32)) });
     expect(JSON.parse(new TextDecoder().decode(bytes!))).not.toHaveProperty('codec');
   });
-  it.each(['machines.managed.acquire', 'machines.managed.credentials.install'] as const)('refuses requester credential custody for foreign %s', actionId => {
+  it.each(['machines.managed.acquire', 'machines.managed.credentials.install',
+    'machines.services.list', 'machines.services.discovery', 'machines.services.detail'] as const)('refuses requester credential custody for foreign %s', actionId => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(12));
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'managed-root', binding: {
       accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'account', tokenEpoch: 1 },
@@ -273,7 +274,8 @@ describe('requester bootstrap installation confidentiality', () => {
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes })).toThrow();
   });
   it.each(['plain', 'e2ee'].flatMap(accountEncryptionMode => ['machines.managed.acquire', 'machines.managed.credentials.install',
-    'machines.managed.cancel', 'machines.managed.setup.skip']
+    'machines.managed.cancel', 'machines.managed.setup.skip',
+    'machines.services.list', 'machines.services.discovery', 'machines.services.detail']
     .map(actionId => ({ accountEncryptionMode, actionId }))))('seals only an invocation codec for $actionId ($accountEncryptionMode)', ({ accountEncryptionMode, actionId }) => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-managed-root', binding: {
@@ -303,7 +305,8 @@ describe('requester bootstrap installation confidentiality', () => {
       { ...input, serverIdentityId: 'other' }, { ...input, authorization: { ...sealed, token: 'different-root' } }]) {
       expect(bootstrap.openManagedControllerActionCodecV1(changed)).toBeNull();
     }
-    for (const actionId of ['notifications.notify_me', 'action.operations.list', 'action.operations.get']) {
+    for (const actionId of ['notifications.notify_me', 'action.operations.list', 'action.operations.get',
+      'machines.services.logs.read', 'machines.services.watch', 'machines.services.unwatch']) {
       const changed = { ...authorization, binding: { ...authorization.binding, actionId } };
       expect(() => bootstrap.sealManagedControllerActionCodecV1({ authorization: changed, material,
         installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes })).toThrow();

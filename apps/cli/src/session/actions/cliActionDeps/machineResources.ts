@@ -24,7 +24,7 @@ import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/pro
 import { createMachineServiceControlAction } from './machineServiceControl';
 import { createMachineServiceExecAction } from './machineServiceExec';
 import { machineServiceAdmissionFailure } from '@/daemon/local/services/launch/machineServiceFailure';
-import { projectVerifiedExternalActionRequesterContext, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { projectVerifiedExternalActionRequesterContext, readRetainedVerifiedExternalActionRequester, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -330,7 +330,8 @@ export function createCliMachineResourceActionDeps(
         if (direct?.machineId === input.machineId) {
           return direct.machineServiceAction
             ? direct.machineServiceAction({ actionId, input, context, ...(signal ? { signal } : {}),
-              requesterAccountId: context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId
+              requesterAccountId: readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)?.authorization.binding.accountId
+                ?? context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId
                 ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
               canReadEnvironments: environmentIds => canReadServiceEnvironments(input.serverId, environmentIds, context, actionId),
               observeEnvironmentAccessChanges: listener => observeEnvironmentAccessChanges({ serverId: input.serverId }, context, listener) })

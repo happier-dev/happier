@@ -95,47 +95,97 @@ const homeIdentityId = 'srv_requester_home';
 // is Account-local declaration discovery and does not originate a Machine call.
 const ownMachineInput = AgentsModelsListInputSchema.parse({ agentId: 'codex', machineId: 'alice-machine' });
 const ownMachineResult = PUBLIC_ACTION_OUTPUT_SCHEMAS['agents.models.list'].parse({ items: [] });
-it.each(['own', 'shared-accepted', 'shared-declined'] as const)(
-  'keeps friendly CLI service reads in original requester admission (%s)', async access => {
+it.each(['plain', 'e2ee'] as const)(
+  'keeps friendly CLI service reads credential-free on shared guests (%s)', async mode => {
     // Generic Machine RPC is the network boundary that loses requester custody.
     const genericRpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(
       Object.assign(new Error('requester_credentials_unavailable'), { code: 'requester_credentials_unavailable' }));
     try {
       const events: string[] = [];
       const result = { kind: 'snapshot', services: [] };
-      const target = await home('plain', events, { originalOwnAction: 'machines.services.list',
+      const target = await home(mode, events, { originalOwnAction: 'machines.services.list',
         authenticationKind: 'terminal', machineRole: 'manage',
-        custodianAccountId: access === 'own' ? 'bob' : 'alice', ownExecution: { ok: true, result } });
+        custodianAccountId: 'alice', ownExecution: { ok: true, result } });
       const disclosures: string[] = [];
-      const credentials: StoredCredentials = { token: token('terminal'), encryption: null, credentialProvenance: 'stored_session' };
+      const credentials: StoredCredentials = { token: token('terminal'), credentialProvenance: 'stored_session',
+        encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
       const executor = createCliActionExecutorFromCredentials({ credentials,
         serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
         actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
         onRequesterSessionCredentialDisclosure: async disclosure => {
           disclosures.push(disclosure.custodian?.accountId ?? 'missing');
-          return access !== 'shared-declined';
+          return false;
         } });
       const execution = await executor.execute('machines.services.list', { serverId: 'home', machineId: 'alice-machine' },
         { surface: 'cli', authority: 'account_automation', actionRequestId: 'request-1' });
-      expect(disclosures).toEqual(access === 'own' ? [] : ['alice']);
-      if (access === 'shared-declined') {
-        expect(execution).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_declined' });
-        expect(events).not.toContain('dispatch');
-        return;
-      }
+      expect(disclosures).toEqual([]);
       expect(execution).toEqual({ ok: true, result });
       const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      expect(received.envelope.v).toBe(mode === 'e2ee' ? 2 : 1);
       const requester = openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
         purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
         serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true });
-      expect(requester).toMatchObject({ credentials: { token: credentials.token }, invocation: { surface: 'cli' } });
-      expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob',
-        custodianAccountId: access === 'own' ? 'bob' : 'alice' });
+      expect(requester).toBeNull();
+      const codec = openManagedControllerActionCodecV1({ authorization: received.executionAuthorization,
+        machineId: 'alice-machine', installationId: 'alice-installation', serverIdentityId: homeIdentityId,
+        installationPrivateKey: target.privateKey, includeInvocation: true });
+      expect(codec).toMatchObject({ invocation: { surface: 'cli' } });
+      expect(codec).not.toHaveProperty('credentials');
+      if (received.envelope.v === 2 && codec) {
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+          envelope: received.envelope, binding: { serverIdentityId: homeIdentityId, accountId: 'bob',
+            authentication: { kind: 'terminal', tokenEpoch: 7 }, actionId: 'machines.services.list', requestId: 'request-1',
+            target: { kind: 'machine', machineId: 'alice-machine' } }, material: codec.material })?.input)
+          .toEqual({ serverId: homeIdentityId, machineId: 'alice-machine' });
+      }
+      expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: 'alice' });
       expect(events).toEqual(['home-authorized', 'dispatch']);
     } finally {
       genericRpc.mockRestore();
     }
   });
+it.each(['accepted', 'declined', 'missing'] as const)(
+  'retains requester credential consent for shared service logs (%s)', async consent => {
+    const events: string[] = [];
+    const target = await home('plain', events, { originalOwnAction: 'machines.services.logs.read',
+      authenticationKind: 'account', ownExecution: { ok: true, result: { kind: 'page',
+        page: { sourceRevision: 'generation', text: 'fixture log', nextCursor: null, truncated: false } } } });
+    const disclosures: string[] = [];
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const execution = await dispatchOriginalAccountAction({ actionId: 'machines.services.logs.read',
+      input: { serverId: 'home', machineId: 'alice-machine', serviceId: 'service' },
+      requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user',
+      invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+      ...(consent === 'missing' ? {} : { onRequesterSessionCredentialDisclosure: async () => {
+        disclosures.push('prompt'); return consent === 'accepted';
+      } }) });
+    expect(disclosures).toEqual(consent === 'missing' ? [] : ['prompt']);
+    if (consent !== 'accepted') {
+      expect(execution).toMatchObject({ ok: false, errorCode: consent === 'missing'
+        ? 'requester_credential_disclosure_required' : 'requester_credential_disclosure_declined' });
+      expect(events).not.toContain('dispatch');
+      return;
+    }
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
+    const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+      purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+      serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true }))
+      .toMatchObject({ credentials: { token: credentials.token }, invocation: { surface: 'cli' } });
+  });
+it('retains requester credential consent for shared service watch effects', async () => {
+  const events: string[] = [];
+  const target = await home('plain', events, { originalOwnAction: 'machines.services.unwatch', authenticationKind: 'terminal' });
+  const execution = await dispatchOriginalAccountAction({ actionId: 'machines.services.unwatch',
+    input: { serverId: 'home', machineId: 'alice-machine', watchId: 'watch', expectedRevision: 'revision' },
+    requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
+    credentials: { token: token('terminal'), encryption: null, credentialProvenance: 'stored_session' },
+    serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user',
+    invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
+  expect(execution).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
+  expect(events).not.toContain('dispatch');
+});
 it('requires installed requester custody for private deployment observation reads', () => {
   expect(requiresOriginalAccountMachineActionProof('deployments.observation.get', {
     serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime',

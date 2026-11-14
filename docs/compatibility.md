@@ -1158,11 +1158,18 @@ requester Account credentials. `machines.agents.signIn.status`,
 `machines.agents.list`, `machines.agents.install.status`,
 `machines.agents.install.cancel`, `machines.work.summary.get` and
 `localServices.actions.stopManaged` opt in.
+The shared credential-carrier policy also selects credential-free transport for
+Services inventory reads (`machines.services.list`, `machines.services.discovery`
+and `machines.services.detail`). CLI and browser dispatch consume that same
+policy; logs and watch effects retain requester credential consent and custody.
 Foreign-Machine dispatch uses the existing sealed
 invocation codec carrier; it conveys a fresh request/reply key and invocation,
 never the requester's ordinary bearer or Account encryption key. Omission keeps
-the existing credential custody and disclosure gate. Home admission and Machine
-authorization are unchanged. The declaration and existing carrier envelopes
+the existing credential custody and disclosure gate for other Actions. Native
+inventory reads retain the verified requester identity and signed Home HTTP
+projection without acquiring Account content keys; private Service visibility
+still follows that requester. Home admission and Machine authorization are
+unchanged. The declaration and existing carrier envelopes
 remain closed, with matching development Protocol and dispatch/daemon readers;
 no wire field, codec purpose, epoch or rollback adapter is added.
 

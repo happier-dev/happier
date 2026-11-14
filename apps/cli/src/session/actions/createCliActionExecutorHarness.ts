@@ -375,8 +375,9 @@ export function createCliActionExecutorHarness(
     return {
       ...(context ?? {}),
       // This is the executing Account, never a substitute for the requester.
-      // Received RPC/Machine admission keeps its host-built requester context.
-      ...(context?.surface !== 'rpc' && !context?.machineAdmission && runtimeAccountId ? { runtimeAccountId } : {}),
+      // Received RPC/Machine and original Action admission keep their host-built requester context.
+      ...(context?.surface !== 'rpc' && !context?.machineAdmission && !context?.externalActionExecutionAuthorization
+        && runtimeAccountId ? { runtimeAccountId } : {}),
       // A received Action already represents another origin. Do not recheck the
       // controller's Account preference, including on same-Account reception.
       ...(accountSettings ? { managedMachineCreationEnabled: accountSettings.managedMachineCreationEnabled } : {}),

@@ -7,6 +7,8 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 export type CliProjectAdmission = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
@@ -51,11 +53,17 @@ export function createCliProjectAdmission(
     if (authorization) {
       const account = authorization.requesterAccountProjection;
       const http = authorization.requesterHttpProjection;
-      if (!account || !http || account.accountId !== authorization.binding.accountId || http.accountId !== account.accountId
-        || account.serverId !== projectHomeId || http.serverId !== projectHomeId
+      const accountId = authorization.binding.accountId;
+      // Native credential-free roots retain installed signed HTTP custody, not
+      // Account content keys. An arbitrary HTTP projection cannot select this path.
+      const credentialFree = !account && readRetainedVerifiedExternalActionRequester(authorization)
+        && isManagedControllerCodecActionV1(authorization.binding);
+      if (!account && !credentialFree || !http || http.accountId !== accountId
+        || account && (account.accountId !== accountId || account.serverId !== projectHomeId)
+        || http.serverId !== projectHomeId
         || http.serverHttpBaseUrl.replace(/\/+$/, '') !== (params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '')
-        || context?.externalActionCredential && context.externalActionCredential.accountId !== account.accountId
-        || context?.runtimeAccountId && context.runtimeAccountId !== account.accountId) {
+        || context?.externalActionCredential && context.externalActionCredential.accountId !== accountId
+        || context?.runtimeAccountId && context.runtimeAccountId !== accountId) {
         return executionRunActionFailure('project_requester_authority_unavailable');
       }
       return null;
@@ -87,7 +95,8 @@ export function createCliProjectAdmission(
     const authorization = context?.externalActionExecutionAuthorization;
     if (!authorization) return;
     if (await projectAccountAdmission(projectHomeId, context)
-      || !await authorization.requesterAccountProjection!.isCurrent() || !await authorization.requesterHttpProjection!.isCurrent()) {
+      || authorization.requesterAccountProjection && !await authorization.requesterAccountProjection.isCurrent()
+      || !await authorization.requesterHttpProjection!.isCurrent()) {
       throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
     }
     context?.signal?.throwIfAborted();
