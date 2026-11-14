@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { rm } from 'node:fs/promises';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -50,11 +51,12 @@ describe('session host', () => {
   let host: SessionHost | null = null;
 
   async function startHost(runSessionCommand: (argv: readonly string[]) => Promise<void>, trustedCallerPid = process.pid): Promise<SessionHost> {
+    const own = await captureProcessBirthWitness(process.pid);
     hostProcess = new EventEmitter();
     hostExit = vi.fn<(code: number) => void>();
     host = await startSessionHost({
       runSessionCommand,
-      readTrustedCallerPid: async () => trustedCallerPid,
+      readTrustedCaller: async () => own && { ...own, pid: trustedCallerPid },
       process: hostProcess,
       exit: hostExit,
     });

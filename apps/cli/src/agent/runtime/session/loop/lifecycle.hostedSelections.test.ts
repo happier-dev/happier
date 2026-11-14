@@ -1,4 +1,5 @@
 import { EventEmitter, once } from 'node:events';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { createServer } from 'node:http';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
@@ -66,7 +67,7 @@ it('uses each added Session selection for provider-started turn custody on a sha
   const clients: ApiSessionClient[] = [];
   const errors: unknown[] = [];
   const hostProcess = new EventEmitter();
-  const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCallerPid: async () => process.pid,
+  const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCaller: () => captureProcessBirthWitness(process.pid),
     runSessionCommand: async argv => {
       try {
         const sessionId = argv[0]!;

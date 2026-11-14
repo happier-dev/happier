@@ -9,6 +9,8 @@ const ownershipEnvironment = z.strictObject({
     HAPPIER_WEBAPP_URL: z.optional(z.string()), HAPPIER_PUBLIC_SERVER_URL: z.optional(z.string()),
 });
 export const ProcessStartIdentitySchema = z.strictObject({ startTimeMs: unsigned, native: z.optional(z.string()) });
+/** One process generation: a pid plus the native start identity it was born with. */
+export const ProcessBirthWitnessSchema = z.strictObject({ pid: unsigned.check(z.positive()), start: ProcessStartIdentitySchema });
 const rowSchema = z.strictObject({
     pid: unsigned.check(z.positive()), ppid: z.nullable(unsigned), pgid: z.optional(z.number().check(z.int(), z.int())), sessionId: z.optional(unsigned.check(z.positive())),
     start: ProcessStartIdentitySchema,

@@ -13,6 +13,7 @@ import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpd
 
 import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
 import { registerRunnerTerminationHandlers, requestHostedSessionTermination } from './runnerTerminationHandlers';
+import type { ProcessBirthWitness } from '@/daemon/processIdentity';
 
 export { SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpcChannel';
 
@@ -40,7 +41,7 @@ export async function startSessionHost(params: Readonly<{
   /** Runs one Session's runner command line (the CLI dispatch in production). */
   runSessionCommand: (argv: readonly string[]) => Promise<void>;
   /** The daemon that launched this host: the only caller admitted on its endpoint. */
-  readTrustedCallerPid: () => Promise<number | null>;
+  readTrustedCaller: () => Promise<ProcessBirthWitness | null>;
   process?: Pick<EventEmitter, 'on' | 'removeListener'>;
   exit?: (code: number) => void;
 }>): Promise<SessionHost> {
@@ -121,7 +122,7 @@ export async function startSessionHost(params: Readonly<{
   };
 
   try {
-    retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, handOver, readTrustedCallerPid: params.readTrustedCallerPid });
+    retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, handOver, readTrustedCaller: params.readTrustedCaller });
   } catch (error) {
     closing = true;
     termination.dispose();

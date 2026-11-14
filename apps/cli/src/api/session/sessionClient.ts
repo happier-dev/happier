@@ -173,7 +173,7 @@ import { readSidechainId } from './outbound/shared';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
-import { readDaemonState } from '@/persistence';
+import { readPublishedDaemonProcessBirth } from '@/persistence';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
@@ -1874,8 +1874,8 @@ export class ApiSessionClient extends EventEmitter {
                 ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
                 : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel')),
             cancelRequest: requestId => this.rpcHandlerManager.cancelTransportRequest(requestId),
-            // The daemon that spawned or adopted this runner publishes its pid in its own state.
-            readTrustedCallerPid: async () => (await readDaemonState())?.pid ?? null,
+            // The daemon that spawned or adopted this runner publishes its process birth in its own state.
+            readTrustedCaller: readPublishedDaemonProcessBirth,
         }).catch((error: unknown) => {
             logger.warn('[API] Local Session RPC channel unavailable; same-machine calls use the server', {
                 error: error instanceof Error ? error.message : String(error),

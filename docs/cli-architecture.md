@@ -7029,8 +7029,8 @@ Long-lived Agent processes are started by a tiny native holder
 (`happier-session-holder`, see [binary runtime](binary-runtime.md)) instead of
 directly by the runner. The holder owns the Agent's stdio pipes and makes the
 Agent the leader of its own process group; the runner talks to it over a
-same-user local socket (Unix socket created 0600 in a 0700 per-user directory under
-`XDG_RUNTIME_DIR` or the OS temp dir; on Windows a local named pipe with an
+same-user local socket (Unix socket created 0600 in a 0700 `happier-h` directory
+under the owner-only socket root described for the local Session RPC channel; on Windows a local named pipe with an
 owner-only DACL that rejects remote clients). No network port is opened.
 `happier-session-holder attach --socket <path>` bridges a holder to stdio for exec
 channels and exits when the holder closes that connection.
@@ -9864,15 +9864,15 @@ This mechanism allows the server and mobile clients to drive local actions witho
 - the platform is not Windows;
 - the method's Session context is mintable from the Session id alone (`resolveSocketRpcSameAccountSessionAuthorizationV1`);
 - the caller's credential kind is `account`, `account_directory` or `terminal` (a routing filter for honest callers, not a security control);
-- an owner-only descriptor for the sessionId names the caller's Account and an owner-only endpoint directory whose parent is sticky or owner-only.
+- an owner-only descriptor for the sessionId names the caller's Account and an owner-only endpoint directory whose parent is owner-only (a shared world-writable directory, sticky or not, is refused).
 
 Every other caller, and every other case, uses the server path.
 
-**The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. The daemon is identified by its pid in the daemon's own published state, which also covers a daemon restart or adoption.
+**The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. The daemon is identified by its process generation in the daemon's own published state (`processBirth`: pid plus native start identity, stamped by the lifecycle-lock owner on every publication), re-read per request, which also covers a daemon restart or adoption. The host reads the peer pid's birth once per connection; a pid recycled after an unclean daemon exit carries another birth and is refused.
 
 Any other same-user process gets `403 local_session_peer_refused` before dispatch; for example, a sandboxed agent shell posting directly to the socket. This holds even for a sandbox that can read the descriptor. No secret exists in files, env or argv. The router treats that refusal, connect-refused and 404 as "not dispatched" and uses the server.
 
-Endpoint: a 0600 unix socket in a 0700 directory. Its root is `$XDG_RUNTIME_DIR` if present, else the Happier home's private `run/` when the path fits the socket-path limit, else the user temp dir.
+Endpoint: a 0600 unix socket in a 0700 directory under this user's owner-only socket root (`resolveOwnerOnlySocketRoot` in `utils/ipc/ownerOnlyLocalEndpoint.ts`, shared with the session holder). The root is the first that fits the socket-path limit: `$XDG_RUNTIME_DIR`, else the Happier home's private `run/`, else a private `~/.happier-run`, else a per-user `happier-<uid>` under the system temp dir. That last one is created 0700; if it already exists it must be ours, not a symlink and exactly 0700, or it is refused (never repaired). The shared temp directory itself is never used, and callers refuse an endpoint whose parent is not owner-only.
 
 The local hop carries the plain codec. Both ends hold the Session key, the hop never leaves the machine, and only the daemon is admitted. Callers therefore read no Session record (`{ mode: 'deferred' }` via `deferSessionRpcEncryption` / `withTrackedSessionRpcContext`). Server-path packets stay sealed.
 

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { EventEmitter } from 'node:events';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -59,7 +60,7 @@ it('serves each Agent relay tool call with its own added Session authority on a 
   const host = await startSessionHost({
     process: hostProcess,
     exit: () => {},
-    readTrustedCallerPid: async () => process.pid,
+    readTrustedCaller: () => captureProcessBirthWitness(process.pid),
     runSessionCommand: async ([sessionId]) => {
       const bridge = await createHappierMcpBridge(
         {

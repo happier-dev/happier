@@ -80,6 +80,25 @@ describe('acquireDaemonLock', () => {
     }
   });
 
+  it('publishes the lock owner\'s process birth in every daemon state, so a recycled pid is provably not the daemon', async () => {
+    const { captureProcessBirthWitness } = await import('@/daemon/processIdentity');
+    const { acquireDaemonLock, readDaemonState, releaseDaemonLock, writeDaemonStateForLockOwner } = await import('@/persistence');
+    const fileHandle = await acquireDaemonLock(1, 1);
+    expect(fileHandle).not.toBeNull();
+    try {
+      const own = await captureProcessBirthWitness(process.pid);
+      expect(own).not.toBeNull();
+      const births = [];
+      for (const httpPort of [4321, 4322]) {
+        expect(writeDaemonStateForLockOwner(fileHandle!, { pid: process.pid, httpPort, startedAt: 1, startedWithCliVersion: 't' })).toBe(true);
+        births.push((await readDaemonState())?.processBirth);
+      }
+      expect(births).toEqual([own, own]);
+    } finally {
+      if (fileHandle) await releaseDaemonLock(fileHandle);
+    }
+  });
+
   it('does not clear the lock file when daemon doctor import fails', async () => {
     vi.doMock('@/daemon/doctor', () => {
       throw new Error('doctor import failed');

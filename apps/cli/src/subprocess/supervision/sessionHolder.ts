@@ -1,9 +1,8 @@
 import { ChildProcess, spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable, type Duplex } from 'node:stream';
@@ -14,6 +13,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 
 import { readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { logger } from '@/ui/logger';
+import { isOwnerOnlyPath, resolveOwnerOnlySocketRoot } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
@@ -293,24 +293,23 @@ function consumeSessionHolderAdoptToken(): SessionHolderAdoptToken | null {
 }
 
 /**
- * A fresh per-launch holder address. POSIX: a 0700 per-user directory (checked
- * for ownership and mode) under `XDG_RUNTIME_DIR` or the OS temp dir, kept short
- * for the Unix socket path limit. Windows: a local named pipe; the holder sets an
- * owner-only DACL and rejects remote clients.
+ * A fresh per-launch holder address. POSIX: a 0700 `happier-h` directory under this user's
+ * owner-only socket root (`resolveOwnerOnlySocketRoot`, shared with the local Session channel).
+ * Windows: a local named pipe; the holder sets an owner-only DACL and rejects remote clients.
  */
 export function createSessionHolderSocketPath(platform: NodeJS.Platform = process.platform): string {
     const id = randomBytes(12).toString('hex');
     if (platform === 'win32') return `\\\\.\\pipe\\happier-holder-${id}`;
-    const uid = process.getuid?.() ?? 0;
-    const base = process.env.XDG_RUNTIME_DIR && isOwnedPrivateDirectory(process.env.XDG_RUNTIME_DIR, uid)
-        ? process.env.XDG_RUNTIME_DIR : tmpdir();
-    const directory = join(base, `happier-holders-${uid}`);
+    const directory = join(resolveOwnerOnlySocketRoot(join(HOLDER_DIRECTORY_NAME, `${id}.sock`)), HOLDER_DIRECTORY_NAME);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    if (!isOwnedPrivateDirectory(directory, uid)) {
+    if (!isOwnerOnlyPath(directory)) {
         throw Object.assign(new Error('Session holder directory is not private to this user'), { code: 'session_holder_directory_unsafe' });
     }
     return join(directory, `${id}.sock`);
 }
+
+/** Short: on macOS the per-user temp root plus this leaf must stay under the socket path limit. */
+const HOLDER_DIRECTORY_NAME = 'happier-h';
 
 /** Whether `path` is an address `createSessionHolderSocketPath` hands out on this Machine (its private directory). */
 export function isSessionHolderSocketPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
@@ -318,14 +317,6 @@ export function isSessionHolderSocketPath(path: string, platform: NodeJS.Platfor
     return /^[0-9a-f]{24}\.sock$/u.test(basename(path)) && dirname(path) === dirname(createSessionHolderSocketPath(platform));
 }
 
-function isOwnedPrivateDirectory(path: string, uid: number): boolean {
-    try {
-        const stat = statSync(path);
-        return stat.isDirectory() && stat.uid === uid && (stat.mode & 0o077) === 0;
-    } catch {
-        return false;
-    }
-}
 
 function encodeFrame(kind: string, payload: Uint8Array): Buffer {
     const header = Buffer.alloc(FRAME_HEADER_BYTES);

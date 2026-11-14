@@ -1,4 +1,5 @@
 import { EventEmitter, once } from 'node:events';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { createServer } from 'node:http';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
@@ -58,7 +59,7 @@ it('notifies the daemon with each added Session selection after a live Home mess
   let added = 0;
   const hostProcess = new EventEmitter();
   const errors: unknown[] = [];
-  const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCallerPid: async () => process.pid,
+  const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCaller: () => captureProcessBirthWitness(process.pid),
     runSessionCommand: async argv => {
       try {
         const sessionId = argv[0]!;

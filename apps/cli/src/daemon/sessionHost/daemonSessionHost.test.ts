@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { EventEmitter } from 'node:events';
 import { rm } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
@@ -161,7 +162,7 @@ async function createHarness() {
         await Promise.race([new Promise<void>((resolve) => { releaseSessions.push(resolve); }), termination.whenTerminated]);
         termination.dispose();
       },
-      readTrustedCallerPid: async () => process.pid,
+      readTrustedCaller: () => captureProcessBirthWitness(process.pid),
       process: hostProcess,
       exit: hostExit,
     });

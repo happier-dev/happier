@@ -1,8 +1,7 @@
 import { compareNumericProcessGenerationIdentities, processGenerationMatches, processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
-import { z } from 'zod/mini';
 
 import { parseProcessCustodyStartIdentity } from '@/subprocess/supervision/processCustody';
-import { createProcessCensusReader, ProcessStartIdentitySchema, readProcessCensus, type ProcessCensusDependencies, type ProcessCensusSnapshot, type ProcessStartIdentity } from '@/processes/census/processCensus';
+import { createProcessCensusReader, readProcessCensus, type ProcessCensusDependencies, type ProcessCensusSnapshot, type ProcessStartIdentity } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
 import { equalProcessStart } from './processes/ownership/types';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
@@ -45,10 +44,7 @@ type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';
 export type ReadProcessIdentityByPidDependencies = Pick<ProcessCensusDependencies,
     'platform' | 'linuxBoundary' | 'execFile' | 'helperExecutablePath'>;
 
-export const ProcessBirthWitnessSchema = z.strictObject({
-    pid: z.number().check(z.int(), z.positive()),
-    start: ProcessStartIdentitySchema,
-});
+export { ProcessBirthWitnessSchema } from '@/processes/census/decodeHelperCensus';
 export type ProcessBirthWitness = Readonly<{ pid: number; start: ProcessStartIdentity }>;
 export type ProcessBirthInspection =
     | Readonly<{ status: 'same'; witness: ProcessBirthWitness }>
@@ -89,11 +85,19 @@ export async function inspectProcessBirthWitness(
     witness: ProcessBirthWitness,
     dependencies: ReadProcessIdentityByPidDependencies = {},
 ): Promise<ProcessBirthInspection> {
-    const observation = await observeProcessBirth(witness.pid, dependencies);
+    return compareProcessBirth(witness, await observeProcessBirth(witness.pid, dependencies), dependencies.platform);
+}
+
+/** Whether an observation of `witness.pid` is the captured generation (exact native birth on darwin). */
+export function compareProcessBirth(
+    witness: ProcessBirthWitness,
+    observation: ProcessBirthInspection,
+    platform: NodeJS.Platform = process.platform,
+): ProcessBirthInspection {
     if (observation.status !== 'same') return observation;
-    if (!equalProcessStart(witness.start, observation.witness.start)) return { status: 'reused' };
+    if (observation.witness.pid !== witness.pid || !equalProcessStart(witness.start, observation.witness.start)) return { status: 'reused' };
     if ((witness.start.native && !observation.witness.start.native)
-        || ((dependencies.platform ?? process.platform) === 'darwin' && !witness.start.native)) {
+        || (platform === 'darwin' && !witness.start.native)) {
         return { status: 'unknown', reason: 'native_birth_missing' };
     }
     return observation;

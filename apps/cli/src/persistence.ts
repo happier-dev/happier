@@ -34,6 +34,8 @@ import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/proc
 import { processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import * as z from 'zod/mini';
+import { ProcessBirthWitnessSchema } from './processes/census/decodeHelperCensus';
+import type { ProcessBirthWitness } from './daemon/processIdentity';
 import { decodeBase64, encodeBase64 } from './api/encryption';
 import { logger } from './ui/logger';
 import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
@@ -364,6 +366,12 @@ export interface DaemonLocallyPersistedState {
   sourceRuntimeReloadRequired?: import("@happier-dev/cli-common/sourceRuntimeEntries").SourceRuntimeDependencyStatus;
   daemonLogPath?: string;
   controlToken?: string;
+  /**
+   * This daemon process's birth (pid + native start identity), stamped by the lifecycle-lock owner
+   * on every publication. A state left behind by an unclean exit names a pid the OS may recycle;
+   * its birth tells the recycled process apart from the daemon (local Session channel admission).
+   */
+  processBirth?: ProcessBirthWitness;
 }
 
 const DaemonLocallyPersistedStateSchemaV2 = lazyZodSchema(() => z.object({
@@ -388,6 +396,7 @@ const DaemonLocallyPersistedStateSchemaV2 = lazyZodSchema(() => z.object({
   })),
   daemonLogPath: z.optional(z.string()),
   controlToken: z.optional(z.string()),
+  processBirth: z.optional(ProcessBirthWitnessSchema),
 }).check(z.refine(state => state.httpPort > 0 || (
   state.controlToken === undefined && state.startupSource !== undefined
   && state.startedWithPublicReleaseChannel !== undefined && state.machineControlReady === false
@@ -1545,6 +1554,8 @@ export async function clearDaemonStateForTestTeardown(
  * Returns the file handle to hold for the daemon's lifetime, or null if locked.
  */
 const daemonLockRawByHandle = new WeakMap<FileHandle, string>();
+/** The lock owner's own birth, captured with the lock and stamped on each state it publishes. */
+const daemonProcessBirthByHandle = new WeakMap<FileHandle, ProcessBirthWitness>();
 
 export type DaemonStateOwner = Readonly<
   Pick<DaemonLocallyPersistedState, 'pid' | 'httpPort' | 'startedAt' | 'controlToken'>
@@ -1581,8 +1592,18 @@ export function writeDaemonStateForLockOwner(
   if (state.pid !== process.pid || !isCurrentDaemonLockHandleOwner(lockHandle)) {
     return false;
   }
-  writeDaemonState(state);
+  const processBirth = daemonProcessBirthByHandle.get(lockHandle);
+  writeDaemonState(processBirth ? { ...state, processBirth } : state);
   return true;
+}
+
+/**
+ * The published daemon's process generation: the only peer a local Session host admits. Null when
+ * no daemon is published or its publication carries no birth for its pid (unprovable: refused).
+ */
+export async function readPublishedDaemonProcessBirth(): Promise<ProcessBirthWitness | null> {
+  const state = await readDaemonState();
+  return state?.processBirth && state.processBirth.pid === state.pid ? state.processBirth : null;
 }
 
 /**
@@ -1782,7 +1803,11 @@ export async function acquireDaemonLock(
   await import('@/daemon/doctor');
   await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
   const { readProcessIdentityByPid } = await import('@/daemon/processIdentity');
-  const currentProcessStartedAtMs = (await readProcessIdentityByPid(process.pid))?.processStartTimeMs;
+  const currentProcessIdentity = await readProcessIdentityByPid(process.pid);
+  const currentProcessStartedAtMs = currentProcessIdentity?.processStartTimeMs;
+  // The same census row's native start is this process's birth witness (see ProcessBirthWitness).
+  const processBirth: ProcessBirthWitness | null = currentProcessIdentity?.censusRow?.pid === process.pid
+    ? { pid: process.pid, start: currentProcessIdentity.censusRow.start } : null;
   if (!Number.isSafeInteger(currentProcessStartedAtMs) || currentProcessStartedAtMs === undefined || currentProcessStartedAtMs < 0) {
     throw new Error('Current daemon process generation is unavailable');
   }
@@ -1817,6 +1842,7 @@ export async function acquireDaemonLock(
         throw error;
       }
       daemonLockRawByHandle.set(fileHandle, raw);
+      if (processBirth) daemonProcessBirthByHandle.set(fileHandle, processBirth);
       return fileHandle;
     } catch (error: any) {
       if (error.code === 'EEXIST') {

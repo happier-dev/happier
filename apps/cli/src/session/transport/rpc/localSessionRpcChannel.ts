@@ -1,9 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { Agent, createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readAuthTokenProvenance, type AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
 import { resolveSocketRpcCallerAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -19,9 +18,10 @@ import type { SocketRpcSocket } from '@happier-dev/sync-client';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { createOwnerOnlyLocalEndpoint, type OwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
+import { createOwnerOnlyLocalEndpoint, isOwnerOnlyPath, resolveOwnerOnlySocketRoot, type OwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable,
   type ProcessCustodyPeerIdentity } from '@/subprocess/supervision/processCustody';
+import type { ProcessBirthWitness } from '@/daemon/processIdentity';
 
 /**
  * Same-machine Session RPC channel.
@@ -37,9 +37,9 @@ import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutabl
  * unchanged); handlers keep the Session's real content mode.
  *
  * Trust boundary: the OS user. Descriptors live in a 0700 directory under the active server
- * directory (0600 files); the endpoint is a 0600 unix socket inside a private 0700 temp directory
- * whose ownership the caller verifies before connecting (a crashed host's temp directory may be gone
- * and recreated by another user). Windows hosts serve a named pipe with an owner-SID-only DACL, but
+ * directory (0600 files); the endpoint is a 0600 unix socket inside a private 0700 directory under
+ * an owner-only root (never shared temp), and the caller verifies both before connecting. The
+ * caller must be the daemon's published process generation (kernel peer pid + birth). Windows hosts serve a named pipe with an owner-SID-only DACL, but
  * callers keep the server path there until the client can verify the pipe server's user SID.
  */
 
@@ -71,10 +71,10 @@ export type LocalSessionRpcTarget = Readonly<{
   handleRequest(request: SocketRpcRequestPayload): Promise<unknown>;
   cancelRequest(requestId: string): void;
   /**
-   * The pid of the daemon that spawned or adopted this host (its current published state). Only a
-   * connection whose kernel-proven peer is that process, under this OS user, may call.
+   * The process generation of the daemon that spawned or adopted this host (its current published
+   * state). Only a connection whose kernel-proven peer is that process, under this OS user, may call.
    */
-  readTrustedCallerPid(): Promise<number | null>;
+  readTrustedCaller(): Promise<ProcessBirthWitness | null>;
 }>;
 
 type RegisteredTarget = Readonly<{
@@ -139,23 +139,34 @@ function readBody(stream: IncomingMessage): Promise<string> {
 }
 
 const LOCAL_SESSION_PEER_REFUSED = 'local_session_peer_refused';
-const peerIdentities = new WeakMap<Socket, ProcessCustodyPeerIdentity | null>();
+/** A connection's kernel-proven peer under this OS user, with the process generation holding that pid. */
+type CallerPeer = ProcessCustodyPeerIdentity & Readonly<{ birth: ProcessBirthWitness | null }>;
+const peerIdentities = new WeakMap<Socket, CallerPeer | null>();
 
-async function observeCallerPeer(socket: Socket): Promise<ProcessCustodyPeerIdentity | null> {
+async function observeCallerPeer(socket: Socket): Promise<CallerPeer | null> {
   const executablePath = resolveProcessCustodyPeerIdentityExecutable(process.platform);
   if (!executablePath) return null;
-  return await observeLocalIpcPeerIdentity({ socket, executablePath }).catch(() => null);
+  const identity = await observeLocalIpcPeerIdentity({ socket, executablePath }).catch(() => null);
+  if (!identity || identity.uid !== process.getuid?.()) return null;
+  // Read right after accept: a pid recycled after an unclean daemon exit carries another birth.
+  const { captureProcessBirthWitness } = await import('@/daemon/processIdentity');
+  return { ...identity, birth: await captureProcessBirthWitness(identity.pid).catch(() => null) };
 }
 
-/** The caller is the host's own daemon (kernel-proven pid) under this OS user; anything unprovable is refused. */
+/**
+ * The caller is the host's own daemon under this OS user: its kernel-proven pid and that pid's
+ * process birth both match the daemon's published generation. Anything unprovable is refused.
+ */
 async function isTrustedCaller(
-  owner: Readonly<{ readTrustedCallerPid(): Promise<number | null> }>,
+  owner: Readonly<{ readTrustedCaller(): Promise<ProcessBirthWitness | null> }>,
   request: IncomingMessage,
 ): Promise<boolean> {
-  const identity = peerIdentities.get(request.socket as Socket);
-  if (!identity || identity.uid !== process.getuid?.()) return false;
-  const trusted = await owner.readTrustedCallerPid().catch(() => null);
-  return trusted !== null && identity.pid === trusted;
+  const peer = peerIdentities.get(request.socket as Socket);
+  if (!peer?.birth || peer.uid !== process.getuid?.()) return false;
+  const trusted = await owner.readTrustedCaller().catch(() => null);
+  if (!trusted || trusted.pid !== peer.pid) return false;
+  const { compareProcessBirth } = await import('@/daemon/processIdentity');
+  return compareProcessBirth(trusted, { status: 'same', witness: peer.birth }).status === 'same';
 }
 
 function reply(response: ServerResponse, status: number, body: unknown): void {
@@ -251,11 +262,11 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
 
 async function startIngress(): Promise<Ingress> {
   const isWindows = process.platform === 'win32';
-  const directory = isWindows ? null : await mkdtemp(join(await resolveEndpointRoot(), 'happier-srpc-'));
+  const directory = isWindows ? null : await mkdtemp(join(resolveOwnerOnlySocketRoot(`${ENDPOINT_DIRECTORY_PREFIX}XXXXXX/${ENDPOINT_SOCKET_NAME}`), ENDPOINT_DIRECTORY_PREFIX));
   try {
     if (directory) await chmod(directory, 0o700);
     const endpoint = createOwnerOnlyLocalEndpoint({
-      endpointPath: directory ? join(directory, 'rpc.sock') : `\\\\.\\pipe\\happier-session-rpc-${randomBytes(16).toString('hex')}`,
+      endpointPath: directory ? join(directory, ENDPOINT_SOCKET_NAME) : `\\\\.\\pipe\\happier-session-rpc-${randomBytes(16).toString('hex')}`,
       windowsPipePrefix: 'happier-session-rpc-',
     });
     const server = createServer();
@@ -289,27 +300,9 @@ async function startIngress(): Promise<Ingress> {
   }
 }
 
-/** unix-domain socket paths are limited to 104 bytes on macOS (108 on Linux), including the NUL. */
-const MAX_SOCKET_PATH_BYTES = 103;
-
-/**
- * Per-user root for the endpoint directory: $XDG_RUNTIME_DIR (0700, ours) when present; else the
- * Happier home's private `run/` directory when the socket path fits; else the user's temp dir, which
- * callers accept only under a sticky or owner-only parent.
- */
-async function resolveEndpointRoot(): Promise<string> {
-  const runtime = process.env.XDG_RUNTIME_DIR;
-  try {
-    if (runtime && isOwnerOnly(runtime)) return runtime;
-  } catch { /* unavailable: fall through */ }
-  const home = join(configuration.happyHomeDir, 'run');
-  if (Buffer.byteLength(join(home, 'happier-srpc-XXXXXX', 'rpc.sock')) <= MAX_SOCKET_PATH_BYTES) {
-    await mkdir(home, { recursive: true, mode: 0o700 });
-    await chmod(home, 0o700);
-    if (isOwnerOnly(home)) return home;
-  }
-  return tmpdir();
-}
+/** Short leaf names leave the most room for the owner-only root under the socket path limit. */
+const ENDPOINT_DIRECTORY_PREFIX = 'hs-';
+const ENDPOINT_SOCKET_NAME = 'rpc';
 
 async function writeDescriptor(path: string, descriptor: LocalSessionRpcDescriptorV1 | LocalSessionHostDescriptorV1): Promise<void> {
   const directory = resolveDescriptorDirectory();
@@ -412,32 +405,18 @@ export async function retireGoneLocalSessionRpcHost(input: Readonly<{ sessionId:
   await removeOwnDescriptor(input.sessionId, input.pid).catch(() => false);
 }
 
-/** Owner-only check of a descriptor path on POSIX: our uid, no group/other bits on file and directory. */
-function isOwnerOnly(path: string): boolean {
-  if (process.platform === 'win32') return false;
-  const uid = process.getuid?.();
-  const entry = lstatSync(path);
-  return entry.uid === uid && (entry.mode & 0o077) === 0 && !entry.isSymbolicLink();
-}
-
-function isStickyOrOwnerOnly(path: string): boolean {
-  const entry = lstatSync(path);
-  if (entry.isSymbolicLink()) return false;
-  return (entry.mode & 0o1000) !== 0 || (entry.uid === process.getuid?.() && (entry.mode & 0o022) === 0);
-}
-
 /** An owner-only descriptor file naming an endpoint whose directory is still ours, or null. */
 function readVerifiedDescriptorFile(path: string): Record<string, unknown> | null {
   try {
-    if (!isOwnerOnly(resolveDescriptorDirectory()) || !isOwnerOnly(path)) return null;
+    if (!isOwnerOnlyPath(resolveDescriptorDirectory()) || !isOwnerOnlyPath(path)) return null;
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown> | null;
     const endpoint = parsed?.endpoint as Partial<LocalSessionRpcDescriptorV1['endpoint']> | undefined;
     if (!parsed || parsed.v !== DESCRIPTOR_VERSION || !endpoint || typeof endpoint.path !== 'string' || endpoint.kind !== 'unix') return null;
-    // The endpoint's own directory must still be ours: a crashed host's temp directory can be
-    // recreated by another OS user. Its parent must be sticky or ours, or another user could swap the
-    // owned leaf between this check and connect (non-sticky world-writable TMPDIR).
+    // The endpoint's own directory must still be ours, and so must its parent (an owner-only socket
+    // root): in a shared world-writable directory (sticky or not) another user could recreate a
+    // crashed host's leaf, or swap it between this check and connect. Hosts never place endpoints there.
     const endpointDir = dirname(endpoint.path);
-    if (!isOwnerOnly(endpointDir) || !isStickyOrOwnerOnly(dirname(endpointDir))) return null;
+    if (!isOwnerOnlyPath(endpointDir) || !isOwnerOnlyPath(dirname(endpointDir))) return null;
     return parsed;
   } catch {
     return null;
@@ -600,7 +579,7 @@ export type LocalSessionHostAdmission = Readonly<{
    */
   handOver(): boolean;
   /** The daemon that launched this host (or adopted it after a restart): the only caller admitted. */
-  readTrustedCallerPid(): Promise<number | null>;
+  readTrustedCaller(): Promise<ProcessBirthWitness | null>;
 }>;
 
 /**

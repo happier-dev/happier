@@ -1,4 +1,5 @@
 import { EventEmitter, once } from 'node:events';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { createServer } from 'node:http';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
@@ -106,7 +107,7 @@ it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http'
     let started = 0;
     const results = new Map<string, unknown>();
     const errors: unknown[] = [];
-    const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCallerPid: async () => process.pid,
+    const host = await startSessionHost({ process: hostProcess, exit: () => {}, readTrustedCaller: () => captureProcessBirthWitness(process.pid),
       runSessionCommand: async argv => {
         try {
           const sessionId = argv[0]!;

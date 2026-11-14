@@ -1,4 +1,5 @@
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import { captureProcessBirthWitness } from '@/daemon/processIdentity';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -8492,7 +8493,7 @@ describe('runHostSessionRuntime', () => {
     const hostProcess = new EventEmitter();
     const hostExit = vi.fn();
     const host = await startSessionHost({ process: hostProcess, exit: hostExit,
-      readTrustedCallerPid: async () => process.pid,
+      readTrustedCaller: () => captureProcessBirthWitness(process.pid),
       runSessionCommand: () => runHostSessionRuntime(harness.opts, harness.config, harness.deps) });
     const running = host.addSession({ trackingKey: 'startup-refused', argv: [], env: {}, cwd: '/repo' });
     // Observe early rejection without allowing an unhandled promise in RED.
