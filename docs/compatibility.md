@@ -1,5 +1,19 @@
 # Compatibility and version skew
 
+## Saved finite health results (unreleased 0.3)
+
+The canonical result schema admits optional typed `cause` facts. Current finite
+producers write those facts directly and leave Forge evidence as readable prose.
+The nested cause and enclosing result use the health Action's recursively closed
+publication contract. Retained readers own additive-field projection, and no
+cause fact grants routing or execution authority.
+Older stored results without `cause` remain readable. The existing health
+checkpoint also admits optional recent samples, coverage and failed-streak facts;
+an absent sample collection means that checkpoint did not record history.
+Protocol, SDK facades, finite producers and checkpoint readers consume the same
+schema in the coordinated development reload; there is no second JSON-in-text
+decoder or independent probe runner.
+
 ## Machine managed-service summary (unreleased 0.3)
 
 Machine daemon state optionally publishes `managedServices: { running, failing }`
