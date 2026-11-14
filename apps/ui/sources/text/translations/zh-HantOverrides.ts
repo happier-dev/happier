@@ -5333,6 +5333,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             install: '安裝',
             reinstall: '重新安裝',
             customAgents: '自訂代理',
+            invalidConfiguration: '設定無效',
             onMachine: ({ machine }: { machine: string }) => `在 ${machine} 上`,
             enabledGroup: '已啟用',
             moreAgents: '更多代理',

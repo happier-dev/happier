@@ -291,7 +291,7 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
         previousPublishedInventories.current = next;
         return next;
     }, [props.catalog.targetSelection.pickerRows, summaryScope?.serverId]);
-    const { backends: customBackends, brandMarks } = useAcpCatalogBackends();
+    const { backends: customBackends, invalidDefinitions, brandMarks } = useAcpCatalogBackends();
 
     const [query, setQuery] = React.useState('');
     const { collection: queriedCollection, allCollection } = useAgentCollection(props.catalog, query);
@@ -305,17 +305,20 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
         // Account-defined commands have no observed Machine readiness; do not invent it for filtering.
         ...commandBackends.map((backend) => ({ key: `definition:${backend.id}`, title: backend.title || backend.name,
             context: null, status: null, fields: { status: null, machine: null } })),
-    ], [allCollection, commandBackends, projectionMachineId]);
+        ...invalidDefinitions.map((diagnostic) => ({ key: `invalid:${diagnostic.path}`, title: diagnostic.displayName ?? diagnostic.path,
+            context: diagnostic.reason, status: 'failed', fields: { status: ['failed'], machine: null } })),
+    ], [allCollection, commandBackends, invalidDefinitions, projectionMachineId]);
     const filterFields = React.useMemo(() => {
         const statusLabels = new Map<string, string>([...allCollection.onMachine, ...allCollection.available].flatMap((row) => {
             const label = resolveRowStatusLabel(row);
             return label ? [[row.status, label] as const] : [];
         }));
+        if (invalidDefinitions.length > 0) statusLabels.set('failed', t('agentInstallJob.failed'));
         return {
             status: { label: t('sessionsList.filtersStatus'), valueLabel: (value: string) => statusLabels.get(value) ?? t('common.unavailable') },
             machine: { label: t('sessionsList.filtersMachine'), valueLabel: (value: string) => value === projectionMachineId && machineLabel ? machineLabel : t('common.unavailable') },
         };
-    }, [allCollection, machineLabel, projectionMachineId]);
+    }, [allCollection, invalidDefinitions, machineLabel, projectionMachineId]);
     const columnFilter = useSettingsColumnFilter({
         column: 'agents',
         search: { value: query, set: setQuery },
@@ -331,6 +334,9 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
     }), [matchesFilter, queriedCollection]);
     const visibleCustomBackends = React.useMemo(() => commandBackends.filter((backend) => matchesFilter(`definition:${backend.id}`)
         && (!normalizedQuery || (backend.title || backend.name).toLocaleLowerCase().includes(normalizedQuery))), [commandBackends, matchesFilter, normalizedQuery]);
+    const visibleInvalidDefinitions = React.useMemo(() => invalidDefinitions.filter((diagnostic) => matchesFilter(`invalid:${diagnostic.path}`)
+        && (!normalizedQuery || (diagnostic.displayName ?? diagnostic.path).toLocaleLowerCase().includes(normalizedQuery))),
+    [invalidDefinitions, matchesFilter, normalizedQuery]);
 
     const onDetailRoute = pathname.startsWith('/settings/agents/');
     const customAcpRoute = resolveCustomAcpAgentRoute(pathname);
@@ -443,6 +449,22 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             onPress={() => openCustomAcpEditor(router, backend.id, rail && onDetailRoute)}
         />
     );
+    const renderInvalidRow = (diagnostic: (typeof invalidDefinitions)[number]) => (
+        <Item
+            rowRole="catalogRow"
+            key={diagnostic.path}
+            testID={`settings-agents-collection.invalid.${diagnostic.path}`}
+            title={diagnostic.displayName ?? diagnostic.path}
+            subtitle={<CollectionStatusLine status="failed" label={t('settingsAgents.collection.invalidConfiguration')}
+                description={`${diagnostic.reason} · ${diagnostic.path}`} />}
+            subtitleLines={0}
+            icon={<HappierCollectionListMark><HappierBrandMark brand={{ displayName: diagnostic.displayName ?? diagnostic.path }} pixelSize={20} externallyLabelled /></HappierCollectionListMark>}
+            mode="info"
+            density="compact"
+            showChevron={false}
+            pressableStyle={collectionListStyles.row}
+        />
+    );
 
     // With no machine chosen nothing was detected anywhere, so the list makes no "On <machine>"
     // claim: it groups by what the Account has enabled, which needs no machine.
@@ -460,13 +482,14 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             },
         ];
     const firstGroupKey = groups.find((group) => group.rows.length > 0)?.key ?? null;
-    const total = collection.total + commandBackends.length;
+    const total = collection.total + commandBackends.length + invalidDefinitions.length;
     const searchable = total > SEARCH_THRESHOLD || query.length > 0;
     const noMatches = total > 0
         && collection.onMachine.length === 0
         && collection.available.length === 0
-        && visibleCustomBackends.length === 0;
-    const emptyRow = collection.total === 0 && commandBackends.length === 0 ? (
+        && visibleCustomBackends.length === 0
+        && visibleInvalidDefinitions.length === 0;
+    const emptyRow = total === 0 ? (
         <Item
             title={t('settingsAgents.notAvailable')}
             subtitle={t('settingsAgents.footer')}
@@ -494,14 +517,15 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                     {group.rows.map(renderRow)}
                 </React.Fragment>
             ) : null)}
-            {visibleCustomBackends.length > 0 ? (
+            {visibleCustomBackends.length + visibleInvalidDefinitions.length > 0 ? (
                 <CollectionListGroupLabel
                     title={t('settingsAgents.collection.customAgents')}
-                    count={visibleCustomBackends.length}
+                    count={visibleCustomBackends.length + visibleInvalidDefinitions.length}
                     first={collection.onMachine.length === 0 && collection.available.length === 0}
                 />
             ) : null}
             {visibleCustomBackends.map(renderCustomRow)}
+            {visibleInvalidDefinitions.map(renderInvalidRow)}
             {columnFilter.editorOverlay}
         </>
     );
@@ -565,16 +589,17 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                     <CardGridSheet testID={`settings-agents-collection.grid.${group.key}`} cells={group.rows.map(gridCellOf)} />
                 </ItemGroup>
             ) : null)}
-            {visibleCustomBackends.length > 0 ? (
+            {visibleCustomBackends.length + visibleInvalidDefinitions.length > 0 ? (
                 <ItemGroup title={t('settingsAgents.collection.customAgents')}>
-                    <CardGridSheet testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
+                    {visibleCustomBackends.length > 0 ? <CardGridSheet testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
                         key: backend.id,
                         testID: `settings-agents-collection.custom.${backend.id}`,
                         title: backend.title || backend.name,
                         mark: <HappierBrandMark brand={brandMarks?.[backend.id] ?? { displayName: backend.title || backend.name }}
                             pixelSize={CARD_GRID_SHEET.markPx} externallyLabelled />,
                         onPress: () => openCustomAcpEditor(router, backend.id, false),
-                    }))} />
+                    }))} /> : null}
+                    {visibleInvalidDefinitions.map(renderInvalidRow)}
                 </ItemGroup>
             ) : null}
             {columnFilter.editorOverlay}

@@ -6650,6 +6650,7 @@ localTailscale: {
           install: 'インストール',
           reinstall: '再インストール',
           customAgents: 'カスタムエージェント',
+          invalidConfiguration: '無効な設定',
           onMachine: ({ machine }: { machine: string }) => `${machine} 上`,
           enabledGroup: '有効',
           moreAgents: 'その他のエージェント',

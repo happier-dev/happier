@@ -6054,6 +6054,7 @@ export const zhHans: TranslationStructure = {
       install: '安装',
       reinstall: '重新安装',
       customAgents: '自定义智能体',
+      invalidConfiguration: '配置无效',
       onMachine: ({ machine }: { machine: string }) => `在 ${machine} 上`,
       enabledGroup: '已启用',
       moreAgents: '更多智能体',

@@ -12,9 +12,14 @@ export function useAcpCatalogBackends() {
     const scope = useAccountSettingsScope();
     const { snapshot } = useAcpCatalog(scope);
     const definitions = snapshot?.data?.definitions;
+    const diagnostics = snapshot?.catalog.status === 'partial' ? snapshot.catalog.diagnostics : undefined;
     const backends = React.useMemo(
         () => (definitions ?? []).slice().sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name)),
         [definitions],
     );
-    return { backends, brandMarks: snapshot?.brandMarks } as const;
+    const invalidDefinitions = React.useMemo(
+        () => diagnostics?.filter(diagnostic => diagnostic.reason === 'invalid_definition') ?? [],
+        [diagnostics],
+    );
+    return { backends, invalidDefinitions, brandMarks: snapshot?.brandMarks } as const;
 }

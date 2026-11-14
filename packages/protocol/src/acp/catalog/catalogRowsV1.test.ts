@@ -100,6 +100,13 @@ describe('Account ACP catalog rows', () => {
             diagnostics: [{ path: 'definitions[1]', reason: 'invalid_definition' }] });
     });
 
+    it('retains a malformed definition display name without admitting it as an executable sibling', () => {
+        expect(openAcpCatalogContentV1({ mode: 'plain', material: null, content: { t: 'plain', v: {
+            v: 1, definitions: [definition, { id: 'broken', name: 'broken', title: 'Broken agent', launch: { command: 42 } }],
+        } } })).toMatchObject({ status: 'partial', record: { definitions: [definition] },
+            diagnostics: [{ path: 'definitions[1]', reason: 'invalid_definition', displayName: 'Broken agent' }] });
+    });
+
     it('distinguishes genuinely absent sources from invalid or retained configured inventory', () => {
         expect(readFreshAcpCatalogSourceV1({})).toMatchObject({ status: 'ready', record: { v: 1, definitions: [] } });
         expect(readFreshAcpCatalogSourceV1({ acpCatalogSettingsV1: { v: 2, backends: [] } })).toMatchObject({ status: 'ready' });

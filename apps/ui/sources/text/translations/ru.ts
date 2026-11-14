@@ -6060,6 +6060,7 @@ export const ru: TranslationStructure = {
       install: 'Установить',
       reinstall: 'Переустановить',
       customAgents: 'Свои агенты',
+      invalidConfiguration: 'Недопустимая конфигурация',
       onMachine: ({ machine }: { machine: string }) => `На ${machine}`,
       enabledGroup: 'Включённые',
       moreAgents: 'Другие агенты',

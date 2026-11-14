@@ -88,7 +88,12 @@ export const AcpCatalogRowMutationResponseV1Schema = lazyZodSchema(() => z.union
   z.strictObject({ status: z.literal('settings-conflict'), revision }), AcpCatalogRowFailureV1Schema,
 ]));
 
-export type AcpCatalogDiagnosticV1 = Readonly<{ path: string; reason: 'unclassified_reference' | 'invalid_definition' }>;
+export type AcpCatalogDiagnosticV1 = Readonly<{
+  path: string;
+  reason: 'unclassified_reference' | 'invalid_definition';
+  /** Display identity only; an invalid definition never becomes an executable catalog entry. */
+  displayName?: string;
+}>;
 export type AcpCatalogSnapshotV1 = Readonly<{ status: 'loading' }>
   | Readonly<{ status: 'unavailable'; reason: string;
       /** Observing a row revision does not require opening its content or grant write authority. */

@@ -125,7 +125,13 @@ function projectStoredAcpCatalogRecordV1(raw: unknown): ReturnType<typeof openAc
   const diagnostics: AcpCatalogDiagnosticV1[] = [];
   for (const { index, parsed } of candidates) {
     if (!parsed.success || ids.get(parsed.data.id) !== 1 || names.get(parsed.data.name) !== 1) {
-      diagnostics.push({ path: `definitions[${index}]`, reason: 'invalid_definition' });
+      const value: unknown = inventory[index];
+      const displayName = value && typeof value === 'object' && !Array.isArray(value)
+        ? [Reflect.get(value, 'title'), Reflect.get(value, 'name'), Reflect.get(value, 'id')]
+          .find((label): label is string => typeof label === 'string' && label.trim().length > 0)
+        : undefined;
+      diagnostics.push({ path: `definitions[${index}]`, reason: 'invalid_definition',
+        ...(displayName ? { displayName } : {}) });
       continue;
     }
     definitions.push(parsed.data);
