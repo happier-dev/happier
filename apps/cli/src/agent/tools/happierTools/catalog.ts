@@ -1,4 +1,5 @@
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 
 import type { HappierBuiltInToolDefinition } from './types';
 import {
@@ -57,9 +58,11 @@ function dedupeToolsByName(
   return Object.freeze([...deduped.values()]);
 }
 
-export const HAPPIER_BUILT_IN_TOOLS: readonly HappierBuiltInToolDefinition[] = dedupeToolsByName([
+// Built on first read with the Action catalog's own lazy owner: building it at
+// module evaluation built the whole Action catalog in every importing process.
+export const HAPPIER_BUILT_IN_TOOLS: readonly HappierBuiltInToolDefinition[] = lazyActionSpecArray(() => dedupeToolsByName([
   ...MANUAL_TOOLS,
   ...buildActionBackedTools(),
-] as const);
+] as const));
 
-export const HAPPIER_BUILT_IN_TOOL_NAMES = Object.freeze(HAPPIER_BUILT_IN_TOOLS.map((tool) => tool.name));
+export const HAPPIER_BUILT_IN_TOOL_NAMES: readonly string[] = lazyActionSpecArray(() => Object.freeze(HAPPIER_BUILT_IN_TOOLS.map((tool) => tool.name)));

@@ -3,6 +3,7 @@ import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getDefaultActionToolExposureMode, isActionToolExposureSurface, resolveActionSurfaceAvailability, resolveActionToolExposureModeForSurface } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { memoizeActionSpecValue } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId, ActionSurfaceAvailability, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -54,27 +55,32 @@ type ActionToolCatalogAvailability = ActionSurfaceAvailability & Readonly<{
   provenance: ResolvedContributionProvenance | 'unknown';
 }>;
 
-const BUILT_IN_ACTION_TOOL_ENTRIES = Object.freeze(
-  listActionSpecs()
-    .map((spec) => ({
-      id: String(spec.id),
-      toolName: String(spec.bindings?.mcpToolName ?? '').trim(),
-      surfaces: spec.surfaces,
-      title: spec.title,
-      description: spec.description ?? spec.title,
-      inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
-      ...(spec.examples ? { examples: spec.examples } : {}),
-      // No contextualDefaults copy: the spec derives them from its input schema on
-      // read, which would build every Action schema in every process importing this
-      // module. Built-in tools bind defaults from their spec (`catalog.ts`).
-      provenance: 'first_party' as const,
-    }))
-    .filter((entry) => entry.toolName.length > 0),
-);
-const BUILT_IN_ACTION_SPECS_BY_ID = new Map(
-  listActionSpecs().map((spec) => [String(spec.id), spec] as const),
-);
-const BUILT_IN_ACTION_TOOL_CATALOG = indexActionToolEntries(BUILT_IN_ACTION_TOOL_ENTRIES);
+// Built on first use: building these at module evaluation built the whole
+// Action catalog in every process that imports this module (daemon, session host).
+const readBuiltInActionTools = memoizeActionSpecValue(() => {
+  const entries = Object.freeze(
+    listActionSpecs()
+      .map((spec) => ({
+        id: String(spec.id),
+        toolName: String(spec.bindings?.mcpToolName ?? '').trim(),
+        surfaces: spec.surfaces,
+        title: spec.title,
+        description: spec.description ?? spec.title,
+        inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
+        ...(spec.examples ? { examples: spec.examples } : {}),
+        // No contextualDefaults copy: the spec derives them from its input schema on
+        // read, which would build every Action schema in every process importing this
+        // module. Built-in tools bind defaults from their spec (`catalog.ts`).
+        provenance: 'first_party' as const,
+      }))
+      .filter((entry) => entry.toolName.length > 0),
+  );
+  return {
+    entries,
+    specsById: new Map(listActionSpecs().map((spec) => [String(spec.id), spec] as const)),
+    catalog: indexActionToolEntries(entries),
+  };
+});
 
 const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
   ['change_title', 'session.title.set'],
@@ -170,9 +176,9 @@ export function createActionToolCatalog(params?: Readonly<{
     ?? (activeRegistry && (!params?.registry || activeRegistry.contributes === params.registry)
       ? projectExecutablePluginToolCatalog(activeRegistry)
       : []);
-  if (pluginToolCatalog.length === 0) return BUILT_IN_ACTION_TOOL_CATALOG;
+  if (pluginToolCatalog.length === 0) return readBuiltInActionTools().catalog;
   return indexActionToolEntries([
-    ...BUILT_IN_ACTION_TOOL_ENTRIES,
+    ...readBuiltInActionTools().entries,
     ...pluginToolCatalog.map(toPluginToolEntry),
   ]);
 }
@@ -273,7 +279,7 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
 }>, catalog?: ActionToolCatalog): ActionToolCatalogAvailability {
   const surface = params.surface ?? 'agent';
   const actionId = String(params.actionId);
-  const builtInSpec = BUILT_IN_ACTION_SPECS_BY_ID.get(actionId);
+  const builtInSpec = readBuiltInActionTools().specsById.get(actionId);
   if (builtInSpec) {
     return {
       ...resolveActionSurfaceAvailability({
@@ -450,7 +456,7 @@ export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>, catalog?: ActionToolCatalog): boolean {
   const surface = params.surface ?? 'agent';
-  const builtInSpec = BUILT_IN_ACTION_SPECS_BY_ID.get(String(params.actionId));
+  const builtInSpec = readBuiltInActionTools().specsById.get(String(params.actionId));
   if (builtInSpec) {
     const ordinarilyExposed = isActionDirectToolExposedOn(builtInSpec, surface, {
       settings: params.actionsSettings ?? null,

@@ -28,6 +28,9 @@ function measureCatalogFirstReadBytesAfterImporting(modulePath: string): { count
 describe('Action catalog stays unbuilt when daemon modules are imported', () => {
   it.each([
     'api/machine/machineRpcAuthorization.ts',
+    'agent/tools/happierTools/catalog.ts',
+    'agent/tools/happierTools/actionToolCatalog.ts',
+    'agent/tools/happierTools/resolveHappierActionForMcpToolName.ts',
   ])('%s', (modulePath) => {
     const { count, firstReadBytes } = measureCatalogFirstReadBytesAfterImporting(modulePath);
     expect(count).toBeGreaterThan(0);
