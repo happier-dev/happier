@@ -359,12 +359,18 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             }));
         }
     };
-    child.stdout.on('data', (value: Buffer | Uint8Array | string) => {
-        refreshRootExitCapture();
-        if (input.pipeStdout) return;
-        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        captureStdout(sanitizers ? Buffer.from(sanitizers.stdout.push(chunk), 'utf8') : chunk);
-    });
+    if (input.pipeStdout) {
+        // The caller owns piped stdout: observing it here must not start the flow before the
+        // caller reads, or output already delivered (an adopted Agent's replay) would reach
+        // no consumer, and the holder client would acknowledge it as taken.
+        child.stdout.once('resume', () => { child.stdout.on('data', refreshRootExitCapture); });
+    } else {
+        child.stdout.on('data', (value: Buffer | Uint8Array | string) => {
+            refreshRootExitCapture();
+            const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+            captureStdout(sanitizers ? Buffer.from(sanitizers.stdout.push(chunk), 'utf8') : chunk);
+        });
+    }
     child.stderr.on('data', (value: Buffer | Uint8Array | string) => {
         refreshRootExitCapture();
         const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
