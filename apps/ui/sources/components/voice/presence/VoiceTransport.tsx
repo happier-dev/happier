@@ -72,7 +72,7 @@ function resolveVoiceTransportControls(voice: VoiceAttemptControlProjection) {
 export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly<{
     voice: VoiceAttemptControlProjection;
     size: VoiceTransportSize;
-    /** Read-aloud running during a call: its Stop leads, so stopping the reading never ends the call. */
+    /** Read-aloud: its own Stop leads, beside (never instead of) the call's controls, so stopping the reading never ends the call. */
     readAloud?: VoiceReadAloud;
     /** Labelled sizes: Interrupt and Cancel reply, from the surface model. */
     turn?: VoiceTransportTurn;
@@ -83,7 +83,7 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
     const { voice, size } = props;
     const testID = props.testID ?? 'voice-transport';
     if (size === 'glance' || size === 'sheet') {
-        return <VoiceTransportLabelled voice={voice} size={size} turn={props.turn} narrowByDefault={props.narrowByDefault} testID={testID} />;
+        return <VoiceTransportLabelled voice={voice} size={size} readAloud={props.readAloud} turn={props.turn} narrowByDefault={props.narrowByDefault} testID={testID} />;
     }
     const controls = resolveVoiceTransportControls(voice);
     const readAloudStop = props.readAloud && props.readAloud.phase !== 'idle' && size !== 'touch'
@@ -119,8 +119,8 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
         />
     ) : null;
     if (!controls.end) {
-        if (!recovery && !dismiss) return null;
-        return <View testID={testID} style={[styles.row, { gap: geometry.gap }]}>{recovery}{dismiss}</View>;
+        if (!readAloudStop && !recovery && !dismiss) return null;
+        return <View testID={testID} style={[styles.row, { gap: geometry.gap }]}>{readAloudStop}{recovery}{dismiss}</View>;
     }
 
     const muteLabel = voice.muted ? t('voiceSurface.a11y.unmute') : t('voiceSurface.a11y.mute');
@@ -189,6 +189,7 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
 const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props: Readonly<{
     voice: VoiceAttemptControlProjection;
     size: 'glance' | 'sheet';
+    readAloud?: VoiceReadAloud;
     turn?: VoiceTransportTurn;
     narrowByDefault?: boolean;
     testID: string;
@@ -269,6 +270,11 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             />
         ) : secondary('send', voice.commitInputLabel, 'arrow-up', voice.onCommitInput)
         : null;
+    // Stop reading, drawn like Cancel reply: the short verb keeps the sheet's row three-up beside Mute
+    // and End; "Stop reading" stays its accessible name. It is the read-aloud Action, never the call's.
+    const readAloudStop = props.readAloud && props.readAloud.phase !== 'idle'
+        ? secondary('read-aloud-stop', t('common.stop'), 'stop', props.readAloud.stop, t('voicePresence.readAloud.stop'))
+        : null;
     const interrupt = turn?.canBargeIn ? secondary('interrupt', t('voicePresence.interrupt'), 'hand', turn.onBargeIn) : null;
     // A reply can be cancelled without ending the call (thinking, or speaking without barge-in).
     const cancelReply = turn?.canCancelTurn && !turn.canBargeIn
@@ -291,6 +297,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
     const dismiss = controls.dismiss ? secondary('dismiss', t('voicePresence.dismiss'), 'x', controls.dismiss) : null;
     return (
         <View testID={testID} onLayout={onRowLayout} style={[styles.labelled, sheet ? styles.labelledSheet : null]}>
+            {readAloudStop}
             {recovery}
             {mute}
             {send}

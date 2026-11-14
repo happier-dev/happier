@@ -17,6 +17,7 @@ import {
 } from '@/voice/session/voiceSessionStore';
 
 import { VoiceGlance } from './VoiceGlance';
+import { useVoiceReadAloud } from './VoiceReadAloud';
 import { registerVoiceCompanionSection } from './voiceCompanionSectionReveal';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
@@ -65,6 +66,7 @@ function VoiceCompanionSectionPresentation(props: Readonly<{ tracker: NearViewpo
 function VoiceCompanionSectionRuntime(props: Readonly<{ testID: string; onReveal?: () => boolean }>): React.ReactElement | null {
     const router = useRouter();
     const model = useVoiceSurfaceModel(SURFACE_PROPS);
+    const readAloud = useVoiceReadAloud();
     const voice = model?.attemptControl ?? null;
     const canOpenConversation = voice?.canOpenConversation === true;
     const onOpenConversation = voice?.onOpenConversation;
@@ -93,6 +95,7 @@ function VoiceCompanionSectionRuntime(props: Readonly<{ testID: string; onReveal
                 <VoiceGlance
                     model={model}
                     presentation="companion"
+                    readAloud={readAloud}
                     menu={accessory}
                     fresh={revealCount}
                     testID={`${props.testID}-glance`}

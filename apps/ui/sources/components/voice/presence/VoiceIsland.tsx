@@ -41,7 +41,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const { voice, readAloud } = props;
-    const reading = resolveVoicePresenceReadAloud(voice, readAloud, { includeLiveCall: true });
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
     const height = props.phone ? VOICE_ISLAND_PHONE.height : VOICE_ISLAND_DESKTOP.height;
     const markSize = props.phone ? VOICE_ISLAND_PHONE.mark : VOICE_ISLAND_DESKTOP.mark;
     const testID = props.testID ?? 'voice-island';
@@ -55,7 +55,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
         if (suppress()) return;
         onOpenSection();
     }, [onOpenSection, suppress]);
-    if (reading && !voice.live) {
+    if (reading?.alone) {
         return (
             <View ref={props.anchorRef} collapsable={false} style={{ width: props.width, height }}>
                 <VoiceIslandAnatomy
@@ -63,9 +63,9 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
                     width={props.width}
                     height={height}
                     mark={<VoiceReadAloudGlyph size="island" />}
-                    body={<View style={styles.body}><VoiceReadAloudStatus phase={reading.phase} size="island" /></View>}
+                    body={<View style={styles.body}><VoiceReadAloudStatus phase={reading.readAloud.phase} size="island" /></View>}
                     transport={<CompanionNoDragRegion {...VOICE_PRESENCE_NO_DRAG_PROPS}>
-                        <VoiceReadAloudStop readAloud={reading} size="island" testID={`${testID}-read-aloud-stop`} />
+                        <VoiceReadAloudStop readAloud={reading.readAloud} size="island" testID={`${testID}-read-aloud-stop`} />
                     </CompanionNoDragRegion>}
                 />
             </View>
@@ -99,7 +99,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
                     style={styles.body}
                 >
                     {reading
-                        ? <VoiceReadAloudStatus phase={reading.phase} size="island" testID={`${testID}-read-aloud-status`} />
+                        ? <VoiceReadAloudStatus phase={reading.readAloud.phase} size="island" testID={`${testID}-read-aloud-status`} />
                         : <VoiceStatusLine voice={voice} size="island" />}
                     <VoiceCompactTranscript voice={voice} />
                 </Pressable>}

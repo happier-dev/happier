@@ -9,6 +9,7 @@ import { useVoiceSurfaceModel, type VoiceSurfaceViewModel } from '@/components/v
 import { t } from '@/text';
 
 import { VoiceGlance } from './VoiceGlance';
+import { useVoiceReadAloud } from './VoiceReadAloud';
 
 /** The lab popover's width; it narrows to the window on a phone. */
 const VOICE_GLANCE_POPOVER_WIDTH = 340;
@@ -59,6 +60,7 @@ function OpenVoiceGlancePopover(props: VoiceGlanceOverlayProps): React.ReactElem
 /** The overlay that hosts the glance for an open surface model: anchored popover, or phone sheet. */
 export function VoiceGlanceOverlay(props: VoiceGlanceOverlayProps & Readonly<{ model: VoiceSurfaceViewModel }>): React.ReactElement {
     const { model } = props;
+    const readAloud = useVoiceReadAloud();
     const testID = props.testID ?? 'voice-glance-popover';
     return (
         <Popover
@@ -85,6 +87,7 @@ export function VoiceGlanceOverlay(props: VoiceGlanceOverlayProps & Readonly<{ m
                     <VoiceGlance
                         model={model}
                         presentation="sheet"
+                        readAloud={readAloud}
                         testID={testID}
                         menu={(
                             <IconButton
@@ -105,7 +108,7 @@ export function VoiceGlanceOverlay(props: VoiceGlanceOverlayProps & Readonly<{ m
                     keyboardShouldPersistTaps="always"
                 >
                     <View style={styles.inset}>
-                        <VoiceGlance model={model} presentation="popover" testID={testID} />
+                        <VoiceGlance model={model} presentation="popover" readAloud={readAloud} testID={testID} />
                     </View>
                 </FloatingOverlay>
             )}

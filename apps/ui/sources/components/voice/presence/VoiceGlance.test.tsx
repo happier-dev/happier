@@ -246,6 +246,40 @@ describe('VoiceGlance', () => {
         });
     });
 
+    it.each(['companion', 'popover', 'sheet'] as const)('says Voice is reading aloud during a call and stops only the reading in the %s', async (presentation) => {
+        const voice = attempt();
+        const stop = vi.fn();
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation={presentation}
+            readAloud={{ phase: 'speaking', stop }} />);
+        expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.speaking'));
+        const readingStop = screen.findByTestId('voice-glance-transport-read-aloud-stop')!;
+        expect(readingStop.props.accessibilityLabel).toBe(t('voicePresence.readAloud.stop'));
+        screen.pressByTestId('voice-glance-transport-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(voice.onToggle).not.toHaveBeenCalled();
+        expect(voice.onPrimaryAction).not.toHaveBeenCalled();
+        screen.pressByTestId('voice-glance-transport-end');
+        expect(voice.onToggle).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a retained failure acknowledgeable beside the reading Stop', async () => {
+        const voice = {
+            ...attempt(),
+            ...resolveVoiceAttemptControl({ surfaceState: 'error', tone: 'error', status: 'disconnected',
+                sessionId: 'voice-1', canStop: false, muted: false, capturing: false,
+                startAdmitted: true, hasRecovery: false, canDismissFailedAttempt: true }),
+            onDismissFailedAttempt: vi.fn(),
+        };
+        const stop = vi.fn();
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover"
+            readAloud={{ phase: 'preparing', stop }} />);
+        expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.preparing'));
+        screen.pressByTestId('voice-glance-transport-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+        screen.pressByTestId('voice-glance-transport-dismiss');
+        expect(voice.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
+    });
+
     it('routes Mute, Interrupt and End to three different handlers', async () => {
         const voice = attempt();
         const model = surface(voice);

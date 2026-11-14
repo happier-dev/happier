@@ -57,14 +57,14 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
     const testID = props.testID ?? 'voice-top-bar';
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
     if (voice.availability === 'unavailable') return null;
-    const reading = resolveVoicePresenceReadAloud(voice, readAloud, { includeLiveCall: true });
-    if (reading && !voice.live) {
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
+    if (reading?.alone) {
         return (
             <VoiceTopBarAnatomy testID={`${testID}-read-aloud`}
                 mark={<View style={stylesheet.readAloudMark}><VoiceReadAloudGlyph size="pill" /></View>}
-                label={<VoiceReadAloudStatus phase={reading.phase} size="pill" />}
+                label={<VoiceReadAloudStatus phase={reading.readAloud.phase} size="pill" />}
                 showDivider
-                transport={<VoiceReadAloudStop readAloud={reading} size="pill" testID={`${testID}-read-aloud-stop`} />}
+                transport={<VoiceReadAloudStop readAloud={reading.readAloud} size="pill" testID={`${testID}-read-aloud-stop`} />}
             />
         );
     }
@@ -97,7 +97,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const { voice } = props;
-    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud, { includeLiveCall: true });
+    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud);
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
     React.useLayoutEffect(() => registerVoiceGlancePresentation((expanded) => {
@@ -136,7 +136,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
             >
                 <View style={styles.labelRow}>
                     {reading
-                        ? <VoiceReadAloudStatus phase={reading.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
+                        ? <VoiceReadAloudStatus phase={reading.readAloud.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
                         : <VoiceStatusLine voice={voice} size="pill" />}
                     {/* The admitted target stays named through its clean ended moment; global has none. */}
                     {voice.targetSessionAddress ? (

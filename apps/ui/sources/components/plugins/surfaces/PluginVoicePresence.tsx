@@ -29,7 +29,7 @@ export function PluginVoicePresence({ target, children }: VoicePresenceProps): R
 export function PluginVoiceMark(props: VoiceMarkProps): React.ReactElement | null {
     const voice = React.useContext(VoiceContext);
     const readAloud = React.useContext(ReadAloudContext);
-    if (voice && readAloud && resolveVoicePresenceReadAloud(voice, readAloud)) {
+    if (voice && resolveVoicePresenceReadAloud(voice, readAloud)?.alone) {
         return <VoiceReadAloudGlyph size={props.size} testID={props.testID} />;
     }
     return voice ? <VoiceMark voice={voice} size={props.size} testID={props.testID} /> : null;
@@ -37,7 +37,8 @@ export function PluginVoiceMark(props: VoiceMarkProps): React.ReactElement | nul
 export function PluginVoiceStatusLine(props: VoiceStatusLineProps): React.ReactElement | null {
     const voice = React.useContext(VoiceContext);
     const readAloud = React.useContext(ReadAloudContext);
-    const standalone = voice && readAloud ? resolveVoicePresenceReadAloud(voice, readAloud) : null;
+    const reading = voice ? resolveVoicePresenceReadAloud(voice, readAloud) : null;
+    const standalone = reading?.alone ? reading.readAloud : null;
     if (standalone) return <VoiceReadAloudStatus phase={standalone.phase} size={props.size} testID={props.testID} />;
     return voice ? <VoiceStatusLine voice={voice} size={props.size} testID={props.testID} /> : null;
 }
@@ -49,7 +50,8 @@ export function PluginVoiceTransport(props: VoiceTransportProps): React.ReactEle
     const voice = React.useContext(VoiceContext);
     const readAloud = React.useContext(ReadAloudContext);
     const size = props.size === 'touch' ? 'island' : props.size;
-    const standalone = voice && readAloud ? resolveVoicePresenceReadAloud(voice, readAloud) : null;
+    const reading = voice ? resolveVoicePresenceReadAloud(voice, readAloud) : null;
+    const standalone = reading?.alone ? reading.readAloud : null;
     if (standalone) return <VoiceReadAloudStop readAloud={standalone} size={size}
         testID={`${props.testID ?? 'voice-transport'}-read-aloud-stop`} />;
     // The public `touch` size predates hit areas: the controls draw at the Island size under every pointer and a

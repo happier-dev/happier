@@ -29,6 +29,8 @@ import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
 import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNotePresentation';
 import { VoiceStatusCell } from './VoiceStatusCell';
 import { VoiceTransport } from './VoiceTransport';
+import { VoiceReadAloudStatus, type VoiceReadAloud } from './VoiceReadAloud';
+import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
 import {
   formatVoiceElapsed,
@@ -59,6 +61,8 @@ export const VoiceGlance = React.memo(function VoiceGlance(
     menu?: React.ReactNode;
     /** Replays the frame's one-shot ring when it changes (a container revealed this section). */
     fresh?: number;
+    /** Read-aloud (`useVoiceReadAloud`, from the host): its word leads the status and its own Stop joins the transport. */
+    readAloud?: VoiceReadAloud;
     testID?: string;
   }>,
 ): React.ReactElement {
@@ -122,6 +126,7 @@ export const VoiceGlance = React.memo(function VoiceGlance(
           <VoiceGlanceBody
             model={model}
             presentation={props.presentation}
+            readAloud={props.readAloud}
             testID={testID}
           />
         ),
@@ -148,6 +153,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
   props: Readonly<{
     model: VoiceSurfaceViewModel;
     presentation: VoiceGlancePresentation;
+    readAloud?: VoiceReadAloud;
     testID: string;
   }>,
 ) {
@@ -155,6 +161,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
   const { model } = props;
   const voice = model.attemptControl;
   const sheet = props.presentation === 'sheet';
+  const reading = resolveVoicePresenceReadAloud(voice, props.readAloud);
   const turns = React.useMemo(
     () =>
       model.visibleTranscriptEntries
@@ -181,7 +188,15 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
       <View style={sheet ? styles.heroSheet : styles.hero}>
         <VoiceMark voice={voice} size={sheet ? 64 : 44} />
         <View style={styles.heroText}>
-          <VoiceStatusLine voice={voice} size="hero" />
+          {reading ? (
+            <VoiceReadAloudStatus
+              phase={reading.readAloud.phase}
+              size="hero"
+              testID={`${props.testID}-read-aloud-status`}
+            />
+          ) : (
+            <VoiceStatusLine voice={voice} size="hero" />
+          )}
           {caption ? (
             <Text
               style={sheet ? styles.captionSheet : styles.caption}
@@ -226,6 +241,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
       <VoiceTransport
         voice={voice}
         size={sheet ? 'sheet' : 'glance'}
+        readAloud={reading?.readAloud}
         turn={model}
         narrowByDefault={props.presentation === 'companion'}
         testID={`${props.testID}-transport`}

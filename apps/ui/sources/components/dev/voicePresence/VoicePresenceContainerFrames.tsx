@@ -235,6 +235,14 @@ function ReadAloudFrame() {
                 <Text style={styles.stateName}>Orb · speaking</Text>
                 <VoiceOrb voice={rest} readAloud={READ_ALOUD('speaking')} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} translateX={translateX} hostWidth={1100} />
             </View>
+            <View style={styles.sayGlances}>
+                {([['companion', 'listening', 248], ['popover', 'listening', 320], ['sheet', 'listening', 358], ['popover', 'failed', 320]] as const).map(([presentation, state, width]) => (
+                    <View key={`${presentation}-${state}`} style={[styles.sayRow, { width }]}>
+                        <Text style={styles.stateName}>{`Voice section · ${presentation} · ${state}`}</Text>
+                        <VoiceGlance model={buildVoicePresenceSurfaceFixture(state)} presentation={presentation} readAloud={READ_ALOUD('speaking')} />
+                    </View>
+                ))}
+            </View>
         </View>
     );
 }
@@ -265,6 +273,7 @@ function ReadAloudPhoneFrame() {
 const stylesheet = StyleSheet.create((theme) => ({
     sayBoard: { gap: theme.space.s24, alignItems: 'flex-start' },
     sayRow: { gap: theme.space.s6 },
+    sayGlances: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: theme.space.s24 },
     window: { height: 860, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.colors.background.canvas, borderWidth: 1, borderColor: theme.colors.border.default },
     strip: { height: 40, flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.space.s12, gap: theme.space.s8 },
     tabs: { flex: 1, flexDirection: 'row', gap: theme.space.s6, minWidth: 0 },

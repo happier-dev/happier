@@ -52,8 +52,9 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
     const onOpenSection = props.onOpenSection;
     const [focused, setFocused] = React.useState(false);
     const { translateX, hostWidth } = props;
-    const readAloud = resolveVoicePresenceReadAloud(voice, props.readAloud, { includeLiveCall: true });
-    const readingOnly = readAloud !== null && !voice.live;
+    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud);
+    const readAloud = reading?.readAloud ?? null;
+    const readingOnly = reading?.alone === true;
     const showOptions = voice.live || Boolean(voice.ended) || readAloud !== null;
     const width = resolveVoiceOrbContainerWidth(Platform.OS, showOptions);
     const captionInset = (width - VOICE_ORB_BODY_SIZE) / 2 + VOICE_ORB_BODY_SIZE + VOICE_ORB_OPTIONS_GAP;
@@ -65,7 +66,7 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
             : { left: captionInset, right: 'auto' as const, justifyContent: 'flex-start' as const }
     ));
 
-    const stopReading = readingOnly ? readAloud.stop : null;
+    const stopReading = reading?.alone ? reading.readAloud.stop : null;
     const onPress = React.useCallback(() => {
         if (suppress()) return;
         if (stopReading) stopReading();
