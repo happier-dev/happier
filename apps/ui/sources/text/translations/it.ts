@@ -11330,6 +11330,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `Passato alla modalità ${mode}`,
     discarded: "Scartato",
+    readAloudA11y: "Leggi ad alta voce",
+    stopReadAloudA11y: "Interrompi la lettura ad alta voce",
+    readAloudFailed: "Impossibile leggere questo messaggio ad alta voce. Controlla le impostazioni vocali.",
     recoveredHistory: "Cronologia recuperata",
     unknownEvent: "Evento sconosciuto",
     contextCompactionStarted: "Compattazione del contesto...",

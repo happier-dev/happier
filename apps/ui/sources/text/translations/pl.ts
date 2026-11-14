@@ -10998,6 +10998,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `Przełączono na tryb ${mode}`,
     discarded: "Odrzucono",
+    readAloudA11y: "Odczytaj na głos",
+    stopReadAloudA11y: "Zatrzymaj czytanie na głos",
+    readAloudFailed: "Nie udało się odczytać tej wiadomości na głos. Sprawdź ustawienia głosu.",
     recoveredHistory: "Odzyskana historia",
     unknownEvent: "Nieznane zdarzenie",
     contextCompactionStarted: "Kompaktowanie kontekstu...",
