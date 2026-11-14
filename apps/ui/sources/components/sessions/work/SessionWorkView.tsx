@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { usePageColumn } from '@/components/ui/lists/listPresentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
@@ -112,6 +114,8 @@ const stylesheet = StyleSheet.create(() => ({
         marginHorizontal: -HAPPIER_WORK_PANE_METRICS.contentInsetPx,
     },
     content: {
+        width: '100%',
+        alignSelf: 'center',
         paddingHorizontal: HAPPIER_WORK_PANE_METRICS.contentInsetPx,
         paddingTop: 8,
         paddingBottom: 16,
@@ -169,6 +173,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
+    // Hidden Session, wide pane: the rows keep the reading column their Triggers section already takes
+    // (an inspector section's page column), so one page never sets two widths.
+    const columnMaxWidth = useLayoutMaxWidth(usePageColumn());
     const session = useSessionViewShellSession(props.sessionId, props.serverId);
     const sessionServerId = props.serverId ?? session?.serverId ?? null;
     const router = useRouter();
@@ -545,7 +552,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     ref={scrollRef}
                     testID="session-work-scroll"
                     style={styles.scroll}
-                    contentContainerStyle={[styles.content, nothingStarted ? styles.contentEmpty : null]}
+                    contentContainerStyle={[styles.content, { maxWidth: columnMaxWidth }, nothingStarted ? styles.contentEmpty : null]}
                     onScroll={workViewport.onScroll}
                     scrollEventThrottle={100}
                     onLayout={workViewport.onLayout}

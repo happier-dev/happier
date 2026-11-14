@@ -121,7 +121,7 @@ export const en = {
         localNoneFound: 'No model servers found here.',
         invitationAccountDescription: 'Connect a provider once and its models appear in every agent that can run them. No machine needed to start.',
         subscriptionsPointerLead: 'Subscriptions like Claude and ChatGPT live in ',
-        subscriptionsPointerLink: 'Connected services',
+        subscriptionsPointerLink: 'Credentials',
         subscriptionsPointerTail: '.',
         addTitle: ({ provider }: { provider: string }) => `Add ${provider}`,
         addDescription: ({ provider }: { provider: string }) => `Add a key and ${provider}’s models appear in every agent that can run them.`,
