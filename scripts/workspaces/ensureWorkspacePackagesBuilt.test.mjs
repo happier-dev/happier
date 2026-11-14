@@ -236,6 +236,57 @@ if(args[0]==='run' && args[1]==='build:packages') {
   assert.equal(idle.waitingCount, 0, 'completed publication leaves no queued work');
 });
 
+test('one named build of a package closure takes one compiler admission, and none when current', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  // build:shared admitted every package separately (P03-BUILD-REUSE: 656 queue lines, median 10 min queued
+  // per 1.8 min compile). The closure takes one admission and builds inside it.
+  const root = mkdtempSync(join(tmpdir(), 'happier-batch-admission-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const repoRoot = join(root, 'native-owner');
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['apps/*', 'packages/*'] });
+  const names = ['agents', 'protocol', 'plugin-sdk', 'transfers'];
+  for (const [index, name] of names.entries()) {
+    const dir = join(repoRoot, 'packages', name);
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/index.ts'), 'export const ready = true;\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`, type: 'module',
+      main: './dist/index.js', scripts: { build: 'fixture-build' },
+      ...(index === 1 || index === 2 ? { dependencies: { [`@happier-dev/${names[index - 1]}`]: 'workspace:*' } } : {}) }));
+  }
+  for (const app of ['cli', 'server', 'ui']) {
+    mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const pnpm = join(root, 'pnpm.mjs');
+  writeFileSync(pnpm, `import {mkdirSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const output=process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+mkdirSync(output,{recursive:true});writeFileSync(join(output,'index.js'),'export const ready = true;\\n');
+`);
+  writeFakeBin({ root: repoRoot, binDirName: 'node_modules/.bin', name: 'pnpm',
+    content: `#!/bin/sh\nexec '${process.execPath}' '${pnpm}' "$@"\n` });
+  // Count admissions at the native launcher boundary; the broker, graph and publisher stay real.
+  const admissions = join(root, 'admissions.log');
+  const launcher = join(root, 'counting-launcher.sh');
+  writeFileSync(launcher, `#!/bin/sh\ncase "$1" in --heavyweight-admission) echo "$*" >> '${admissions}' ;; esac\nexec /bin/sh '${native.launcher}' "$@"\n`);
+  chmodSync(launcher, 0o755);
+  const env = { ...native.env, npm_execpath: pnpm, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '1',
+    HAPPIER_HSTACK_EXECUTION: '', PATH: `${join(repoRoot, 'node_modules/.bin')}:${process.env.PATH}` };
+  const build = () => ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/plugin-sdk', '@happier-dev/transfers'], {
+    env, quiet: true, workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher },
+  });
+  const admissionCount = () => (existsSync(admissions) ? readFileSync(admissions, 'utf8').trim().split('\n').filter(Boolean).length : 0);
+  const cold = await build();
+  assert.deepEqual(cold.built, ['@happier-dev/agents', '@happier-dev/plugin-sdk', '@happier-dev/protocol', '@happier-dev/transfers']);
+  assert.equal(admissionCount(), 1, 'a closure of four compiled packages takes one admission');
+  const warm = await build();
+  assert.deepEqual(warm.built, []);
+  assert.equal(admissionCount(), 1, 'a current closure takes no admission');
+  const idle = await native.brokerStatus();
+  assert.equal(idle.activeCount, 0);
+  assert.equal(idle.waitingCount, 0);
+});
+
 test('captured public package builds keep their manifest identity through native self-dispatch', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'happier-captured-public-build-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

@@ -358,6 +358,13 @@ export async function readWorkspaceBuildBatchDemand(componentDirs, { env = proce
   const packageNames = [...new Set(closures.flat())].sort();
   const consumerOnlyPackageNames = componentInputs.map(([, manifest]) => manifest.name)
     .filter(name => typeof name === 'string' && !packageNames.includes(name)).sort();
+  admissionClass = await resolveWorkspaceBatchAdmissionClass({ monorepoRoot, packageNames, packageDirsByName,
+    packageJsonByDir, env, admissionClass });
+  return { monorepoRoot, componentInputs, packageNames, consumerOnlyPackageNames, packageDirsByName, packageJsonByDir, admissionClass };
+}
+
+/** The largest producer class of a batch; one admission covers every package build inside it. */
+async function resolveWorkspaceBatchAdmissionClass({ monorepoRoot, packageNames, packageDirsByName, packageJsonByDir, env, admissionClass = '' }) {
   const { resolveWorkspacePackageBuildAdmissionClass, resolveHeavyweightMemoryFloorKiB } = await import(
     '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs'
   );
@@ -372,7 +379,7 @@ export async function readWorkspaceBuildBatchDemand(componentDirs, { env = proce
       admissionClass = required;
     }
   }
-  return { monorepoRoot, componentInputs, packageNames, consumerOnlyPackageNames, packageDirsByName, packageJsonByDir, admissionClass };
+  return admissionClass;
 }
 
 export async function collectWorkspaceBuildBatchResources(componentDirs, { env = process.env, admissionClass = 'compilation' } = {}) {
@@ -1676,7 +1683,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
     // inspection must consume its resulting manifest, not the earlier map.
     packageJsonByDir.set(protocolDir, protocolManifest);
   }
-  const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(inheritedAdmission ? 1 : maxConcurrentBuilds);
+  const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
   const schedulePackageBuild = (packageJson, packageDir, operation) => (
     hasBundledWorkspaceDependencies(packageJson)
@@ -1852,6 +1859,14 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   )];
   const resolvedPublicationMode = resolveWorkspaceBundlePublicationMode({ mode: publicationMode });
   const resolvedBuildMode = resolveWorkspaceBuildMode({ buildMode, env });
+  const batchOptions = { quiet, force, timeoutMs, includeDevDependencies, publicationMode: resolvedPublicationMode,
+    buildMode: resolvedBuildMode, maxConcurrentBuilds, isolatePluginFailures, visitedNames };
+  if (!inheritedAdmission && workspaceBuildBoundary.workerModule && requiresTypeScriptAdmission({ env })) {
+    const batch = await buildWorkspacePackageNamesInOneAdmission(monorepoRoot, normalizedPackageNames, {
+      ...batchOptions, env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode }, workspaceBuildBoundary,
+      onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal });
+    if (batch) return { ok: true, ...batch, skipped: [] };
+  }
   const result = await ensureWorkspacePackageNamesBuilt(monorepoRoot, normalizedPackageNames, {
     quiet,
     env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode },
@@ -1871,6 +1886,113 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
     visitedNames,
   });
   return { ok: true, ...result, skipped: [] };
+}
+
+/**
+ * One compiler admission for a named closure (P03-BUILD-REUSE, Systemic ruling 2026-11-13 19:30Z):
+ * per-package admissions queued a 126-package build:shared ~10 min per 1.8 min compile. Returns null
+ * when every package is current (no admission; the caller reports already-built results as before).
+ */
+async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNames, { env, workspaceBuildBoundary,
+  onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal, ...options }) {
+  const { packageDirsByName, packageJsonByDir } = await readWorkspacePackageGraph(monorepoRoot);
+  const closure = [...await collectWorkspaceDependencyClosure(packageNames, packageDirsByName, {
+    includeDevDependencies: options.includeDevDependencies, packageJsonByDir })].sort();
+  const workspacePackageNames = new Set(packageDirsByName.keys());
+  let current = !options.force;
+  for (const name of current ? closure : []) {
+    const packageDir = packageDirsByName.get(name);
+    const packageJson = packageJsonByDir.get(packageDir);
+    const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(packageJson, name,
+      workspacePackageNames, { packageDirsByName }).map(dependency => packageDirsByName.get(dependency));
+    const state = await inspectWorkspacePackageBuildState(packageDir, packageJson, { monorepoRoot, dependencyDirs, env });
+    if (state.expectedTargets.length && !workspacePackageBuildStateCurrent(state)) { current = false; break; }
+  }
+  if (current) return null;
+  const admissionClass = await resolveWorkspaceBatchAdmissionClass({ monorepoRoot, packageNames: closure,
+    packageDirsByName, packageJsonByDir, env });
+  const resources = workspaceBuildBatchResources({ monorepoRoot, componentInputs: [], packageNames: closure,
+    consumerOnlyPackageNames: [], packageDirsByName, packageJsonByDir, admissionClass });
+  const resultDir = await mkdtemp(join(tmpdir(), 'happier-workspace-batch-result-'));
+  const resultPath = join(resultDir, 'result.json');
+  const request = { monorepoRoot, packageNames, options, resultPath, identity: resources.identity,
+    boundaryModule: workspaceBuildBoundary.workerModule, boundaryExport: workspaceBuildBoundary.workerExport };
+  const callbacks = { start: onPackageBuildStart, done: onPackageBuildDone, result: onPackageBuildResult };
+  const decoder = new StringDecoder('utf8');
+  let buffered = '', callbackError, pending = Promise.resolve();
+  const consumeLine = line => {
+    if (!line.startsWith(WORKSPACE_BUILD_EVENT_PREFIX)) { process.stdout.write(line); return; }
+    pending = pending.then(async () => {
+      const event = JSON.parse(line.slice(WORKSPACE_BUILD_EVENT_PREFIX.length));
+      if (!Object.hasOwn(callbacks, event.kind)) throw new Error('Invalid workspace build progress event');
+      await callbacks[event.kind]?.(event.value);
+    }).catch(error => { callbackError ??= error; });
+  };
+  try {
+    const terminal = await runWorkspaceBuildAdmission({ command: process.execPath,
+      args: [fileURLToPath(import.meta.url), '--workspace-package-batch-worker', JSON.stringify(request)],
+      locks: resources.locks, admissionClass: resources.admissionClass, admissionRequired: true,
+      ...(workspaceBuildBoundary.workerLauncherPath ? { launcherPath: workspaceBuildBoundary.workerLauncherPath } : {}),
+      cwd: monorepoRoot, env, signal, stdio: ['inherit', 'pipe', 'inherit'], captureStdout: false,
+      onStdout: chunk => {
+        buffered += decoder.write(chunk);
+        for (let index; (index = buffered.indexOf('\n')) !== -1;) {
+          consumeLine(buffered.slice(0, index + 1));
+          buffered = buffered.slice(index + 1);
+        }
+      } });
+    buffered += decoder.end();
+    if (buffered) consumeLine(buffered);
+    await pending;
+    if (callbackError) throw callbackError;
+    const response = await readFile(resultPath, 'utf8').then(JSON.parse).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (response?.code === 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED') throw new BuildInputDriftError(response.message);
+    if (response?.error) throw deserializeWorkspaceBuildError(response.error);
+    if (terminal.error) throw terminal.error;
+    if (!response?.result || terminal.status !== 0 || terminal.signal) {
+      throw Object.assign(new Error('[workspace-build] package batch did not complete'),
+        { code: 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
+    }
+    return response.result;
+  } finally {
+    await rm(resultDir, { recursive: true, force: true });
+  }
+}
+
+async function runWorkspacePackageBatchWorker(rawRequest) {
+  const request = JSON.parse(rawRequest);
+  const report = (kind, value) => new Promise((resolveWritten, rejectWritten) => {
+    process.stdout.write(`${WORKSPACE_BUILD_EVENT_PREFIX}${JSON.stringify({ kind, value })}\n`, error => {
+      if (error) rejectWritten(error); else resolveWritten();
+    });
+  });
+  try {
+    const { packageDirsByName, packageJsonByDir } = await readWorkspacePackageGraph(request.monorepoRoot);
+    const closure = [...await collectWorkspaceDependencyClosure(request.packageNames, packageDirsByName, {
+      includeDevDependencies: request.options.includeDevDependencies, packageJsonByDir })].sort();
+    const admissionClass = await resolveWorkspaceBatchAdmissionClass({ monorepoRoot: request.monorepoRoot,
+      packageNames: closure, packageDirsByName, packageJsonByDir, env: process.env });
+    if (workspaceBuildBatchResources({ monorepoRoot: request.monorepoRoot, componentInputs: [], packageNames: closure,
+      consumerOnlyPackageNames: [], packageDirsByName, packageJsonByDir, admissionClass }).identity !== request.identity) {
+      throw Object.assign(new Error('Workspace package batch resources changed while queued; retry after releasing admission'),
+        { code: 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED' });
+    }
+    const workspaceBuildBoundary = (await import(request.boundaryModule))[request.boundaryExport];
+    const result = await ensureWorkspacePackagesBuiltByName(request.monorepoRoot, request.packageNames, {
+      ...request.options, env: process.env, workspaceBuildBoundary, inheritedAdmission: true,
+      onPackageBuildStart: value => report('start', value),
+      onPackageBuildDone: value => report('done', value),
+      onPackageBuildResult: value => report('result', value),
+    });
+    await writeJsonAtomic(request.resultPath, { result });
+  } catch (error) {
+    await writeJsonAtomic(request.resultPath, { code: error.code, message: error.message,
+      error: serializeWorkspaceBuildError(error) });
+    throw error;
+  }
 }
 
 async function runWorkspacePackageWorker(rawRequest) {
@@ -1905,6 +2027,14 @@ async function runWorkspacePackageWorker(rawRequest) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
   && process.argv[2] === '--workspace-package-worker') {
   runWorkspacePackageWorker(process.argv[3]).catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+  && process.argv[2] === '--workspace-package-batch-worker') {
+  runWorkspacePackageBatchWorker(process.argv[3]).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });
