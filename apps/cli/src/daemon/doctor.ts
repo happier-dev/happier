@@ -7,7 +7,7 @@
 
 import spawn from 'cross-spawn';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
 import { listProcessSnapshot } from './processSnapshotCache';
 import { posixPsEnvironment } from './posixPs';
@@ -189,6 +189,32 @@ function parseWindowsProcessInfoOutput(output: string): Map<number, { pid: numbe
   return result;
 }
 
+// Win32_Process queries go through PowerShell + CIM, which commonly takes several seconds (7-14 s
+// observed on a managed Windows 11 laptop). These run inside the daemon, so they must not block the
+// event loop: a synchronous call here stalls every RPC, control-server request and socket heartbeat.
+// The timeout is a safety net only; callers already treat a failed lookup as "no info".
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 60_000;
+const WINDOWS_PROCESS_QUERY_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+function runWindowsProcessQuery(script: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
+        maxBuffer: WINDOWS_PROCESS_QUERY_MAX_BUFFER_BYTES,
+      },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout ?? ''));
+      },
+    );
+  });
+}
+
 async function getProcessInfosByPidWindows(
   pids: readonly number[],
 ): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
@@ -204,12 +230,7 @@ async function getProcessInfosByPidWindows(
       'if ($null -eq $rows) { return }',
       '$rows | ConvertTo-Json -Compress',
     ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
+    return parseWindowsProcessInfoOutput(await runWindowsProcessQuery(script));
   } catch {
     return new Map();
   }
@@ -224,12 +245,7 @@ async function getAllProcessInfosWindows(): Promise<Map<number, { pid: number; n
       'if ($null -eq $rows) { return }',
       '$rows | ConvertTo-Json -Compress',
     ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
+    return parseWindowsProcessInfoOutput(await runWindowsProcessQuery(script));
   } catch {
     return new Map();
   }
