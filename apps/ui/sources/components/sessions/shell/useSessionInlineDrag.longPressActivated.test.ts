@@ -395,7 +395,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             absoluteY: null,
         });
 
-        expect(resolveDropResult).toHaveBeenLastCalledWith({
+        expect(resolveDropResult).toHaveBeenCalledWith({
             sessionKey: 's1',
             groupKey: 'g1',
             dataIndex: 1,
@@ -445,6 +445,38 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             groupKey: 'g1',
             dataIndex: 1,
             result: lineResolved('folder:live-target', 0).result,
+        });
+
+        await hook.unmount();
+    });
+
+    it('falls back to what the last hovered pointer resolves to now, not a target geometry has since moved away', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+        const onDropResult = vi.fn();
+        // A scroll or layout change under a stationary pointer moves the drop
+        // destination without another pointer update; the list's resolver is live.
+        let pointerIsOverSourceSlot = false;
+        const resolveDropResult = vi.fn(() => (
+            pointerIsOverSourceSlot ? blockedSamePositionResolved() : lineResolved('session:server:target', 1)
+        ));
+
+        const hook = await renderHook(() => useSessionInlineDrag(dragParams({
+            resolveDropResult,
+            onDropResult,
+        })));
+
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        gesture.handlers.onStart?.();
+        gesture.handlers.onUpdate?.({ translationY: 80, absoluteX: 24, absoluteY: 120 });
+        pointerIsOverSourceSlot = true;
+        gesture.handlers.onEnd?.({ translationY: 80, absoluteX: 24, absoluteY: 120 });
+
+        expect(onDropResult).toHaveBeenCalledWith({
+            sessionKey: 's1',
+            groupKey: 'g1',
+            dataIndex: 1,
+            result: blockedSamePositionResolved().result,
         });
 
         await hook.unmount();
