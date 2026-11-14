@@ -1366,6 +1366,66 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('retains the accepted Promote root purpose for destination and exact selected source reads', async () => {
+        const f = await fixture('account', 'account', { platformTarget: 'vercel', readableEnvironment: true });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        const sourceEnvironment = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
+        const sourceLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            environmentId: sourceEnvironment.id, ...await f.content('deployment-target-link.v1') } });
+        await db.deploymentEnvironment.update({ where: { id: sourceEnvironment.id }, data: { runtimeTargetLinkId: sourceLink.id } });
+        const sourceReceipt = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            environmentId: sourceEnvironment.id, targetLinkId: sourceLink.id, state: 'succeeded',
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.content('deployment-receipt.v1') } });
+        const anotherSourceReceipt = await db.deployment.create({ data: { ...sourceReceipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.content('deployment-receipt.v1') } });
+        const unrelatedEnvironment = await db.deploymentEnvironment.create({ data: { ...sourceEnvironment, id: crypto.randomUUID(),
+            runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
+        const input = { ...f.input, expectedRevision: f.environmentRevision, requestKey: crypto.randomUUID(),
+            ...await f.content('deployment-receipt.v1'), sourceEnvironmentId: sourceEnvironment.id,
+            sourceDeploymentId: sourceReceipt.id, artifact: 'image' as const,
+            destinationContent: await f.content('deployment-environment.v1') };
+        const target = f.authorization.binding.target;
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.promote', machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const headers = (method: 'GET' | 'POST', path: string, body?: unknown, effectActionId = 'deployments.promote') =>
+            createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId, target,
+                installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                method, path, ...(body === undefined ? {} : { body }) });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const admissionPath = `/v1/deployments/environments/${f.environment.id}/promote`;
+            const admissionInput = { ...input, actionOperationId: crypto.randomUUID() };
+            const admission = await app.inject({ method: 'POST', url: admissionPath, payload: admissionInput,
+                headers: headers('POST', admissionPath, admissionInput) });
+            expect(admission.statusCode, admission.body).toBe(200);
+            expect(DeploymentReceiptResultV1Schema.parse(admission.json())).toMatchObject({ ok: true });
+            const reads = [
+                { name: 'destination Environment', path: `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}` },
+                { name: 'selected source Environment', path: `/v1/deployments/environments/${sourceEnvironment.id}?serverId=${serverId}` },
+                { name: 'exact selected source receipt', path: `/v1/deployments/receipts/${sourceReceipt.id}?serverId=${serverId}` },
+            ];
+            for (const read of reads) {
+                const response = await app.inject({ method: 'GET', url: read.path, headers: headers('GET', read.path) });
+                expect.soft(response.statusCode, `${read.name}: ${response.body}`).toBe(200);
+            }
+            for (const path of [
+                `/v1/deployments/environments/${unrelatedEnvironment.id}?serverId=${serverId}`,
+                `/v1/deployments/receipts/${anotherSourceReceipt.id}?serverId=${serverId}`,
+                `/v1/deployments/environments/${f.environment.id}?serverId=another-home`,
+            ]) {
+                const response = await app.inject({ method: 'GET', url: path, headers: headers('GET', path) });
+                expect.soft(response.statusCode, `outside admitted Promote scope: ${response.body}`).toBe(401);
+            }
+            const path = reads[0]!.path;
+            const unreviewedProvider = await app.inject({ method: 'GET', url: path,
+                headers: headers('GET', path, undefined, 'happier.deploy.vercel/actions/deploy-upload-v1') });
+            expect(unreviewedProvider.statusCode, unreviewedProvider.body).toBe(401);
+        }, { authentication: 'real' });
+    });
+
     it.each([
         { platformTarget: 'vercel' as const, pluginId: 'happier.deploy.vercel', localId: 'deploy-upload-v1' },
         { platformTarget: 'workers' as const, pluginId: 'happier.deploy.cloudflare', localId: 'pages-upload' },

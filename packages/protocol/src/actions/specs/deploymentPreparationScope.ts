@@ -56,10 +56,13 @@ export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationK
         ? [ids.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1] : [])] : [];
   const domainRead = effectActionId !== undefined && ids.isDeploymentDomainMetadataReadActionIdV1(effectActionId) ? effectActionId
     : effectActionId === ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? ids.DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 : undefined;
+  const nativeRootRead = effectActionId === actionId
+    && ids.deploymentOperationForRootActionV1(actionId, admission) !== undefined;
   const httpReads = [
     ...(kind === 'link' && effectActionId === actionId ? [ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1] as const : []),
     ...(domainRead && (kind === 'membership' || deployIntent) ? [domainRead] : []),
-    ...ids.DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1.filter(id => effectActionId === ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId === id),
+    ...ids.DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1.filter(id => nativeRootRead
+      || effectActionId === ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId === id),
   ];
   return { createEffects, previewReads, candidateEffects, setupReads, moveEffects, httpReads,
     environment: kind === 'create' ? 'create' : kind === 'template' ? 'template' : 'admitted',

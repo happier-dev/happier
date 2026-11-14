@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_ACTION_IDS_V1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ACTION_IDS_V1, deploymentOperationForRootActionV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { db } from '@/storage/db';
@@ -61,6 +61,11 @@ describe('admitted deployment read scope (real SQLite)', () => {
     };
 
     expect(await read(environmentId)).toBe(true);
+    if (deploymentOperationForRootActionV1(actionId) !== undefined) {
+      // Native execution retains the root effect while preparing its admitted resources.
+      expect(await read(environmentId, serverId, 'GET', actionId)).toBe(true);
+      expect(await read('environment-outside', serverId, 'GET', actionId)).toBe(false);
+    }
     expect(await read('environment-outside')).toBe(false);
     expect(await read(environmentId, `srv_${'c'.repeat(32)}`)).toBe(false);
     expect(await read(environmentId, serverId, 'POST')).toBe(false);

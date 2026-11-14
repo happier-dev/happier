@@ -1642,10 +1642,9 @@ async function verifyCommon(
                 : acceptedPreparationRead || signedChildPurpose.deploymentWorkspaceRead || signedChildPurpose.deploymentReferenceRead
                     || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
                     ? { state: { in: deploymentInProgressStates() } } : {}),
-            ...(acceptedPreparationRead?.environmentId ? { environmentId: acceptedPreparationRead.environmentId }
-                : acceptedPreparationRead?.deploymentId ? { environment: { deployments: { some: {
-                    id: acceptedPreparationRead.deploymentId,
-                } } } } : {}),
+            // The shared preparation owner already bound the read operands.
+            // This lookup proves the original job is active, including when
+            // that job reads a pinned source in a different Environment.
         });
     if (platformMaterial && !acceptedDeployment) return refuse('deployment_child_http');
     if (domainContinuation?.kind === 'secret-facts') {

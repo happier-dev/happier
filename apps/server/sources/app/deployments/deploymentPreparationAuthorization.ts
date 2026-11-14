@@ -1615,8 +1615,7 @@ export async function readDeploymentPreparationHttpReadPurpose(
     const read = getActionSpec(actionId).inputSchema.safeParse(proof.routeInput);
     if (!read.success || !read.data || typeof read.data !== 'object' || !('serverId' in read.data)
         || read.data.serverId !== binding.serverIdentityId) return null;
-    if ((isDeploymentDomainMetadataReadActionIdV1(actionId) || deploymentActionIds.isDeploymentDomainDnsActionIdV1(binding.actionId))
-        && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.data,
+    if (await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.data,
             undefined, undefined, actionId) !== true) return null;
     return { actionId,
         ...('environmentId' in read.data && typeof read.data.environmentId === 'string' ? { environmentId: read.data.environmentId } : {}),
