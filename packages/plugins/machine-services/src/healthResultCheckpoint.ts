@@ -11,7 +11,7 @@ export function fitHealthResultCheckpoint<T extends { current?: HealthResultProj
         .sort((left, right) => left.result.observedAt - right.result.observedAt);
     const trim = (removed: number): T => {
         const omitted = new Map<number, number>();
-        const samples = new Map<number, NonNullable<HealthResultProjection['checks'][number]['recentResults']>>();
+        const samples = new Map<number, NonNullable<HealthResultProjection['checks'][number]['recentResults']>[number][]>();
         for (let index = 0; index < ordered.length; index++) {
             const { checkIndex, result } = ordered[index]!;
             if (index < removed) omitted.set(checkIndex, result.observedAt);
