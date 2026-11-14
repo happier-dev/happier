@@ -4,10 +4,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
-import { useSetting } from '@/sync/store/hooks';
+import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { isReadAloudAvailable } from '@/voice/local/localVoiceSettings';
-import { toggleReadAloud, useIsReadingAloud } from '@/voice/local/readAloud';
+import { toggleReadAloud } from '@/voice/local/readAloud';
+import { useIsReadingAloud } from '@/voice/local/readAloudState';
+import { useReadAloudAvailable } from '@/voice/local/useReadAloudAvailable';
 import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -26,20 +27,19 @@ export function MessageSpeakButton(props: Readonly<{
     onHoverOut?: () => void;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
-    const voice = useSetting('voice');
     const { messageKey, text } = props;
     const playing = useIsReadingAloud(messageKey);
-    const settings = React.useMemo(() => ({ voice }), [voice]);
-    const available = React.useMemo(() => isReadAloudAvailable(settings), [settings]);
+    const available = useReadAloudAvailable();
 
     const handlePress = React.useCallback(() => {
         // Browsers only allow audio that is unlocked from the press itself, before any async work.
         primeWebAudioPlayback();
         fireAndForget((async () => {
-            const ok = await toggleReadAloud({ key: messageKey, text, settings });
+            // Read the current speech settings at press time rather than subscribing to them.
+            const ok = await toggleReadAloud({ key: messageKey, text, settings: storage.getState().settings });
             if (!ok) Modal.alert(t('common.error'), t('message.readAloudFailed'));
         })(), { tag: 'MessageSpeakButton.toggleReadAloud' });
-    }, [messageKey, settings, text]);
+    }, [messageKey, text]);
 
     if (text.trim().length === 0 || !available) return null;
 

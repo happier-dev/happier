@@ -15,7 +15,10 @@ vi.mock('expo-speech', () => expoSpeech);
 import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
-import { getReadAloudActiveKey, toggleReadAloud, useIsReadingAloud } from './readAloud';
+import { speakAssistantText } from '@/voice/output/speakAssistantText';
+
+import { toggleReadAloud } from './readAloud';
+import { getReadAloudActiveKey, useIsReadingAloud } from './readAloudState';
 
 const settings = {
     voice: voiceSettingsParse({
@@ -123,5 +126,39 @@ describe('toggleReadAloud', () => {
         await act(async () => { utterances[0].onDone?.(); await pending; });
         expect(own.getCurrent()).toBe(false);
         expect(otherRenders).toBe(rendersBefore);
+    });
+
+    it('is taken over by a live voice reply, which stops it before speaking', async () => {
+        const reading = toggleReadAloud({ key: 'm1', text: 'hello', settings });
+        const live = speakAssistantText({
+            text: 'reply',
+            settings,
+            networkTimeoutMs: 1000,
+            registerPlaybackStopper: localVoicePlaybackController.registerStopper,
+            onSpeaking: () => {},
+        });
+        expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
+        expect(getReadAloudActiveKey()).toBeNull();
+
+        utterances[0].onStopped?.();
+        await reading;
+        utterances[1].onDone?.();
+        await live;
+    });
+
+    it('leaves a live voice reply alone when nothing is being read aloud', async () => {
+        const liveStopper = vi.fn();
+        localVoicePlaybackController.registerStopper(liveStopper);
+        const live = speakAssistantText({
+            text: 'reply',
+            settings,
+            networkTimeoutMs: 1000,
+            registerPlaybackStopper: localVoicePlaybackController.registerStopper,
+            onSpeaking: () => {},
+        });
+        expect(liveStopper).not.toHaveBeenCalled();
+        expect(expoSpeech.stop).not.toHaveBeenCalled();
+        utterances[0].onDone?.();
+        await live;
     });
 });

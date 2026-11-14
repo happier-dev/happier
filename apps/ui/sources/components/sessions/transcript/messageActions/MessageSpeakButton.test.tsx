@@ -14,7 +14,8 @@ const expoSpeech = vi.hoisted(() => ({
     speak: vi.fn<(text: string, options: SpeakOptions) => void>(),
     stop: vi.fn(),
 }));
-const settingsState = vi.hoisted(() => ({ voice: null as unknown }));
+type ReactiveStore = ReturnType<typeof import('@/dev/testkit/mocks/storage').createReactiveStorageStoreMock>;
+const settingsStore = vi.hoisted(() => ({ current: null as ReactiveStore | null }));
 const modal = vi.hoisted(() => ({ spies: null as null | { alert: ReturnType<typeof vi.fn> } }));
 const primeWebAudioPlayback = vi.hoisted(() => vi.fn());
 
@@ -38,13 +39,16 @@ vi.mock('@/modal', async () => {
     modal.spies = mock.spies;
     return mock.module;
 });
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const { createStoreHooksModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStoreHooksModuleMock({
-        importOriginal,
-        overrides: { useSetting: createUseSettingMock({ values: settingsState as never }) },
-    });
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock, createReactiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const store = createReactiveStorageStoreMock({ settings: { voice: voiceSettingsParse({ providerId: 'realtime_elevenlabs' }) } as never });
+    settingsStore.current = store;
+    return createStorageModuleMock({ importOriginal, overrides: { storage: store } });
 });
+
+function setVoice(voice: unknown): void {
+    settingsStore.current?.setState({ settings: { voice } as never });
+}
 
 const localVoice = voiceSettingsParse({
     providerId: 'local_conversation',
@@ -55,7 +59,7 @@ let utterances: SpeakOptions[] = [];
 
 describe('MessageSpeakButton', () => {
     afterEach(() => {
-        settingsState.voice = null;
+        setVoice(voiceSettingsParse({ providerId: 'realtime_elevenlabs' }));
         utterances = [];
         expoSpeech.speak.mockReset();
         expoSpeech.stop.mockReset();
@@ -64,13 +68,13 @@ describe('MessageSpeakButton', () => {
     });
 
     function setup() {
-        settingsState.voice = localVoice;
+        setVoice(localVoice);
         expoSpeech.speak.mockImplementation((_text, options) => { utterances.push(options); });
     }
 
     it('is hidden when no local voice provider is selected', async () => {
         const { MessageSpeakButton } = await import('./MessageSpeakButton');
-        settingsState.voice = voiceSettingsParse({ providerId: 'realtime_elevenlabs' });
+        setVoice(voiceSettingsParse({ providerId: 'realtime_elevenlabs' }));
         const screen = await renderScreen(<MessageSpeakButton messageKey="m1" text="hi" testID="speak" />);
         expect(screen.findAllByType('Pressable')).toHaveLength(0);
     });

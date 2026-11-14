@@ -112,6 +112,10 @@ export function isReadAloudAvailable(settings: LocalVoiceSettingsInput): boolean
   const tts = parsed.data;
 
   if (tts.provider === 'openai_compat') return String(tts.openaiCompat.baseUrl ?? '').trim().length > 0;
-  if (tts.provider === 'google_cloud') return tts.googleCloud.apiKey != null;
+  if (tts.provider === 'google_cloud') {
+    // Same precedence as decrypting the secret: a non-blank plain value, else an encrypted one.
+    const apiKey = tts.googleCloud.apiKey;
+    return (apiKey?.value ?? '').trim().length > 0 || apiKey?.encryptedValue != null;
+  }
   return true;
 }

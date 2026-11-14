@@ -2,6 +2,7 @@ import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybac
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { speakWithLocalTtsProvider } from '@/voice/backends/tts/runtime';
 import { patchLocalVoiceState, resolveLocalVoiceError } from '@/voice/local/localVoiceState';
+import { stopReadAloud } from '@/voice/local/readAloudState';
 import { toSpeechText, type SpeechTextContext } from '@/voice/output/speechText';
 
 /**
@@ -17,9 +18,12 @@ export async function speakAssistantText(params: {
   networkTimeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
   onSpeaking: () => void;
+  /** Live voice replies take over from a message being read aloud; read-aloud itself opts out. */
+  takeOverReadAloud?: boolean;
 }): Promise<boolean> {
   const spoken = toSpeechText(params.text, params.speechTextContext);
   if (!spoken) return true;
+  if (params.takeOverReadAloud !== false) stopReadAloud();
 
   const voice = params.settings?.voice ?? null;
   const providerId = voice?.providerId;

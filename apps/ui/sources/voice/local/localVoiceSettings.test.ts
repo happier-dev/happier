@@ -40,6 +40,7 @@ describe('isReadAloudAvailable', () => {
 
     it('needs an API key for Google Cloud TTS', () => {
         expect(isReadAloudAvailable(withTts('local_conversation', { provider: 'google_cloud' }))).toBe(false);
+        expect(isReadAloudAvailable(withTts('local_conversation', { provider: 'google_cloud', googleCloud: { apiKey: { _isSecretValue: true, value: '   ' } } }))).toBe(false);
         expect(isReadAloudAvailable(withTts('local_conversation', { provider: 'google_cloud', googleCloud: { apiKey: { _isSecretValue: true, value: 'k' } } }))).toBe(true);
     });
 });
