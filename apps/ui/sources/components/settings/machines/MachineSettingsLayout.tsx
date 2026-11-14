@@ -14,7 +14,7 @@ function resolveMachinesChildRoute(pathname: string): string {
     const root = pathname.startsWith(MACHINES_COLLECTION_ROOT) ? MACHINES_COLLECTION_ROOT : MACHINES_RAIL_ROOT;
     if (pathname === root) return 'index';
     const rest = pathname.slice(root.length + 1);
-    if (rest === 'add' || rest === 'this-computer' || rest === 'defaults' || rest === 'pools/new') return rest;
+    if (rest === 'add' || rest === 'this-computer' || rest === 'defaults' || rest === 'updates' || rest === 'activity' || rest === 'pools/new') return rest;
     if (rest.startsWith('add/')) return 'add/[provisioner]';
     if (rest === 'presets/new') return 'presets/new';
     if (rest.startsWith('presets/')) return 'presets/[presetId]';

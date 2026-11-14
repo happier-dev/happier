@@ -111,6 +111,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'presets/[presetId]', navigator: 'machines', titleKey: 'machinePresets.title' },
     { name: 'this-computer', navigator: 'machines', titleKey: 'settingsMachines.thisComputerTitle' },
     { name: 'defaults', navigator: 'machines', titleKey: 'settingsMachines.defaultsTitle' },
+    { name: 'updates', navigator: 'machines', titleKey: 'machineFleetUpdates.title' },
+    { name: 'activity', navigator: 'machines', titleKey: 'machineFleetActivity.title' },
     { name: 'pools/[poolId]', navigator: 'machines', titleKey: 'machinePools.title' },
     { name: 'pools/new', navigator: 'machines', titleKey: 'machinePools.add' },
     // Skills: the list beside the selected skill or the homepage (P6 §4.1).

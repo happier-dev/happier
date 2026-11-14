@@ -417,6 +417,8 @@ export function resolveSelectedMachineCollectionKey(
     if (segments.length !== 1 || !segments[0]) return null;
     if (segments[0] === 'this-computer') return 'thisComputer';
     if (segments[0] === 'defaults') return 'defaults';
+    if (segments[0] === 'updates') return 'updates';
+    if (segments[0] === 'activity') return 'activity';
     if (segments[0] === 'add') return 'machineDraft';
     return `machine:${serverId}:${segments[0]}`;
 }

@@ -392,6 +392,46 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         />
     );
 
+    // Fleet OS updates (pfc-redesign fUpd) sit under Defaults: one page for every machine's system packages.
+    const updatesRow = (
+        <Item
+            rowRole="catalogRow"
+            testID="settings.machines.updates"
+            title={t('machineFleetUpdates.title')}
+            subtitle={t('machineFleetUpdates.rowSubtitle')}
+            icon={(
+                <HappierCollectionListMark rowRole="catalogRow">
+                    <Icon name="download" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={rail ? selectedKey === 'updates' : undefined}
+            density={rail ? 'compact' : undefined}
+            showChevron={!rail}
+            pressableStyle={rail ? collectionListStyles.row : undefined}
+            onPress={() => openHref(router, SETTINGS_ROUTES.machineUpdates, replaceConfiguration, 'MachineCollectionList.updates')}
+        />
+    );
+
+    // Fleet Activity (pfc-redesign fAct): the history of what ran on these machines; attention stays in Inbox.
+    const activityRow = (
+        <Item
+            rowRole="catalogRow"
+            testID="settings.machines.activity"
+            title={t('machineFleetActivity.title')}
+            subtitle={t('machineFleetActivity.rowSubtitle')}
+            icon={(
+                <HappierCollectionListMark rowRole="catalogRow">
+                    <Icon name="clock" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={rail ? selectedKey === 'activity' : undefined}
+            density={rail ? 'compact' : undefined}
+            showChevron={!rail}
+            pressableStyle={rail ? collectionListStyles.row : undefined}
+            onPress={() => openHref(router, SETTINGS_ROUTES.machineActivity, replaceConfiguration, 'MachineCollectionList.activity')}
+        />
+    );
+
     // Readable rows remain visible while a new Machine's own reserved slot waits for its name.
     const loading = (total === 0 && viewModel.isLoadingMachines) || collection.firstAnswerPending;
     const empty = !loading && total === 0;
@@ -442,7 +482,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             <>
                 {renderManagedReadFailures()}
                 {managedReadApprovals}
-                <ItemGroup>{defaultsRow}{thisComputerRow}</ItemGroup>
+                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{thisComputerRow}</ItemGroup>
                 {/* Retired created machines stay recoverable here; All machines lists only the active fleet. */}
                 {collection.sections.filter(section => section.archived).map(section => (
                     <ArchivedMachineSection key={section.key} section={section} rail={false}
@@ -466,7 +506,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                         placement="page"
                     />
                 ) : null}
-                <ItemGroup>{defaultsRow}{thisComputerRow}</ItemGroup>
+                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{thisComputerRow}</ItemGroup>
                 {renderManagedReadFailures()}
                 {managedReadApprovals}
                 {loading ? (
@@ -540,6 +580,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             />
             {/* Defaults head the list, above the machines they apply to (lab m-defaults). */}
             {defaultsRow}
+            {updatesRow}
+            {activityRow}
             {renderManagedReadFailures()}
             {managedReadApprovals}
             {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. */}

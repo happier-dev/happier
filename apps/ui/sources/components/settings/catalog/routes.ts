@@ -12,6 +12,8 @@ export const SETTINGS_ROUTES = {
     deployments: '/settings/deployments',
     machines: '/settings/machines',
     machineDefaults: '/settings/machines/defaults',
+    machineUpdates: '/settings/machines/updates',
+    machineActivity: '/settings/machines/activity',
     machinePoolsNew: '/settings/machines/pools/new',
     machinesAdd: '/settings/machines/add',
     machinesThisComputer: '/settings/machines/this-computer',
