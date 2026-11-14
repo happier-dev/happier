@@ -146,38 +146,65 @@ function readStructuredMentions(
     );
 }
 
+type InputStateReadOptions = Readonly<{ textLength?: number; fontScale?: number }>;
+
+/**
+ * Store-derived composer state for one owner/scope. `inputState` was read against
+ * `textLength`/`fontScale`; a render whose live text basis differs re-reads it (see
+ * resolveCurrentInputState) so the render that flips restoreToken carries the payload.
+ */
 type ScopedComposerPersistenceState = Readonly<{
     owner: AgentInputDraftOwner | null;
     scope: ServerAccountScope | null;
-    text: string | undefined;
     textLength: number | undefined;
     fontScale: number | undefined;
     expanded: boolean;
     inputState: ReturnType<typeof readInputState>;
-    structuredInputMentions: readonly ComposerStructuredInputMention[];
 }>;
+
+function areInputStatesValueEqual(
+    left: AgentInputLocalUiStateV1 | null,
+    right: AgentInputLocalUiStateV1 | null,
+): boolean {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    return left.updatedAt === right.updatedAt
+        && left.expanded === right.expanded
+        && left.scrollY === right.scrollY
+        && left.textLength === right.textLength
+        && left.fontScale === right.fontScale
+        && left.selection?.start === right.selection?.start
+        && left.selection?.end === right.selection?.end;
+}
+
+/**
+ * Value equality over the store-derived facts only. The read-basis tags are excluded on purpose:
+ * the focus effect re-reads the store on every text change (so mentions re-filter against live
+ * text), and a re-read that derives nothing new must keep the previous state so typing does not
+ * schedule a second render. A kept stale tag only makes resolveCurrentInputState re-read.
+ */
+function areScopedComposerPersistenceStatesEqual(
+    left: ScopedComposerPersistenceState,
+    right: ScopedComposerPersistenceState,
+): boolean {
+    return areOwnersEqual(left.owner, right.owner)
+        && areNullableScopesEqual(left.scope, right.scope)
+        && left.expanded === right.expanded
+        && areInputStatesValueEqual(left.inputState, right.inputState);
+}
 
 function readScopedComposerPersistenceState(
     scope: ServerAccountScope | null,
     owner: AgentInputDraftOwner | null,
-    options: Readonly<{
-        text?: string;
-        textLength?: number;
-        fontScale?: number;
-    }>,
+    options: InputStateReadOptions,
 ): ScopedComposerPersistenceState {
     return {
         owner,
         scope,
-        text: options.text,
         textLength: options.textLength,
         fontScale: options.fontScale,
         expanded: readExpanded(scope, owner),
-        inputState: readInputState(scope, owner, {
-            textLength: options.textLength,
-            fontScale: options.fontScale,
-        }),
-        structuredInputMentions: readStructuredMentions(scope, owner, options.text),
+        inputState: readInputState(scope, owner, options),
     };
 }
 
@@ -185,17 +212,39 @@ function isScopedComposerPersistenceStateCurrent(
     state: ScopedComposerPersistenceState,
     scope: ServerAccountScope | null,
     owner: AgentInputDraftOwner | null,
-    options: Readonly<{
-        text?: string;
-        textLength?: number;
-        fontScale?: number;
-    }>,
 ): boolean {
     return areOwnersEqual(state.owner, owner)
-        && areNullableScopesEqual(state.scope, scope)
-        && state.text === options.text
-        && state.textLength === options.textLength
-        && state.fontScale === options.fontScale;
+        && areNullableScopesEqual(state.scope, scope);
+}
+
+/**
+ * The input state for the live text basis. Reuses the stored reading when it was taken against
+ * the same basis or still reads value-equal, so consumers keep a stable identity while typing.
+ */
+function resolveCurrentInputState(
+    state: ScopedComposerPersistenceState,
+    scope: ServerAccountScope | null,
+    owner: AgentInputDraftOwner | null,
+    options: InputStateReadOptions,
+): ScopedComposerPersistenceState['inputState'] {
+    if (state.textLength === options.textLength && state.fontScale === options.fontScale) {
+        return state.inputState;
+    }
+    const next = readInputState(scope, owner, options);
+    return areInputStatesValueEqual(state.inputState, next) ? state.inputState : next;
+}
+
+function withInputState(
+    base: ScopedComposerPersistenceState,
+    inputState: ScopedComposerPersistenceState['inputState'],
+    options: InputStateReadOptions,
+): ScopedComposerPersistenceState {
+    return {
+        ...base,
+        textLength: options.textLength,
+        fontScale: options.fontScale,
+        inputState,
+    };
 }
 
 /**
@@ -237,24 +286,23 @@ export function useSessionAgentInputComposerPersistence({
         NO_PERSISTED_MENTIONS,
     );
     const inputStateReadOptions = React.useMemo(() => ({ textLength, fontScale }), [fontScale, textLength]);
-    const scopedStateReadOptions = React.useMemo(() => ({ text, textLength, fontScale }), [fontScale, text, textLength]);
     const previousOwnerRef = React.useRef<Readonly<{
         owner: AgentInputDraftOwner | null;
         scope: ServerAccountScope | null;
     }> | null>(null);
     const [scopedState, setScopedState] = React.useState(() =>
-        readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions),
+        readScopedComposerPersistenceState(scope, owner, inputStateReadOptions),
     );
     // Bumped only by explicit restores (e.g. send-failure transient-state
     // rollback) so consumers re-apply the restored selection/scroll exactly
     // once. Self-originated persist writes must not touch it — see
     // buildRestoreToken.
     const [restoreEpoch, setRestoreEpoch] = React.useState(0);
-    const currentScopedState = isScopedComposerPersistenceStateCurrent(scopedState, scope, owner, scopedStateReadOptions)
+    const currentScopedState = isScopedComposerPersistenceStateCurrent(scopedState, scope, owner)
         ? scopedState
-        : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+        : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
     const expanded = currentScopedState.expanded;
-    const inputState = currentScopedState.inputState;
+    const inputState = resolveCurrentInputState(currentScopedState, scope, owner, inputStateReadOptions);
     const structuredInputMentions = readStructuredMentions(scope, owner, text);
     // One-way latch per owner/scope: flips when the persisted basis first
     // becomes applicable to the live text (draft adopted after an async load on
@@ -279,36 +327,33 @@ export function useSessionAgentInputComposerPersistence({
     const setScopedStateFromStore = React.useCallback((
         nextScope: ServerAccountScope | null,
         nextOwner: AgentInputDraftOwner | null,
-        nextOptions: Readonly<{
-            text?: string;
-            textLength?: number;
-            fontScale?: number;
-        }>,
+        nextOptions: InputStateReadOptions,
     ) => {
-        setScopedState(readScopedComposerPersistenceState(nextScope, nextOwner, nextOptions));
+        const next = readScopedComposerPersistenceState(nextScope, nextOwner, nextOptions);
+        setScopedState((current) => areScopedComposerPersistenceStatesEqual(current, next) ? current : next);
     }, []);
     const setScopedStateWithExpanded = React.useCallback((nextExpanded: boolean) => {
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
-                : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
+            if (base === current && base.expanded === nextExpanded) return current;
             return {
                 ...base,
                 expanded: nextExpanded,
             };
         });
-    }, [owner, scope, scopedStateReadOptions]);
+    }, [inputStateReadOptions, owner, scope]);
     const setScopedStateWithInputState = React.useCallback(() => {
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
-                : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
-            return {
-                ...base,
-                inputState: readInputState(scope, owner, inputStateReadOptions),
-            };
+                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
+            const nextInputState = readInputState(scope, owner, inputStateReadOptions);
+            if (base === current && areInputStatesValueEqual(base.inputState, nextInputState)) return current;
+            return withInputState(base, nextInputState, inputStateReadOptions);
         });
-    }, [inputStateReadOptions, owner, scope, scopedStateReadOptions]);
+    }, [inputStateReadOptions, owner, scope]);
     const pendingFlushScopeRef = React.useRef<ServerAccountScope | null | undefined>(undefined);
     const pendingFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingStructuredFlushTargetRef = React.useRef<Readonly<{
@@ -370,12 +415,12 @@ export function useSessionAgentInputComposerPersistence({
         previousOwnerRef.current = { owner, scope };
 
         if (!owner) {
-            setScopedStateFromStore(scope, owner, scopedStateReadOptions);
+            setScopedStateFromStore(scope, owner, inputStateReadOptions);
             return;
         }
 
         if (!isFocused) return;
-        setScopedStateFromStore(scope, owner, scopedStateReadOptions);
+        setScopedStateFromStore(scope, owner, inputStateReadOptions);
         const mentions = readStructuredMentions(scope, owner, text);
         if (scope && owner.kind === 'session') {
             const persistedMentions = existingSessionDraftSemanticValues.read(scope, owner.sessionId, 'structuredInput.mentions') ?? [];
@@ -384,7 +429,7 @@ export function useSessionAgentInputComposerPersistence({
                 flushPendingStructuredInput({ scope, sessionId: owner.sessionId });
             }
         }
-    }, [flushPendingStructuredInput, flushPendingUiState, isFocused, owner, scope, scopedStateReadOptions, setScopedStateFromStore, text]);
+    }, [flushPendingStructuredInput, flushPendingUiState, inputStateReadOptions, isFocused, owner, scope, setScopedStateFromStore, text]);
 
     React.useEffect(() => {
         const flushForBackground = () => {
@@ -482,19 +527,14 @@ export function useSessionAgentInputComposerPersistence({
             fontScale,
         }, { flush: false });
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
-                : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
-            return {
-                ...base,
-                inputState: readInputState(scope, owner, {
-                    textLength: nextTextLength,
-                    fontScale,
-                }),
-            };
+                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
+            const readOptions = { textLength: nextTextLength, fontScale };
+            return withInputState(base, readInputState(scope, owner, readOptions), readOptions);
         });
         scheduleUiStateFlush(scope);
-    }, [fontScale, owner, scheduleUiStateFlush, scope, scopedStateReadOptions]);
+    }, [fontScale, inputStateReadOptions, owner, scheduleUiStateFlush, scope]);
 
     const clearTransientInputState = React.useCallback(() => {
         if (!owner) return;
@@ -514,17 +554,16 @@ export function useSessionAgentInputComposerPersistence({
             && areNullableScopesEqual(activeOwner.scope, scope)
         ) {
             setScopedState((current) => {
-                const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+                const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                     ? current
-                    : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+                    : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
                 return {
-                    ...base,
+                    ...withInputState(base, readInputState(scope, owner, inputStateReadOptions), inputStateReadOptions),
                     expanded: shouldKeepExpanded,
-                    inputState: readInputState(scope, owner, inputStateReadOptions),
                 };
             });
         }
-    }, [flushPendingUiState, inputStateReadOptions, owner, scope, scopedStateReadOptions]);
+    }, [flushPendingUiState, inputStateReadOptions, owner, scope]);
 
     const captureTransientInputState = React.useCallback(() => {
         if (!owner) return null;
@@ -542,17 +581,16 @@ export function useSessionAgentInputComposerPersistence({
             ...(typeof state.fontScale === 'number' ? { fontScale: state.fontScale } : {}),
         });
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
-                : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
             return {
-                ...base,
+                ...withInputState(base, readInputState(scope, owner, inputStateReadOptions), inputStateReadOptions),
                 expanded: state.expanded === true,
-                inputState: readInputState(scope, owner, inputStateReadOptions),
             };
         });
         setRestoreEpoch((epoch) => epoch + 1);
-    }, [inputStateReadOptions, owner, scope, scopedStateReadOptions]);
+    }, [inputStateReadOptions, owner, scope]);
 
     const onStructuredMentionsChange = React.useCallback((mentions: readonly ComposerStructuredInputMention[]) => {
         if (!scope || !owner || owner.kind !== 'session') return;
