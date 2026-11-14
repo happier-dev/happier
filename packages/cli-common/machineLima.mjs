@@ -76,9 +76,15 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
 }
 
 function limaStoreOptions(store) {
+  if (store === undefined) return {};
   // Lima derives socket names from LIMA_HOME without expanding relative roots.
   // Keep retained data in the selected store while native paths stay short.
-  return store === undefined ? {} : { cwd: validateLimaStore(store), env: { LIMA_HOME: '.' } };
+  // v2.2.1 hostagent.forwardSSH only cleans absolute socket paths. Let OpenSSH
+  // rebind relative sockets; Lima still parses the original SSH binary/arguments,
+  // and an earlier explicit option retains OpenSSH's first-value precedence.
+  const configuredSsh = process.env.SSH;
+  const ssh = configuredSsh && !/^[ \t\r\n]*$/.test(configuredSsh) ? configuredSsh : 'ssh';
+  return { cwd: validateLimaStore(store), env: { LIMA_HOME: '.', SSH: `${ssh} -o StreamLocalBindUnlink=yes` } };
 }
 
 export async function runLimaCommand({ executor, store, args, input, interactive = false }) {

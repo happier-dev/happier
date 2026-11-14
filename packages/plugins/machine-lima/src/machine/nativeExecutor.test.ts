@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,33 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('public Lima process transport', () => {
+  it.each([
+    { ssh: undefined, expected: 'ssh -o StreamLocalBindUnlink=yes' },
+    { ssh: '', expected: 'ssh -o StreamLocalBindUnlink=yes' },
+    { ssh: ' \t ', expected: 'ssh -o StreamLocalBindUnlink=yes' },
+    { ssh: "'/opt/custom ssh/bin/ssh' -i '/private/key with spaces' -o ProxyCommand='relay $HOST *.example'",
+      expected: "'/opt/custom ssh/bin/ssh' -i '/private/key with spaces' -o ProxyCommand='relay $HOST *.example' -o StreamLocalBindUnlink=yes" },
+    { ssh: '  custom-ssh -o ProxyCommand="relay $HOST"  ', expected: '  custom-ssh -o ProxyCommand="relay $HOST"   -o StreamLocalBindUnlink=yes' },
+    // OpenSSH uses the first value. A deliberate custom refusal remains authoritative.
+    { ssh: 'custom-ssh -oStreamLocalBindUnlink=no', expected: 'custom-ssh -oStreamLocalBindUnlink=no -o StreamLocalBindUnlink=yes' },
+  ])('allows native socket rebinding without replacing the configured SSH command: $ssh', async ({ ssh, expected }) => {
+    vi.stubEnv('SSH', ssh);
+    try {
+      let running = false;
+      const exec: Pick<ExecService, 'run'> = { run: async request => {
+        expect(request.cwd).toBe(identity.store);
+        expect(request.env).toEqual({ LIMA_HOME: '.', SSH: expected });
+        if (request.args?.[0] === 'restart') running = true;
+        return success(new TextEncoder().encode(JSON.stringify({ ...native, status: running ? 'Running' : 'Stopped' })));
+      } };
+      const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+      await expect(changeLimaPower({ executor, ...identity, intent: 'start' }))
+        .resolves.toEqual({ changed: true, status: 'Running' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('opens the stream channel as one interactive guest shell process carrying the invocation channel', async () => {
     const spawned: unknown[] = [];
     const handle = { kind: 'channel-handle' };
@@ -34,7 +61,7 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
     await expect(openLimaGuestChannel({ executor, ...identity, argv: ['hshim', 'attach', '--socket', '/s'] })).resolves.toBe(handle);
     expect(spawned).toEqual([{ args: ['shell', '--workdir=/', identity.instance, '--', 'hshim', 'attach', '--socket', '/s'],
-      cwd: identity.store, env: { LIMA_HOME: '.' }, outputDelivery: 'invocation' }]);
+      cwd: identity.store, env: { LIMA_HOME: '.', SSH: 'ssh -o StreamLocalBindUnlink=yes' }, outputDelivery: 'invocation' }]);
   });
 
   it('opens no channel to a guest that is not running', async () => {
@@ -52,7 +79,7 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     const store = join(testDirectory, 'long-selected-persistent-store-'.repeat(5));
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       expect(request.cwd).toBe(store);
-      expect(request.env).toEqual({ LIMA_HOME: '.' });
+      expect(request.env).toEqual({ LIMA_HOME: '.', SSH: 'ssh -o StreamLocalBindUnlink=yes' });
       const directory = await stat(store);
       expect(directory.isDirectory()).toBe(true);
       expect(directory.mode & 0o777).toBe(0o700);
@@ -120,7 +147,7 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     expect(await putLimaGuestFile({ executor, ...identity, guestPath: '/tmp/private-enrollment', bytes: payload })).toEqual({ kind: 'written' });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin).toEqual(payload);
-    expect(shell?.env).toEqual({ LIMA_HOME: '.' });
+    expect(shell?.env).toEqual({ LIMA_HOME: '.', SSH: 'ssh -o StreamLocalBindUnlink=yes' });
     expect(shell?.cwd).toBe(identity.store);
     expect(shell?.args?.slice(-2)).toEqual(['/tmp/private-enrollment', '0600']);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);
