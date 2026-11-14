@@ -240,10 +240,14 @@ function sameCandidateRows(left: readonly PluginExecutionOriginCandidateV1[], ri
     return left.length === right.length && left.every((candidate, index) => candidate === right[index]);
 }
 
-function readInventoryMachineFact(homes: ReadonlyMap<string, InventoryHome>, target: PluginExecutionOriginContextualTarget): InventoryMachineFact {
-    const home = homes.get(target.serverIdentityId);
-    return home?.rows.get(target.machineId)?.fact ?? { activeAt: 0, eligible: false,
-        rejection: resolveFleetSnapshotMachineRejection({ snapshot: home?.snapshot, machine: undefined }) };
+// Hermes keeps the reader's creation frame. Capture only these Homes, never
+// the publishing frame containing the preceding inventory generation.
+function createInventoryMachineFactReader(homes: ReadonlyMap<string, InventoryHome>): PluginExecutionOriginMachineFactReader {
+    return target => {
+        const home = homes.get(target.serverIdentityId);
+        return home?.rows.get(target.machineId)?.fact ?? { activeAt: 0, eligible: false,
+            rejection: resolveFleetSnapshotMachineRejection({ snapshot: home?.snapshot, machine: undefined }) };
+    };
 }
 
 function candidateFact(candidate: PluginExecutionOriginCandidateV1) {
@@ -700,7 +704,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             context.inventory = { snapshots, pendingHomes, contentPendingHomes, state, homes, changedTargets, fullRefresh: !previous,
                 activeServerIdentityId: getServerProfileById(context.inputs.activeServerId)?.serverIdentityId ?? '',
                 reachabilityRevision: revision,
-                readMachineFact: target => readInventoryMachineFact(homes, target) };
+                readMachineFact: createInventoryMachineFactReader(homes) };
             // New storage carriers are not new demand facts. Keep the current
             // row coordinates for later exact updates without waking demands.
             if (previous && snapshots === previous.snapshots && changedTargets.length === 0
@@ -767,7 +771,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         snapshots[snapshotIndex] = nextSnapshot;
         context.inventory = { ...previous, snapshots: Object.freeze(snapshots), homes, state,
             changedTargets, fullRefresh: false,
-            readMachineFact: target => readInventoryMachineFact(homes, target) };
+            readMachineFact: createInventoryMachineFactReader(homes) };
         for (const demand of context.demands) publishDemand(demand);
     }
 

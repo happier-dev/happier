@@ -76,6 +76,50 @@ function fixture() {
 }
 
 describe('execution-origin Machine publication', () => {
+    it.each(['census', 'incremental'] as const)('collects superseded inventories after %s updates while the current reader remains usable', async mode => {
+        const { inputs, home, machine, now } = fixture();
+        let state = storage.getState();
+        let publishState: () => void = () => {};
+        let publishUpdate: (serverId: string, machineIds: readonly string[]) => void = () => {};
+        // Inject only the storage delivery boundary; projection and activity owners stay real.
+        const publication = createExecutionOriginMachineSnapshotPublication({ readState: () => state,
+            subscribeState: listener => { publishState = listener; return () => {}; },
+            subscribeMachineUpdates: listener => { publishUpdate = listener; return () => {}; } });
+        const connection = publication.connect(inputs, () => {});
+        connections.push(connection);
+        const superseded: WeakRef<object>[] = [];
+        const controls: WeakRef<object>[] = [];
+        let currentMachine = machine;
+        function advance(round: number) {
+            if (mode === 'census') {
+                currentMachine = { ...currentMachine, activeAt: now + round, updatedAt: round + 1 };
+                publishMachineActivities([{ machine: currentMachine, activity: currentMachine, projections: [] }]);
+                state = { ...state, machineListByServerId: { [home.id]: [currentMachine] } };
+                publishState();
+            } else {
+                publishMachineActivities([{ machine: currentMachine,
+                    activity: { active: true, activeAt: now + round }, projections: [] }]);
+                publishUpdate(home.id, [currentMachine.id]);
+            }
+            if (round < 8) superseded.push(new WeakRef(connection.readCurrent().snapshots));
+            controls.push(new WeakRef({}));
+        }
+        for (let round = 1; round <= 8; round++) advance(round);
+        const current = new WeakRef(connection.readCurrent().snapshots);
+        setFlagsFromString('--expose-gc');
+        const collect: () => void = runInNewContext('gc');
+        setFlagsFromString('--no-expose-gc');
+        await setImmediate();
+        collect();
+        expect(controls.filter(ref => ref.deref())).toHaveLength(0);
+        expect(superseded.filter(ref => ref.deref())).toHaveLength(0);
+        expect(current.deref()).toBeDefined();
+        expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).activeAt)
+            .toBe(now + 8);
+        // Hermes retains creation frames more broadly than V8. The native
+        // companion probe must exercise both paths before closing this regression.
+    });
+
     it('collects superseded selections while their Account-bound connection remains subscribed', async () => {
         const { inputs, home, connect } = fixture();
         const account = await activateStorageAccountScope({ serverId: home.id, accountId: 'account-count' }, storage);
