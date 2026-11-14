@@ -412,7 +412,12 @@ beforeEach(async () => {
         },
         failure: value => {
             const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
-            return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
+            return result.success && !result.data.ok ? {
+                errorCode: result.data.code, error: result.data.code,
+                failureCause: result.data.failureCause,
+                requestId: result.data.requestId,
+                effectAttempted: result.data.effectAttempted,
+            } : null;
         },
     });
     await sync.refreshMachines({ serverId: SERVER_ID });
@@ -796,7 +801,7 @@ describe('AutomationHistoryGapRecoveryAction', () => {
 
     it('keeps an unavailable recovery visible, announced, and retryable while source status remains authoritative', async () => {
         const currentAutomation = automationForScreen();
-        actionResult = { ok: false, code: 'plugin_action_failed', message: 'do-not-disclose' };
+        actionResult = { ok: false, code: 'plugin_action_failed', message: 'do-not-disclose', failureCause: { phase: 'github.automation.baseline', errorClass: 'TypeError', errorCode: 'EIO', httpStatus: 200 } };
 
         const { AutomationHistoryGapRecoveryAction } = await import('./AutomationHistoryGapRecoveryAction');
         const screen = await renderScreen(React.createElement(AutomationHistoryGapRecoveryAction, {
@@ -824,6 +829,12 @@ describe('AutomationHistoryGapRecoveryAction', () => {
             }),
         }));
         expect(screen.findByTestId('automation-history-gap-recovery-retry')).not.toBeNull();
+        const { TechnicalDetailsDisclosure } = await import('@/components/ui/lists/TechnicalDetailsDisclosure');
+        const details = screen.findAllByType(TechnicalDetailsDisclosure)[0];
+        expect(details?.props.lines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'causePhase', value: 'github.automation.baseline' }),
+            expect.objectContaining({ key: 'causeCode', value: 'EIO' }),
+        ]));
         expect(screen.getTextContent()).not.toContain('do-not-disclose');
         expect(readAutomationHistoryGapRecoveryStatus(currentAutomation, TRIGGER_ID)).toEqual(
             readEventTrigger(currentAutomation).sourceStatus,

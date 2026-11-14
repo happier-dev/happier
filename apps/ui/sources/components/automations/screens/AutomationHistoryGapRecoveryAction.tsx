@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { HappierBanner } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -13,6 +14,8 @@ import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDa
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 
@@ -77,6 +80,7 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     const operationRef = React.useRef<AbortController | null>(null);
     const [recovering, setRecovering] = React.useState(false);
     const [recoveryFailed, setRecoveryFailed] = React.useState(false);
+    const [failurePresentation, setFailurePresentation] = React.useState<PluginUiActionFailurePresentationV1 | null>(null);
     React.useEffect(() => () => operationRef.current?.abort(), []);
     const presentationTheme = usePluginUiTheme(theme);
 
@@ -117,6 +121,12 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
                     // clears this presentation. A successful-looking Action result
                     // cannot clear source attention.
                     setRecoveryFailed(true);
+                    setFailurePresentation(outcome.failure ? presentActionExecutionFailure({
+                        errorCode: outcome.failure.code,
+                        failureCause: outcome.failure.failureCause,
+                        requestId: outcome.failure.requestId,
+                        effectAttempted: outcome.failure.effectAttempted,
+                    }) : null);
                 }
             } finally {
                 if (operationRef.current === operation) operationRef.current = null;
@@ -140,7 +150,7 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     const presentation = readHistoryGapRecoveryPresentation({ projectionPhase: projection.phase, canRecover, recovering, recoveryFailed });
     const failed = presentation === 'failed';
     return (
-        <HappierBanner
+        <><HappierBanner
             testID={failed ? 'automation-history-gap-recovery-failure' : 'automation-history-gap-recovery'}
             tone="warning"
             theme={presentationTheme}
@@ -160,5 +170,9 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
                 />
             )}
         />
+        {failed && failurePresentation ? <TechnicalDetailsDisclosure
+            title={t('workflows.run.technicalDetails')}
+            lines={failurePresentation.technicalDetails}
+        /> : null}</>
     );
 }

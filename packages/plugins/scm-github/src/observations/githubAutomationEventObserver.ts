@@ -431,7 +431,16 @@ function parseRepositoryEventPayload(input: Readonly<{
   raw: JsonRecord;
   repository: GithubRepositorySourceConfigV1;
   eventLocalId?: GithubAutomationEventLocalIdV1;
+  eventLocalIds?: readonly GithubAutomationEventLocalIdV1[];
 }>): ReturnType<typeof normalizeGithubAutomationEvent> | null {
+  // Repository timelines mix Event families. Validate payload facts only for
+  // subscribers to that family; unrelated entries still establish continuity.
+  const accepts = (id: GithubAutomationEventLocalIdV1) => input.eventLocalIds === undefined || input.eventLocalIds.includes(id);
+  if (input.raw.type === 'PushEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push)) return null;
+  if (input.raw.type === 'IssuesEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened)) return null;
+  if (input.raw.type === 'PullRequestEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened)
+    && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestMerged)
+    && input.eventLocalId !== GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) return null;
   const rawPayload = isRecord(input.raw.payload) ? input.raw.payload : null;
   if (rawPayload === null) {
     if (
@@ -482,7 +491,7 @@ function parseRepositoryEventPayload(input: Readonly<{
       }),
     }));
   }
-  if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'opened') {
+  if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'opened' && accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened)) {
     const pullRequest = isRecord(rawPayload.pull_request) ? rawPayload.pull_request : null;
     if (pullRequest === null) {
       throw new GithubRepositoryEventsHistoryGapError('GitHub opened pull request Event lacks pull request facts');
@@ -500,7 +509,7 @@ function parseRepositoryEventPayload(input: Readonly<{
       }),
     }));
   }
-  if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'closed') {
+  if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'closed' && accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestMerged)) {
     const pullRequest = isRecord(rawPayload.pull_request) ? rawPayload.pull_request : null;
     if (pullRequest === null || pullRequest.merged !== true) return null;
     return normalizeGithubAutomationEvent(Object.freeze({
@@ -554,7 +563,7 @@ function normalizeGithubRepositoryEventTimeline(
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry changed its immutable repository');
   }
   const legacy = eventLocalIds?.every(id => id === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) ? null
-    : parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository });
+    : parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository, eventLocalIds });
   const lifecycle = value.type === 'PullRequestEvent' && eventLocalIds?.includes(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle)
     ? parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle }) : null;
   const observations = [legacy, lifecycle].flatMap(normalized => normalized === null

@@ -4,7 +4,7 @@ import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUse
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { readActionOperationTerminalResultV1, type ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
@@ -145,7 +145,8 @@ export type MachinePluginUiTargetedContributionsReadResult =
     }>;
 
 export type MachinePluginTargetedSourceDeclarationsReadResult =
-    | Readonly<{ supported: true; sourceDeclarations: readonly DaemonPluginTargetedSourceDeclarationV1[] }>
+    | Readonly<{ supported: true; sourceDeclarations: readonly DaemonPluginTargetedSourceDeclarationV1[];
+        unavailablePlugins?: SourceDeclarationsAnswer['unavailablePlugins'] }>
     | Extract<MachinePluginUiTargetedContributionsReadResult, Readonly<{ supported: false }>>;
 
 type MachinePluginTargetedReadOptions = Readonly<{
@@ -335,6 +336,8 @@ export async function machineContributionRegistryProjectionDescribe(
         reuseManifest?: boolean;
         /** Captured by the loader before a cold Home inventory may be awaited. */
         locale?: string;
+        /** Observes the admitted manifest before its sections hydrate, so other demand can hydrate beside it. */
+        onManifest?: (manifest: DaemonProjectionDeferredSectionsResponse) => void;
     }> & ProjectionDescribeSelection,
 ): Promise<MachineContributionRegistryProjectionDescribeResult> {
     if (opts?.signal?.aborted) return { supported: false, reason: 'aborted' };
@@ -394,6 +397,7 @@ export async function machineContributionRegistryProjectionDescribe(
             };
             const hydrateResult = async (initialManifest: DaemonProjectionDeferredSectionsResponse): Promise<MachineContributionRegistryProjectionDescribeResult> => {
                 let manifest = initialManifest;
+                opts?.onManifest?.(manifest);
                 try {
                     try { return { supported: true, ...await hydrate(manifest) }; }
                     catch (error) {
@@ -479,7 +483,9 @@ const preparedSourceDeclarations = new WeakMap<SourceDeclarationsAnswer, Machine
 function readPreparedSourceDeclarations(answer: SourceDeclarationsAnswer): MachinePluginTargetedSourceDeclarationsReadResult {
     let prepared = preparedSourceDeclarations.get(answer);
     if (!prepared) {
-        prepared = { supported: true, sourceDeclarations: answer.sourceDeclarations.map(row => ({ ...row,
+        prepared = { supported: true,
+            ...(answer.unavailablePlugins === undefined ? {} : { unavailablePlugins: answer.unavailablePlugins }),
+            sourceDeclarations: answer.sourceDeclarations.map(row => ({ ...row,
             manifest: { ...row.manifest,
                 contributes: preparePluginContributionPointDeclarationsV1(row.manifest.contributes) },
         })) };
@@ -927,6 +933,13 @@ export async function machinePluginSecretDelete(
     }
 }
 
+function projectMachinePluginActionExecutionResponse(result: ActionExecuteResult): DaemonPluginStructuredMessageActionExecuteResponse {
+    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(result.ok
+        ? { ok: true, result: result.result }
+        : { ok: false, code: result.errorCode, message: result.error,
+            failureCause: result.failureCause, requestId: result.requestId, effectAttempted: result.effectAttempted });
+}
+
 export async function machinePluginStructuredMessageActionExecute(
     machineId: string,
     opts: Readonly<Omit<DaemonPluginStructuredMessageActionExecuteRequest, 'machineId' | 'executionSurface'> & {
@@ -998,8 +1011,7 @@ export async function machinePluginStructuredMessageActionExecute(
                     return { supported: true, result: { ok: false, code: 'approval_request_created' } };
                 }
                 if (!result.ok && isActionOutcomeUnknownErrorCodeV1(result.errorCode)) return { supported: false, reason: 'outcomeUnknown' };
-                return { supported: true, result: DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(result.ok
-                    ? { ok: true, result: result.result } : { ok: false, code: result.errorCode, message: result.error }) };
+                return { supported: true, result: projectMachinePluginActionExecutionResponse(result) };
             } finally { account.dispose(); }
         }
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
@@ -1037,8 +1049,7 @@ export async function machinePluginStructuredMessageActionExecute(
             const refusal = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(operation?.result);
             if (refusal.success && !refusal.data.ok) return { supported: true, result: refusal.data };
         }
-        return { supported: true, result: DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(terminal.ok
-            ? { ok: true, result: terminal.result } : { ok: false, code: terminal.errorCode, message: terminal.error }) };
+        return { supported: true, result: projectMachinePluginActionExecutionResponse(terminal) };
     } catch {
         return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
     }

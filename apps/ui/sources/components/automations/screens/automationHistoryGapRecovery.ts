@@ -14,6 +14,7 @@ import {
     type PluginContributedActionDispatch,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import type { PluginSurfaceActionDispatchOutcome } from '@/components/plugins/surfaces/actionFailure';
 import {
     readFreshPluginMachineExecutionOriginCandidates,
     resolveFreshPluginMachineExecutionOrigin,
@@ -32,7 +33,7 @@ import {
 
 type HistoryGapRecoveryOutcome =
     | Readonly<{ kind: 'settled' }>
-    | Readonly<{ kind: 'unavailable' }>
+    | Readonly<{ kind: 'unavailable'; failure?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }> }>
     | Readonly<{ kind: 'stale' }>;
 
 function sameCurrentSourceStatus(
@@ -404,9 +405,8 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
             signal: operationScope.signal,
             isCurrent: current.actionSnapshot.host.isCurrent,
         });
-        return outcome.ok && !operationScope.signal.aborted
-            ? { kind: 'settled' }
-            : { kind: 'unavailable' };
+        if (!outcome.ok) return { kind: 'unavailable', failure: outcome };
+        return operationScope.signal.aborted ? { kind: 'unavailable' } : { kind: 'settled' };
     } catch {
         return { kind: 'unavailable' };
     } finally {

@@ -1,4 +1,5 @@
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { readUnexpectedActionErrorDiagnosticV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginActionInputById,
@@ -282,11 +283,26 @@ export async function resetGithubRepositoryEventHistoryGap(
   if (source === null) {
     return PluginEventAutomationHistoryGapResetActionResultV1Schema.parse({ kind: 'stale' });
   }
-  return PluginEventAutomationHistoryGapResetActionResultV1Schema.parse(
-    await replaceGithubAutomationEventHistoryGapWithBaseline({
-      context,
-      definition: source.definition,
-      isDefinitionCurrent: source.isCurrent,
-    }),
-  );
+  try {
+    return PluginEventAutomationHistoryGapResetActionResultV1Schema.parse(
+      await replaceGithubAutomationEventHistoryGapWithBaseline({
+        context,
+        definition: source.definition,
+        isDefinitionCurrent: source.isCurrent,
+      }),
+    );
+  } catch (error) {
+    context.signal.throwIfAborted();
+    const cause = readUnexpectedActionErrorDiagnosticV1(error);
+    const phase = 'github.automation.baseline';
+    throw withActionFailureDiagnostic(new PluginError({
+      ...(isPluginError(error) ? error.data : {}),
+      code: isPluginError(error) ? error.code : 'plugin_action_execution_failed',
+      message: isPluginError(error) ? error.message : 'GitHub Event baseline failed.',
+      retryable: isPluginError(error) ? error.retryable : false,
+      failureCause: (isPluginError(error) ? error.data.failureCause : undefined) ?? {
+        phase, errorClass: cause.errorClass, errorCode: cause.errorCode, httpStatus: cause.httpStatus,
+      },
+    }), { phase, causeKind: 'native_failure', error });
+  }
 }

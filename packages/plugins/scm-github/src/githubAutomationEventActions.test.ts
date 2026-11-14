@@ -538,6 +538,11 @@ describe('GitHub Automation Event history-gap reset', () => {
         throw new Error(`unexpected Action ${actionId}`);
       }),
     };
+    const httpRequest = vi.fn(async () => jsonResponse([{
+      id: '100', created_at: '2026-11-13T22:00:00Z',
+      repo: { id: 77, name: 'acme/widgets' }, type: 'PullRequestEvent',
+      payload: { action: 'opened', number: 1, pull_request: { id: 1, number: 1, url: 'https://api.github.com/repos/acme/widgets/pulls/1', base: {}, head: {} } },
+    }]));
     const context = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: {
@@ -554,7 +559,7 @@ describe('GitHub Automation Event history-gap reset', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http: createPluginHttpFixture({ request: vi.fn(async () => jsonResponse([])) }),
+        http: createPluginHttpFixture({ request: httpRequest }),
         storage: { account: { collection: vi.fn(() => collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -565,6 +570,7 @@ describe('GitHub Automation Event history-gap reset', () => {
       triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'baselined' });
+
 
     // The provider consumes the persisted source ref through ordinary exact
     // materialization. It never substitutes a listed account or a caller
@@ -589,5 +595,13 @@ describe('GitHub Automation Event history-gap reset', () => {
       { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
       { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
     ]);
+
+    sourcePageCalls = 0;
+    httpRequest.mockResolvedValueOnce(jsonResponse({ invalid: true }));
+    await expect(resetGithubRepositoryEventHistoryGap({
+      automationId: source.automationId, triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision, sourceSelectorId: source.sourceSelectorId,
+    }, context)).rejects.toMatchObject({ data: { failureCause: { phase: 'github.automation.baseline', errorClass: 'Error' } } });
+
   });
 });
