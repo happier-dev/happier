@@ -1,7 +1,7 @@
 import { execFile } from 'child_process';
 import type { ExecOptions } from 'child_process';
 import { constants as fsConstants } from 'fs';
-import { access } from 'fs/promises';
+import { access, stat } from 'fs/promises';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
@@ -388,7 +388,42 @@ async function resolveCliBinaryNames(name: DetectCliName): Promise<readonly stri
     return [name];
 }
 
+// `<cli> --version` results keyed by the binary's identity (path + size + mtime).
+//
+// The snapshot cache above only lasts 30 s, so without this the daemon re-spawns every installed
+// provider CLI each time the app refreshes capabilities. Process creation happens synchronously
+// inside spawn(), even for async execFile, and on Windows it can take many seconds (antivirus
+// scanning a freshly updated binary): one such launch was measured blocking the daemon's event
+// loop for 27 s. A CLI's version only changes when its file changes, so a successful result stays
+// valid until the file's size or mtime changes or an update calls invalidateCliSnapshots().
+const CLI_VERSION_CACHE_MAX_ENTRIES = 64;
+const cliVersionByBinaryIdentity = new Map<string, string>();
+
+async function readCliBinaryIdentity(name: DetectCliName, resolvedPath: string): Promise<string | null> {
+    try {
+        const info = await stat(resolvedPath);
+        return `${name}\0${resolvedPath}\0${info.size}\0${info.mtimeMs}`;
+    } catch {
+        return null;
+    }
+}
+
 async function detectCliVersion(params: { name: DetectCliName; resolvedPath: string; verifyVersion: boolean; probeTimeoutMs: number }): Promise<string | null> {
+    const identity = await readCliBinaryIdentity(params.name, params.resolvedPath);
+    // Verification (right after an update) always probes; the result is still cached below.
+    if (identity && !params.verifyVersion) {
+        const cached = cliVersionByBinaryIdentity.get(identity);
+        if (cached) return cached;
+    }
+    const version = await probeCliVersion(params);
+    if (identity && version) {
+        if (cliVersionByBinaryIdentity.size >= CLI_VERSION_CACHE_MAX_ENTRIES) cliVersionByBinaryIdentity.clear();
+        cliVersionByBinaryIdentity.set(identity, version);
+    }
+    return version;
+}
+
+async function probeCliVersion(params: { name: DetectCliName; resolvedPath: string; verifyVersion: boolean; probeTimeoutMs: number }): Promise<string | null> {
     // Best-effort, must never throw.
     try {
         // Ambient listing keeps each attempt short (runs in parallel for many CLIs) so one retry
@@ -622,6 +657,7 @@ async function resolveCliPathForName(
  */
 export function invalidateCliSnapshots(): void {
     cliSnapshotCache.clear();
+    cliVersionByBinaryIdentity.clear();
 }
 
 /**
