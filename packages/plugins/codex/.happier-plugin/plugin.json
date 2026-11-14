@@ -63,6 +63,7 @@
                 1
               ]
             },
+            "functionTools": true,
             "goals": {
               "active": {
                 "clear": true,
