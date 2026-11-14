@@ -5,10 +5,11 @@ import { InboxArtifactSourceBoundary } from '@/hooks/inbox/useInboxArtifactSourc
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 type Props = Omit<Parameters<typeof ManagedInventorySections>[0], 'inventory' | 'input' | 'query'> & Readonly<{
-    query: ManagedInventoryQuery & Readonly<{ machine: NonNullable<ManagedInventoryQuery['machine']> }>;
+    /** One Machine's own inventory (its Overview), or the Account's (Services → Checks · Watched, no Machine). */
+    query: ManagedInventoryQuery;
 }>;
 
-/** The Overview supplies its routed, admitted Machine. No Settings administration preference is read or written. */
+/** A managed inventory section for one door: the Overview's routed Machine, or the Account's (Services). No Settings administration preference is read or written. */
 export function MachineManagedInventorySection(props: Props): React.ReactNode {
     return <PluginSurfaceFocusEligibilityProvider active={props.query.presented}>
         <InboxArtifactSourceBoundary><MachineInventoryBody {...props} /></InboxArtifactSourceBoundary>

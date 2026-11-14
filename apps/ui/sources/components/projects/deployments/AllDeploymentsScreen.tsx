@@ -31,6 +31,12 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView } from './ServicesViews';
+import { ServiceCheckDetail, ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
+import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 
@@ -72,16 +78,59 @@ export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const selectView = React.useCallback((next: ServicesView) => {
     router.setParams({ view: next === 'apps' ? undefined : next });
   }, [router]);
+  // A Check opens beside the page where a pane fits (the Store's pattern: one body for pane and page), otherwise as
+  // its own page, which is also the pane's Open as page.
+  const besidePage = useDetailsPaneAvailable();
+  const [checkKey, setCheckKey] = React.useState<string | null>(null);
+  const [checkRow, setCheckRow] = React.useState<ManagedConfiguredCheckRow | null>(null);
+  const openCheckPage = React.useCallback((row: ManagedConfiguredCheckRow) => {
+    router.push(`/automations/${encodeURIComponent(row.automationId)}` as never);
+  }, [router]);
+  const selectCheck = React.useCallback((row: ManagedConfiguredCheckRow) => {
+    if (besidePage) setCheckKey(row.key);
+    else openCheckPage(row);
+  }, [besidePage, openCheckPage]);
+  const closeCheck = React.useCallback(() => setCheckKey(null), []);
+  const checks = React.useMemo(() => ({ selectedKey: checkKey, onSelect: selectCheck, onSelectedRow: setCheckRow }),
+    [checkKey, selectCheck]);
+  const shown = view === 'checks' && checkKey !== null && checkRow !== null && besidePage ? checkRow : null;
+  const details = React.useMemo(() => shown ? {
+    header: {
+      title: shown.native.name,
+      actions: (
+        <CorePluginUiPresentationScope>
+          <DetailsPaneOpenAsPageButton testID="services.checks.detailPane.openAsPage"
+            accessibilityLabel={t('capabilities.store.openAsPage')} onPress={() => openCheckPage(shown)} />
+        </CorePluginUiPresentationScope>
+      ),
+    },
+    content: <ItemList testID="services.checks.detail"><ServiceCheckDetail row={shown} /></ItemList>,
+  } : null, [openCheckPage, shown]);
+  const title = t('projects.deployments.services.title');
+  const mainColumn = React.useMemo(() => ({
+    hideLabel: t('panes.mainColumn.hidePage', { title }),
+    showLabel: t('panes.mainColumn.showPage', { title }),
+    identity: { name: title },
+  }), [title]);
   return (
-    <AllDeploymentsView
-      read={read}
-      serverId={lifetime?.scope.serverId ?? null}
-      lifetime={lifetime}
-      presented={demand.visible}
-      controller={read.controller}
-      demand={demand}
-      view={view}
-      onSelectView={selectView}
+    <DetailsPaneHost
+      testID="services.detailPane"
+      mainColumn={mainColumn}
+      onCloseDetails={closeCheck}
+      details={details}
+      main={(
+        <AllDeploymentsView
+          read={read}
+          serverId={lifetime?.scope.serverId ?? null}
+          lifetime={lifetime}
+          presented={demand.visible}
+          controller={read.controller}
+          demand={demand}
+          view={view}
+          onSelectView={selectView}
+          checks={checks}
+        />
+      )}
     />
   );
 });
@@ -100,6 +149,9 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     demand?: DeploymentReadDemandV1;
     view?: ServicesView;
     onSelectView?: (view: ServicesView) => void;
+    /** The Checks view's selection, hosted by the page's details pane. */
+    checks?: Readonly<{ selectedKey: string | null; onSelect: (row: ManagedConfiguredCheckRow) => void;
+      onSelectedRow: (row: ManagedConfiguredCheckRow | null) => void }>;
   }>,
 ) {
   const { read, serverId } = props;
@@ -218,6 +270,11 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       ) : view === 'domains' && props.controller ? (
         <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
           accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} />
+      ) : view === 'checks' && props.checks ? (
+        <ServicesChecksView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible}
+          selectedKey={props.checks.selectedKey} onSelect={props.checks.onSelect} onSelectedRow={props.checks.onSelectedRow} />
+      ) : view === 'watched' ? (
+        <ServicesWatchedView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible} />
       ) : (<>
       {notBackedUpFilter}
       {snapshot.status === 'unavailable' ? (
@@ -290,13 +347,16 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   );
 });
 
-function AllDeploymentsGroups(
+/** Environment rows grouped by Project: the one row (DeploymentEnvironmentCollection parts), also a Machine's What runs here. */
+export function AllDeploymentsGroups(
   props: Readonly<{
     items: readonly EnvironmentItem[];
     serverId: string;
     lifetime: ServerAccountScopeLifetime | null;
     /** Rows shown for "Not backed up" open where that Environment's backups are set up. */
     openBackups?: boolean;
+    /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
+    hereMachine?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -307,7 +367,7 @@ function AllDeploymentsGroups(
     props.items,
     'all-deployments.row',
     props.lifetime,
-    phone ? 'rail' : 'row',
+    phone || props.hereMachine ? 'rail' : 'row',
   );
   const serverId = props.serverId;
   const openBackups = props.openBackups === true;

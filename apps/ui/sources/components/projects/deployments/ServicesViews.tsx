@@ -28,8 +28,8 @@ import {
  * The Services page's views (pfc-redesign svcApps · svcDb · svcDom): one collection seen three ways, so a tab bar.
  * Checks and Watched join when their Account-wide reads exist; a view never computes a fact its owner doesn't report.
  */
-export type ServicesView = 'apps' | 'databases' | 'domains';
-const VIEWS: readonly ServicesView[] = ['apps', 'databases', 'domains'];
+export type ServicesView = 'apps' | 'databases' | 'domains' | 'checks' | 'watched';
+const VIEWS: readonly ServicesView[] = ['apps', 'databases', 'domains', 'checks', 'watched'];
 
 /** The route's `view`, read once: anything else is the Apps view. */
 export function readServicesView(
@@ -44,6 +44,7 @@ export function ServicesViewTabs(
     onSelect: (view: ServicesView) => void;
   }>,
 ) {
+  const overflow = React.useMemo(() => ({ label: t('common.more'), testID: 'services.view.more' }), []);
   const tabs = React.useMemo(
     () => [
       { id: 'apps' as const, label: t('projects.deployments.services.apps') },
@@ -55,6 +56,8 @@ export function ServicesViewTabs(
         id: 'domains' as const,
         label: t('projects.deployments.services.domains'),
       },
+      { id: 'checks' as const, label: t('projects.deployments.services.checks') },
+      { id: 'watched' as const, label: t('projects.deployments.services.watched') },
     ],
     [],
   );
@@ -64,6 +67,8 @@ export function ServicesViewTabs(
         role="tablist"
         segmentSizing="content"
         testIDPrefix="services.view"
+        // Views that don't fit (a phone) move into More, measured by the bar itself (Machine page pattern).
+        overflow={overflow}
         tabs={tabs}
         activeTabId={props.active}
         onSelectTab={props.onSelect}
