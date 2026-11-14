@@ -5,8 +5,11 @@ import {
 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
+import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
+
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
+import { t } from '@/text';
 
 type Checks = Extract<
   ConfiguredHealthResultsState,
@@ -144,4 +147,46 @@ export function readServiceCheckSettings(
     subjectMachineId: source.subject.kind === 'machineService' ? source.subject.machineId : null,
     label: seed.source.displayLabel,
   };
+}
+
+/**
+ * The subject Investigate hands to the one failure-investigation owner: the Domain a Domain-bound check watches, else
+ * the Environment it watches. A Machine-service check needs the service's identity (not on the saved source): none.
+ */
+export function serviceCheckInvestigationSubject(
+  seed: PluginEventAutomationEditSeed | null,
+  checkId: string | null,
+  serverId: string,
+): TriageFailureSubjectV1 | null {
+  if (!seed) return null;
+  const parsed = HealthCheckSourceConfigV1Schema.safeParse(seed.source.sourceConfig);
+  if (!parsed.success || parsed.data.subject.kind !== 'environment') return null;
+  const environmentId = parsed.data.subject.environmentId;
+  const check = parsed.data.checks.find((candidate) => candidate.checkId === checkId) ?? parsed.data.checks[0];
+  return check?.binding.kind === 'domain'
+    ? { kind: 'domain', serverId, environmentId, domainId: check.binding.domainId }
+    : { kind: 'deploymentEnvironment', serverId, environmentId };
+}
+
+/** A Check's state in words, as every Check surface says it (list row, detail facts, latest results). */
+export function serviceCheckStatusWord(status: ServiceCheckStatus): string {
+  switch (status) {
+    case 'up':
+      return t('projects.deployments.healthUp');
+    case 'down':
+      return t('projects.deployments.healthDown');
+    case 'degraded':
+      return t('projects.deployments.healthDegraded');
+    case 'notChecked':
+      return t('projects.deployments.healthNotChecked');
+    case 'loading':
+      return t('common.loading');
+    default:
+      return t('projects.deployments.healthUnknown');
+  }
+}
+
+/** Whether a Check's state needs the person: down is danger, degraded a warning; anything else stays quiet (null). */
+export function serviceCheckStatusTone(status: ServiceCheckStatus): 'danger' | 'warning' | null {
+  return status === 'down' ? 'danger' : status === 'degraded' ? 'warning' : null;
 }

@@ -32,6 +32,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentRailState } from './deploymentPresentation';
+import { buildServiceCheckHref } from './deploymentNavigation';
 import { ServiceCheckDetail } from './ServiceCheckDetail';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
@@ -84,7 +85,7 @@ export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const [checkKey, setCheckKey] = React.useState<string | null>(null);
   const [checkRow, setCheckRow] = React.useState<ManagedConfiguredCheckRow | null>(null);
   const openCheckPage = React.useCallback((row: ManagedConfiguredCheckRow) => {
-    router.push(`/automations/${encodeURIComponent(row.automationId)}` as never);
+    router.push(buildServiceCheckHref({ automationId: row.automationId, triggerId: row.triggerId }) as never);
   }, [router]);
   const selectCheck = React.useCallback((row: ManagedConfiguredCheckRow) => {
     if (besidePage) setCheckKey(row.key);

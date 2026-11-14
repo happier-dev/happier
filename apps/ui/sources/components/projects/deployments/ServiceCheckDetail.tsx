@@ -4,6 +4,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Heatmap } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import {
+  InvestigationAgentActionButtons,
+  type InvestigationAgentActionButtonModel,
+} from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -19,35 +24,21 @@ import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 
 import {
   readServiceCheckFacts,
   readServiceCheckSettings,
+  serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
+  serviceCheckStatusTone,
+  serviceCheckStatusWord,
   type ServiceCheckDay,
   type ServiceCheckSettings,
-  type ServiceCheckStatus,
 } from './serviceCheckPresentation';
 
 const k = 'projects.deployments.services' as const;
 const STRIP_ROWS = [{ id: 'days', label: '' }] as const;
-
-export function serviceCheckStatusWord(status: ServiceCheckStatus): string {
-  switch (status) {
-    case 'up':
-      return t('projects.deployments.healthUp');
-    case 'down':
-      return t('projects.deployments.healthDown');
-    case 'degraded':
-      return t('projects.deployments.healthDegraded');
-    case 'notChecked':
-      return t('projects.deployments.healthNotChecked');
-    case 'loading':
-      return t('common.loading');
-    default:
-      return t('projects.deployments.healthUnknown');
-  }
-}
 
 const unit = (
   value: number,
@@ -80,12 +71,14 @@ type SeedRead = Readonly<{
   seed: PluginEventAutomationEditSeed | null;
 }>;
 
-/** The saved source behind this Check, read once while its detail is open, through the automation edit-seed owner. */
-function useCheckSeed(
-  row: ManagedConfiguredCheckRow,
-): PluginEventAutomationEditSeed | null {
+/**
+ * The saved source behind this Check, read once while its detail is open, through the automation edit-seed owner.
+ * A read that settles without a source says so (`unavailable`) and can be read again; it never reads as no settings.
+ */
+function useCheckSeed(row: ManagedConfiguredCheckRow) {
   const key = `${row.automationId}\n${row.triggerId}`;
   const [read, setRead] = React.useState<SeedRead | null>(null);
+  const [generation, setGeneration] = React.useState(0);
   React.useEffect(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     let alive = true;
@@ -100,8 +93,13 @@ function useCheckSeed(
     return () => {
       alive = false;
     };
-  }, [key, row.automationId, row.triggerId]);
-  return read?.key === key ? read.seed : null;
+  }, [generation, key, row.automationId, row.triggerId]);
+  const retry = React.useCallback(() => {
+    setRead(null);
+    setGeneration((value) => value + 1);
+  }, []);
+  const settled = read?.key === key ? read : null;
+  return { seed: settled?.seed ?? null, unavailable: settled !== null && settled.seed === null, retry };
 }
 
 function dayColor(
@@ -137,15 +135,20 @@ export function ServiceCheckDetail(
   const facts = readServiceCheckFacts(row.lastResults);
   const nowMs = props.nowMs ?? Date.now();
   const pluginTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
-  const seed = useCheckSeed(row);
+  const { seed, unavailable: seedUnavailable, retry: retrySeed } = useCheckSeed(row);
   const shown =
     facts.checks.find(
       (check) =>
-        check.result.status === 'down' || check.result.status === 'degraded',
+        serviceCheckStatusTone(check.result.status) !== null,
     ) ??
     facts.checks[0] ??
     null;
   const settings = readServiceCheckSettings(seed, shown?.checkId ?? null);
+  const serverIdForSubject = row.scope.serverId;
+  const investigateSubject = React.useMemo(
+    () => serviceCheckInvestigationSubject(seed, shown?.checkId ?? null, serverIdForSubject),
+    [seed, shown?.checkId, serverIdForSubject],
+  );
   const serverId = row.scope.serverId;
   const observer = useServerScopedMachineLabel(
     serverId,
@@ -174,7 +177,7 @@ export function ServiceCheckDetail(
   );
   const failing =
     row.native.enabled &&
-    (facts.status === 'down' || facts.status === 'degraded');
+    serviceCheckStatusTone(facts.status) !== null;
   const colors = {
     up: theme.colors.state.success.foreground,
     down: theme.colors.state.danger.foreground,
@@ -199,6 +202,7 @@ export function ServiceCheckDetail(
       : null,
     statusText,
   ].filter((part): part is string => Boolean(part));
+  const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
   const stripFacts: FactStripFact[] = [
     {
       key: 'last',
@@ -206,11 +210,7 @@ export function ServiceCheckDetail(
       value: shown
         ? serviceCheckStatusWord(shown.result.status)
         : serviceCheckStatusWord(facts.status),
-      ...(shown?.result.status === 'down'
-        ? { tone: 'danger' as const }
-        : shown?.result.status === 'degraded'
-          ? { tone: 'attention' as const }
-          : {}),
+      ...(lastTone === 'danger' ? { tone: 'danger' as const } : lastTone === 'warning' ? { tone: 'attention' as const } : {}),
       ...(shown
         ? {
             detail: [
@@ -250,7 +250,7 @@ export function ServiceCheckDetail(
     : null;
   return (
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
-      <View style={styles.meta}>
+      <ItemGroup surface="none" testID="services.check.head">
         <Text
           variant="meta"
           style={styles.metaText}
@@ -258,11 +258,14 @@ export function ServiceCheckDetail(
         >
           {meta.join(' · ')}
         </Text>
-      </View>
+        {failing && investigateSubject ? (
+          <CheckInvestigate subject={investigateSubject} serverId={serverIdForSubject} />
+        ) : null}
+      </ItemGroup>
       {failing ? (
         <AttentionBanner
           testID="services.check.failing"
-          tone={facts.status === 'down' ? 'danger' : 'warning'}
+          tone={serviceCheckStatusTone(facts.status) ?? 'warning'}
           title={t(
             facts.status === 'down'
               ? `${k}.checkFailingTitle`
@@ -394,6 +397,15 @@ export function ServiceCheckDetail(
             onPress={openEditor}
           />
         ) : null}
+        {seedUnavailable ? (
+          <Item
+            testID="services.check.settings.unavailable"
+            title={t('automations.form.trigger.sourceUnavailable')}
+            detail={t('common.retry')}
+            onPress={retrySeed}
+            showChevron={false}
+          />
+        ) : null}
         <Item
           testID="services.check.settings.paused"
           title={t(`${k}.paused`)}
@@ -407,6 +419,40 @@ export function ServiceCheckDetail(
           }
         />
       </ItemGroup>
+    </View>
+  );
+}
+
+const CHECK_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
+
+/** Investigate a failing Check through the one failure-investigation owner, on the subject its source watches. */
+function CheckInvestigate(props: Readonly<{ subject: NonNullable<ReturnType<typeof serviceCheckInvestigationSubject>>; serverId: string }>) {
+  const investigation = useInvestigateFailure(props.subject, CHECK_AGENT_ACTIONS);
+  // Until the catalog answers, the one Investigate the failure pages show (MachineServicePage's fallback).
+  const fallback = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [
+    { label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true },
+  ], []);
+  const actions = investigation.actions ?? fallback;
+  return (
+    <View style={styles.actions} testID="services.check.investigate">
+      <InvestigationAgentActionButtons
+        actions={actions}
+        pending={investigation.pending}
+        compact={false}
+        onLaunch={(mode, actionId) => {
+          void investigation.launch(mode, actionId);
+        }}
+      />
+      {investigation.showOutcome && investigation.outcome ? (
+        <InvestigationOutcomeBanner
+          outcome={investigation.outcome}
+          serverId={props.serverId}
+          testID="services.check.investigate.outcome"
+          onChoosePlacement={investigation.investigateWithPlacement}
+          pending={investigation.pending}
+          placement="inline"
+        />
+      ) : null}
     </View>
   );
 }
@@ -427,8 +473,8 @@ function kindWord(kind: NonNullable<ServiceCheckSettings['kind']>): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  meta: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s4 },
   metaText: { color: theme.colors.text.secondary },
+  actions: { paddingTop: theme.space.s12, gap: theme.space.s8, alignItems: 'flex-start' },
   strip: { paddingHorizontal: theme.space.s16 },
   mono: { ...Typography.mono(), color: theme.colors.text.secondary },
 }));

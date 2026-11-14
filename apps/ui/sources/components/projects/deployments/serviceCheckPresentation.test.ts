@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   readServiceCheckFacts,
   readServiceCheckSettings,
+  serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
 } from './serviceCheckPresentation';
 
@@ -138,5 +139,38 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
     ]), { kind: 'durablePush', webhookEndpointId: 'w', webhookRoutingSourceInstanceId: 'health:x' }), null);
     expect(settings).toMatchObject({ kind: 'tcp', address: 'db.internal:5432', expectStatus: null, keyword: null,
       observerMachineId: null, alertChannels: 0 });
+  });
+});
+
+describe('Investigate on a failing Check names the subject its saved source watches', () => {
+  const seed = (sourceConfig: unknown) => ({
+    automationId: 'automation-a', triggerId: 'trigger-a', expectedTriggerRevision: 1, enabled: true,
+    eventRef: { pluginId: 'happier.machine.services', localId: 'changed' },
+    source: { v: 1, sourceInstanceId: 'health:x', sourceContractVersion: 1, sourceConfig, displayLabel: 'Check' },
+    observation: { kind: 'socket', watcherMaterializationRef: { machineId: 'm', pluginId: 'p', materializationId: 'x' } },
+    filter: null, maximumObservationAgeMs: null,
+  }) as never;
+  const check = (checkId: string, binding: unknown) => ({
+    checkId, kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding, config: { keyword: 'ok' },
+    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1,
+  });
+  const environment = { kind: 'environment', environmentId: 'env-a' };
+
+  it('a Domain-bound check investigates that Domain; another check on the Environment investigates the Environment', () => {
+    const config = { v: 1, subject: environment, checks: [
+      check('domain', { kind: 'domain', domainId: 'domain-a', targetLinkId: 'link-a', condition: 'domain_probe_failed' }),
+      check('aggregate', { kind: 'environmentHealth', domainId: 'domain-b', targetLinkId: 'link-a' }),
+    ] };
+    expect(serviceCheckInvestigationSubject(seed(config), 'domain', 'server-a'))
+      .toEqual({ kind: 'domain', serverId: 'server-a', environmentId: 'env-a', domainId: 'domain-a' });
+    expect(serviceCheckInvestigationSubject(seed(config), 'aggregate', 'server-a'))
+      .toEqual({ kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'env-a' });
+  });
+
+  it('a Machine service check has no subject until the service identity is read; no source, no subject', () => {
+    const config = { v: 1, subject: { kind: 'machineService', machineId: 'm', serviceId: 's' },
+      checks: [check('svc', { kind: 'healthCheck' })] };
+    expect(serviceCheckInvestigationSubject(seed(config), 'svc', 'server-a')).toBeNull();
+    expect(serviceCheckInvestigationSubject(null, null, 'server-a')).toBeNull();
   });
 });

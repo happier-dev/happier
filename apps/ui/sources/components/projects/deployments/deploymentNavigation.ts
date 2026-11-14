@@ -3,6 +3,22 @@ import type { DeploymentEnvironmentSettingsSectionV1, DeploymentEnvironmentTabV1
 /** The Services page: every app, database, domain and check this Account runs (formerly All deployments). */
 export const SERVICES_ROUTE = '/projects/deployments';
 
+/** One saved Check (an Automation's health trigger) as its own Services page; the details pane's Open as page. */
+export const SERVICE_CHECK_ROUTE = '/projects/deployments/check';
+
+export type ServiceCheckAddress = Readonly<{ automationId: string; triggerId: string }>;
+
+export function buildServiceCheckHref(input: ServiceCheckAddress): string {
+    return `${SERVICE_CHECK_ROUTE}?automation=${encodeURIComponent(input.automationId)}&trigger=${encodeURIComponent(input.triggerId)}`;
+}
+
+export function readServiceCheckRouteParams(params: Readonly<Record<string, string | string[] | undefined>>): ServiceCheckAddress | null {
+    const automationId = params.automation;
+    const triggerId = params.trigger;
+    return typeof automationId === 'string' && automationId && typeof triggerId === 'string' && triggerId
+        ? { automationId, triggerId } : null;
+}
+
 type DeploymentEnvironmentAddress = Readonly<{
     serverId: string; projectSourceId: string; environmentId: string; deploymentId?: string; tab?: DeploymentEnvironmentTabV1;
     /** A Settings section, opened in place on the Settings tab. */
