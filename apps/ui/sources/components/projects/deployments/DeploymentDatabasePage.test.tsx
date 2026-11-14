@@ -7,6 +7,7 @@ import {
   createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptDetailV1,
   createDeploymentSecretVariableBindingV1,
+  createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentBackupActionInputSchemasV1, deploymentBackupPolicyV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -141,6 +142,7 @@ async function renderDatabase(
     moveDestination?: boolean;
     moveCopySucceeds?: boolean;
     moveDestinationUnprotected?: boolean;
+    moveManagedDestination?: boolean;
   }> = {},
 ) {
   await homes.reset();
@@ -223,8 +225,15 @@ async function renderDatabase(
   } });
   const moved = createDeploymentEnvironmentDetailV1({
     environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated' },
-    targetLinks: detail.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
-      id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
+    targetLinks: input.moveManagedDestination ? [{ targetLink: createDeploymentTargetLinkHeaderV1({
+      id: 'target-database-dedicated', environmentId: 'database-dedicated', role: 'data', targetKind: 'neon', machines: [], members: [],
+      source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
+    }), content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
+      providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'owner',
+        purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
+        target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } }]
+      : detail.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+        id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
     content: { ...detail.content, name: 'Dedicated Postgres',
       backup: input.moveDestinationUnprotected ? undefined : { ...backup,
         ownership: { environmentId: 'database-dedicated', prefix: 'dedicated/' } },
@@ -696,6 +705,23 @@ describe('Environment → Database → Read-only query', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it('explains unsupported managed import without starting a copy or offering cutover', async () => {
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, storedDefinition: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle('project-deployments.move.destination:database-dedicated');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      await view.settle('project-deployments.move.destination.unavailable');
+      await waitForHomeGovernance(() => expect(view.screen.findAllByType(SurfaceStateCard)
+        .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported'));
+      expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
+      expect(view.screen.findByTestId('project-deployments.move.review')).toBeNull();
+      expect(view.effects.filter(effect => effect.actionId !== 'deployments.backups.history')).toEqual([]);
+    } finally { view.dispose(); }
+  });
+
   it('requires destination backups before copying into an already provisioned database', async () => {
     const view = await renderDatabase({ moveDestination: true, moveDestinationUnprotected: true, storedDefinition: true });
     try {

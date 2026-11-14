@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { deploymentBackupCaptureChoices, deploymentRestoreOperands, readDeploymentRestorePreparation } from './deploymentRestore';
+import { deploymentBackupCaptureChoices, deploymentDatabaseMoveDestination, deploymentRestoreOperands, readDeploymentRestorePreparation } from './deploymentRestore';
 import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployment-protocol';
 import { DeploymentBackupInventoryResultV1Schema, type DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
@@ -18,6 +18,21 @@ it('retains the canonical SQLite destination and its service-owned path from res
 });
 
 describe('database copy restore operands', () => {
+  it.each(['neon', 'supabase'])('returns typed unavailable for a %s move without a supported import', provider => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const targetLink = createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: provider,
+      machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: `happier.deploy.${provider}`, localId: 'database' } } });
+    const destination = { ...base, runtimeTargetLink: null,
+      targetLinks: [{ targetLink, content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project',
+        providerEnvironment: 'main' }, providerEnvironment: { kind: 'custom' as const, id: 'main' } } }] };
+    expect(deploymentDatabaseMoveDestination(destination)).toEqual({ kind: 'unavailable', reason: 'unsupported' });
+    // A verified source capture cannot turn an undeclared provider import into native restore operands.
+    expect(deploymentRestoreOperands({ ...base, runtimeTargetLink: base.targetLinks[0]!.targetLink },
+      { deploymentId: 'source-deploy', restoreBackupId: 'snapshot', takenAtMs: 1,
+        service: 'postgres', database: 'shop', versionLabel: null },
+      { detail: destination, service: 'database', database: 'shop', backupOperationId: 'verified-source-backup' })).toBeNull();
+  });
+
   it('addresses the destination while retaining the source capture identity', () => {
     const source = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: createDeploymentTargetLinkHeaderV1() };
     const destination = { ...source, environment: { ...source.environment, id: 'dedicated-database', revision: 8 },

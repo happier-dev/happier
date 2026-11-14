@@ -18,9 +18,8 @@ import { showDeploymentRestoreSheet } from './DeploymentRestoreSheet';
 import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
-import { deploymentDataTargetOperands, deploymentRestoreOperands } from './deploymentRestore';
+import { deploymentDatabaseMoveDestination, deploymentRestoreOperands } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { isPrivateServiceExport } from './privateServiceExport';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
@@ -41,30 +40,13 @@ export function showDeploymentDatabaseMoveSheet(input: Input): void {
     title: t('projects.deployments.databaseMoveTitle'), testID: 'project-deployments.move.modal', closeOnBackdrop: false });
 }
 
-/** Selecting a destination reads its template and ordinary bindings; credentials never pass through the form. */
-function readMoveDestination(detail: Detail | null) {
-  if (!detail || !deploymentDataTargetOperands(detail)) return null;
-  const data = detail.content.template?.data;
-  if (data?.length !== 1 || data[0]?.engine !== 'postgres') return null;
-  const database = data[0];
-  const shared = detail.content.ownServer?.serviceExports?.find(entry => entry.service === database.service && isPrivateServiceExport(entry));
-  const publicValue = (name: string | undefined) => detail.content.bindings.find(binding => binding.purpose === 'variable'
-    && binding.phase === 'runtime' && binding.name === name && binding.source.kind === 'value');
-  const user = publicValue(database.variables?.username);
-  const db = publicValue(database.variables?.database);
-  const password = detail.content.bindings.find(binding => binding.purpose === 'variable' && binding.phase === 'runtime'
-    && binding.name === database.variables?.password && binding.source.kind === 'secret');
-  if (!shared || user?.source.kind !== 'value' || db?.source.kind !== 'value' || password?.source.kind !== 'secret') return null;
-  return { sourceService: database.service, destinationEnvironmentId: detail.environment.id, exportKey: shared.key,
-    username: user.source.value, database: db.source.value, password: password.source };
-}
-
 function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = useDeploymentEnvironmentRecord(props.controller, selectedId, { mounted: true, visible: true, focused: true });
   const destination = selected.snapshot.value;
-  const destinationBackupConfigured = destination?.content.backup !== undefined && 'configRevision' in destination.content.backup;
-  const selection = destinationBackupConfigured ? readMoveDestination(destination) : null;
+  const destinationDecision = deploymentDatabaseMoveDestination(destination);
+  const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
+  const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
   const [busy, setBusy] = React.useState(false);
   const [code, setCode] = React.useState<string | null>(null);
   const select = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
@@ -122,10 +104,11 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'failed' : 'loading'}`} size="line"
         kind={selected.snapshot.status === 'ready' ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'error' : 'loading'}
         title={selected.snapshot.status === 'ready' || selected.snapshot.status === 'unavailable'
-          ? selected.snapshot.status === 'ready' && !destinationBackupConfigured
+          ? destinationRefusal === 'unsupported' ? t('common.unavailable') : destinationRefusal === 'backup_required'
             ? t('projects.deployments.databaseMoveBackupsRequired') : t('projects.deployments.databaseMoveSelectionUnavailable')
           : t('projects.deployments.loading')}
-        diagnosticCode={selected.snapshot.failure?.code} /> : null}
+        diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
+        reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined} /> : null}
       {code ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
         title={t('projects.deployments.restoreRefused')} diagnosticCode={code} reason={deploymentActionRefusalRemedy(code)} /> : null}
       {setChrome ? null : footer}
