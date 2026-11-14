@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { type LayoutChangeEvent, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
 import {
   normalizeSessionListFilterV1,
@@ -8,11 +7,9 @@ import {
 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import { SessionListStoredFilterEditor } from '@/components/sessions/shell/search/SessionListStoredFilterEditor';
-import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 
-import { AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
+import { SessionTalkStepBack } from './SessionTalkStepBack';
 
 /**
  * Matching reads one Home's Sessions: the preview resolves on this session's Home (an empty Home list
@@ -45,7 +42,6 @@ export function SessionTalkMatchingStep(
     frameHeight?: number;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const { onFilterChange, serverId } = props;
   const [backHeight, setBackHeight] = React.useState(0);
   const onBackLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -55,21 +51,7 @@ export function SessionTalkMatchingStep(
   return (
     <View testID="session-talk-matching">
       <View onLayout={onBackLayout}>
-        <Item
-          testID="session-talk-matching-back"
-          rowRole="menu"
-          showChevron={false}
-          showDivider={false}
-          icon={
-            <Icon
-              name="caret-left"
-              size={AGENT_INPUT_MENU_ICON_SIZE_PX}
-              color={theme.colors.text.secondary}
-            />
-          }
-          title={t('common.back')}
-          onPress={props.onBack}
-        />
+        <SessionTalkStepBack testID="session-talk-matching-back" onBack={props.onBack} />
       </View>
       <SessionListStoredFilterEditor
         serverId={serverId}

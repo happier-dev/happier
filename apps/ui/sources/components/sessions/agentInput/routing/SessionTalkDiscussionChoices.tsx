@@ -12,6 +12,7 @@ import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscu
 import { t } from '@/text';
 
 import { AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
+import { SessionTalkStepBack } from './SessionTalkStepBack';
 
 /**
  * The To picker's Discussion step: this session's active Discussions, read from the same anchored list People
@@ -26,26 +27,8 @@ export function SessionTalkDiscussionChoices(
     onBack: () => void;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
-  const iconColor = theme.colors.text.secondary;
-  const back = (
-    <Item
-      testID="session-talk-discussion-back"
-      rowRole="menu"
-      showChevron={false}
-      showDivider={false}
-      icon={
-        <Icon
-          name="caret-left"
-          size={AGENT_INPUT_MENU_ICON_SIZE_PX}
-          color={iconColor}
-        />
-      }
-      title={t('common.back')}
-      onPress={props.onBack}
-    />
-  );
+  const back = <SessionTalkStepBack testID="session-talk-discussion-back" onBack={props.onBack} />;
   return (
     <>
       {back}

@@ -7,6 +7,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { Text } from '@/components/ui/text/Text';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
@@ -131,6 +132,9 @@ function ComposerFields(props: Readonly<{
     const [toolsOpen, setToolsOpen] = React.useState(false);
     const { changeDirectory, clearDirectory, placementCandidates } = useRecipeFolderChoice(props.model);
     return (
+        // A form wherever it is hosted (a sheet, the composer's To menu): the narrow host's page anatomy (flat
+        // sections, one inset, bordered fields), never the menu's grouped look or cards inside a popover.
+        <SidePaneInspectorSections>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
             {/* Who runs it first, then where (lab flows `sel`): the agent's fields lead the recipe. */}
             <ItemGroup>
@@ -256,6 +260,7 @@ function ComposerFields(props: Readonly<{
                 </Text>
             ) : null}
         </ScrollView>
+        </SidePaneInspectorSections>
     );
 }
 

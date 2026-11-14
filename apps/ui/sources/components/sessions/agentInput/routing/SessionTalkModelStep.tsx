@@ -5,11 +5,13 @@ import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessi
 import { SessionServerStartDraftComposerBody } from '@/components/sessions/new/SessionServerStartDraftComposerBody';
 import { useSessionServerStartDraftRecipe } from '@/components/sessions/new/useSessionServerStartDraftRecipe';
 import type { SessionServerStartDraftSeed, SessionServerStartDraftTarget } from '@/components/sessions/new/serverStartDraftComposer';
-import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+
+import { SessionTalkStepBack } from './SessionTalkStepBack';
 
 /** A value-only New Session recipe inside To. Only the composer's Send starts it. */
 export function SessionTalkModelStep(props: Readonly<{
@@ -21,8 +23,7 @@ export function SessionTalkModelStep(props: Readonly<{
 }>) {
     const model = useSessionServerStartDraftRecipe(props);
     return <View testID="session-talk-model" style={[styles.root, props.frameHeight ? { height: props.frameHeight } : undefined]}>
-        <Item testID="session-talk-model-back" rowRole="menu" title={t('common.back')}
-            showChevron={false} showDivider={false} onPress={props.onBack} />
+        <SessionTalkStepBack testID="session-talk-model-back" onBack={props.onBack} />
         <View style={styles.body}>
             <SessionServerStartDraftComposerBody seed={props.seed} model={model} />
         </View>
@@ -43,5 +44,5 @@ const styles = StyleSheet.create(theme => ({
     root: { minHeight: 0 },
     body: { flex: 1, minHeight: 0 },
     footer: { gap: theme.space.s8, padding: theme.space.s12 },
-    fact: { color: theme.colors.text.secondary, fontSize: 13 },
+    fact: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
 }));
