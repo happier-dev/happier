@@ -85,9 +85,12 @@ function selectSchemaRows(protocol, keys, readSource) {
   const helperBindings = (path, helper, bindings = new Map()) => {
     const locals = new Map(bindings);
     for (const statement of helper.body.statements) {
-      if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      if (!ts.isVariableStatement(statement)) continue;
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+        if (!ts.isIdentifier(declaration.name)) continue;
+        // Mutable locals still shadow the caller, even though their value is not statically readable.
+        locals.set(declaration.name.text, null);
+        if ((statement.declarationList.flags & ts.NodeFlags.Const) && declaration.initializer) {
           locals.set(declaration.name.text, { path, node: declaration.initializer });
         }
       }
@@ -98,7 +101,8 @@ function selectSchemaRows(protocol, keys, readSource) {
     let node = unwrapped(expression);
     if (ts.isIdentifier(node)) {
       const local = bindings.get(node.text);
-      if (local) return property(local.path, local.node, key, bindings);
+      if (local) return property(local.path, local.node, key, local.bindings ?? bindings);
+      if (bindings.has(node.text)) return null;
       const found = variable(path, node.text);
       return found ? property(found.path, found.node, key) : null;
     }
@@ -116,7 +120,7 @@ function selectSchemaRows(protocol, keys, readSource) {
         const argumentsByName = helperBindings(path, helper, bindings);
         helper.parameters.forEach((parameter, index) => {
           if (ts.isIdentifier(parameter.name) && node.arguments[index]) {
-            argumentsByName.set(parameter.name.text, { path, node: unwrapped(node.arguments[index]) });
+            argumentsByName.set(parameter.name.text, { path, node: unwrapped(node.arguments[index]), bindings });
           }
         });
         // Inspect the declared return object only; runtime metadata never executes.

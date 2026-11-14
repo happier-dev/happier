@@ -197,6 +197,12 @@ export type AutomationEventCheckpointRetirementsV1 = z.infer<
 
 export const AutomationEventSourcesListInputV1Schema = lazyZodSchema(() => z.strictObject({
   transport: AutomationEventSourcesListTransportV1Schema,
+  // Occurrence admission selects at the adopted query owner; omission lists the catalog.
+  source: z.optional(z.strictObject({
+    eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
+    sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
+    sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
+  })),
   pageSize: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE)), MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE),
   cursor: z.optional(OPAQUE_CURSOR_SCHEMA),
   knownRevision: zMini.optional(UNSIGNED_DECIMAL_BIGINT_SCHEMA),

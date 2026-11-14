@@ -73,7 +73,9 @@ export type AutomationEventAdmitPreparedRequestSequenceV1 = AsyncIterableIterato
 
 export type AutomationEventAdoptedDefinitionSetV1 = Readonly<{
   refresh(signal?: AbortSignal): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1>;
-  readPublicProjection():
+  readPublicProjection(request?: Readonly<{
+    definitions: readonly AutomationEventAdmitInputV1['definitions'][number][];
+  }>):
     | Readonly<{ kind: 'initializing' }>
     | Readonly<{
         kind: 'available';
@@ -128,6 +130,7 @@ type AdoptedSnapshot = Readonly<{
   accountCurrentness: AutomationAccountCurrentnessWitnessV1;
   definitions: readonly AutomationEventAdoptedDefinitionV1[];
   definitionsByAdmissionKey: ReadonlyMap<string, AutomationEventAdoptedDefinitionSnapshotRecordV1>;
+  definitionsBySource: ReadonlyMap<string, readonly AutomationEventAdoptedDefinitionV1[]>;
 }>;
 
 type PublicProjectionCursor = Readonly<{
@@ -196,6 +199,7 @@ function createPublicProjectionScopeFingerprint(params: Readonly<{
   caller: PluginMachineMaterializationRefV1;
   transport: AutomationEventSourcesListTransportV1;
   storedDefinitionScope?: string;
+  source?: AutomationEventSourcesListInputV1['source'];
   webhookInvocationScope?: Readonly<{
     webhookEndpointId: string;
     endpointRevision: number;
@@ -213,6 +217,11 @@ function publicProjectionDefinitionKeyDigest(
   return createHash('sha256')
     .update(definitionStableKey(definition), 'utf8')
     .digest('base64url');
+}
+
+function observationSourceKey(source: NonNullable<AutomationEventSourcesListInputV1['source']>): string {
+  return JSON.stringify([source.eventRef.pluginId, source.eventRef.localId,
+    source.sourceInstanceId, source.sourceContractVersion]);
 }
 
 function encodePublicProjectionCursor(cursor: PublicProjectionCursor): string {
@@ -533,6 +542,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   ): AdoptedSnapshot | null {
     if (params.transport.kind === 'durablePush' && storedDefinitionScope === undefined) return null;
     const definitionsByAdmissionKey = new Map<string, AutomationEventAdoptedDefinitionSnapshotRecordV1>();
+    const definitionsBySource = new Map<string, AutomationEventAdoptedDefinitionV1[]>();
     const immutableDefinitions = definitions.map((candidate) => cloneDefinition(
       isDefinitionPreparedForAdmission(candidate) ? candidate.definition : candidate,
     ));
@@ -555,6 +565,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           : null,
         eventDeclarationRelease: declarationRelease,
       });
+      const sourceKey = observationSourceKey(definition);
+      const sourceDefinitions = definitionsBySource.get(sourceKey);
+      if (sourceDefinitions === undefined) definitionsBySource.set(sourceKey, [definition]);
+      else sourceDefinitions.push(definition);
     }
     return {
       revision,
@@ -563,6 +577,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       accountCurrentness,
       definitions: immutableDefinitions,
       definitionsByAdmissionKey,
+      definitionsBySource,
     };
   }
 
@@ -982,7 +997,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       adoptedSnapshotRefresh?.expedite();
     },
     refresh,
-    readPublicProjection() {
+    readPublicProjection(request) {
       if (
         adopted === null
         || params.occurrenceSignal.aborted
@@ -991,7 +1006,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       return {
         kind: 'available',
         revision: adopted.revision,
-        definitions: adopted.definitions.map((definition) => projectPublicDefinition(definition)),
+        definitions: (request === undefined ? adopted.definitions : request.definitions.flatMap((selector) => {
+          const selected = adopted.definitionsByAdmissionKey.get(admissionKey(selector));
+          return selected === undefined ? [] : [selected.definition];
+        })).map((definition) => projectPublicDefinition(definition)),
       };
     },
     async readCurrentCheckpointedPullSource(request) {
@@ -1080,13 +1098,15 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         await isCurrent(signal, accountCurrentness) ? projection : { kind: 'unavailable' }
       );
 
+      const sourceDefinitions = request.input.source === undefined ? snapshot.definitions
+        : snapshot.definitionsBySource.get(observationSourceKey(request.input.source)) ?? [];
       const projectionDefinitions = params.transport.kind === 'durablePush' && request.webhookInvocationReference !== undefined
-        ? snapshot.definitions.filter((definition) => matchesDurableWebhookInvocation({
+        ? sourceDefinitions.filter((definition) => matchesDurableWebhookInvocation({
           definition,
           reference: request.webhookInvocationReference!,
           caller: params.caller,
         }))
-        : snapshot.definitions;
+        : sourceDefinitions;
 
       if (
         request.input.checkpointRetirementCandidates !== undefined
@@ -1125,6 +1145,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         accountId: request.accountId,
         caller: params.caller,
         transport: params.transport,
+        ...(request.input.source === undefined ? {} : { source: request.input.source }),
         ...(snapshot.storedDefinitionScope === undefined
           ? {}
           : { storedDefinitionScope: snapshot.storedDefinitionScope }),

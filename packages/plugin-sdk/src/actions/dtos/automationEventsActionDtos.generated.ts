@@ -12,6 +12,14 @@ export type AutomationEventsActionInputById = {
         } | {
             kind: 'socket';
         };
+        source?: undefined | {
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceInstanceId: string;
+            sourceContractVersion: number;
+        };
         pageSize?: number | undefined;
         cursor?: string | undefined;
         knownRevision?: string | undefined;

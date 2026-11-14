@@ -103,7 +103,10 @@ export type CurrentSourceCatalog = Readonly<{
 
 export async function readCurrentSourceDefinitions(
     context: PluginInvocationContext,
-    scope: Readonly<{ kind: 'checkpointedPull' | 'socket' | 'durablePush' }>,
+    scope: Readonly<{
+        kind: 'checkpointedPull' | 'socket' | 'durablePush';
+        source?: PluginActionInputById['automation.event.sources.list']['source'];
+    }>,
     knownCatalog?: CurrentSourceCatalog,
     onObservedRevision?: (revision: string, definitions: readonly SourceDefinition[]) => Promise<void>,
     catalogRefresh?: PluginActionInputById['automation.event.sources.list']['catalogRefresh'],
@@ -116,6 +119,7 @@ export async function readCurrentSourceDefinitions(
         context.signal.throwIfAborted();
         const request: PluginActionInputById['automation.event.sources.list'] = {
             transport: { kind: scope.kind },
+            ...(scope.source === undefined ? {} : { source: scope.source }),
             ...(cursor === undefined && catalogRefresh !== undefined ? { catalogRefresh } : {}),
             ...(cursor === undefined ? knownCatalog === undefined ? {} : { knownRevision: knownCatalog.revision } : { cursor }),
         };
@@ -331,7 +335,7 @@ export function admitDurablePushPluginEventObservationV1(
 
 /**
  * Shared admission core: resolves one observation against a complete,
- * revision-stable source scan under one observation-transport scope and
+ * revision-stable exact-source query under one observation-transport scope and
  * invokes canonical host admission. Status reporting is observational:
  * failures never change the disposition, while cancellation always propagates.
  * The caller owns the transport truthfulness of its declared source.
@@ -345,12 +349,20 @@ export async function admitPluginEventObservationUnderScopeV1(
 ): Promise<PluginEventDispositionV1> {
     let definitions = selectedDefinitions;
     if (definitions === undefined) {
-        const catalog = await readCurrentSourceDefinitions(context, scope);
+        const catalog = await readCurrentSourceDefinitions(context, {
+            kind: scope.kind,
+            source: {
+                eventRef: observation.eventRef,
+                sourceInstanceId: observation.sourceInstanceId,
+                sourceContractVersion: observation.sourceContractVersion,
+            },
+        });
         if (catalog === null) return { kind: 'unsettled' };
         if (reportCatalogCurrent) await reportCurrentSourceCatalog(context, catalog.revision, scope);
         definitions = catalog.definitions;
     }
-    const matchingDefinitions = definitions.filter((definition) => (
+    // A supplied discovery snapshot needs selection; the source query already selected at its owner.
+    const matchingDefinitions = selectedDefinitions === undefined ? definitions : definitions.filter((definition) => (
         definition.eventRef.pluginId === observation.eventRef.pluginId
         && definition.eventRef.localId === observation.eventRef.localId
         && definition.sourceInstanceId === observation.sourceInstanceId

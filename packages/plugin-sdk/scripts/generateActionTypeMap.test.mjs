@@ -19,7 +19,7 @@ import {
   writeFileIfChanged,
 } from './generateActionTypeMap.mjs';
 import * as actionTypeMapGenerator from './generateActionTypeMap.mjs';
-import { deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
+import { captureActionSchemaInputs, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import { withPatchedProcessEnv } from '../../../apps/stack/scripts/testkit/core/env_scope.mjs';
 
@@ -91,6 +91,47 @@ test('approval reads derive sanitized requester attribution instead of opaque JS
   const list = results.members.find(member => member.name.text === 'approval.request.list').type;
   assert.equal(ts.isTypeLiteralNode(list), true, 'list must expose its existing header projection');
   assert.ok(list.members.some(member => member.name.text === 'items'));
+});
+
+test('Action DTO metadata helpers respect caller arguments and shadowed mutable locals', async () => {
+  const repoRoot = process.cwd();
+  const actions = resolve(repoRoot, 'packages/protocol/src/actions');
+  const inputSnapshot = captureActionSchemaInputs(repoRoot);
+  inputSnapshot.set(resolve(actions, 'actionIds.ts'), `
+    export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] } as const;
+  `);
+  inputSnapshot.set(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  inputSnapshot.set(resolve(actions, 'actionSpecs.ts'), `
+    import { z } from 'zod/mini';
+    throw new Error('Catalog source must not execute');
+    const metadata = { id: 'fixture.read' } as const;
+    function identity<const T>(metadata: T) { return metadata; }
+    export const ACTION_SPECS = [{
+      ...identity(metadata),
+      inputSchema: z.object({ value: z.string() }),
+      outputSchema: z.boolean(),
+    }] as const;
+    function readActionSpec(id: string) {
+      let spec: unknown;
+      return spec;
+    }
+    export function getActionSpec(id: string) {
+      const spec = readActionSpec(id);
+      return spec;
+    }
+    export const resolved = getActionSpec('fixture.read');
+  `);
+  const derived = await deriveActionDtoSchemas({ repoRoot, inputSnapshot, onlyFamilies: ['fixture'] });
+  const dto = derived.outputs.get(resolve(actions, 'fixtureActionDtos.ts'));
+  assert.ok(dto, 'the metadata helper must select the canonical schema row');
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const inputs = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'FixtureActionInputById').type;
+  const input = inputs.members.find(member => member.name.text === 'fixture.read').type;
+  assert.equal(input.members.find(member => member.name.text === 'value').type.kind, ts.SyntaxKind.StringKeyword);
+  const results = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'FixtureActionResultById').type;
+  assert.equal(results.members.find(member => member.name.text === 'fixture.read').type.kind, ts.SyntaxKind.BooleanKeyword);
 });
 
 test('filtered canonical Action families preserve their exact partition without executing source', t => {

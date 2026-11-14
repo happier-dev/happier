@@ -308,7 +308,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     if (currentCatalogStatus !== null) {
       let projection: ReturnType<AutomationEventAdoptedDefinitionSetV1['readPublicProjection']>;
       try {
-        projection = adoptedDefinitionSet?.readPublicProjection() ?? { kind: 'initializing' };
+        projection = adoptedDefinitionSet?.readPublicProjection({ definitions: [] }) ?? { kind: 'initializing' };
       } catch {
         return failure('automation_event_adopted_definitions_unavailable');
       }
@@ -383,7 +383,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           watcherCandidates.push(candidate);
           let projection: ReturnType<AutomationEventAdoptedDefinitionSetV1['readPublicProjection']>;
           try {
-            projection = candidate.readPublicProjection();
+            projection = candidate.readPublicProjection({ definitions: admissionInput.data.definitions });
           } catch {
             return admissionFailure('automation_event_adopted_definitions_unavailable');
           }
@@ -477,7 +477,8 @@ export function createAutomationEventActionExecutor(params: Readonly<{
         }
         // Preparation owns first-use adoption. Read its public projection only
         // after that owner has acquired the source snapshot.
-        const projection = params.onCommittedObservation ? adoptedDefinitionSet.readPublicProjection() : null;
+        const projection = params.onCommittedObservation
+          ? adoptedDefinitionSet.readPublicProjection({ definitions: preparedInput.definitions }) : null;
         if (projection && projection.kind !== 'available') {
           return admissionFailure('automation_event_adopted_definitions_unavailable');
         }

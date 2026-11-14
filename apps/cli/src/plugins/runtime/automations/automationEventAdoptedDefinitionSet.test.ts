@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { HostEventEnvelope } from '@happier-dev/plugin-sdk/events';
+import { admitCheckpointedPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import {
   AutomationSourceSelectorIdV1Schema,
@@ -195,6 +197,98 @@ function unchanged(
 }
 
 describe('createAutomationEventAdoptedDefinitionSetV1', () => {
+  it('reads only the observed source across an adopted multi-page catalog', async () => {
+    const stored = Array.from({ length: 1001 }, (_, index) => storedDefinition(index + 1));
+    const owner = createAutomationEventAdoptedDefinitionSetV1({
+      caller,
+      transport: { kind: 'checkpointedPull' },
+      occurrenceSignal: new AbortController().signal,
+      isOccurrenceCurrent: () => true,
+      revalidateCallerMaterialization: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions: async ({ input }) => {
+        const start = input.cursor === undefined ? 0 : Number(input.cursor);
+        const end = Math.min(start + 500, stored.length);
+        return page('7', stored.slice(start, end), end < stored.length ? String(end) : null);
+      },
+      projectStoredDefinition: async ({ storedDefinition: definition }) => projectStoredDefinition(definition),
+    });
+    await owner.refresh();
+    let reads = 0;
+    let disclosedDefinitions = 0;
+    const admittedDefinitions: unknown[] = [];
+    // Action execution is the plugin-to-host boundary; source selection runs through the real owner.
+    const context = {
+      signal: new AbortController().signal,
+      services: { actions: { async execute(id: string, input: unknown) {
+        if (id === 'automation.event.sources.list') {
+          reads += 1;
+          const result = await owner.listPublicProjection({ accountId: 'account-1',
+            input: AutomationEventSourcesListInputV1Schema.parse(input) });
+          if (result.kind === 'page') disclosedDefinitions += result.definitions.length;
+          return result;
+        }
+        if (id === 'automation.event.admit') {
+          admittedDefinitions.push(input);
+          return { results: [{ kind: 'observed', checkpointSafe: true }] };
+        }
+        return {};
+      } } },
+    } as unknown as PluginInvocationContext;
+    const result = await admitCheckpointedPluginEventObservationV1({
+      eventRef: stored[1000]!.eventRef, sourceInstanceId: 'repository-1001', sourceContractVersion: 1,
+      occurrenceId: 'observation-1', occurredAt: 1, observationReceivedAt: 1, observedDelta: 1, payload: {},
+    }, context);
+    expect(result.kind).toBe('checkpointSafe');
+    expect(admittedDefinitions).toEqual([expect.objectContaining({ definitions: [expect.objectContaining({
+      triggerId: stored[1000]!.triggerId,
+    })] })]);
+    expect({ reads, disclosedDefinitions }).toEqual({ reads: 1, disclosedDefinitions: 1 });
+  });
+
+  it('paginates every matching trigger and binds the cursor to the exact source selection', async () => {
+    const stored = [storedDefinition(1), storedDefinition(2), storedDefinition(3)];
+    const owner = createAutomationEventAdoptedDefinitionSetV1({
+      caller, transport: { kind: 'checkpointedPull' }, occurrenceSignal: new AbortController().signal,
+      isOccurrenceCurrent: () => true, revalidateCallerMaterialization: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions: async () => page('7', stored, null),
+      projectStoredDefinition: async ({ storedDefinition: definition }) => {
+        const projected = projectStoredDefinition(definition);
+        return projected === null ? null : { ...projected,
+          sourceInstanceId: definition.triggerId === stored[2]!.triggerId ? 'unrelated' : 'shared-source' };
+      },
+    });
+    await owner.refresh();
+    const source = { eventRef: stored[0]!.eventRef, sourceInstanceId: 'shared-source', sourceContractVersion: 1 };
+    const input = { transport: { kind: 'checkpointedPull' as const }, pageSize: 1, source };
+    const first = await owner.listPublicProjection({ accountId: 'account-1', input });
+    expect(first).toMatchObject({ kind: 'page', definitions: [{ triggerId: stored[0]!.triggerId }] });
+    if (first.kind !== 'page' || first.nextCursor === null) throw new Error('Expected a second matching page');
+    await expect(owner.listPublicProjection({ accountId: 'account-1', input: { ...input, cursor: first.nextCursor } }))
+      .resolves.toMatchObject({ kind: 'page', definitions: [{ triggerId: stored[1]!.triggerId }], nextCursor: null });
+    const changedSourceInput = { ...input, cursor: first.nextCursor,
+      source: { ...source, sourceInstanceId: 'unrelated' } };
+    await expect(owner.listPublicProjection({ accountId: 'account-1', input: changedSourceInput }))
+      .resolves.toEqual({ kind: 'cursorStale', currentRevision: '7' });
+    for (const unmatchedSource of [
+      { ...source, sourceContractVersion: 2 },
+      { ...source, eventRef: { ...source.eventRef, localId: 'other-event' } },
+      { ...source, sourceInstanceId: 'missing-source' },
+    ]) {
+      const unmatchedInput = { ...input, source: unmatchedSource };
+      await expect(owner.listPublicProjection({ accountId: 'account-1', input: unmatchedInput }))
+        .resolves.toMatchObject({ kind: 'page', definitions: [], nextCursor: null });
+    }
+    await expect(owner.listPublicProjection({ accountId: 'account-1',
+      input: { transport: { kind: 'checkpointedPull' }, pageSize: 500 } }))
+      .resolves.toMatchObject({ kind: 'page', definitions: [expect.anything(), expect.anything(), expect.anything()] });
+    expect(owner.readPublicProjection({ definitions: [] })).toMatchObject({ kind: 'available', definitions: [] });
+    expect(owner.readPublicProjection({ definitions: [stored[1]!] })).toMatchObject({
+      kind: 'available', definitions: [{ triggerId: stored[1]!.triggerId }],
+    });
+  });
+
   it('forwards only server-classified checkpoint retirements at the exact refreshed revision', async () => {
     const definition = storedDefinition(1);
     const candidate = {
