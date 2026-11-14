@@ -78,6 +78,8 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
     origin?: PluginUiAccountExecutableOrigin;
     /** Model the AppShell's scoped publication for ordinary host dependencies. */
     publishProjection?: boolean;
+    /** Prepare several actual plugins, then admit their complete activation set together. */
+    deferActivation?: boolean;
 }>) {
     const platform = resolvePluginUiClientExecutablePlatform();
     const parsed = ingestPluginManifestV2(input.manifest);
@@ -137,7 +139,7 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
     let activationFailure: unknown;
     for (const entry of resolved) cache.putInstalledArtifact({ identity: entry.cacheIdentity,
         bytes: new Uint8Array([47, 47, 32, 102, 105, 120, 116, 117, 114, 101]), format: 'plainJs' });
-    const attempts = await composition.reconcile(resolved.map(entry => ({
+    const activations: PluginUiClientExecutableActivation[] = resolved.map(entry => ({
         pluginId: entry.pluginId, pluginVersion: entry.pluginVersion, hostUiApiRange: entry.hostUiApiRange,
         contributes: entry.contributes, target: entry.target, executionOrigin: entry.executionOrigin,
         cache, identity: entry.cacheIdentity, moduleReference: entry.moduleReference,
@@ -148,7 +150,8 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
         authority: entry.authority, accountLifetime: input.accountLifetime, occurrenceId,
         ...(input.prepareRegistration ? { prepareRegistration: input.prepareRegistration } : {}),
         isCurrent: input.accountLifetime.isCurrent,
-    })));
+    }));
+    const attempts = input.deferActivation ? [] : await composition.reconcile(activations);
     if (attempts.some(attempt => !attempt.result.ok)) {
         await composition.unload();
         throw new Error(`Account fixture activation failed: ${JSON.stringify(attempts.map(attempt => attempt.result))}`,
@@ -161,5 +164,5 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
     const unpublish = input.publishProjection ? publishCommittedAppShellPluginUiProjection(read =>
         input.accountLifetime.isCurrent() && (!read || read.scope.accountId === input.accountLifetime.scope.accountId
             && areServerProfileIdentifiersEquivalent(read.scope.serverId, input.accountLifetime.scope.serverId)) ? projection : null) : undefined;
-    return { projection, async dispose() { unpublish?.(); unregister(); await composition.invalidatePlugin(input.manifest.id); } };
+    return { projection, activations, async dispose() { unpublish?.(); unregister(); await composition.invalidatePlugin(input.manifest.id); } };
 }

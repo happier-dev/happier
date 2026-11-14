@@ -11,6 +11,9 @@ import { TriageConfigureSourceOfferV1Schema } from './sourceAdministration.js';
 
 const closed = { policy: 'closed' } as const;
 
+/** Shared by the authored declaration, producer and mounted consumers. */
+export const TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 = 'session-pull-request-status-v1';
+
 /** The host owns the exact Home and Session; Resource input never resolves selectors. */
 export const SessionPullRequestStatusResourceInputV1Schema = ActionSessionAddressV1Schema;
 export type SessionPullRequestStatusResourceInputV1 = ReturnType<typeof SessionPullRequestStatusResourceInputV1Schema.parse>;

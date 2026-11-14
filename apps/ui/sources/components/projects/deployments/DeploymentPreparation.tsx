@@ -80,7 +80,7 @@ export function DeploymentPreparationEntry(props: DeploymentPreparationContext &
             onPress={() => showDeploymentSheet({ component: DeploymentPreparationSheet,
                 props: { ...props, onSessionAvailable: session => setHandoff({ ...props, session }) },
                 title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false })} />
-        {session ? <DeploymentPreparationResult session={session} accountId={props.lifetime.scope.accountId} /> : null}
+        {session ? <DeploymentPreparationResult session={session} lifetime={props.lifetime} /> : null}
     </>;
 }
 

@@ -403,6 +403,7 @@ export type { TriageActionEditorLaunchInputV1 } from './actionEditorLaunch.js';
 export { TriageSourceOperationOutcomeV1Schema, readTriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export type { TriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export {
+    TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1,
     SessionPullRequestStatusResourceInputV1Schema,
     SessionPullRequestStatusResourceResultV1Schema,
     SessionPullRequestNativeStatusV1Schema,
