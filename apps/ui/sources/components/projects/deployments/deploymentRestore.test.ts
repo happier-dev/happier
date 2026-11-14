@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { deploymentBackupCaptureChoices, deploymentRestoreOperands } from './deploymentRestore';
+import { deploymentBackupCaptureChoices, deploymentRestoreOperands, readDeploymentRestorePreparation } from './deploymentRestore';
+import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployment-protocol';
 import { DeploymentBackupInventoryResultV1Schema, type DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
+
+it('retains the canonical SQLite destination and its service-owned path from restore preparation', () => {
+  const native = DeploymentRestorePreparationV1Schema.parse({ prepared: {
+    kind: 'prepared', operationId: 'sqlite-prepare', sourceFormat: 'sqlite',
+    source: { kind: 'upload', transferId: 'sqlite-upload', sizeBytes: 42, sha256: 'a'.repeat(64) },
+    destination: { adapter: 'sqlite-v1', service: 'app', path: '/data/shop.sqlite',
+      environmentId: 'shop-environment', revision: 2, stagingVolume: 'shop_restore',
+      hasMeaningfulData: true, writerServices: ['app'] },
+  } });
+  expect(readDeploymentRestorePreparation({ kind: 'prepared', operationId: 'sqlite-prepare',
+    evidence: { native } })?.destination).toEqual(native.prepared.destination);
+});
 
 describe('database copy restore operands', () => {
   it('addresses the destination while retaining the source capture identity', () => {

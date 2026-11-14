@@ -1,4 +1,4 @@
-import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentRestorePreparationV1Schema, type DeploymentRestorePreparationV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, type DeploymentNativeSnapshotOfferV1, type DeploymentNativeSnapshotUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -121,7 +121,7 @@ export function deploymentBackupCaptureChoices(input: Readonly<{
 export type DeploymentRestorePreparation = Readonly<{
   prepareOperationId: string;
   takenAtMs: number | null;
-  destination: Readonly<{ adapter: 'postgres-v1'; service: string; database: string }> | Readonly<{ adapter: 'volume-v1'; service: string; volume: string }>;
+  destination: DeploymentRestorePreparationV1['prepared']['destination'];
   snapshot: DeploymentNativeSnapshotOfferV1 | null;
   snapshotUnavailable: DeploymentNativeSnapshotUnavailableV1 | null;
   /** When the destination held data, the verified safety backup taken first; null when there was nothing to save. */
@@ -156,9 +156,7 @@ export function readDeploymentRestorePreparation(
   return {
     prepareOperationId: result.operationId,
     takenAtMs: time('snapshot' in prepared.source ? prepared.source.snapshot.time : undefined),
-    destination: prepared.destination.adapter === 'volume-v1'
-      ? { adapter: 'volume-v1', service: prepared.destination.service, volume: prepared.destination.volume }
-      : { adapter: 'postgres-v1', service: prepared.destination.service, database: prepared.destination.database },
+    destination: prepared.destination,
     snapshot: snapshot?.success ? snapshot.data : null,
     snapshotUnavailable: unavailable?.success ? unavailable.data : null,
     safetyBackup: prepared.safetyBackup

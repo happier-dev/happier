@@ -350,6 +350,27 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     } finally { view.dispose(); }
   });
 
+  it('reviews the SQLite destination path through the shared restore preparation owner', async () => {
+    const view = await renderRestore(input => {
+      const result = prepared(String(input.environmentId), true);
+      return { ok: true, result: { ...result, evidence: { ...result.evidence, native: {
+        ...result.evidence.native, prepared: { ...result.evidence.native.prepared, sourceFormat: 'sqlite',
+          destination: { adapter: 'sqlite-v1', service: 'embedded', path: '/data/shop.sqlite',
+            environmentId: input.environmentId, revision: 1, stagingVolume: 'shop_restore',
+            hasMeaningfulData: true, writerServices: ['app'] },
+        },
+      } } } };
+    });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      expect(view.screen.getTextContent()).toContain('/data/shop.sqlite on embedded');
+      expect(view.screen.findByTestId('project-deployments.restore.fact.volume')).toBeNull();
+    } finally { view.dispose(); }
+  });
+
   it('reviews the native named volume destination without relabeling it as a database', async () => {
     const view = await renderRestore(input => {
       const result = prepared(String(input.environmentId), true);

@@ -362,7 +362,9 @@ function DeploymentRestoreSheet(
       : backup ? backupLabel(backup, takenAtMs) : t('projects.deployments.restoreBackupRetained') },
     destination.adapter === 'volume-v1'
       ? { key: 'volume', label: t('projects.deployments.settingsSections.restoreExtended.volume'), value: `${destination.service} · ${destination.volume}` }
-      : { key: 'database', label: t('projects.deployments.restoreDatabase'), value: t('projects.deployments.restoreDatabaseValue', destination) },
+      : { key: 'database', label: t('projects.deployments.restoreDatabase'), value: t('projects.deployments.restoreDatabaseValue', {
+        service: destination.service, database: destination.adapter === 'sqlite-v1' ? destination.path : destination.database,
+      }) },
     { key: 'machine', label: t('projects.deployments.machine'), value: props.machine },
     ...(preparation ? [{ key: 'safety', label: t('projects.deployments.restoreSafety'), value: preparation.safetyBackup
       ? preparation.safetyBackup.savedAtMs === null ? t('projects.deployments.restoreSafetySavedNow')
@@ -438,7 +440,7 @@ function DeploymentRestoreSheet(
     const { result } = step;
     const restored = result.kind === 'restored';
     const code = isRecord(result.evidence) && typeof result.evidence.code === 'string' ? result.evidence.code : result.kind;
-    const failure = restored ? null : presentActionFailureOutcome({ ok: false, errorCode: code, error: code,
+    const failure = restored ? null : presentActionFailureOutcome({ errorCode: code, error: code,
       details: result.evidence }, 'deployment');
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
