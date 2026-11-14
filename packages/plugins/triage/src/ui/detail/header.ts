@@ -205,11 +205,11 @@ export function projectTriageDetailHeaderV1(
  * source's name and the state word are not repeated in words. The connection is named only when the reader has
  * more than one connection to this source, which is the only time there is one to tell apart.
  */
-export function readTriageDetailContextLineV1(
+export function readTriageDetailContextSegmentsV1(
   header: TriageDetailHeaderV1,
   text: (key: string, fallback?: string, values?: Readonly<Record<string, string>>) => string,
   clock: Readonly<{ locale: string; nowMs: number }>,
-): string | null {
+): readonly string[] {
   const age = header.openedAtMs === null
     ? null
     : formatTriageTimestampV1(clock.locale, header.openedAtMs, 'relative', clock.nowMs);
@@ -230,5 +230,15 @@ export function readTriageDetailContextLineV1(
       ? null
       : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
   ].filter((part): part is string => part !== null && part.length > 0);
+  return parts;
+}
+
+/** The same facts as one line, for a single-line text (the inline header); a host header takes the segments. */
+export function readTriageDetailContextLineV1(
+  header: TriageDetailHeaderV1,
+  text: (key: string, fallback?: string, values?: Readonly<Record<string, string>>) => string,
+  clock: Readonly<{ locale: string; nowMs: number }>,
+): string | null {
+  const parts = readTriageDetailContextSegmentsV1(header, text, clock);
   return parts.length === 0 ? null : parts.join(' · ');
 }

@@ -355,6 +355,8 @@
   "plugins.github.ui.markUnviewed": "标记为未查看",
   "plugins.github.ui.fileViewed": "已查看",
   "plugins.github.ui.fileViewedNotSaved": "未保存到 GitHub",
+  "plugins.github.ui.filesViewedOf": "已查看 {viewed}/{total}",
+  "plugins.github.ui.filesViewedCount": "已查看 {viewed} 个",
   "plugins.github.ui.checkStatus.completed": "已完成",
   "plugins.github.ui.checkStatus.in_progress": "进行中",
   "plugins.github.ui.checkStatus.queued": "已排队",

@@ -353,7 +353,11 @@ export type CollectionRowActions = Readonly<{
  */
 export type CollectionDetailHeader = Readonly<{
   title: string;
-  subtitle?: string;
+  /**
+   * The line under the title. Separate facts (where it lives, who opened it, its branches) go as segments: the
+   * header joins them and wraps whole facts, never inside one.
+   */
+  subtitle?: string | readonly string[];
   /**
    * Where the item lives, outermost first, drawn as a breadcrumb above the title in the details pane's band
    * (["tidewater/checkout-web", "#2476"]). Its own place: never the page's title, never the item's name.

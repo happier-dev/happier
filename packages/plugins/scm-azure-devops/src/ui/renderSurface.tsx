@@ -402,7 +402,8 @@ function OverviewPanel({
           />
         )}
         {statusFields.length === 0 ? null : (
-          <Row gap="small">
+          // Whole statuses move to the next line on a narrow pane rather than one being cut at the edge.
+          <Row gap="small" wrap>
             {statusFields.map((field) => (
               <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${azureFactLabel(field, text)}: ${field.value}`} />
             ))}

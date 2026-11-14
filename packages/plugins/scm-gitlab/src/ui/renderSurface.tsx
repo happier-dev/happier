@@ -789,7 +789,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   useTriagePageRefresh(controller.refresh);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from GitLab" titleKey="plugins.gitlab.ui.readingFiles" />;
+    return <LoadingState title="Reading the changed files from GitLab" titleKey="plugins.gitlab.ui.readingFiles" rows={6} rowShape="compact" />;
   }
   if (state.kind === 'unavailable') {
     return (

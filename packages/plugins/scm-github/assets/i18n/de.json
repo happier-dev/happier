@@ -355,6 +355,8 @@
   "plugins.github.ui.markUnviewed": "Als nicht angesehen markieren",
   "plugins.github.ui.fileViewed": "Angesehen",
   "plugins.github.ui.fileViewedNotSaved": "Nicht auf GitHub gespeichert",
+  "plugins.github.ui.filesViewedOf": "{viewed} von {total} angesehen",
+  "plugins.github.ui.filesViewedCount": "{viewed} angesehen",
   "plugins.github.ui.checkStatus.completed": "Abgeschlossen",
   "plugins.github.ui.checkStatus.in_progress": "In Bearbeitung",
   "plugins.github.ui.checkStatus.queued": "In Warteschlange",

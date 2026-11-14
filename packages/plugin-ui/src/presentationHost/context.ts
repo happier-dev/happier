@@ -154,7 +154,11 @@ export type PluginUiDetailsPanePresentation = Readonly<{
   title?: string;
   /** Private semantic binding to the incumbent pane header, never an author DOM/native-ref API. */
   headingRef?: (target: HappierFocusable | null) => void;
-  subtitle?: string;
+  /**
+   * The line under the title. Separate facts (where it lives, who opened it, its branches) go as segments: the
+   * header joins them and wraps whole facts, never inside one.
+   */
+  subtitle?: string | readonly string[];
   /** Where the item lives, outermost first: the band draws it above the title, with its actions on that row. */
   breadcrumb?: readonly string[];
   /** The item's identity mark beside the title (a kind glyph); it stands on its own, with no tile. */

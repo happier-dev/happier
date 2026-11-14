@@ -355,6 +355,8 @@
   "plugins.github.ui.markUnviewed": "未表示に戻す",
   "plugins.github.ui.fileViewed": "表示済み",
   "plugins.github.ui.fileViewedNotSaved": "GitHub に保存されていません",
+  "plugins.github.ui.filesViewedOf": "{total} 件中 {viewed} 件を表示済み",
+  "plugins.github.ui.filesViewedCount": "{viewed} 件を表示済み",
   "plugins.github.ui.checkStatus.completed": "完了",
   "plugins.github.ui.checkStatus.in_progress": "進行中",
   "plugins.github.ui.checkStatus.queued": "キュー済み",

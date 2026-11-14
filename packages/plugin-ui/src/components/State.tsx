@@ -7,7 +7,19 @@ import { useOptionalPluginUiPresentationHost } from '../presentationHost/context
 import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice } from '../presentationHost/surfaceNotice.js';
 import { resolveHappierFreshnessText } from '../presentation/state/asOfTime.js';
 import { usePluginSurfaceActivity } from '../hostApi/context.js';
-import { HappierSkeletonRows } from '../presentation/feedback/Skeleton.js';
+import { HappierSkeletonRows, type HappierSkeletonRowGeometry } from '../presentation/feedback/Skeleton.js';
+import { HAPPIER_ITEM_DENSITY_ROW_HEIGHT, resolveHappierPlainListTextInset } from '../presentation/collection/List.js';
+
+const compactSkeletonGeometries = new Map<number, HappierSkeletonRowGeometry>();
+/** One-line rows on the plain list's text edge, no glyph column. */
+function compactSkeletonGeometry(insetPx: number): HappierSkeletonRowGeometry {
+  let geometry = compactSkeletonGeometries.get(insetPx);
+  if (geometry === undefined) {
+    geometry = Object.freeze({ insetStart: insetPx, insetEnd: insetPx, glyphColumn: 0, gap: 0 });
+    compactSkeletonGeometries.set(insetPx, geometry);
+  }
+  return geometry;
+}
 import {
   HAPPIER_EMPTY_STATE_FRAME,
   HAPPIER_FRESHNESS_LINE_METRICS,
@@ -107,6 +119,11 @@ export type LoadingStateProps = StateCopyProps & Readonly<{
    * spinner. The title stays the one accessible name of the wait.
    */
   rows?: number;
+  /**
+   * With `rows`: the loaded rows' shape. `compact` is a List's one-line compact row on the list's text edge, with no
+   * glyph (a file list); the default is a two-line row with a leading glyph.
+   */
+  rowShape?: 'compact';
 }>;
 export type EmptyStateProps = StateCopyProps & Readonly<{
   /**
@@ -191,6 +208,11 @@ function SkeletonRowsLoadingState(props: LoadingStateProps & Readonly<{ rows: nu
       testID={props.testID}
       rows={props.rows}
       theme={theme}
+      {...(props.rowShape === 'compact' ? {
+        lines: 1 as const,
+        rowHeight: HAPPIER_ITEM_DENSITY_ROW_HEIGHT.compact,
+        geometry: compactSkeletonGeometry(resolveHappierPlainListTextInset(theme.spacing.medium)),
+      } : {})}
       animationEnabled={surfaceActivity.active}
       accessibilityLabel={title ?? translate(STATE_LOADING_TRANSLATION_KEY, 'Loading')}
     />

@@ -766,6 +766,8 @@ export {
   type HappierTreemapRect,
   type HappierTreemapTile,
 } from '../presentation/data/treemapLayout.js';
+/** A text body (a story or widget body): rows inside it stand on the body's text edge. */
+export { HappierBodyEdgeContext } from '../presentation/layout/columnEdge.js';
 export {
   HAPPIER_SKELETON_PULSE_V1,
   HappierSkeletonBlock,

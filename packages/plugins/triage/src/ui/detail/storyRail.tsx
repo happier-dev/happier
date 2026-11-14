@@ -23,6 +23,7 @@ import type { SessionPendingPermissionV1, SessionPermissionAnswerV1, SessionStat
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
 import { TriageStoryLoadingLines } from '@happier-dev/triage-sources/ui';
+import { useTriagePluralCount } from '../pluralCount.js';
 
 import { describeTriageAgentStatusV1, readTriageSessionWhereV1 } from './agentState.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
@@ -88,6 +89,7 @@ export function TriageAgentStep(props: Readonly<{
   entry?: TriageAgentEntryV1 | null;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const pluralCount = useTriagePluralCount();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
   const findings = useReviewCommentProposalsForEntry({ linkedSessionIds, entry: props.reviewEntry });
   const opener = useLinkedSessionOpen();
@@ -127,9 +129,8 @@ export function TriageAgentStep(props: Readonly<{
         <Stack gap="xsmall">
           <Text
             variant="label"
-            value={text('plugins.triage.surface.detail.agent.findings', '{count} findings', {
-              count: String(findings.proposals.length),
-            })}
+            value={pluralCount('surface.detail.agent.findings', findings.proposals.length,
+              { one: '{count} finding', other: '{count} findings' })}
           />
           {shown.map((finding) => {
             const location = readTriageFindingLocationV1(finding.anchor);

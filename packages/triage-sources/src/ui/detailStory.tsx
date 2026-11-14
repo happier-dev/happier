@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Card, Chart, Column, Columns, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonRows, happierFocusRingStyle, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Card, HappierBodyEdgeContext, Chart, Column, Columns, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonRows, happierFocusRingStyle, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { summarizeTriageChangesV1, type TriageChangedFileV1, type TriageChangeTotalsV1 } from './changeSummary.js';
@@ -40,7 +40,10 @@ export function TriageDetailStory({ kind, children, loading, notice, changes, ch
   if (kind === undefined) return <ScrollArea><Stack gap="large">{children}</Stack></ScrollArea>;
   const body = loading === true
     ? <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />
-    : <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>;
+    // The ask reads as text: a folded row in it (Facts) stands on the text's edge, not a list row's inset.
+    : <HappierBodyEdgeContext.Provider value>
+      <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>
+    </HappierBodyEdgeContext.Provider>;
   return <Stack gap="large">
     <Step marker={{ kind: 'number', value: 1 }}
       title={STORY_TITLES[kind].fallback}

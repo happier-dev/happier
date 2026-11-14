@@ -293,6 +293,16 @@ export type HappierListItemProps = Readonly<{
 }>;
 
 const NAVIGATION_ROW_FOCUS_RING_WIDTH = 1;
+/**
+ * A plain list row's transparent focus-ring band. Its text stands this far plus `spacing.medium` in from the list's
+ * edge, which is the edge a plain List's header, bands and end content share (`resolveHappierPlainListTextInset`).
+ */
+const PLAIN_ROW_FOCUS_BAND_PX = 1;
+
+/** Where a plain list row's text starts, from the list's edge: the one inset its header, bands and footer stand on. */
+export function resolveHappierPlainListTextInset(spacingMedium: number): number {
+  return PLAIN_ROW_FOCUS_BAND_PX + spacingMedium;
+}
 /** The least air above and below a navigation row's text when it wraps past the row's height. */
 const NAVIGATION_ROW_TEXT_FLOOR_PX = 4;
 
@@ -1131,7 +1141,7 @@ export function HappierListItem({
         width: '100%',
         minWidth: 0,
         minHeight: rowHeight,
-        borderWidth: 1,
+        borderWidth: PLAIN_ROW_FOCUS_BAND_PX,
         borderColor: 'transparent',
         // Inset: the row spans its list, which clips anything drawn outside it.
         ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),

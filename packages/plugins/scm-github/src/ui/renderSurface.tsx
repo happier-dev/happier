@@ -149,7 +149,7 @@ import {
   type TriagePullRequestOperationOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { GithubFilesList } from './detail/filesList.js';
+import { GithubFilesList, useViewedFileCount } from './detail/filesList.js';
 import type {
   GithubProjectedCheckRowV1,
   GithubProjectedTimelineRowV1,
@@ -2869,6 +2869,7 @@ function FilesPanel({
   const { active } = useTabPanelActivity();
   // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner.
   const viewed = useGithubFileViewedSource(input);
+  const viewedCount = useViewedFileCount(viewed);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
   // One disclosed file for reader and agent intents; leaving Files releases its body.
@@ -2890,7 +2891,8 @@ function FilesPanel({
     state.canLoadMore, state.pending, controller.loadMore);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" />;
+    // The rows' own shape, so the files replace placeholders of their size rather than a spinner.
+    return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" rows={6} rowShape="compact" />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -2927,10 +2929,15 @@ function FilesPanel({
 
   // GitHub's own total when the Overview has it; else the rows read, but only once the walk has no page left.
   const total = totalFiles ?? (state.canLoadMore ? undefined : state.rows.length);
+  // The tab already counts the files; above them the panel says only what the tab cannot: the reader's progress.
   const notices = (
     <>
-      <Text variant="label" value={total === undefined ? text('plugins.github.ui.changedFiles', 'Changed files')
-        : `${text('plugins.github.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(total)}`} />
+      {viewedCount === null ? null : (
+        <Text variant="micro" tone="secondary" value={total === undefined
+          ? text('plugins.github.ui.filesViewedCount', '{viewed} viewed', { viewed: new Intl.NumberFormat(locale).format(viewedCount) })
+          : text('plugins.github.ui.filesViewedOf', '{viewed} of {total} viewed', {
+            viewed: new Intl.NumberFormat(locale).format(viewedCount), total: new Intl.NumberFormat(locale).format(total) })} />
+      )}
       <PageFailureBanner state={state} />
       {incomplete === null
         ? null

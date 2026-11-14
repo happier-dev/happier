@@ -29,7 +29,7 @@ import {
   resolveHappierUiPalette,
 } from '../environment/context.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
-import { useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
+import { HappierBodyEdgeContext, useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
 import {
   HappierPageSectionHeader,
   HappierPageSectionText,
@@ -70,6 +70,7 @@ import {
   HappierListItem,
   HappierListSection,
   HappierRowActionsReveal,
+  resolveHappierPlainListTextInset,
 } from '../presentation/collection/List.js';
 import {
   HappierItemGroup,
@@ -878,12 +879,19 @@ function VirtualizedList<Item>(
     ? { gap: 0 }
     : props.density === 'flush' ? { gap: 0 } : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   const theme = usePluginTheme();
-  // A List no page section or Collection lays out draws its rows' text `spacing.medium` in from its edge. What an
+  // A List no page section or Collection lays out draws its rows' text one plain-row inset in from its edge. What an
   // author puts above and below those rows (a total, notices, a paging control) stands on the same text edge, so
   // the panel reads as one column rather than a header hanging left of its rows.
+  // A page-scrolling panel (`Tabs layout="page"`) is still a plain List; only a Collection (`hideChrome`) or a page
+  // section lays its rows out on its own edge.
+  // A list in a text body (a widget or story body) draws its rows on that body's edge, and so its header too.
+  const bodyEdge = useContext(HappierBodyEdgeContext);
+  const plainTextInsetPx = pageSection === null && collectionControl?.hideChrome !== true
+    ? resolveHappierPlainListTextInset(bodyEdge ? 0 : theme.spacing.medium)
+    : null;
   const authorContentInsetStyle = useMemo<HappierPortableStyle | null>(
-    () => pageSection === null && collectionControl === null ? { paddingHorizontal: theme.spacing.medium } : null,
-    [pageSection, collectionControl, theme.spacing.medium],
+    () => plainTextInsetPx === null ? null : { paddingHorizontal: plainTextInsetPx },
+    [plainTextInsetPx],
   );
   const { query, control: searchControl } = useListCollectionSearch(
     props.search,
@@ -1763,8 +1771,7 @@ function VirtualizedList<Item>(
   // Above it, the pause a group edge makes, so the label reads as the start of its rows rather than a tail of
   // whatever sits over it.
   // A plain List's bands stand on its rows' text edge with its header and end content (see `authorContentInsetStyle`).
-  const sectionHeaderInsetPx = pageSection?.rowInsetPx
-    ?? (collectionControl === null ? theme.spacing.medium : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
+  const sectionHeaderInsetPx = pageSection?.rowInsetPx ?? plainTextInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const defaultSectionHeaderStyle = useMemo(
     () => ({ paddingHorizontal: sectionHeaderInsetPx, paddingTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx }),
     [sectionHeaderInsetPx],
@@ -2346,6 +2353,7 @@ function renderListItem(
  * text column; while open, the row lifts.
  */
 const EXPANDED_BODY_GLYPH_COLUMN_PX = 20;
+const CLOSED_FRAME_STYLE = { borderWidth: 0 } as const;
 
 function ListItemExpansion(
   props: Readonly<{
@@ -2360,16 +2368,22 @@ function ListItemExpansion(
   const theme = usePluginTheme();
   const { reducedMotion } = useHappierUiAccessibility();
   const motion = host?.disclosureMotion ?? HAPPIER_INSTANT_DISCLOSURE_MOTION;
+  // The body's text under the row's: both stand one plain-row inset inside the open frame.
+  const bodyEdge = useContext(HappierBodyEdgeContext);
   const inset =
-    theme.spacing.medium +
+    resolveHappierPlainListTextInset(bodyEdge ? 0 : theme.spacing.medium) +
     (props.hasIcon ? EXPANDED_BODY_GLYPH_COLUMN_PX + theme.spacing.small : 0);
   return (
     <View
-      style={resolveHappierDisclosureFrameStyle({
-        expanded: props.expanded,
-        borderColor: theme.colors.border,
-        backgroundColor: theme.colors.elevatedSurface,
-      })}
+      style={[
+        resolveHappierDisclosureFrameStyle({
+          expanded: props.expanded,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.elevatedSurface,
+        }),
+        // Closed, the row is a plain row: no transparent rim that would set its text a pixel off its list's edge.
+        props.expanded ? null : CLOSED_FRAME_STYLE,
+      ]}
     >
       <HappierDisclosure
         expanded={props.expanded}

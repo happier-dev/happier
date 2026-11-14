@@ -355,6 +355,8 @@
   "plugins.github.ui.markUnviewed": "Oznacz jako nieprzejrzane",
   "plugins.github.ui.fileViewed": "Przejrzane",
   "plugins.github.ui.fileViewedNotSaved": "Nie zapisano w GitHub",
+  "plugins.github.ui.filesViewedOf": "Przejrzane: {viewed} z {total}",
+  "plugins.github.ui.filesViewedCount": "Przejrzane: {viewed}",
   "plugins.github.ui.checkStatus.completed": "Ukończono",
   "plugins.github.ui.checkStatus.in_progress": "W toku",
   "plugins.github.ui.checkStatus.queued": "W kolejce",

@@ -26,7 +26,11 @@ export type DetailsPaneProps = Readonly<{
   open: boolean;
   /** The pane's title in its header band. Omit it when the detail draws its own heading and close control. */
   title?: string;
-  subtitle?: string;
+  /**
+   * The line under the title. Separate facts (where it lives, who opened it, its branches) go as segments: the
+   * header joins them and wraps whole facts, never inside one.
+   */
+  subtitle?: string | readonly string[];
   /**
    * Where the item lives, outermost first, above the title in the pane's band ("owner/repo › #2476"). A detail
    * pushed as the page names its place in its facts line instead, so the pushed header does not draw it.
@@ -375,9 +379,11 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
       <HappierPageHeader
         title={props.title}
         // A line led by a mark is the item's facts line (the header's meta), its mark before the words.
-        {...(props.subtitleLeading === undefined || props.subtitle === undefined
-          ? { description: props.subtitle }
-          : { meta: [{ key: 'subtitle', text: props.subtitle, icon: props.subtitleLeading }] })}
+        {...(props.subtitle === undefined ? {} : props.subtitleLeading === undefined
+          ? { description: typeof props.subtitle === 'string' ? props.subtitle : props.subtitle.join(' · ') }
+          // Each fact its own meta item, so the line wraps between facts; the mark leads the first.
+          : { meta: (typeof props.subtitle === 'string' ? [props.subtitle] : props.subtitle).map((text, index) => (
+            index === 0 ? { key: 'subtitle', text, icon: props.subtitleLeading } : { key: `subtitle:${index}`, text })) })}
         {...(props.leading === undefined ? {} : { leading: props.leading })}
         actions={props.actions}
         // A detail's actions are its item's own quiet controls (pin, open at the source): they hang from the title's

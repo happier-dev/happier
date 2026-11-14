@@ -86,7 +86,7 @@ import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChoos
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
-import { projectTriageDetailHeaderV1, readTriageDetailContextLineV1, type TriageDetailHeaderV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
 import {
   readTriageSourceDetailContributionV1,
   readTriageSourceDescriptorV1,
@@ -615,12 +615,13 @@ export function renderTriageDetailHeaderV1(input: Readonly<{
   nowMs: number;
   pin?: TriageDetailPinActionV1;
 }>): CollectionDetailHeader {
-  const subtitle = readTriageDetailContextLineV1(input.header, input.text, input);
+  // Separate facts, so the host header wraps between them and never inside an address or a branch name.
+  const subtitle = readTriageDetailContextSegmentsV1(input.header, input.text, input);
   return {
     title: input.header.title,
     ...(input.header.breadcrumb === null ? {} : { breadcrumb: input.header.breadcrumb }),
     leading: <TriageDetailKindMark header={input.header} />,
-    ...(subtitle === null ? {} : {
+    ...(subtitle.length === 0 ? {} : {
       subtitle,
       subtitleLeading: <TriageSourceMark source={{ pluginId: input.header.sourcePluginId }} />,
     }),
@@ -669,7 +670,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
       {props.headerHosted || identity.subtitle === undefined ? null : (
         <Row gap="xsmall" align="center">
           {identity.subtitleLeading}
-          <Stack grow><Text variant="micro" tone="secondary" value={identity.subtitle} numberOfLines={1} /></Stack>
+          <Stack grow><Text variant="micro" tone="secondary" value={typeof identity.subtitle === 'string' ? identity.subtitle : identity.subtitle.join(' · ')} numberOfLines={1} /></Stack>
         </Row>
       )}
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}

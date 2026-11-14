@@ -7,7 +7,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -158,16 +158,19 @@ function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
   </TriageActivityAgentProvider>;
 }
 
-async function mountDetail(firstPage: JsonValue = FIRST_PAGE): Promise<PluginUiTestkit> {
+async function mountDetail(firstPage: JsonValue = FIRST_PAGE,
+  hostScope?: ReturnType<typeof createTriageEphemeralSharedScopeFixture>): Promise<PluginUiTestkit> {
   const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-200', mountNonce: 'fixture-mount-200' },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
+      // The host hands its shared scope to the surface's own entry, so a case that needs it mounts that entry bare.
+      surface: hostScope !== undefined ? renderSurface
+        : defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(hostScope === undefined ? {} : { ephemeralSharedScope: hostScope }),
       launchInput: launchInput(),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
@@ -410,6 +413,24 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
   });
 });
 
+// R3 (QB-72): moving the detail between the docked pane and the modal remounts Files. The remount starts from the
+// last settled walk the host scope kept for this entry: its rows at once, no placeholder and no second read.
+it('redraws a remounted Files panel from the host-kept walk for the same entry without re-reading it', async () => {
+  const hostScope = createTriageEphemeralSharedScopeFixture();
+  const docked = await mountDetail(SECOND_PAGE, hostScope);
+  await openTab(docked, 'Files');
+  await vi.waitFor(() => expect(listedText()).toContain('src/gamma.ts'));
+  const reads = readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles);
+  await docked.dispose();
+  mounted.splice(mounted.indexOf(docked), 1);
+
+  const modal = await mountDetail(SECOND_PAGE, hostScope);
+  await openTab(modal, 'Files');
+  expect(listedText()).toContain('src/gamma.ts');
+  expect(document.querySelector('[aria-label="Reading the changed files from GitHub"]')).toBeNull();
+  expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(reads);
+});
+
 // QB-72: the native detail entry must consume List, not the Session review host.
 it('mounts GitHub Files as List sections with adjacent tests, import order and no tree', async () => {
   const paths = ['yarn.lock', 'src/a.test.ts', 'src/orphan.test.ts', 'src/a.ts', 'src/z.ts'];
@@ -428,8 +449,8 @@ it('mounts GitHub Files as List sections with adjacent tests, import order and n
     expect(content).toContain('Source');
     expect(content).toContain('Tests');
     expect(content).toContain('Generated and lockfiles');
-    // The whole walk is read, so the count it states is the pull request's total.
-    expect(listedText()).toContain('Changed files · 5');
+    // The Files tab counts the files; the panel does not repeat that count above them.
+    expect(listedText()).not.toContain('Changed files');
     const expected = ['src/z.ts', 'src/a.ts', 'src/a.test.ts', 'src/orphan.test.ts', 'yarn.lock'];
     expect(expected.map(path => content.indexOf(path))).toEqual(
       [...expected.map(path => content.indexOf(path))].sort((a, b) => a - b));
@@ -468,9 +489,8 @@ it('lists GitHub Files as expandable rows under a total, with Show more inside t
   await openTab(detail, 'Files');
   const list = document.querySelector('ul[aria-label="Files this pull request changes"]');
   expect(list).not.toBeNull();
-  // Five read, more to come: the loaded count is not presented as the pull request's total.
-  expect(listedText()).toContain('Changed files');
-  expect(listedText()).not.toContain('Changed files · 5');
+  // Five read, more to come: no count stands above the rows (the tab owns the count).
+  expect(listedText()).not.toContain('Changed files');
   // One band: its rows need no band title.
   expect(list!.textContent).not.toContain('Source');
   // The file rows' own disclosure state (each row's ⋯ trigger carries one too, for its menu).

@@ -285,6 +285,8 @@ describe('GitHub Files panel Viewed marks', () => {
     const files = await mountFiles(source);
     const row = (path: string) => [...document.querySelectorAll('[aria-expanded]')]
       .find(node => node.textContent?.startsWith(path))!;
+    // Above the rows, the reader's progress rather than the tab's count again.
+    expect(document.body.textContent).toContain('1 of 4 viewed');
     // Collapsed, the viewed file says so; an unviewed one stays one line.
     expect(row('src/alpha.ts').textContent).toContain('Viewed');
     expect(row('src/beta.ts').textContent).not.toContain('Viewed');

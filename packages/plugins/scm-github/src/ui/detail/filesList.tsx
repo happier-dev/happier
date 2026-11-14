@@ -60,6 +60,24 @@ function useFileViewed(source: ScmFileViewedSource | null, path: string): ScmFil
   return React.useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
+const NO_VIEWED_COUNT = () => null;
+
+/**
+ * How many files GitHub has as viewed for this PR head, once the Viewed source has answered: the reader's progress
+ * through the files, the one fact the Files panel adds above its rows (the tab already counts the files).
+ */
+export function useViewedFileCount(source: ScmFileViewedSource | null): number | null {
+  const subscribe = React.useCallback((notify: () => void) => {
+    if (source === null) return NO_VIEWED_SUBSCRIPTION();
+    const offStatus = source.subscribeStatus(notify);
+    const offChanges = source.subscribeChanges(() => notify());
+    return () => { offStatus(); offChanges(); };
+  }, [source]);
+  const snapshot = React.useCallback(() => source === null || source.getSnapshot().status !== 'ready'
+    ? NO_VIEWED_COUNT() : source.getViewedPaths().size, [source]);
+  return React.useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
 type FileRowProps = Readonly<{
   row: GithubChangedFileViewV1;
   input: TriageDetailSurfaceInputV1;

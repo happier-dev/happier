@@ -44,6 +44,7 @@ import {
 } from './panelState.js';
 import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGithubRoutingToken, type ExecuteResult } from './readBoundary.js';
 import type { GithubOverviewControllerV1 } from './overviewReader.js';
+import { useGithubFilesWalkRetention, type GithubPagedRetentionV1 } from './filesWalkRetention.js';
 
 export { useGithubRoutingToken } from './readBoundary.js';
 export { useGithubOverview, type GithubOverviewControllerV1, type GithubOverviewValueV1 } from './overviewReader.js';
@@ -179,13 +180,24 @@ export function useGithubPagedWalk<TRow>(
   enabled: boolean,
   disabledFailure: TriageSourceFailureV1,
   firstContinuation: string | null = null,
-  options: Readonly<{ activity?: ReturnType<typeof useTabPanelActivity>; authority?: unknown }> = {},
+  options: Readonly<{
+    activity?: ReturnType<typeof useTabPanelActivity>;
+    authority?: unknown;
+    /** Where the last settled walk outlives this panel's mount (a docked detail moving into the modal). */
+    retained?: GithubPagedRetentionV1<TRow>;
+  }> = {},
 ): GithubPagedControllerV1<TRow> {
   const [state, dispatch] = useReducer(
     githubPagedReducer<TRow>,
     undefined,
-    githubPagedInitialState<TRow>,
+    () => options.retained?.initial ?? githubPagedInitialState<TRow>(),
   );
+  // Each settled answer becomes the walk a remount of this panel starts from.
+  const retained = useRef(options.retained);
+  retained.current = options.retained;
+  useEffect(() => {
+    if (state.kind === 'ready' && !state.pending) retained.current?.settle(state);
+  }, [state]);
   const tabActivity = useTabPanelActivity();
   const { active, activeSignal } = options.activity ?? tabActivity;
   const previousAuthority = useRef(options.authority);
@@ -445,7 +457,8 @@ export function useGithubChangedFilesReader(
     }) };
   }, [execute, instance, localRef, routingToken]);
 
-  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, null, { activity, authority });
+  const retained = useGithubFilesWalkRetention<GithubChangedFileViewV1>(JSON.stringify(authority));
+  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, null, { activity, authority, retained });
 }
 
 export type GithubChangedFileDiffV1 = Readonly<{
