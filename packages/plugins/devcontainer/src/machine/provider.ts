@@ -8,6 +8,7 @@ import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-servi
 import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerNativeOperationSchema } from './schemas.js';
 import type { DevcontainerLaunch, DevcontainerResource, DevcontainerNativeOperation, DevcontainerReviewQuery } from './schemas.js';
 import { assertDevcontainerEffectReview, devcontainerComposeProjectName, readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './effectReview.js';
+import { devcontainerNativeFlags } from './configuration.js';
 
 export const DEVCONTAINER_PLUGIN_ID = 'happier.devcontainer';
 export const DEVCONTAINER_PROVISIONER_ID = 'devcontainer';
@@ -25,11 +26,6 @@ function output(result: PluginProcessResult) {
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
 function json(result: PluginProcessResult): unknown { return JSON.parse(output(result)); }
-function flags(launch: DevcontainerLaunch) {
-  if (!launch.workspaceFolder || !launch.configPath) fail('invalid_request');
-  return ['--workspace-folder', launch.workspaceFolder, '--config', launch.configPath,
-    ...(launch.runtime === 'podman' ? ['--docker-path', 'podman'] : [])];
-}
 function imageSource(launch: DevcontainerLaunch) { return launch.configuration?.kind === 'image' ? launch.configuration : undefined; }
 function readyPath(managedMachineId: string) { return `/tmp/.${devcontainerComposeProjectName(managedMachineId)}-ready`; }
 function nativeLabels(launch: DevcontainerLaunch | undefined, managedMachineId: string) {
@@ -38,7 +34,7 @@ function nativeLabels(launch: DevcontainerLaunch | undefined, managedMachineId: 
     : { 'devcontainer.local_folder': launch.workspaceFolder!, 'devcontainer.config_file': launch.configPath!, ...managed };
 }
 function managedFlags(launch: DevcontainerLaunch, managedMachineId: string) {
-  return [...flags(launch), ...Object.entries(nativeLabels(launch, managedMachineId))
+  return [...devcontainerNativeFlags(launch), ...Object.entries(nativeLabels(launch, managedMachineId))
     .flatMap(([key, value]) => ['--id-label', `${key}=${value}`])];
 }
 function quote(value: string) { return `'${value.replace(/'/gu, `'"'"'`)}'`; }
@@ -114,7 +110,7 @@ export function createDevcontainerProvider(input: Readonly<{
   const childCommand = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], interactive: boolean) =>
     imageSource(launch)
       ? { executable: input.docker, args: ['exec', ...(interactive ? ['--interactive'] : []), '--workdir', '/workspace', containerId, ...argv] }
-      : { executable: cli(), args: ['exec', ...flags(launch), '--container-id', containerId, ...argv] };
+      : { executable: cli(), args: ['exec', ...devcontainerNativeFlags(launch), '--container-id', containerId, ...argv] };
   const childExec = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string) => {
     const command = childCommand(launch, containerId, argv, stdin !== undefined);
     return run(command.executable, command.args, stdin, live, managedMachineId, launch.workspaceFolder);

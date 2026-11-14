@@ -41,7 +41,8 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: Plugin
   let memoryBytes = 2 * 1024 ** 3;
   const exec: Pick<ExecService, 'run' | 'spawn'> = { spawn: async () => { throw new Error('No channel in this fixture'); }, run: async request => {
     requests.push(request);
-    if (['read-configuration', 'up', 'exec'].includes(request.args?.[0] ?? '')) {
+    // Native 0.90.0 validates the filename in resolve(), used by `up`.
+    if (request.args?.[0] === 'up') {
       const config = request.args?.[request.args.indexOf('--config') + 1];
       if (!config || !['devcontainer.json', '.devcontainer.json'].includes(basename(config))) return result('', 1);
     }

@@ -107,6 +107,20 @@ async function reviewBoundary() {
 }
 
 describe('Devcontainer public passive effect review', () => {
+  it('reviews inline relative Dockerfiles through the native CLI', async () => {
+    const boundary = await reviewBoundary();
+    boundary.nativeConfiguration.configuration = { build: { dockerfile: 'Dockerfile' } };
+    boundary.nativeConfiguration.mergedConfiguration.postCreateCommands = [];
+    const dockerfile = join(boundary.workspaceFolder, '.devcontainer', 'Dockerfile');
+    await writeFile(dockerfile, 'FROM example:latest\nRUN install-package\n');
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!({
+      workspaceFolder: boundary.workspaceFolder,
+      configuration: { kind: 'inline', config: JSON.stringify({ build: { dockerfile: 'Dockerfile' } }) },
+    }, boundary.context));
+    expect(options.base).toMatchObject({ available: true, effectReview: { effects: expect.arrayContaining([
+      expect.objectContaining({ kind: 'build', details: [dockerfile] }),
+    ]) } });
+  });
   it('offers the reviewed base launch and independent dimensions without evaluating host or child hooks', async () => {
     const boundary = await reviewBoundary();
     expect(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners[0]?.actions.options).toBe('options');

@@ -7,7 +7,7 @@ import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-servi
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema } from './schemas.js';
 import type { DevcontainerLaunch } from './schemas.js';
-import { containedDevcontainerPath as contained, materializeDevcontainerConfiguration } from './configuration.js';
+import { containedDevcontainerPath as contained, devcontainerNativeFlags, materializeDevcontainerConfiguration } from './configuration.js';
 
 type NativeReviewInput = Readonly<{ exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef;
   devcontainer?: ManagedExecutableRef; signal: AbortSignal; environment?: Readonly<Record<string, string>> }>;
@@ -146,8 +146,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   const run = async (executable: ManagedExecutableRef, args: readonly string[]) => nativeJson(
     await input.exec.run({ executable, args, cwd: workspaceFolder,
       env: reviewEnvironment }, { signal: input.signal }));
-  const native = record(await run(input.devcontainer, ['read-configuration', '--workspace-folder', workspaceFolder,
-    '--config', configPath, ...(query.runtime === 'podman' ? ['--docker-path', 'podman'] : []), '--id-label', `devcontainer.local_folder=${workspaceFolder}`,
+  const native = record(await run(input.devcontainer, ['read-configuration', ...devcontainerNativeFlags(materialized), '--id-label', `devcontainer.local_folder=${workspaceFolder}`,
     '--id-label', `devcontainer.config_file=${configPath}`, '--id-label', 'happier.managed-machine= ',
     '--include-merged-configuration', '--include-features-configuration']));
   // CLI id-label validation requires a nonempty value. Protocol row ids trim

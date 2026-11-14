@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { canonicalizePath, isCanonicalAbsolutePathInsideRoot, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 import type { DevcontainerLaunch, DevcontainerReviewQuery } from './schemas.js';
+
+/** Native override reads the generated content while keeping relative file
+ * references at their authored .devcontainer origin (CLI 0.90.0 configContainer). */
+export function devcontainerNativeFlags(launch: Pick<DevcontainerLaunch, 'workspaceFolder' | 'configPath' | 'configuration' | 'runtime'>): string[] {
+  if (!launch.workspaceFolder || !launch.configPath) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+  return ['--workspace-folder', launch.workspaceFolder,
+    '--config', launch.configuration?.kind === 'inline' ? join(dirname(launch.configPath), 'devcontainer.json') : launch.configPath,
+    ...(launch.configuration?.kind === 'inline' ? ['--override-config', launch.configPath] : []),
+    ...(launch.runtime === 'podman' ? ['--docker-path', 'podman'] : [])];
+}
 
 export async function containedDevcontainerPath(root: string, candidate: string): Promise<string> {
   const path = await canonicalizePath(candidate);
