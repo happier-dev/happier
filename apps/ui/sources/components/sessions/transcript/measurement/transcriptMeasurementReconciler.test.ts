@@ -27,6 +27,26 @@ function stableSignature(
 }
 
 describe('transcriptMeasurementReconciler', () => {
+    describe('floor retention is bounded (LRU) within a session', () => {
+        it('evicts the least-recently-used floor once distinct item floors exceed the bound', () => {
+            const reconciler = createTestTranscriptMeasurementReconciler({ floorMaxEntries: 2 });
+            const a = streamingSignature({ itemId: 'message-a' });
+            const b = streamingSignature({ itemId: 'message-b' });
+            const c = streamingSignature({ itemId: 'message-c' });
+
+            reconciler.recordMeasuredHeight({ signature: a, heightPx: 100 });
+            reconciler.recordMeasuredHeight({ signature: b, heightPx: 120 });
+            // Touch A so B becomes the least-recently-used floor.
+            expect(reconciler.resolveReservation(a)).toEqual({ kind: 'floor', minHeight: 100 });
+            reconciler.recordMeasuredHeight({ signature: c, heightPx: 140 });
+
+            expect(reconciler.resolveReservation(b)).toBeUndefined();
+            expect(reconciler.resolveReservation(a)).toEqual({ kind: 'floor', minHeight: 100 });
+            expect(reconciler.resolveReservation(c)).toEqual({ kind: 'floor', minHeight: 140 });
+            expect(reconciler.resolveLastMeasuredHeight(b)).toBeUndefined();
+        });
+    });
+
     describe('resolveRecycleType is shape-stable across a stream (T2)', () => {
         it('returns the same recycle type for an agent message growing past the long-text threshold', () => {
             const reconciler = createTestTranscriptMeasurementReconciler();
