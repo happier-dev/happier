@@ -115,6 +115,7 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       const admission = refreshed.acpCatalog ? resolveAcpCatalogRevisionAdmission({ catalog: refreshed.acpCatalog,
         retainedRevision: acpRevision, settingsVersion: refreshed.settingsVersion }) : null;
       sourceSnapshot = next;
+      replaceSavedSecretCatalogInSnapshot(snapshot, { resources: refreshed.savedSecretResources ?? [], state: refreshed.savedSecretCatalogState ?? 'temporarily_unavailable' });
       replaceSnapshot(admission?.status === 'stale' ? { ...refreshed, acpCatalog: snapshot.acpCatalog } : refreshed);
       if (admission?.status === 'admitted') acpRevision = admission.revision;
       if (snapshot.mcpServerCatalog?.status === 'ready' && typeof snapshot.mcpServerCatalog.revision === 'number') {
