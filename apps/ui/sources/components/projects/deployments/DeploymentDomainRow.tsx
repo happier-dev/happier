@@ -1,19 +1,25 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { isDeploymentReadDemandActiveV1, projectDeploymentDomainFactsV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import {
+  isDeploymentReadDemandActiveV1,
+  projectDeploymentDomainDnsReadinessV1,
+  projectDeploymentDomainFactsV1,
+  type DeploymentReadDemandV1,
+} from '@happier-dev/deployments';
 import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
 
 import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { presentActionFailureTechnicalDetails } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
-import { StatusPill, StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
+import { StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -22,179 +28,315 @@ import { t } from '@/text';
 import { deploymentDomainAttention, type DomainCredentialRole, type DomainItem } from './deploymentDomainAttention';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
 
 export type { DomainCredentialRole, DomainItem } from './deploymentDomainAttention';
-type OperationAddress = NonNullable<DomainItem['domain']['operationAddress']>;
-type DomainRowProps = Readonly<{
-  item: DomainItem;
+
+/** What a page can do to its addresses; absent where it cannot write (the rows stay read-only). */
+export type DeploymentDomainRowActions = Readonly<{
+  verify: (item: DomainItem) => void;
+  remove: (item: DomainItem) => void;
+  configureChecks?: (item: DomainItem, anchorRef: React.RefObject<View | null>) => void;
+  /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
+  missingCredentials?: (item: DomainItem) => readonly DomainCredentialRole[];
+  chooseCredential?: (item: DomainItem, role: DomainCredentialRole) => void;
+  /** Opens the provider-owned zone picker for an address whose provider records still wait (Cloudflare DNS). */
+  addDnsRecords?: (item: DomainItem) => void;
+}>;
+
+type DomainRowContext = Readonly<{
+  accountId: string;
+  serverId: string;
+  disabled: boolean;
+  /** The Machine the page already names; a route that leads only there doesn't repeat it. */
+  ownMachineId: string | null;
+  /** The Machine's name, for the DNS instruction a waiting address carries. */
+  machineName: string | null;
+  actions: DeploymentDomainRowActions | null;
+  /** Exact operation reads that answered not_found, by read key. */
+  notFound: ReadonlyMap<string, ActionOperationGetV1Response>;
+}>;
+
+const NO_ROLES: readonly DomainCredentialRole[] = Object.freeze([]);
+const NO_NOT_FOUND: ReadonlyMap<string, ActionOperationGetV1Response> = new Map();
+const noop = () => {};
+const keyOf = (item: DomainItem) => item.domain.id;
+
+/**
+ * The domain list (lab `envDom` / `svcDom`): one row per address with its host and the line that matters (the
+ * record to add, a redirect, password protection), then Reaches, Certificate and State columns and the row's ⋯.
+ * The shared Collection list draws the columns on a wide page and folds them on a phone, where the state stays at
+ * the row's end. The Environment's Domains tab and Services → Domains both draw it.
+ */
+export function DeploymentDomainsList(props: Readonly<{
+  items: readonly DomainItem[];
   accountId: string;
   serverId: string;
   demand: DeploymentReadDemandV1;
   disabled: boolean;
-  onVerify?: () => void;
-  onRemove?: () => void;
-  onConfigureChecks?: (anchorRef: React.RefObject<View | null>) => void;
-  /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
-  missingCredentials?: readonly DomainCredentialRole[];
-  onChooseCredential?: (role: DomainCredentialRole) => void;
-  /** A phone keeps only ⋯ beside the address; Check again moves beneath its state line. */
-  phone?: boolean;
-  /** The Machine the Environment's header already names; a route that leads only there doesn't repeat it. */
   ownMachineId?: string | null;
-}>;
-
-/** A legacy capture has no controller address to inspect; it keeps the Domain owner's desired state. */
-export function DeploymentDomainRow(props: DomainRowProps) {
-  return props.item.domain.operationAddress
-    ? <ObservedDomainRow {...props} address={props.item.domain.operationAddress} />
-    : <DomainRowContent {...props} observation={null} />;
+  machineName?: string | null;
+  actions?: DeploymentDomainRowActions | null;
+  testID: string;
+}>) {
+  const { theme } = useUnistyles();
+  const notFound = useDomainOperationReads(props.items, props.accountId, props.demand);
+  const model = useHappierCollection<DomainItem>({ items: props.items, keyOf, openKey: null, onOpenChange: noop });
+  const context = React.useMemo<DomainRowContext>(() => ({
+    accountId: props.accountId, serverId: props.serverId, disabled: props.disabled, ownMachineId: props.ownMachineId ?? null,
+    machineName: props.machineName ?? null, actions: props.actions ?? null, notFound,
+  }), [notFound, props.accountId, props.actions, props.disabled, props.machineName, props.ownMachineId, props.serverId]);
+  const anatomy = React.useMemo<CollectionAnatomy<DomainItem>>(() => ({
+    glyph: () => <Icon name="globe" size={18} color={theme.colors.text.secondary} />,
+    title: (item) => item.content.hostname,
+    byline: (item, layout) => <DomainByline item={item} context={context} columns={layout?.fieldColumns === true} />,
+    // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
+    titleControls: (item) => <DomainRowControls item={item} context={context} />,
+    // A phone folds the columns; the state and ⋯ keep the row's end.
+    titleMeta: (item) => <DomainRowEnd item={item} context={context} />,
+    titleMetaAlign: 'row',
+    fields: [
+      { key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 112, priority: 3, listColumn: true,
+        render: (item) => <DomainReaches item={item} /> },
+      { key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 128, priority: 2, listColumn: true,
+        render: (item) => <DomainCertificate item={item} /> },
+      // The state and the row's ⋯ share the last column, so the bar's titles stay over their figures.
+      { key: 'state', title: t('projects.deployments.editors.domainColumnState'), minWidth: 148, priority: 4, listColumn: true,
+        align: 'end', control: true, render: (item) => <DomainRowEnd item={item} context={context} /> },
+    ],
+    accessibilityLabel: (item) => [item.content.hostname, domainRoute(item.content)].filter(Boolean).join(', '),
+    testID: (item) => `project-deployments.environment.domains.${item.domain.id}`,
+    columnTitles: {
+      title: t('projects.deployments.editors.domainColumnDomain'),
+      titleMeta: t('projects.deployments.editors.domainColumnState'),
+    },
+  }), [context, theme.colors.text.secondary]);
+  return (
+    <CoreCollectionScope>
+      <Collection<DomainItem>
+        testID={props.testID}
+        model={model}
+        anatomy={anatomy}
+        accessibilityLabel={t('projects.deployments.tabDomains')}
+        presentation="list"
+        detail="none"
+        scroll="page"
+        minListWidth={0}
+        minDetailWidth={0}
+        preferredListRatio={1}
+      />
+    </CoreCollectionScope>
+  );
 }
 
-/** One exact cold read, followed by the existing pushed operation store; no native-target guess or polling. */
-function ObservedDomainRow(props: DomainRowProps & Readonly<{ address: OperationAddress }>) {
-  const { accountId, address } = props;
-  const serverId = resolveServerProfileScopeIdForIdentifier(address.serverId);
-  const record = useActionOperation({ serverId, operationId: address.operationId });
-  const readKey = JSON.stringify([serverId, accountId, address.machineId, address.operationId]);
-  const [missing, setMissing] = React.useState<Readonly<{ key: string; result: ActionOperationGetV1Response }> | null>(null);
-  const presented = isDeploymentReadDemandActiveV1(props.demand);
+/**
+ * One exact cold read per presented address, then the pushed operation store; no native-target guess or polling.
+ * Only a typed not_found is kept here: it is what makes an unresolved removal retryable.
+ */
+function useDomainOperationReads(items: readonly DomainItem[], accountId: string, demand: DeploymentReadDemandV1) {
+  const presented = isDeploymentReadDemandActiveV1(demand);
+  const addresses = JSON.stringify(items.flatMap(item => {
+    const address = item.domain.operationAddress;
+    return address ? [[resolveServerProfileScopeIdForIdentifier(address.serverId), address.machineId, address.operationId]] : [];
+  }));
+  const [notFound, setNotFound] = React.useState(NO_NOT_FOUND);
   React.useEffect(() => {
     if (!presented) return;
     const abort = new AbortController();
-    void getActionOperation({ serverId, accountId, machineId: address.machineId,
-      operationId: address.operationId, requireCurrentDomainFacts: true, signal: abort.signal }).then(result => {
-      if (abort.signal.aborted) return;
-      if (result.kind === 'not_found') {
-        setMissing({ key: readKey, result });
-        return;
-      }
-      setMissing(null);
-      if (result.operation.operationId !== address.operationId
-        || result.operation.scope.accountId !== accountId || result.operation.scope.machineId !== address.machineId) return;
-      actionOperationStore.mergeSnapshots({ serverId, snapshots: [result.operation] });
-    }, () => {
-      // An unavailable read cannot turn an unresolved native removal into a retryable failure.
+    const settle = (readKey: string, result: ActionOperationGetV1Response | null) => setNotFound(current => {
+      if (result ? current.get(readKey) === result : !current.has(readKey)) return current;
+      const next = new Map(current);
+      if (result) next.set(readKey, result);
+      else next.delete(readKey);
+      return next;
     });
+    for (const [serverId, machineId, operationId] of JSON.parse(addresses) as [string, string, string][]) {
+      const readKey = domainReadKey(serverId, accountId, machineId, operationId);
+      void getActionOperation({ serverId, accountId, machineId, operationId, requireCurrentDomainFacts: true, signal: abort.signal })
+        .then(result => {
+          if (abort.signal.aborted) return;
+          if (result.kind === 'not_found') {
+            settle(readKey, result);
+            return;
+          }
+          settle(readKey, null);
+          if (result.operation.operationId !== operationId
+            || result.operation.scope.accountId !== accountId || result.operation.scope.machineId !== machineId) return;
+          actionOperationStore.mergeSnapshots({ serverId, snapshots: [result.operation] });
+        }, () => {
+          // An unavailable read cannot turn an unresolved native removal into a retryable failure.
+        });
+    }
     return () => abort.abort();
-  }, [accountId, address.machineId, address.operationId, presented, readKey, serverId]);
-  const observation = missing?.key === readKey ? missing.result
-    : record ? { kind: 'found' as const, operation: record.snapshot } : null;
-  return <DomainRowContent {...props} observation={observation} />;
+  }, [accountId, addresses, presented]);
+  return notFound;
 }
 
-/** Render the shared Domain owner's lifecycle and recovery facts. */
-function DomainRowContent(props: DomainRowProps & Readonly<{ observation: ActionOperationGetV1Response | null }>) {
-  const { theme } = useUnistyles();
-  const { item } = props;
-  const { state: lifecycle, retryRemoval, failure } = projectDeploymentDomainFactsV1(item.domain, props.accountId, props.observation);
-  const missing = props.missingCredentials ?? [];
+function domainReadKey(serverId: string, accountId: string, machineId: string, operationId: string) {
+  return JSON.stringify([serverId, accountId, machineId, operationId]);
+}
+
+/** The shared Domain owner's lifecycle and recovery facts for one row; a legacy capture keeps its desired state. */
+function useDomainRowFacts(item: DomainItem, context: DomainRowContext) {
+  const address = item.domain.operationAddress ?? null;
+  const serverId = address ? resolveServerProfileScopeIdForIdentifier(address.serverId) : null;
+  const record = useActionOperation({ serverId, operationId: address?.operationId ?? '' });
+  const missingRead = address && serverId !== null
+    ? context.notFound.get(domainReadKey(serverId, context.accountId, address.machineId, address.operationId)) ?? null : null;
+  const observation = !address ? null : missingRead ?? (record ? { kind: 'found' as const, operation: record.snapshot } : null);
+  const facts = projectDeploymentDomainFactsV1(item.domain, context.accountId, observation);
+  const missing = context.actions?.missingCredentials?.(item) ?? NO_ROLES;
   // One state per row, from the Domain attention owner the live address reads too.
-  const state = deploymentDomainAttention(item, lifecycle, missing);
-  const tag = domainTag(item.content);
+  return { ...facts, missing, attention: deploymentDomainAttention(item, facts.state, missing) };
+}
+
+/** State: what needs the person, in its colour; a settled healthy address says it is serving, quietly. */
+function DomainStateCell(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+  const { attention, state } = useDomainRowFacts(props.item, props.context);
+  const testID = `project-deployments.environment.domains.${props.item.domain.id}.state`;
+  if (attention) return <Status tone={attention.variant} label={attention.label} presentation="inline" testID={testID} />;
+  return state === 'active'
+    ? <Status tone="secondary" label={t('projects.deployments.editors.domainServing')} presentation="inline" indicator={false} testID={testID} />
+    : null;
+}
+
+function DomainRowEnd(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+  return <View style={styles.rowEnd}>
+    <DomainStateCell item={props.item} context={props.context} />
+    <DomainRowMenu item={props.item} context={props.context} />
+  </View>;
+}
+
+/** Reaches: the service and port it routes to, and its path when it is not every path. */
+function DomainReaches(props: Readonly<{ item: DomainItem }>) {
+  const { theme } = useUnistyles();
+  const { target } = props.item.content;
+  if (target.kind === 'provider') return null;
+  const text = target.redirectTo ? `→ ${target.redirectTo}` : `${target.service}:${target.containerPort} ${target.path ?? '/'}`;
+  return <Text variant="meta" numberOfLines={1} style={[Typography.mono(), { color: theme.colors.text.secondary }]}>{text}</Text>;
+}
+
+/** Certificate: whose it is, and when it expires once the outside check has read it. */
+function DomainCertificate(props: Readonly<{ item: DomainItem }>) {
+  const { theme } = useUnistyles();
+  const { content, health } = props.item;
+  if (content.target.kind === 'provider') return null;
+  const kind = content.tls?.kind === 'custom'
+    ? t('projects.deployments.domainTagOwnCertificate') : t('projects.deployments.editors.certificateAutomatic');
+  const certificate = health?.certificate;
+  const expires = certificate?.expiresAt && (certificate.state === 'valid' || certificate.state === 'expiresSoon')
+    ? t('projects.deployments.editors.domainCertificateExpires', {
+      date: new Date(certificate.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+    }) : null;
+  return <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>
+    {expires ? `${kind} · ${expires}` : kind}
+  </Text>;
+}
+
+/**
+ * The row's second line: the record to add while DNS is missing, or what sets the address apart (a redirect, a
+ * password), then the Machines it leads to. A phone has no Reaches column, so a row with nothing else says its route.
+ */
+function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowContext; columns: boolean }>) {
+  const { theme } = useUnistyles();
+  const { item, context } = props;
+  const { content } = item;
   // Where the address leads, by Machine name, unless it is only the Machine the page already names; raw ids stay out.
-  const routedMachineIds = React.useMemo(() => domainRouteMachineIds(item.domain.routedReplicas?.replicas, props.ownMachineId ?? null),
-    [item.domain.routedReplicas, props.ownMachineId]);
+  const routedMachineIds = React.useMemo(() => domainRouteMachineIds(item.domain.routedReplicas?.replicas, context.ownMachineId),
+    [item.domain.routedReplicas, context.ownMachineId]);
   const routedNames = useMachineDisplayNamesById(routedMachineIds);
   const routedOn = routedMachineIds.length > 0 ? t('projects.deployments.domainRoutedOn', {
     machines: [...new Set(routedMachineIds.map(machineId => routedNames[machineId] ?? t('projects.deployments.aMachine')))].join(', '),
   }) : null;
-  const route = [domainRoute(item.content), routedOn].filter(Boolean).join(' · ') || null;
-  // An address that needs the person shows its recovery beside it, not only in ⋯.
-  const checkAgain = state && props.onVerify && lifecycle !== 'removing' ? props.onVerify : null;
-  const actionable = props.onRemove && props.onVerify;
-  const checkAgainButton = actionable && checkAgain ? <RoundButton testID={`project-deployments.environment.domains.${item.domain.id}.checkAgain`}
-    size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')} disabled={props.disabled}
-    onPress={checkAgain} /> : null;
-  const menu = actionable ? <DomainRowMenu item={item} disabled={props.disabled}
-    retryRemoval={retryRemoval} onVerify={props.onVerify!} onRemove={props.onRemove!}
-    onConfigureChecks={props.onConfigureChecks}
-    missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : null;
-  // A phone keeps only a short control beside a label: ⋯ stays, Check again sits beneath the state line,
-  // as the Overview's live address places its actions.
-  const phone = props.phone === true;
-  return <>
-    <Item
-      testID={`project-deployments.environment.domains.${item.domain.id}`}
-      icon={<Icon name="globe" size={18} color={theme.colors.text.secondary} />}
-      title={item.content.hostname}
-      titleAccessory={tag ? <StatusPill variant="neutral" hideDot label={tag} /> : undefined}
-      subtitle={state ? <DomainStateLine state={state} route={route} /> : route}
-      mode="info"
-      {...(phone ? { rightElement: menu ?? undefined, bottomElement: checkAgainButton ? <View style={styles.rowActions}>{checkAgainButton}</View> : undefined, bottomElementInset: 'text' as const }
-        : { rightElement: actionable ? <View style={styles.rowActions}>{checkAgainButton}{menu}</View> : undefined })}
-    />
-    {item.content.providerObservation?.dns.map((record, index) => (
-      <FieldItem key={JSON.stringify([record.type, record.name, index])} label={`${record.type} · ${record.name}`}>
-        <Text selectable>{record.value}</Text>
-      </FieldItem>
-    ))}
-    {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
-    {state && (state.variant === 'attention' || state.variant === 'danger') ? <SectionContentRow>
-      <FailureInvestigationActions subject={{ kind: 'domain', serverId: props.serverId,
-        environmentId: item.domain.environmentId, domainId: item.domain.id }} serverId={props.serverId}
-        controllerMachineId={item.domain.operationAddress?.machineId} compact emphasis="secondary"
-        testID={`project-deployments.environment.domains.${item.domain.id}.investigate`} />
-    </SectionContentRow> : null}
-  </>;
+  const dns = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state;
+  const records = content.providerObservation?.dns.map(record =>
+    t('projects.deployments.editors.domainAddRecord', { type: record.type, name: record.name, value: record.value })) ?? [];
+  const lead = records.length > 0 ? records.join(' · ')
+    : dns === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
+    : dns === 'not_this_machine' && context.machineName ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
+    : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
+    : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
+    : null;
+  const parts = [lead, routedOn].filter(Boolean);
+  const line = parts.length > 0 ? parts.join(' · ') : props.columns ? null : domainRoute(content);
+  if (!line) return null;
+  return <Text variant="meta" numberOfLines={2} selectable={records.length > 0} style={{ color: theme.colors.text.secondary }}
+    testID={`project-deployments.environment.domains.${item.domain.id}.line`}>{line}</Text>;
 }
 
-/** A row's `⋯`: Check again re-observes the address, Remove takes it off this environment. */
-function DomainRowMenu(
-  props: Readonly<{
-    item: DomainItem;
-    disabled: boolean;
-    retryRemoval: boolean;
-    onVerify: () => void;
-    onRemove: () => void;
-    onConfigureChecks?: (anchorRef: React.RefObject<View | null>) => void;
-    missingCredentials: readonly DomainCredentialRole[];
-    onChooseCredential?: (role: DomainCredentialRole) => void;
-  }>,
-) {
+/** Check again beside an address that needs the person, then its investigation and a failed change's details. */
+function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+  const { item, context } = props;
+  const { attention, state, failure } = useDomainRowFacts(item, context);
+  const id = `project-deployments.environment.domains.${item.domain.id}`;
+  const verify = context.actions?.verify;
+  const checkAgain = attention && verify && state !== 'removing' ? (
+    <RoundButton testID={`${id}.checkAgain`} size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')}
+      disabled={context.disabled} onPress={() => verify(item)} />
+  ) : null;
+  const investigate = attention && (attention.variant === 'attention' || attention.variant === 'danger') ? (
+    <FailureInvestigationActions subject={{ kind: 'domain', serverId: context.serverId,
+      environmentId: item.domain.environmentId, domainId: item.domain.id }} serverId={context.serverId}
+      controllerMachineId={item.domain.operationAddress?.machineId} compact emphasis="secondary" testID={`${id}.investigate`} />
+  ) : null;
+  // Records a provider still waits for can be written through Cloudflare beside where the row lists them.
+  const addDnsRecords = context.actions?.addDnsRecords;
+  const observation = item.content.providerObservation;
+  const addRecords = addDnsRecords && state !== 'removing' && observation?.state === 'pending' && observation.dns.length > 0 ? (
+    <RoundButton testID={`${id}.dnsProvider`} size="small" display="secondary"
+      title={t('projects.deployments.editors.domainDnsCloudflareAction')} disabled={context.disabled}
+      onPress={() => addDnsRecords(item)} />
+  ) : null;
+  // Why the provider could not set the address up, through the one failure-details presenter.
+  const providerCause = observation?.failureCause;
+  const providerDetails = providerCause ? presentActionFailureTechnicalDetails({ error: providerCause.errorCode ?? providerCause.phase,
+    errorCode: providerCause.errorCode ?? providerCause.phase, failureCause: providerCause }, 'deployment') : null;
+  if (!checkAgain && !addRecords && !investigate && !failure && !providerDetails) return null;
+  return <View style={styles.controls}>
+    {addRecords}
+    {checkAgain}
+    {investigate}
+    {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
+    {providerDetails ? <ApprovalTechnicalDetails lines={providerDetails} /> : null}
+  </View>;
+}
+
+/** A row's `⋯`: a missing credential first, then Check again and Add check, then Remove. */
+function DomainRowMenu(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
   const { theme } = useUnistyles();
+  const { item, context } = props;
+  const { actions } = context;
+  const { retryRemoval, missing } = useDomainRowFacts(item, context);
   const [open, setOpen] = React.useState(false);
   const anchorRef = React.useRef<View>(null);
-  const { missingCredentials, onChooseCredential } = props;
-  const id = `project-deployments.environment.domains.${props.item.domain.id}.menu`;
-  const removing = props.item.domain.state === 'removing';
+  const id = `project-deployments.environment.domains.${item.domain.id}.menu`;
+  const removing = item.domain.state === 'removing';
+  const chooseCredential = actions?.chooseCredential;
+  const configureChecks = actions?.configureChecks;
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
-      // What the address still needs leads its menu, as the row's state line says.
-      ...(!removing && onChooseCredential ? missingCredentials.map(role => ({
-        id: `credential:${role}`,
-        category: 'credential',
-        testID: `${id}.credential.${role}`,
-        title: credentialChoiceTitle(role),
+      // What the address still needs leads its menu, as the row's state says.
+      ...(!removing && chooseCredential ? missing.map(role => ({
+        id: `credential:${role}`, category: 'credential', testID: `${id}.credential.${role}`, title: credentialChoiceTitle(role),
         icon: <Icon name="key" size={16} color={theme.colors.text.secondary} />,
       })) : []),
       ...(!removing ? [{
-        id: 'verify',
-        category: 'check',
-        testID: `${id}.verify`,
-        title: t('projects.deployments.domainCheckAgain'),
+        id: 'verify', category: 'check', testID: `${id}.verify`, title: t('projects.deployments.domainCheckAgain'),
         icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />,
       }] : []),
-      ...(!removing && props.onConfigureChecks ? [{
-        id: 'configure-checks',
-        category: 'check',
-        testID: `${id}.configure-checks`,
+      ...(!removing && configureChecks ? [{
+        id: 'configure-checks', category: 'check', testID: `${id}.configure-checks`,
         title: t('projects.deployments.settingsSections.addCheck'),
         icon: <Icon name="pulse" size={16} color={theme.colors.text.secondary} />,
       }] : []),
       {
-        id: 'remove',
-        category: 'operations',
-        testID: `${id}.remove`,
-        title: t('projects.deployments.domainRemove'),
-        destructive: true,
+        id: 'remove', category: 'operations', testID: `${id}.remove`, title: t('projects.deployments.domainRemove'), destructive: true,
         icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [id, missingCredentials, onChooseCredential, props.onConfigureChecks, removing, theme.colors.text.secondary],
+    [chooseCredential, configureChecks, id, missing, removing, theme.colors.text.secondary],
   );
-  if (props.disabled || removing && !props.retryRemoval) return null;
+  if (!actions || context.disabled || removing && !retryRemoval) return null;
   return (
     <DropdownMenu
       open={open}
@@ -202,24 +344,19 @@ function DomainRowMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverAccessibilityLabel={props.item.content.hostname}
+      popoverAccessibilityLabel={item.content.hostname}
       separateCategories
       onSelect={(itemId) => {
         if (itemId.startsWith('credential:')) {
-          const role = missingCredentials.find(item => `credential:${item}` === itemId);
-          if (role) onChooseCredential?.(role);
-        } else if (itemId === 'verify') props.onVerify();
-        else if (itemId === 'configure-checks') props.onConfigureChecks?.(anchorRef);
-        else if (itemId === 'remove') props.onRemove();
+          const role = missing.find(entry => `credential:${entry}` === itemId);
+          if (role) chooseCredential?.(item, role);
+        } else if (itemId === 'verify') actions.verify(item);
+        else if (itemId === 'configure-checks') configureChecks?.(item, anchorRef);
+        else if (itemId === 'remove') actions.remove(item);
       }}
       trigger={({ toggle }) => (
-        <View ref={anchorRef}><IconButton
-          testID={id}
-          iconName="dots-three"
-          variant="plain"
-          accessibilityLabel={t('common.more')}
-          onPress={toggle}
-        /></View>
+        <View ref={anchorRef}><IconButton testID={id} iconName="dots-three" variant="plain"
+          accessibilityLabel={t('common.more')} onPress={toggle} /></View>
       )}
     />
   );
@@ -265,18 +402,6 @@ function domainRoute(content: DomainItem['content']): string | null {
   });
 }
 
-/** The one thing that sets this address apart from a plain public one, as lab r3 tags it. */
-function domainTag(content: DomainItem['content']): string | null {
-  if (content.target.kind === 'provider') return null;
-  if (content.target.redirectTo)
-    return t('projects.deployments.domainTagRedirect');
-  if (content.basicAuth) return t('projects.deployments.domainTagBasicAuth');
-  if (content.tls?.kind === 'custom')
-    return t('projects.deployments.domainTagOwnCertificate');
-  if (content.target.path) return t('projects.deployments.domainTagPath');
-  return null;
-}
-
 function credentialChoiceTitle(role: DomainCredentialRole): string {
   switch (role) {
     case 'basicAuth': return t('projects.deployments.editors.choosePassword');
@@ -286,5 +411,6 @@ function credentialChoiceTitle(role: DomainCredentialRole): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  rowActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
+  controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
 }));

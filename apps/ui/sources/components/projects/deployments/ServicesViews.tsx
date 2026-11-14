@@ -23,7 +23,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
-import { DeploymentDomainRow } from './DeploymentDomainRow';
+import { DeploymentDomainsList } from './DeploymentDomainRow';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
@@ -316,7 +316,9 @@ export function ServicesDomainsView(
       </ItemGroup>
     );
   }
-  if (items.length === 0) {
+  const page = read.snapshot.value;
+  // An empty page that continues is not an empty Account: it leads on (the Apps paging pattern).
+  if (items.length === 0 && !page.hasNextPage && !page.hasPreviousPage) {
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -331,18 +333,25 @@ export function ServicesDomainsView(
     );
   }
   return (
-    <ItemGroup testID="services.domains">
-      {items.map((item) => (
-        <DeploymentDomainRow
-          key={item.domain.id}
-          item={item}
-          accountId={props.accountId}
-          serverId={props.serverId}
-          demand={props.demand}
-          disabled={false}
-          phone={props.phone}
-        />
-      ))}
-    </ItemGroup>
+    <>
+      {items.length === 0 ? (
+        <ItemGroup surface="none">
+          <SurfaceStateCard testID="services.domains.pageEmpty" kind="empty" size="line"
+            title={t('projects.deployments.services.pageEmpty')} />
+        </ItemGroup>
+      ) : (
+        <ItemGroup surface="none">
+          <DeploymentDomainsList
+            testID="services.domains"
+            items={items}
+            accountId={props.accountId}
+            serverId={props.serverId}
+            demand={props.demand}
+            disabled={false}
+          />
+        </ItemGroup>
+      )}
+      <ServicesPaging testID="services.domains.paging" page={page} onNewer={read.previousPage} onOlder={read.nextPage} />
+    </>
   );
 }

@@ -18620,7 +18620,6 @@ settingsSession: {
         factDeploymentId: "Id развёртывания",
         factEnvironmentName: "Имя окружения",
         factDomainUrl: "Адрес домена",
-        domainsDescription: "Адреса, ведущие к этому окружению.",
         domainsEmpty: "Доменов пока нет",
         domainAdd: "Добавить домен",
         domainAddTitle: "Добавить домен",

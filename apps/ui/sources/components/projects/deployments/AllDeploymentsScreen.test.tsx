@@ -330,4 +330,21 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
     controller.retire();
   });
+  it('pages Domains through the read owner instead of calling a continued Account empty', async () => {
+    const cursors: (string | null | undefined)[] = [];
+    const { controller } = controllerFor(() => page([]), {
+      listDomainPage: async (_scope: unknown, input: { cursor?: string | null }) => {
+        cursors.push(input.cursor);
+        return { ok: true, value: { nextCursor: input.cursor ? null : 'domains-2', items: [] } };
+      },
+    });
+    const screen = await renderScreen(<Page controller={controller} view="domains" />);
+    await vi.waitFor(() => expect(screen.findByTestId('services.domains.paging.older')).not.toBeNull());
+    expect(screen.findByTestId('services.domains.empty')).toBeNull();
+    await screen.pressByTestIdAsync('services.domains.paging.older');
+    await vi.waitFor(() => expect(screen.findByTestId('services.domains.paging.newer')).not.toBeNull());
+    expect(cursors).toEqual([undefined, 'domains-2']);
+    expect(screen.findByTestId('services.domains.paging.older')).toBeNull();
+    controller.retire();
+  });
 });

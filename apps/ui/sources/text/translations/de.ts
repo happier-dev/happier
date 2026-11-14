@@ -18775,7 +18775,6 @@ settingsSession: {
             factDeploymentId: "Die ID des Deployments",
             factEnvironmentName: "Der Name der Umgebung",
             factDomainUrl: "Die Adresse einer Domain",
-            domainsDescription: "Adressen, die diese Umgebung erreichen.",
             domainsEmpty: "Noch keine Domains",
             domainAdd: "Domain hinzufügen",
             domainAddTitle: "Domain hinzufügen",

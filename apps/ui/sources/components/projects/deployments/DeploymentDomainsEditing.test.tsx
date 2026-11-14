@@ -320,8 +320,47 @@ describe('Environment → Domains: add form (P6)', () => {
     try {
       expect(await settle('project-deployments.environment.domains.provider-domain')).not.toBeNull();
       const { Text } = await import('@/components/ui/text/Text');
-      expect(screen.findAllByType(Text).some(node => node.props.selectable === true && node.props.children === 'retained-provider-value')).toBe(true);
+      // The record to add is the row's selectable second line ("Add TXT … → value").
+      expect(screen.findAllByType(Text).some(node => node.props.selectable === true
+        && String(node.props.children).includes('TXT _validation.app.example.test → retained-provider-value'))).toBe(true);
     } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('says why a provider could not set an address up, through the failure details presenter', async () => {
+    const detail = platformDetail();
+    const item = domain('provider-failed', 'app.example.test', { target: { kind: 'provider' }, healthCheck: undefined,
+      providerObservation: { v: 1, hostname: 'app.example.test', state: 'pending', dns: [],
+        failureCause: { phase: 'deployment.domain.provider', errorClass: 'ProviderError', errorCode: 'domain_taken', httpStatus: 409 } } });
+    const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail));
+    try {
+      await settle('project-deployments.environment.domains.provider-failed');
+      expect(screen.findByTestId('approvals.technical-details')).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('opens the Cloudflare record picker beside pending provider records, and only where the page can write it', async () => {
+    const detail = platformDetail();
+    const pending = domain('provider-domain', 'app.example.test', { target: { kind: 'provider' }, healthCheck: undefined,
+      providerObservation: { v: 1, hostname: 'app.example.test', state: 'pending',
+        dns: [{ type: 'CNAME', name: 'app.example.test', value: 'cname.vercel-dns.com' }] } });
+    const plain = domain('plain', 'shop.example.com');
+    const rowId = 'project-deployments.environment.domains';
+    const writable = { ...domainActions(detail), createDomainDns: vi.fn(), inspectPlatformTarget: vi.fn<DomainIngressInspection>() };
+    for (const [actions, offered] of [[writable, true], [domainActions(detail), false]] as const) {
+      const { screen, controller, settle } = await renderDomains(detail, [pending, plain], actions);
+      try {
+        await settle(`${rowId}.provider-domain`);
+        expect(screen.findByTestId(`${rowId}.plain.dnsProvider`)).toBeNull();
+        expect(screen.findByTestId(`${rowId}.provider-domain.dnsProvider`) !== null).toBe(offered);
+        if (offered) {
+          await screen.pressByTestIdAsync(`${rowId}.provider-domain.dnsProvider`);
+          expect(await settle(`${rowId}.dns.form`)).not.toBeNull();
+          // The provider-owned zone picker; nothing is written before its own review.
+          expect(screen.findByTestId(`${rowId}.add.ingress.zones.read`)).not.toBeNull();
+          expect(writable.createDomainDns).not.toHaveBeenCalled();
+        }
+      } finally { await screen.unmount(); controller.retire(); }
+    }
   });
 
   it.each(['docs.happier.dev', '*.happier.dev'])('adds redirect, certificate and basic-auth references for %s in one Domain Add', async hostname => {
@@ -1022,24 +1061,29 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('puts Check again beneath the state line on a phone, leaving only ⋯ beside the address (DEPLOY-REACCEPT-1113 D1)', async () => {
+  it('draws each address with where it reaches, its certificate and its state (lab envDom)', async () => {
     const detail = createDeploymentEnvironmentDetailV1();
-    const known = domain('elsewhere', 'shop.example.com');
-    const item = { ...known, domain: { ...known.domain, dnsHealth: dnsHealth('down', 'dns_not_this_machine') } };
-    const rowId = 'project-deployments.environment.domains.elsewhere';
-    const { Item } = await import('@/components/ui/lists/Item');
-    for (const phone of [true, false]) {
-      const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail), false, undefined, phone);
-      try {
-        await settle(rowId);
-        const row = screen.findAllByType(Item).find(node => node.props.testID === rowId);
-        expect(row).toBeDefined();
-        expect(holdsTestID(row!.props.bottomElement, `${rowId}.checkAgain`)).toBe(phone);
-        expect(holdsTestID(row!.props.rightElement, `${rowId}.checkAgain`)).toBe(!phone);
-        // ⋯ stays beside the address on every width.
-        expect(row!.props.rightElement).toBeTruthy();
-      } finally { await screen.unmount(); controller.retire(); }
-    }
+    const expiresAt = Date.UTC(2027, 0, 8);
+    const serving = { ...domain('serving', 'billing.example.com'), health: { availability: 'observed' as const, unavailableReason: null,
+      observedAt: 1, vantage: 'outside' as const, certificate: { state: 'valid' as const, expiresAt }, needsYou: null } };
+    const waiting = { ...domain('waiting', 'pay.example.com'), domain: { ...domain('waiting', 'pay.example.com').domain,
+      dnsHealth: dnsHealth('down', 'dns_missing') } };
+    const { screen, controller, settle } = await renderDomains(detail, [serving, waiting], domainActions(detail));
+    try {
+      await settle('project-deployments.environment.domains.waiting');
+      const text = screen.getTextContent();
+      expect(text).toContain('2 domains');
+      expect(text).toContain('web:3000 /');
+      expect(text).toContain(`Automatic · expires ${new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`);
+      expect(screen.findByTestId('project-deployments.environment.domains.serving.state')).not.toBeNull();
+      expect(text).toContain('Serving');
+      // A waiting address says what it needs and carries the record to add, with Check again beside it.
+      expect(text).toContain('No DNS record yet');
+      expect(screen.findByTestId('project-deployments.environment.domains.waiting.line')).not.toBeNull();
+      expect(text).toContain('Add an A or AAAA record');
+      expect(screen.findByTestId('project-deployments.environment.domains.waiting.checkAgain')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.domains.serving.checkAgain')).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
   });
 });
 
@@ -1054,11 +1098,3 @@ describe('Environment → Domains: where an address leads (DEPLOY-REACCEPT-1113 
     expect(domainRouteMachineIds([replica('own')], null)).toEqual(['own']);
   });
 });
-
-/** Whether a rendered slot holds the element with this testID, at any depth of its own element tree. */
-function holdsTestID(node: unknown, testID: string): boolean {
-  if (Array.isArray(node)) return node.some(child => holdsTestID(child, testID));
-  if (!React.isValidElement(node)) return false;
-  const props = node.props as Record<string, unknown>;
-  return props.testID === testID || holdsTestID(props.children, testID);
-}

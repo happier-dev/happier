@@ -18773,7 +18773,6 @@ settingsSession: {
         factDeploymentId: "O id da implantação",
         factEnvironmentName: "O nome do ambiente",
         factDomainUrl: "O endereço de um domínio",
-        domainsDescription: "Endereços que chegam a este ambiente.",
         domainsEmpty: "Ainda não há domínios",
         domainAdd: "Adicionar domínio",
         domainAddTitle: "Adicionar um domínio",

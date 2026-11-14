@@ -18581,7 +18581,6 @@ settingsSession: {
         factDeploymentId: "デプロイの ID",
         factEnvironmentName: "環境の名前",
         factDomainUrl: "ドメインのアドレス",
-        domainsDescription: "この環境に届くアドレス。",
         domainsEmpty: "ドメインはまだありません",
         domainAdd: "ドメインを追加",
         domainAddTitle: "ドメインを追加",

@@ -11,7 +11,6 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 
-import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
@@ -37,12 +36,13 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
-import { DeploymentDomainRow, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
+import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
   'addDomain' | 'removeDomain' | 'verifyDomain'
-> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns'>>
+> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns' | 'createDomainDns'>>
   & Readonly<{ inspectPlatformTarget?: DomainIngressInspection }>;
 type EnvironmentContent = DeploymentEnvironmentContentV1;
 type RouteExport = Readonly<{ service: string; containerPort: number }>;
@@ -51,6 +51,8 @@ const NO_EXPORTS: readonly RouteExport[] = Object.freeze([]);
 const NO_BOUND: ReadonlySet<string> = new Set();
 /** The press position of the add form, so its outcome renders there. */
 const ADD_AT = 'add';
+/** The press position of the Cloudflare record form. */
+const DNS_AT = 'dns';
 const credentialKey = (domainId: string, role: DomainCredentialRole) => JSON.stringify([domainId, role]);
 
 /** What the page can change here: the Action owner's Domain Actions and the revisions they are admitted against. */
@@ -98,6 +100,7 @@ export function DeploymentDomainsPanel(
     presentMachineAuthorityV1({ engine: projection.engineKind }).deployment.domains === 'unavailableDockerDesktop') ?? false;
   const editing = unavailableDockerDesktop ? null : props.editing;
   const [adding, setAdding] = React.useState(false);
+  const [dnsFor, setDnsFor] = React.useState<DomainItem | null>(null);
   const [checkSetup, setCheckSetup] = React.useState<Readonly<{
     item: DomainItem; anchorRef: React.RefObject<View | null>;
   }> | null>(null);
@@ -160,34 +163,52 @@ export function DeploymentDomainsPanel(
           source: { kind: 'secret', ref: selected.ref, resourceRevision: selected.resourceRevision } }], remove: [] }));
     } finally { account.dispose(); }
   }, [environment, press, serverId, setBindings]);
+  // Row actions keep one identity across renders, so the list's rows re-render only for their own facts.
+  const verify = useEventCallback((item: DomainItem) => {
+    if (editing) void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item)));
+  });
+  const remove = useEventCallback((item: DomainItem) => {
+    if (editing) void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item)));
+  });
+  const configureChecks = useEventCallback((item: DomainItem, anchorRef: React.RefObject<View | null>) => setCheckSetup({ item, anchorRef }));
+  const choose = useEventCallback((item: DomainItem, role: DomainCredentialRole) => { void chooseCredential(item, role); });
+  const canBind = setBindings !== undefined && content !== null;
+  const missingFor = React.useCallback((item: DomainItem) => missingCredentials(item, bound), [bound]);
+  const canCheck = !!editing && !!props.healthSetup;
+  const addDnsRecords = useEventCallback((item: DomainItem) => setDnsFor(item));
+  const canWriteDns = !!editing?.actions.createDomainDns && !!editing.actions.inspectPlatformTarget;
+  const canEdit = !!editing;
+  const rowActions = React.useMemo<DeploymentDomainRowActions | null>(() => canEdit ? {
+    verify, remove, ...(canCheck ? { configureChecks } : {}),
+    ...(canBind ? { missingCredentials: missingFor, chooseCredential: choose } : {}),
+    ...(canWriteDns ? { addDnsRecords } : {}),
+  } : null, [addDnsRecords, canEdit, canBind, canCheck, canWriteDns, choose, configureChecks, missingFor, remove, verify]);
   const canAdd = editing !== null && editing !== undefined && editing.targetLink !== null;
   // An add's outcome shows inside the open form, beside the Add domain the person pressed.
   const addOutcome = adding && change.outcomeAt === ADD_AT;
+  const dnsOutcome = dnsFor !== null && change.outcomeAt === DNS_AT;
   const addAction = canAdd && !adding ? (
     <SectionActionButton
       testID="project-deployments.environment.domains.add"
-      title={t('projects.deployments.domainAdd')}
+      title={t('projects.deployments.domainAddTitle')}
       icon="plus"
       onPress={() => setAdding(true)}
     />
   ) : undefined;
+  // "3 domains" and what the list says about each (lab `envDom`); the list draws its own sheet.
   return (
     <ItemGroup
       testID="project-deployments.environment.domains"
-      title={t('projects.deployments.tabDomains')}
-      titleAccessory={
-        items.length > 0 ? (
-          <ManagedSectionCount count={items.length} />
-        ) : undefined
-      }
-      description={t('projects.deployments.domainsDescription')}
+      title={items.length > 0 ? t('projects.deployments.editors.domainsCount', { count: items.length }) : t('projects.deployments.tabDomains')}
+      description={t('projects.deployments.editors.domainsLede')}
       action={addAction}
+      surface="none"
     >
       {unavailableDockerDesktop ? (
         <SurfaceStateCard testID="project-deployments.environment.domains.unavailableDockerDesktop"
           size="line" kind="empty" title={t('projects.deployments.review.domainsUnavailable')} />
       ) : null}
-      {outcome && editing && !addOutcome ? (
+      {outcome && editing && !addOutcome && !dnsOutcome ? (
         <DeployOutcomeBanner
           controller={change.banner}
           machine={editing.machine}
@@ -231,23 +252,35 @@ export function DeploymentDomainsPanel(
           }}
         />
       ) : null}
-      {items.map(item => (
-        <DeploymentDomainRow
-          key={item.domain.id}
-          item={item}
-          accountId={props.controller.scope.accountId}
-          serverId={props.controller.scope.serverId}
-          demand={props.demand}
-          phone={props.phone === true}
-          ownMachineId={props.ownMachineId ?? null}
-          disabled={running}
-          onVerify={editing ? () => { void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
-          onRemove={editing ? () => { void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
-          onConfigureChecks={editing && props.healthSetup ? anchorRef => setCheckSetup({ item, anchorRef }) : undefined}
-          missingCredentials={setBindings && content ? missingCredentials(item, bound) : undefined}
-          onChooseCredential={setBindings && content ? (role) => { void chooseCredential(item, role); } : undefined}
+      {items.length > 0 ? <DeploymentDomainsList
+        testID="project-deployments.environment.domains.list"
+        items={items}
+        accountId={props.controller.scope.accountId}
+        serverId={props.controller.scope.serverId}
+        demand={props.demand}
+        ownMachineId={props.ownMachineId ?? null}
+        machineName={editing?.machine ?? null}
+        disabled={running}
+        actions={rowActions}
+      /> : null}
+      {dnsFor && editing?.actions.createDomainDns && editing.actions.inspectPlatformTarget ? (
+        <DomainDnsRecordsForm
+          key={dnsFor.domain.id}
+          hostname={dnsFor.content.hostname}
+          busy={running}
+          inspect={editing.actions.inspectPlatformTarget}
+          notice={dnsOutcome && outcome ? (
+            <DeployOutcomeBanner controller={change.banner} machine={editing.machine} copy="domain" placement="inline" />
+          ) : null}
+          onCancel={() => setDnsFor(null)}
+          onCreate={async (dns) => {
+            const created = await press(() => editing.actions.createDomainDns!({ environmentId: props.environmentId,
+              expectedRevision: editing.environmentRevision, domainId: dnsFor.domain.id,
+              expectedDomainRevision: dnsFor.domain.revision, dns }), DNS_AT);
+            if (created) setDnsFor(null);
+          }}
         />
-      ))}
+      ) : null}
       {checkSetup && editing && props.healthSetup ? <NewAccountTriggerPopover
         anchorRef={checkSetup.anchorRef}
         onRequestClose={() => setCheckSetup(null)}
@@ -620,6 +653,47 @@ function DomainAddForm(
         {props.notice ? <View testID="project-deployments.environment.domains.add.outcome">{props.notice}</View> : null}
       </View>
     </InlineAddExpander>
+  );
+}
+
+type DomainDnsPlacement = NonNullable<ReturnType<typeof useDeploymentDomainIngressFields>['dns']>;
+
+/**
+ * Add a provider's pending records in Cloudflare: the provider-owned zone picker and TTL, then one reviewed
+ * `deployments.domains.dns.create` press. The records themselves come from the provider; nothing is typed here.
+ */
+function DomainDnsRecordsForm(props: Readonly<{
+  hostname: string;
+  busy: boolean;
+  inspect: DomainIngressInspection;
+  notice: React.ReactNode;
+  onCancel: () => void;
+  onCreate: (dns: DomainDnsPlacement) => void | Promise<void>;
+}>) {
+  const { dns, fields } = useDeploymentDomainIngressFields({ hostname: props.hostname, busy: props.busy,
+    inspect: props.inspect, enabled: true, dnsRecordsOnly: true });
+  return (
+    <View testID="project-deployments.environment.domains.dns.form">
+      <InlineAddExpander
+        isOpen
+        onOpenChange={(next) => { if (!next) props.onCancel(); }}
+        title={t('projects.deployments.editors.domainDnsCloudflareTitle', { host: props.hostname })}
+        trigger={null}
+        onCancel={props.onCancel}
+        onSave={() => { if (dns) void props.onCreate(dns); }}
+        saveDisabled={!dns || props.busy}
+        saving={props.busy}
+        cancelLabel={t('common.cancel')}
+        saveLabel={t('projects.deployments.editors.domainDnsCloudflareSave')}
+        saveTestID="project-deployments.environment.domains.dns.save"
+        cancelTestID="project-deployments.environment.domains.dns.cancel"
+      >
+        <View style={styles.form}>
+          {fields}
+          {props.notice}
+        </View>
+      </InlineAddExpander>
+    </View>
   );
 }
 

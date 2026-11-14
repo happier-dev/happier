@@ -18286,7 +18286,6 @@ settingsSession: {
         factDeploymentId: "部署 ID",
         factEnvironmentName: "环境名称",
         factDomainUrl: "域名的地址",
-        domainsDescription: "通往此环境的地址。",
         domainsEmpty: "还没有域名",
         domainAdd: "添加域名",
         domainAddTitle: "添加域名",

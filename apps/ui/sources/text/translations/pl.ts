@@ -18492,7 +18492,6 @@ settingsSession: {
         factDeploymentId: "Id wdrożenia",
         factEnvironmentName: "Nazwa środowiska",
         factDomainUrl: "Adres domeny",
-        domainsDescription: "Adresy prowadzące do tego środowiska.",
         domainsEmpty: "Brak domen",
         domainAdd: "Dodaj domenę",
         domainAddTitle: "Dodaj domenę",
