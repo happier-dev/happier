@@ -353,6 +353,14 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
     '.project/plans/plugin-sdk-author-surface-convergence/symbol-map/MIGRATION-MAP.generated.json',
     '.project/scripts/eu2-source-checks/ui.json',
     '.project/scripts/dep-simplify-1024/custody-overlay/source.mjs');
+  // Instruction-eval source copies and variant runs are whole repository copies
+  // (2026-11-14: 148k of 306k synchronized files). Their protocol stays.
+  for (const root of ['.project/plans/eval', '.project/plans/audit/proposed-v4/eval']) {
+    for (const copy of ['source', 'runs']) {
+      excluded.push(`${root}/${copy}`, `${root}/${copy}/maple/apps/ui/sources/app.tsx`);
+    }
+    included.push(`${root}/PROTOCOL.md`, `${root}/judge-input/maple.md`);
+  }
   const ignored = execFileSync('git', ['-C', fixture.root, '-c', `core.excludesFile=${fixture.path('empty-excludes')}`,
     'check-ignore', '--no-index', '--stdin', '-z'], {
     input: `${[...excluded, ...included].join('\0')}\0`, encoding: 'utf8',

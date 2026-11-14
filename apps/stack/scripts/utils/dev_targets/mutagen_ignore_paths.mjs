@@ -153,6 +153,10 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // Reference checkouts are controller-only and may be absolute or out-of-tree
   // links. Exclude the link itself before portable symbolic-link scanning.
   '/.project/plans/**/refs',
+  // Instruction-eval source copies and variant runs are controller-only
+  // repository copies too (one plan held 148k of 306k replica files).
+  '/.project/plans/**/eval/source',
+  '/.project/plans/**/eval/runs',
   '/.project/plans/runtime-unification-v2/_validation/source-reality-review/qa/lane-A/repo-importers-map.json',
   '/.project/plans/plugin-sdk-author-surface-convergence/CLAUDE-AUDIT-JOURNAL.md',
   '/.project/plans/**/BOARD.md',
