@@ -615,10 +615,6 @@ function normalizeOptionalTimestamp(value: unknown): number | undefined {
     : undefined;
 }
 
-function buildProgressToken(message: Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'>): string {
-  return `${message.createdAtMs}:${message.id}`;
-}
-
 function compareProgressTokens(left: string, right: string): number {
   return left.localeCompare(right);
 }
@@ -712,31 +708,17 @@ export function buildExternalSessionAttentionV1(value: ExternalSessionAttentionV
 export function deriveExternalSessionObservedProgress(
   items: ReadonlyArray<Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'>>,
 ): ExternalSessionObservedProgress | null {
-  let latest: Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'> | null = null;
-  let latestToken: string | null = null;
+  let latest: ExternalSessionObservedProgress | null = null;
   for (const item of items) {
-    const itemToken = buildProgressToken(item);
-    if (!latest) {
-      latest = item;
-      latestToken = itemToken;
-      continue;
-    }
-    if (item.createdAtMs > latest.createdAtMs) {
-      latest = item;
-      latestToken = itemToken;
-      continue;
-    }
-    if (item.createdAtMs === latest.createdAtMs && latestToken && compareProgressTokens(itemToken, latestToken) > 0) {
-      latest = item;
-      latestToken = itemToken;
+    if (item.createdAtMs === undefined) continue;
+    const token = `${item.createdAtMs}:${item.id}`;
+    if (!latest
+      || item.createdAtMs > latest.atMs
+      || (item.createdAtMs === latest.atMs && compareProgressTokens(token, latest.token) > 0)) {
+      latest = { token, atMs: item.createdAtMs };
     }
   }
-
-  if (!latest) return null;
-  return {
-    token: latestToken ?? buildProgressToken(latest),
-    atMs: latest.createdAtMs,
-  };
+  return latest;
 }
 
 export function applyObservedProgressToExternalSessionAttentionV1(

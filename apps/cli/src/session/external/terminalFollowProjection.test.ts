@@ -9,6 +9,48 @@ import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcrip
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
 
 describe('createExternalSessionTerminalFollowProjector', () => {
+  it('publishes an untimed Muse call through the runtime writer using host emission time', async () => {
+    const writes: unknown[] = [];
+    const session = { sessionId: 'session-1', enqueueAgentMessageCommitted: async (provider: string, body: unknown) => {
+      writes.push({ provider, body }); return { persisted: true as const, delivered: true as const };
+    } };
+    const events: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({ sessionId: session.sessionId, agentId: 'muse',
+      projectRuntimeEvent: (event, admission) => {
+        events.push(event);
+        return projectRuntimeTranscriptEvent({ session, provider: 'muse', event, admission });
+      },
+    });
+    const before = Date.now();
+    await publish({ kind: 'data', fromCursor: null, nextCursor: 'next', items: [{
+      id: 'native:tool-call', kind: 'event', data: { role: 'agent', content: {
+        type: 'acp', agentId: 'muse', data: { type: 'tool-call', callId: 'call', name: 'search', input: {} },
+      } },
+    }] });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'tool-call', toolCallId: 'call' });
+    expect(events[0].emittedAtMs).toBeGreaterThanOrEqual(before);
+    expect(events[0].emittedAtMs).toBeLessThanOrEqual(Date.now());
+    expect(writes).toEqual([expect.objectContaining({ provider: 'muse', body: expect.objectContaining({ type: 'tool-call', callId: 'call' }) })]);
+  });
+  it('retains opaque native user content through the real host transcript writer', async () => {
+    const nativeContent = [{ type: 'audio', fileId: 'native-audio', runtimeTurnId: 'inert' }];
+    const writes: unknown[] = [];
+    const session = { sessionId: 'session-1', enqueueUserTextMessageCommitted: async (_text: string, options: unknown) => {
+      writes.push(options); return { persisted: true as const, delivered: true as const };
+    } };
+    const publish = createExternalSessionTerminalFollowProjector({ sessionId: session.sessionId, agentId: 'codex',
+      projectRuntimeEvent: (event, admission) => projectRuntimeTranscriptEvent({ session, event, admission }),
+    });
+    await publish({ kind: 'data', fromCursor: null, nextCursor: 'cursor-1', items: [{ id: 'native-user', localId: 'native-user',
+      kind: 'user', userProjection: 'terminal_origin', timestampMs: 1,
+      data: { role: 'user', content: { type: 'text', text: 'Inspect audio' }, meta: { nativeContent, runtimeTurnId: 'not authoritative' } },
+    }] });
+    expect(writes).toEqual([expect.objectContaining({ meta: {
+      nativeContent, happierProvenanceV1: { v: 1, kind: 'host', producer: 'runtimeTranscript' },
+    } })]);
+  });
+
   it('materializes image-bearing source rows only after their semantic item reaches durable admission', async () => {
     const order: string[] = [];
     const materializeTranscriptMedia = vi.fn(async () => { order.push('media'); });

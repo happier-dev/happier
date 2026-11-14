@@ -10,7 +10,11 @@ export function normalizeExternalSessionTranscriptMessages(
 ): NormalizedMessage[] {
     const displayUserTextById = new Map<string, string>();
     const mediaById = new Map<string, readonly unknown[]>();
+    // Place untimed native rows beside their ordered neighbours without inventing
+    // a producer timestamp. A wholly untimed page uses the display epoch.
+    let displayCreatedAt = items.find(item => item.createdAtMs !== undefined)?.createdAtMs ?? 0;
     return normalizeRawMessages(items.map((item): RawMessageNormalizationInput => {
+        displayCreatedAt = item.createdAtMs ?? displayCreatedAt;
         const id = sourceIdentity
             ? makeExternalSessionHistoricalImportLocalId({
                 ...sourceIdentity,
@@ -24,7 +28,7 @@ export function normalizeExternalSessionTranscriptMessages(
             id,
             localId: typeof item.localId === 'string' ? item.localId : null,
             sidechainId: item.sidechainId ?? undefined,
-            createdAt: item.createdAtMs,
+            createdAt: displayCreatedAt,
             // The projection classifies every row it emits; forwarding that role is what lets
             // normalization drop content-less event rows here exactly as it does for synced sessions.
             messageRole: item.messageRole ?? undefined,

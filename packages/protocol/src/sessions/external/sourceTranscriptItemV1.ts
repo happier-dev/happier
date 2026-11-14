@@ -45,6 +45,7 @@ export type ExternalSessionToolResultMediaReferenceV1 = z.infer<typeof ExternalS
  * Canonical known-field owner for one Agent-produced External Session source
  * item. Callers select their epoch-specific identifier, raw-record, and
  * unknown-field policies without independently redeclaring the field census.
+ * Unknown producer creation time stays absent; revision time is not creation time.
  */
 export function createExternalSessionTranscriptSourceItemV1Schema<
   IdentifierSchema extends z.ZodMiniType<string>,
@@ -55,7 +56,7 @@ export function createExternalSessionTranscriptSourceItemV1Schema<
 }>) {
   return z.object({
     id: options.identifier,
-    createdAtMs: ExternalSessionTranscriptSourceTimestampV1Schema,
+    createdAtMs: z.optional(ExternalSessionTranscriptSourceTimestampV1Schema),
     localId: z.optional(z.nullable(options.identifier)),
     sidechainId: z.optional(z.nullable(SidechainIdSchema)),
     messageRole: z.optional(z.nullable(SessionMessageRoleSchema)),

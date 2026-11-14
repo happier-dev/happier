@@ -9,7 +9,7 @@ import type { DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 import type { SummaryShardIndexDbHandle } from './summaryShardIndexDb';
 import { logger } from '@/ui/logger';
 import { setImmediate } from 'node:timers/promises';
-import { extractMemoryIndexableTranscriptItemFromDecryptedRow } from './transcript/extractIndexableItem';
+import { extractMemoryIndexableTranscriptItemFromDecryptedPayload } from './transcript/extractIndexableItem';
 import { applyMemoryCoveragePolicy, memoryIndexPolicyKey, resolveMemoryIndexPolicy, resolveMemoryCoverageCreatedAtCutoffMs } from './transcript/coveragePolicy';
 
 export function externalMemoryStorageId(source: MemoryExternalTranscriptSourceV1): string {
@@ -69,8 +69,9 @@ export function extractExternalMemoryTranscriptItems(
   return items.flatMap((item, index) => {
     if (item.raw.role === 'source_observation' || ('sidechainId' in item && item.sidechainId)) return [];
     if (item.raw.role !== 'user' && item.raw.role !== 'agent') return [];
-    const extracted = extractMemoryIndexableTranscriptItemFromDecryptedRow({ sessionId: 'external', index,
-      row: { seq: index + 1, createdAtMs: item.createdAtMs, role: item.raw.role, content: item.raw.content },
+    const extracted = extractMemoryIndexableTranscriptItemFromDecryptedPayload({ sessionId: 'external', index,
+      row: { id: String(index + 1), seq: index + 1, createdAt: item.createdAtMs, messageRole: item.raw.role },
+      decrypted: { role: item.raw.role, content: item.raw.content },
       contentPolicy });
     return extracted ? [{ sourceItemId: item.id, createdAtMs: extracted.createdAtMs, text: extracted.text,
       role: extracted.role, ordinal: index + 1 }] : [];

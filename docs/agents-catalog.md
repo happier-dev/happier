@@ -2710,6 +2710,13 @@ that an installed Agent's endpoint is reachable or implements the negotiated ACP
 In 0.3 development, Muse Tool calls omit a source creation timestamp: native
 `recordedAt` dates the current Item revision, and completed Items can re-emit
 the same call across history windows. Tool results retain their revision time.
+The shared source Item schema preserves this absence through native page,
+read-after and secure refresh. UI normalization places untimed rows beside
+their ordered neighbours (the first known time for leading untimed rows, or
+the display epoch for a wholly untimed page); it does not persist a synthetic
+source time. Attention observes only Items with a known source timestamp.
+Terminal follow uses host emission time for runtime events when source creation
+time is unknown, retaining the absence on the native source Item.
 The historical writer still requires identical content and source timestamps
 for repeated stable identities. Import recovery retains the server
 `publicationErrorCode` in owner progress and displays that closed code beside

@@ -14,6 +14,14 @@ import {
 } from '../index.js';
 
 describe('direct session linked metadata helpers', () => {
+  it('derives attention only from known source times beside untimed Muse calls', () => {
+    const untimed = { id: 'call' };
+    expect(protocol.deriveExternalSessionObservedProgress([untimed])).toBeNull();
+    expect(protocol.deriveExternalSessionObservedProgress([untimed, { id: 'result', createdAtMs: 20 }]))
+      .toEqual({ token: '20:result', atMs: 20 });
+    expect(protocol.deriveExternalSessionObservedProgress([{ id: 'result', createdAtMs: 20 }, untimed]))
+      .toEqual({ token: '20:result', atMs: 20 });
+  });
   it('reads canonical and released conversion tombstones into the canonical shape', () => {
     const canonical = {
       externalHistoryImportV1: {

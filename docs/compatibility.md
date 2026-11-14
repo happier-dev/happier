@@ -2,11 +2,15 @@
 
 ## External Session import refusal causes (unreleased 0.3)
 
-The SDK transcript Item and its host admission accept absent `createdAtMs`,
-matching the existing optional Protocol source timestamp. Present timestamps
-still pass the same validation. Muse uses this for Tool calls whose original
-creation time is unknown; plugin and host reload together under the unpublished
-0.3 direct cut. Native tool results retain their observed revision time.
+The SDK transcript Item, host admission and canonical Protocol source Item accept
+absent `createdAtMs`. Present timestamps still pass the same safe nonnegative
+integer validation. Native page/read-after and secure-refresh responses share
+that source Item schema; UI display placement does not fabricate source time,
+and attention derives only from known source times. Terminal-follow runtime
+events use host emission time when native creation time is unknown. Muse uses
+this for Tool calls whose original creation time is unknown; plugin and host reload together under the unpublished
+0.3 direct cut. Native tool results retain their observed revision time. Strict
+older development UI readers require a reload to accept untimed native calls.
 
 Repeated E2EE historical preparation now consumes the existing keyed message
 idempotency primitive with the destination Session and stable historical id.

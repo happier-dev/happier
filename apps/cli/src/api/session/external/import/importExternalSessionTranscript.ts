@@ -191,7 +191,7 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     content,
     usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
       message: { id: localId, localId, content: raw, createdAt: params.item.createdAtMs } }),
-    ...(Number.isSafeInteger(params.item.createdAtMs) && params.item.createdAtMs >= 0
+    ...(typeof params.item.createdAtMs === 'number' && Number.isSafeInteger(params.item.createdAtMs) && params.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.item.createdAtMs }
       : {}),
   };
@@ -299,7 +299,7 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
     content,
     usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
       message: { id: localId, localId, content: raw, createdAt: params.staged.item.createdAtMs } }),
-    ...(Number.isSafeInteger(params.staged.item.createdAtMs) && params.staged.item.createdAtMs >= 0
+    ...(typeof params.staged.item.createdAtMs === 'number' && Number.isSafeInteger(params.staged.item.createdAtMs) && params.staged.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.staged.item.createdAtMs }
       : {}),
   };

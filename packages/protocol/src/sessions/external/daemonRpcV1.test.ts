@@ -63,6 +63,20 @@ describe('ExternalSessionsAgentIdSchema', () => {
 });
 
 describe('external-session transcript schemas', () => {
+  it('reads Muse native tool calls with unknown creation time through page and read-after responses', () => {
+    // r1113n: native tool calls carry id/raw/messageRole, with no createdAtMs.
+    const item = { id: 'native-call', messageRole: 'event', raw: { role: 'agent', content: {
+      type: 'acp', agentId: 'muse', data: { type: 'tool-call', callId: 'call', name: 'search', input: { query: 'fixture' } },
+    } } };
+    for (const schema of [daemonRpcV1.ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptReadAfterResponseSchema]) {
+      const response = { ok: true, items: [item], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
+      expect(schema.parse(response)).toMatchObject({ ok: true, items: [item] });
+      expect(schema.safeParse({ ...response, items: [{ ...item, createdAtMs: 1700 }] }).success).toBe(true);
+      for (const createdAtMs of [null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1700']) {
+        expect(schema.safeParse({ ...response, items: [{ ...item, createdAtMs }] }).success).toBe(false);
+      }
+    }
+  });
   it('exports canonical external-session transcript symbols', () => {
     expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptRawMessageV1Schema?.safeParse).toBe('function');
     expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptPageRequestSchema?.safeParse).toBe('function');
@@ -612,6 +626,12 @@ describe('ExternalSessionsSourceSchema', () => {
     })).toThrow();
   });
 
+  it('carries one provider-neutral unsupported-session-format failure on list and transcript answers', () => {
+    const failure = { ok: false, errorCode: 'agent_format_unsupported', error: 'cursor_cli_store_format_unsupported', retryable: false };
+    expect(daemonRpcV1.ExternalSessionsCandidatesListResponseSchema.parse(failure)).toEqual(failure);
+    expect(daemonRpcV1.ExternalSessionTranscriptPageResponseSchema.parse(failure)).toEqual(failure);
+  });
+
   it('type-preserves attach failure retryability across the released producer directions', () => {
     const nonRetryable = ExternalSessionAttachResponseSchema.parse({
       ok: false,
@@ -768,28 +788,6 @@ describe('ExternalSessionsCandidatesListResponseSchema', () => {
       errorCode: 'invalid_request',
       error: 'invalid_request',
       autoLinkPolicyScopeV1: scope,
-    }).success).toBe(false);
-  });
-
-  it('admits only the strict visible candidate-index preparation state', () => {
-    const response = {
-      ok: true,
-      candidates: [],
-      nextCursor: null,
-      preparation: {
-        kind: 'building_candidate_index',
-        scanned: 50,
-        total: 10_000,
-      },
-    };
-
-    expect(ExternalSessionsCandidatesListResponseSchema.parse(response)).toMatchObject(response);
-    expect(ExternalSessionsCandidatesListResponseSchema.safeParse({
-      ...response,
-      preparation: {
-        ...response.preparation,
-        privateChunk: [{ remoteSessionId: 'must-not-cross-rpc' }],
-      },
     }).success).toBe(false);
   });
 

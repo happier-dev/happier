@@ -45,12 +45,14 @@ function toRuntimeTranscriptEvent(params: Readonly<{
   sequence: number;
 }>): AgentSessionRuntimeEvent | null {
   if (
-    params.item.timestampMs === undefined
-    || !Number.isSafeInteger(params.item.timestampMs)
-    || params.item.timestampMs < 0
+    params.item.timestampMs !== undefined
+    && (!Number.isSafeInteger(params.item.timestampMs) || params.item.timestampMs < 0)
   ) {
     throw new Error('external_session_terminal_transcript_item_invalid');
   }
+  // A runtime event always has a host emission time; an absent native creation
+  // time must not prevent terminal-follow publication or become a source fact.
+  const emittedAtMs = params.item.timestampMs ?? Date.now();
   // The top-level Protocol sidechain carrier wins; a sidechain id nested in
   // the provider's semantic body remains the fallback so pre-existing
   // producers keep projecting their subagent identity. The transport schema
@@ -83,14 +85,16 @@ function toRuntimeTranscriptEvent(params: Readonly<{
     if (!params.item.localId || params.item.localId.trim().length === 0) {
       throw new Error('external_session_terminal_transcript_item_invalid');
     }
+    const nativeContent = asRecord(raw.meta)?.nativeContent;
     return parseRuntimeTranscriptEvent({
       kind: 'transcript-message-committed',
       sequence: params.sequence,
       sessionId: params.sessionId,
-      emittedAtMs: params.item.timestampMs,
+      emittedAtMs,
       messageId: params.item.localId,
       role: 'user',
       text: content.text,
+      ...(nativeContent !== undefined ? { nativeContent } : {}),
       ...(itemSidechainId !== undefined
         ? { sidechainId: itemSidechainId }
         : {}),
@@ -124,7 +128,7 @@ function toRuntimeTranscriptEvent(params: Readonly<{
       kind: 'tool-call',
       sequence: params.sequence,
       sessionId: params.sessionId,
-      emittedAtMs: params.item.timestampMs,
+      emittedAtMs,
       turnId: body.callId,
       toolCallId: body.callId,
       toolName: body.name,
@@ -139,7 +143,7 @@ function toRuntimeTranscriptEvent(params: Readonly<{
       kind: 'tool-result',
       sequence: params.sequence,
       sessionId: params.sessionId,
-      emittedAtMs: params.item.timestampMs,
+      emittedAtMs,
       turnId: body.callId,
       toolCallId: body.callId,
       output: body.output,
@@ -163,7 +167,7 @@ function toRuntimeTranscriptEvent(params: Readonly<{
     kind: 'transcript-message-committed',
     sequence: params.sequence,
     sessionId: params.sessionId,
-    emittedAtMs: params.item.timestampMs,
+    emittedAtMs,
     messageId: params.item.localId ?? params.item.id,
     role: body.type === 'message' ? 'assistant' : 'reasoning',
     text,

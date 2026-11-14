@@ -1,5 +1,16 @@
-import { expect, it } from 'vitest';
-import { isDeepStrictEqual } from 'node:util';
+import { expect, it, vi } from 'vitest';
+import { normalizeMemorySettings } from '@happier-dev/protocol/memory/memorySettings';
+import { openDeepIndexDb } from '@/daemon/memory/deepIndex/deepIndexDb';
+import { externalMemoryStorageId, syncExternalMemoryTranscriptOnce } from '@/daemon/memory/externalTranscriptIndex';
+import { ExternalSessionTranscriptPageResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
+import { normalizeExternalSessionTranscriptMessages } from '../../../../../apps/ui/sources/sync/runtime/external/normalizeExternalSessionTranscriptMessages';
+import { runSessionMessagesPagePipeline } from '../../../../../apps/ui/sources/sync/engine/sessions/sessionMessagesPagePipeline';
+import { readStoredSessionMessage } from '../../../../../apps/ui/sources/sync/runtime/readStoredSessionContent';
+import { decryptStoredSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { Tx } from '../../../../../apps/server/sources/storage/inTx';
+import { createDbTransactionMock } from '../../../../../apps/server/sources/app/api/testkit/dbMocks';
 import { createExternalSessionHistoricalImportReplay } from '@/session/external/staging/historicalImportReplay';
 import { createExternalSessionOperationPrivateStagingStore } from '@/session/external/staging/operationPrivateStaging';
 import { prepareExternalSessionHistoricalImportItem } from '@/api/session/external/import/importExternalSessionTranscript';
@@ -10,11 +21,19 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
-import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY, createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { museExternalSessionsContribution } from './externalSessions.js';
 import { readMuseRecord } from './events.js';
 import { createMuseMspProcessFixture, readMuseMspProcessAudit } from './testkit/mspProcess.js';
+
+let publicationTx: Tx | null = null;
+const publicationDbBoundary = createDbTransactionMock(() => {
+  if (!publicationTx) throw new Error('No publication transaction');
+  return publicationTx;
+});
+vi.doMock(new URL('../../../../../apps/server/sources/storage/db.ts', import.meta.url).pathname,
+  () => ({ db: publicationDbBoundary.wrapDb({}) }));
 
 function value<T>(result: AgentExternalSessionsResult<T>): T {
   expect(result.ok ? null : result).toBeNull();
@@ -173,10 +192,28 @@ it('advances through captured nonvisual native events without inventing transcri
 });
 
 
-it.each(['plain', 'e2ee'] as const)('publishes a repeated native Tool call with changed revision recordedAt (%s)', async (encryptionMode) => {
+it.each(['plain', 'e2ee'] as const)('publishes and renders repeated native Tool call/progress through native and published readers (%s)', async (encryptionMode) => {
   const fixture = await boundary();
-  const activeServerDir = await mkdtemp(join(tmpdir(), 'muse-import-overlap-'));
+  const activeServerDir = await mkdtemp(join(tmpdir(), 'muse-import-reader-'));
+  const physical = new Map<string, Record<string, unknown>>();
+  let seq = 0;
+  // Only Prisma persistence is substituted; storage admission, stable identity,
+  // byte-backed ciphertext, transaction/after-commit and both readers stay real.
+  const tx = {
+    session: { findUnique: async () => ({ encryptionMode, currentStorageState: 'machine_only' }),
+      update: async () => ({ seq: ++seq, accountId: 'account', tag: null }) },
+    sessionMessage: { findMany: async () => [...physical.values()],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const row = { id: 'published-'+seq, updatedAt: data.createdAt, sourceCreatedAt: null, sourceUpdatedAt: null,
+          transcriptObservationProvenance: null, deliveryResolution: null, ...data };
+        physical.set(String(data.localId), row); return row;
+      } },
+  } as unknown as Tx;
+  publicationTx = tx;
+  vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite');
   try {
+    const { inTx } = await import('../../../../../apps/server/sources/storage/inTx');
+    const { writeHistoricalSessionMessageBatchInTx } = await import('../../../../../apps/server/sources/app/session/sessionTranscriptWrite');
     const rows = await fixture.recording('isolated-long-history-reader');
     const page = readMuseRecord(rows[10]);
     const message = readMuseRecord(page.message);
@@ -187,45 +224,133 @@ it.each(['plain', 'e2ee'] as const)('publishes a repeated native Tool call with 
     const nativeItem = readMuseRecord(params.item);
     const sessionId = params.sessionId;
     if (typeof sessionId !== 'string') throw new Error('Missing native identity');
-    const projected = [];
+    const windows = [];
     for (const recordedAt of ['2026-11-09T09:00:00Z', '2026-11-09T09:00:01Z']) {
       const window = structuredClone(rows);
-      window[10] = { ...page, message: { ...message, result: { ...result,
-        events: [{ ...event, params: { ...params, item: { ...nativeItem, recordedAt } } }], nextCursor: null } } };
+      // Repeated in-progress revision exercises tool-progress, then completion
+      // re-emits that same call. All are real Muse native history events.
+      const revisions = ['inProgress', 'inProgress', 'completed'].map(status => ({ ...event,
+        params: { ...params, item: { ...nativeItem, recordedAt, status } } }));
+      window[10] = { ...page, message: { ...message, result: { ...result, events: revisions, nextCursor: null } } };
       await fixture.phase(window, [9]);
       const read = value(await fixture.callbacks.pageTranscript({ ...fixture.invocation, source: fixture.source,
         remoteSessionId: sessionId, cursor: 'native-before', direction: 'older', maxItems: 100 }));
       const call = read.items.find(item => readMuseRecord(readMuseRecord(item.raw.content).data).type === 'tool-call');
       if (!call) throw new Error('Missing Tool call');
-      projected.push(call);
+      expect(call).not.toHaveProperty('createdAtMs');
+      // The repeated call alone is the immutable overlap; result belongs to its
+      // first completed revision and is not re-created with a newer revision time.
+      windows.push(windows.length === 0 ? [...read.items] : [call]);
     }
     const linked = { rawSession: { id: 'import-session', encryptionMode, dataEncryptionKey: null },
       metadata: {}, sessionPath: null, agentId: 'muse', machineId: 'machine-1', remoteSessionId: sessionId,
       linkGeneration: 'generation-1', source: fixture.source } as LoadedLinkedExternalSession;
+    const secret = new Uint8Array(32).fill(7);
+    const credentials = { token: 'fixture', encryption: encryptionMode === 'e2ee' ? { type: 'legacy' as const, secret } : null };
     const staging = createExternalSessionOperationPrivateStagingStore({ activeServerDir,
       limits: { perOperation: { maxItems: 100, maxBytes: 100000 }, aggregate: { maxItems: 200, maxBytes: 200000 } } });
     const capturedSource = { sourceIdentity: 'source-1', sourceGeneration: 'generation-1', revision: 'revision-1', boundary: 'boundary-1' };
     await staging.beginOperation({ operationId: 'overlap-import', representation: 'content', capturedSource });
-    for (const [index, item] of projected.entries()) {
-      const prepared = await prepareExternalSessionHistoricalImportItem({ item, linked,
-        credentials: { token: 'fixture', encryption: encryptionMode === 'e2ee' ? { type: 'legacy', secret: new Uint8Array(32).fill(7) } : null }, sessionId: 'import-session', workingDirectory: null, sourceReadRoots: [] });
+    for (const [index, items] of windows.entries()) {
+      const prepared = await Promise.all(items.map(item => prepareExternalSessionHistoricalImportItem({ item, linked,
+        credentials, sessionId: 'import-session', workingDirectory: null, sourceReadRoots: [] })));
       await staging.appendPageGroup({ operationId: 'overlap-import', captureIndex: index, groupId: 'page-'+index,
-        items: [prepared], sourceRead: { ...capturedSource, availability: 'reachable', relationshipToCapture: 'same', eof: index === 1 } });
+        items: prepared, sourceRead: { ...capturedSource, availability: 'reachable', relationshipToCapture: 'same', eof: index === 1 } });
     }
     await staging.completeCapture({ operationId: 'overlap-import' });
-    const accepted = new Map<string, unknown>();
+    const published = new Map<string, SessionMessageV1>();
     const replay = createExternalSessionHistoricalImportReplay({ staging, sourceGeneration: 'generation-1',
       maxBatchItems: 100, isBatchWithinSerializedByteLimit: () => true,
-      // Genuine server transport boundary mirrors the writer's exact stable-row conflict.
       writeHistoricalBatch: async batch => {
-        for (const item of batch.items) {
-          if (accepted.has(item.localId) && !isDeepStrictEqual(accepted.get(item.localId), item)) return { ok: false, error: 'batch_conflict' };
-          accepted.set(item.localId, item);
-        }
-        return { ok: true, batchId: batch.batchId, acceptedThroughServerSeq: accepted.size };
+        const written = await inTx(tx => writeHistoricalSessionMessageBatchInTx(tx, { sessionId: 'import-session',
+          storagePolicy: 'optional', items: batch.items.map(item => ({ ...item,
+            ...(item.sourceCreatedAtMs === undefined ? {} : { sourceCreatedAt: new Date(item.sourceCreatedAtMs) }),
+          })) }));
+        if (!written.ok) return { ok: false, error: 'batch_conflict' };
+        for (const row of written.messages) published.set(row.localId!, { id: row.id, seq: row.seq,
+          localId: row.localId, sidechainId: row.sidechainId, messageRole: row.messageRole,
+          content: row.content, createdAt: row.createdAt.getTime(), updatedAt: row.updatedAt.getTime(),
+          ...(row.sourceCreatedAt ? { sourceCreatedAt: row.sourceCreatedAt.getTime() } : {}) });
+        return { ok: true, batchId: batch.batchId, acceptedThroughServerSeq: seq };
       } });
-    await expect(replay.resume('overlap-import')).resolves.toMatchObject({ status: 'completed', acceptedThroughServerSeq: 1 });
-    expect(accepted.size).toBe(1);
+    await expect(replay.resume('overlap-import')).resolves.toMatchObject({ status: 'completed', acceptedThroughServerSeq: 2 });
+    expect(physical.size).toBe(2);
+    // Native UI reader: the same post-publication source shape must still parse
+    // and reduce; this assertion fails if the shared source schema requires time.
+    const nativePage = ExternalSessionTranscriptPageResponseSchema.parse({ ok: true, items: windows[0],
+      hasMore: false, truncated: false, nextCursor: null, tailCursor: null });
+    if (!nativePage.ok) throw new Error('Native page failed');
+    const nativeRendered = reducer(createReducer(), normalizeExternalSessionTranscriptMessages(nativePage.items, { agentId: 'muse', remoteSessionId: sessionId })).messages;
+    expect(nativeRendered).toHaveLength(1);
+    const toolResult = nativePage.items.find(item => readMuseRecord(readMuseRecord(item.raw.content).data).type === 'tool-result');
+    const expectedToolState = readMuseRecord(readMuseRecord(toolResult?.raw.content).data).isError ? 'error' : 'completed';
+    expect(nativeRendered[0]).toMatchObject({ kind: 'tool-call', tool: { state: expectedToolState } });
+    // Published UI reader: real HTTP page parser, envelope opening, sequential
+    // normalizer and reducer receive only the canonical writer's persisted rows.
+    const encryption = { decryptMessages: async (messages: SessionMessageV1[]) => Promise.all(messages.map(message =>
+      readStoredSessionMessage({ message, sessionEncryptionMode: encryptionMode, decryptMessage: async row => ({
+        id: row.id, seq: row.seq, localId: row.localId ?? null, messageRole: row.messageRole ?? null, createdAt: row.createdAt,
+        content: row.content.t === 'encrypted' ? decryptStoredSessionPayload({ mode: 'e2ee',
+          ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, value: row.content.c }) : null,
+      }) }))) };
+    let publishedRendered = reducer(createReducer(), []).messages;
+    const read = await runSessionMessagesPagePipeline({ sessionId: 'import-session', purpose: 'initial',
+      page: { direction: 'initial', requestPath: '/v1/sessions/import-session/messages', scope: 'main' },
+      lifecyclePolicy: 'suppress', sessionEncryptionMode: encryptionMode, getSessionEncryption: () => encryption,
+      request: async () => new Response(JSON.stringify({ messages: [...published.values()], hasMore: false }), { status: 200 }),
+      sessionReceivedMessages: new Map(), applyMessages: (_id, messages) => { publishedRendered = reducer(createReducer(), messages).messages; },
+      log: { log() {} } });
+    expect(read.applied).toBe(2);
+    expect(publishedRendered).toHaveLength(1);
+    expect(publishedRendered[0]).toMatchObject({ kind: 'tool-call', tool: { state: expectedToolState } });
+    const nativeTool = nativeRendered[0];
+    const publishedTool = publishedRendered[0];
+    if (nativeTool.kind !== 'tool-call' || publishedTool.kind !== 'tool-call') throw new Error('Expected rendered tools');
+    expect(publishedTool.tool.id).toBe(nativeTool.tool.id);
     await fixture.assertReadOnly();
-  } finally { await fixture.dispose(); await rm(activeServerDir, { recursive: true, force: true }); }
+  } finally {
+    publicationTx = null;
+    vi.unstubAllEnvs();
+    await fixture.dispose(); await rm(activeServerDir, { recursive: true, force: true });
+  }
+});
+
+
+it('preserves native backfill continuation for untimed Muse Tool events under the memory semantic policy', async () => {
+  const fixture = await boundary();
+  const dir = await mkdtemp(join(tmpdir(), 'muse-undated-memory-'));
+  const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+  const signal = new AbortController().signal;
+  try {
+    const rows = await fixture.recording('isolated-long-history-reader');
+    const page = readMuseRecord(rows[10]);
+    const message = readMuseRecord(page.message);
+    const result = readMuseRecord(message.result);
+    if (!Array.isArray(result.events)) throw new Error('Missing native events');
+    const event = readMuseRecord(result.events[9]);
+    const params = readMuseRecord(event.params);
+    const nativeItem = readMuseRecord(params.item);
+    if (typeof params.sessionId !== 'string') throw new Error('Missing native identity');
+    const window = structuredClone(rows);
+    window[10] = { ...page, message: { ...message, result: { ...result, nextCursor: 'native-older',
+      // Fill one demanded native page with revisions of the same untimed call.
+      // The real projection folds them; its continuation must remain readable.
+      events: Array.from({ length: EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxItems }, () => ({ ...event,
+        params: { ...params, item: { ...nativeItem, status: 'inProgress' } } })) } } };
+    await fixture.phase(window, [9]);
+    const source = { type: 'external_transcript' as const, agentId: 'muse', sourceKey: 'local', nativeSessionId: params.sessionId };
+    const sessionId = externalMemoryStorageId(source);
+    db.setExternalSourceState({ sessionId, source, cursor: JSON.stringify({ type: 'page', cursor: 'native-before' }), nextOrdinal: 1 });
+    const settings = normalizeMemorySettings({ enabled: true, indexMode: 'deep', coveragePolicy: { type: 'full' },
+      contentPolicy: { includeToolSummaries: true },
+      conversationSearch: { indexExternal: { enabled: true, agents: ['muse'], historyDays: 1, includeToolOutput: true } } });
+    const state = await syncExternalMemoryTranscriptOnce({ source,
+      native: { agentId: 'muse', sourceKey: 'local', source: fixture.source, reader: fixture.callbacks },
+      db, settings, nowMs: Date.now(), signal });
+    expect(state).toBe('more');
+    const frontier = JSON.parse(db.getExternalSourceState({ sessionId })!.cursor!);
+    expect(frontier).toMatchObject({ type: 'page', cursor: expect.any(String) });
+    expect(frontier.cursor).not.toBe('native-before');
+    await fixture.assertReadOnly();
+  } finally { db.close(); await fixture.dispose(); await rm(dir, { recursive: true, force: true }); }
 });

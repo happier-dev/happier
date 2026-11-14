@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ExternalSessionTranscriptPageResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 import { createReducer, reducer } from "@happier-dev/session-core/reducer";
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
@@ -9,6 +10,26 @@ import { projectClaudeJsonlLineToDirectMessages } from '../../../../../../packag
 import { normalizeExternalSessionTranscriptMessages } from './normalizeExternalSessionTranscriptMessages';
 
 describe('normalizeExternalSessionTranscriptMessages', () => {
+    it('renders the r1113n native page shape with untimed Muse calls between timed neighbours', () => {
+        const items = [
+            { id: 'user', createdAtMs: 1000, localId: 'user', messageRole: 'user', userProjection: 'source_fact',
+                raw: { role: 'user', content: { type: 'text', text: 'fixture prompt' } } },
+            { id: 'call', messageRole: 'agent', raw: { role: 'agent', content: { type: 'acp', agentId: 'muse',
+                data: { type: 'tool-call', callId: 'call', name: 'search', input: { query: 'fixture' } } } } },
+            { id: 'result', createdAtMs: 2000, messageRole: 'agent', raw: { role: 'agent', content: { type: 'acp', agentId: 'muse',
+                data: { type: 'tool-result', callId: 'call', output: 'fixture result', isError: false } } } },
+            { id: 'answer', createdAtMs: 3000, messageRole: 'agent', raw: { role: 'agent', content: { type: 'acp', agentId: 'muse',
+                data: { type: 'message', message: 'fixture answer' } } } },
+        ];
+        const page = ExternalSessionTranscriptPageResponseSchema.parse({ ok: true, items, hasMore: false, nextCursor: null, tailCursor: null, truncated: false });
+        if (!page.ok) throw new Error('expected native page');
+        const normalized = normalizeExternalSessionTranscriptMessages(page.items);
+        expect(normalized.map(row => row.createdAt)).toEqual([1000, 1000, 2000, 3000]);
+        const messages = reducer(createReducer(), normalized).messages;
+        expect(messages.map(row => row.kind)).toEqual(['user-text', 'tool-call', 'agent-text']);
+        expect(messages[1]).toMatchObject({ tool: { id: 'call', state: 'completed', result: 'fixture result' } });
+        expect(page.items[1]).not.toHaveProperty('createdAtMs');
+    });
     it.each(['user', 'agent'] as const)('retains transient native images on normalized and reduced %s rows', role => {
         const media = [{ type: 'image' as const, mimeType: 'image/png' as const, data: 'aW1hZ2U=' }];
         const raw = role === 'user'
