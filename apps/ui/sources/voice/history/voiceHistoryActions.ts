@@ -101,7 +101,8 @@ export async function executeVoiceHistoryAction(request: VoiceHistoryActionReque
       }
       case 'ui.voice_global.history.export': {
         const value = request.input;
-        await ports.consumer.search();
+        // All-history admission belongs to the consumer, including cold use.
+        if (value.range === 'loaded') await ports.consumer.search();
         assertCurrent();
         const artifact = await ports.consumer.exportHistory(value);
         assertCurrent();

@@ -353,15 +353,21 @@ export function createVoiceHistoryConsumer<
         resetBinding();
         throw new VoiceHistoryOperationSupersededError();
       }
+      if (scopeKey !== nextScope.key) pagesBySession.clear();
       capturedScope?.release?.();
       scopeKey = nextScope.key;
       capturedScope = nextScope;
       retained = true;
       sessionIds = discoveredSessionIds;
       sessionId = sessionIds[0] ?? null;
-      pagesBySession.clear();
-      for (const id of sessionIds) pagesBySession.set(id, null);
-      hasMore = null;
+      const membership = new Set(sessionIds);
+      for (const id of pagesBySession.keys()) {
+        if (!membership.has(id)) pagesBySession.delete(id);
+      }
+      for (const id of sessionIds) {
+        if (!pagesBySession.has(id)) pagesBySession.set(id, null);
+      }
+      hasMore = [...pagesBySession.values()].some(value => value !== false) ? null : false;
       updateSourceDemand();
       emit();
       return sessionId;
@@ -405,14 +411,20 @@ export function createVoiceHistoryConsumer<
     return { loaded, hasMore, status: hasMore ? 'loaded' : 'no_more' };
   };
 
-  const load = async (query: string): Promise<VoiceHistorySnapshot> => {
-    const epoch = beginOperation();
-    const discoveredSessionId = await discover(epoch);
-    if (!discoveredSessionId || !capturedScope) return empty();
+  const refreshMessages = async (epoch: number): Promise<void> => {
+    if (!capturedScope) return;
     for (const id of sessionIds) {
       await deps.refreshSessionMessages(id, capturedScope);
       assertOperationCurrent(epoch);
     }
+  };
+
+  const load = async (query: string): Promise<VoiceHistorySnapshot> => {
+    const epoch = beginOperation();
+    pagesBySession.clear();
+    const discoveredSessionId = await discover(epoch);
+    if (!discoveredSessionId || !capturedScope) return empty();
+    await refreshMessages(epoch);
     assertOperationCurrent(epoch);
     if (sessionId !== discoveredSessionId) throw new VoiceHistoryOperationSupersededError();
     if (!isScopeCurrent()) return empty();
@@ -497,6 +509,12 @@ export function createVoiceHistoryConsumer<
         assertOperationCurrent(readEpoch);
       }
       const epoch = beginOperation();
+      // Admit the complete current membership once; warm search only filters
+      // the previously loaded slice and is not an all-history admission.
+      if (input.range === 'all') {
+        await discover(epoch);
+        await refreshMessages(epoch);
+      }
       const expectedSessionId = sessionId;
       if (input.range === 'all' && expectedSessionId && isScopeCurrent()) {
         // "All" means all of it. There is no page, row or byte ceiling: a
@@ -577,9 +595,7 @@ export function createVoiceHistoryConsumer<
       readState = 'ready';
       emit();
       const result = await deps.runCarrierOperation(async () => {
-        if (!sessionId) {
-          await discover(epoch);
-        }
+        await discover(epoch);
         assertOperationCurrent(epoch);
         if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
         const deletingScope = capturedScope;

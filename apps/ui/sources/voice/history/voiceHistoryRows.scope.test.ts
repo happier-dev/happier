@@ -21,7 +21,7 @@ describe('Voice conversation transcript projection', () => {
     const deleted: string[] = [];
     const consumer = createVoiceHistoryConsumer({
       readScopeKey: () => 'home/account', captureScope: async () => ({ key: 'home/account' }),
-      discoverHistorySession: async () => ['recent', 'archived'],
+      discoverHistorySession: async () => [...messages.keys()],
       refreshSessionMessages: async () => {}, readMessages: id => messages.get(id) ?? [],
       readMessagesRevision: id => messages.get(id)?.length ?? 0,
       subscribeHistorySources: () => () => {}, resolveProviderLabel: () => 'Voice',

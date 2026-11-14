@@ -107,6 +107,37 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
 }
 
 describe('projectVoiceHistoryRows', () => {
+  it.each(['export', 'clear'] as const)('refreshes warm membership once when admitting all-history %s', async operation => {
+    let owned = ['conversation-a'];
+    const transcripts = new Map<string, Message[]>([
+      ['conversation-a', [agentMessage('a', 'First conversation', 1)]],
+      ['conversation-b', [agentMessage('b', 'New conversation', 2)]],
+      ['target-session', [agentMessage('target', 'Unrelated transcript', 3)]],
+    ]);
+    const discovery = vi.fn(async () => [...owned]);
+    const deleted: string[] = [];
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      discoverHistorySession: discovery,
+      readMessages: id => transcripts.get(id) ?? [],
+      deleteSession: async id => { deleted.push(id); return { success: true }; },
+      retireLocalSession: id => { transcripts.delete(id); },
+    }));
+    await consumer.open();
+    await consumer.exportHistory({ range: 'all' });
+    owned = ['conversation-a', 'conversation-b'];
+    discovery.mockClear();
+
+    if (operation === 'export') {
+      const artifact = await consumer.exportHistory({ range: 'all' });
+      expect(JSON.parse([...artifact.chunks()].join('')).entries.map((row: { id: string }) => row.id)).toEqual(['a', 'b']);
+    } else {
+      await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+      expect(deleted).toEqual(owned);
+      expect([...transcripts.keys()]).toEqual(['target-session']);
+    }
+    expect(discovery).toHaveBeenCalledOnce();
+  });
+
   it('keeps an older unacknowledged note before a newer acknowledged turn in History and export rows', () => {
     const rows = projectVoiceHistoryRows([
       { ...agentMessage('newer-answer', 'Created third.txt.', 1794303184958), seq: 1 },
@@ -668,7 +699,8 @@ describe('createVoiceHistoryConsumer', () => {
     // The growing slice is projected and re-sorted exactly ONCE, after the last
     // page, instead of once per page: three rows, three label resolutions.
     expect(resolveProviderLabel).toHaveBeenCalledTimes(3);
-    expect(mountedRead).toHaveBeenCalledTimes(3);
+    // Membership admission publishes once before the existing page updates.
+    expect(mountedRead).toHaveBeenCalledTimes(4);
     expect(artifact).toMatchObject({
       mimeType: 'application/json',
       rowCount: 3,
@@ -1041,6 +1073,7 @@ describe('createVoiceHistoryConsumer', () => {
   });
 
   it('retires an exactly rebound same-account session after its stale clear succeeds', async () => {
+    const deleteStarted = createDeferred<void>();
     let resolveDelete!: (result: { success: boolean }) => void;
     const deleteResult = new Promise<{ success: boolean }>((resolve) => {
       resolveDelete = resolve;
@@ -1048,7 +1081,7 @@ describe('createVoiceHistoryConsumer', () => {
     const retireLocalSession = vi.fn();
     const consumer = createVoiceHistoryConsumer(createDeps({
       discoverHistorySession: vi.fn(async () => 'voice-history-session'),
-      deleteSession: vi.fn(async () => await deleteResult),
+      deleteSession: vi.fn(async () => { deleteStarted.resolve(); return await deleteResult; }),
       retireLocalSession,
     }));
 
@@ -1056,6 +1089,7 @@ describe('createVoiceHistoryConsumer', () => {
       sessionId: 'voice-history-session',
     });
     const staleClear = consumer.clear();
+    await deleteStarted.promise;
 
     // The delete has not settled yet, so a newer open can still rediscover
     // and bind the exact carrier that the server is about to remove.
