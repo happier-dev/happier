@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type RequestTiming = Readonly<{
   receivedAtMs: number;
   route: string;
+  failure?: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>;
 }>;
 
 function readSafeRoute(request: FastifyRequest): string {
@@ -25,6 +27,11 @@ export function registerDaemonControlRequestTiming(
     timings.set(request, { receivedAtMs: nowMs(), route });
   });
 
+  app.addHook('onError', async (request, _reply, error) => {
+    const timing = timings.get(request);
+    if (timing) timings.set(request, { ...timing, failure: readUnexpectedActionErrorDiagnosticV1(error) });
+  });
+
   app.addHook('onResponse', async (request, reply) => {
     const timing = timings.get(request);
     if (!timing) return;
@@ -40,6 +47,7 @@ export function registerDaemonControlRequestTiming(
       route: timing.route,
       statusCode: reply.statusCode,
       durationMs: Math.max(0, Math.round(nowMs() - timing.receivedAtMs)),
+      ...(reply.statusCode >= 500 ? timing.failure : {}),
     });
   });
 }

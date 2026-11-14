@@ -2399,6 +2399,13 @@ whose handlers call the local daemon control client and supervisor. hsetup prese
 the task's data and typed failures; it does not implement tunnel lifecycle or
 maintain another list of kind strings. Electron and Tauri share this hsetup path.
 
+The delegated `daemon system-task` process follows the task's operation lifetime
+and explicit cancellation, including CLI startup. The generic local-command
+capture deadline does not terminate it while the daemon may still apply its effect.
+Unexpected local-control failures retain the shared diagnostic owner's safe error
+class, allowlisted code and source locations in the correlated request log. Request
+content and exception messages are not included in that diagnostic.
+
 All hsetup tasks execute through the shared system-task registry runner. A prompt
 event leaves the task pending while hsetup reads its JSON answer from stdin,
 including first-use SSH host trust. Hosts without an answer transport retain the

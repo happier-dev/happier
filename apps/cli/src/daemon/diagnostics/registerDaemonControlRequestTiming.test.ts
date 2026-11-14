@@ -4,6 +4,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerDaemonControlRequestTiming } from './registerDaemonControlRequestTiming';
 
 describe('registerDaemonControlRequestTiming', () => {
+  it('retains the first safe exception cause with the failed request without logging private content', async () => {
+    const warn = vi.fn();
+    const app = fastify({ logger: false });
+    registerDaemonControlRequestTiming(app, { debug: vi.fn(), warn });
+    app.post('/ssh-tunnels/ensure', async () => {
+      const error = Object.assign(new Error('never-log-exception'), { code: 'ENOSPC' });
+      error.stack = 'Error: never-log-exception\n    at write (/repo/apps/cli/src/daemon/ssh/tunnels/registry.ts:55:13)';
+      throw error;
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST', url: '/ssh-tunnels/ensure?token=never-log-query',
+        headers: { authorization: 'Bearer never-log-header' }, payload: { password: 'never-log-body' },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(warn.mock.calls).toEqual([['[CONTROL SERVER] Request completed', expect.objectContaining({
+        requestId: expect.any(String),
+        route: '/ssh-tunnels/ensure', statusCode: 500,
+        errorClass: 'Error', errorCode: 'ENOSPC',
+        stackFrames: [{ file: '/repo/apps/cli/src/daemon/ssh/tunnels/registry.ts', line: 55, column: 13 }],
+      })]]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('never-log');
+    } finally { await app.close(); }
+  });
+
   it('suppresses successful ping floods, keeps failures visible, and leaves probes at debug', async () => {
     const debug = vi.fn();
     const warn = vi.fn();

@@ -82,11 +82,17 @@ describe('local Happier command lifecycle budget', () => {
     }
   });
 
-  it.each(['install', 'start', 'stop', 'restart'])('lets scoped service %s finish beyond the generic command deadline', async (action) => {
+  it.each([
+    ['service', 'install'],
+    ['service', 'start'],
+    ['service', 'stop'],
+    ['service', 'restart'],
+    ['daemon', 'system-task'],
+  ])('lets scoped %j finish beyond the generic command deadline', async (...args) => {
     vi.useFakeTimers();
     const { child, executor } = fixture();
     const scoped = scopeHappierJsonExecutor(executor, { serverId: 'home', targetMode: 'pinned' }, { HAPPIER_BOOTSTRAP_CLI_PATH: process.execPath });
-    const result = scoped.runHappierJson(['service', action, '--json']).catch((error: unknown) => error);
+    const result = scoped.runHappierJson([...args, '--json']).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(60_001);
     expect(spawnMock).toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
@@ -96,11 +102,14 @@ describe('local Happier command lifecycle budget', () => {
     await expect(result).resolves.toEqual({ ok: true });
   });
 
-  it('keeps explicit cancellation for the daemon service alias', async () => {
+  it.each([
+    ['daemon', 'service', 'install'],
+    ['daemon', 'system-task'],
+  ])('keeps explicit cancellation for %j', async (...args) => {
     vi.useFakeTimers();
     const { child, executor } = fixture();
     const controller = new AbortController();
-    const result = executor.runHappierJson(['daemon', 'service', 'install', '--json'], { signal: controller.signal }).catch((error: unknown) => error);
+    const result = executor.runHappierJson([...args, '--json'], { signal: controller.signal }).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(60_001);
     expect(child.kill).not.toHaveBeenCalled();
     controller.abort();
