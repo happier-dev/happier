@@ -362,7 +362,7 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
         wrapItem: (row, children) => isAccountRow(row) ? <AccountWorkflowHomeRow row={row}>{children}</AccountWorkflowHomeRow>
             : <WorkflowDefinitionDragRow row={row}>{children}</WorkflowDefinitionDragRow>,
         // Every saved row would repeat the same workflow glyph, so none draws one and the names start on the
-        // sheet's text edge; the Built-in sheet below keeps its purpose marks (LIST-ICONS-1108).
+        // sheet's text edge; the Built-in rows below, the same Collection row shape, keep their purpose marks (LIST-ICONS-1108).
         glyph: () => null,
         loadingGlyph: false,
         title: rowTitle,

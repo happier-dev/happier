@@ -12,6 +12,7 @@ import { COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX, CompactSearchField } from '@
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import {
@@ -35,7 +36,18 @@ export type MainScreenSearch = Readonly<{
   testID: string;
   /** Ends the field (a saved space's filter funnel, as the Sessions field ends with it). */
   trailing?: React.ReactNode;
+  /** A field that hands its query on (Discover opens the Search page with it) rather than filtering in place. */
+  onSubmitEditing?: () => void;
 }>;
+
+/**
+ * The page's count line from its owner's reported counts ("12 Machines · 3 online"): each part already says its
+ * number in words; an absent or empty part drops out, and no part means no line. Pages never count for it.
+ */
+export function formatMainScreenCount(parts: readonly (string | null | undefined | false)[]): string | null {
+  const shown = parts.filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+  return shown.length > 0 ? shown.join(' · ') : null;
+}
 
 export type MainScreenHeaderProps = Readonly<{
   testID?: string;
@@ -58,7 +70,11 @@ export type MainScreenHeaderProps = Readonly<{
   createTrigger?: React.ReactNode;
   /** What stands right under the title: filter chips, a view switch, a saved space's strip. */
   band?: React.ReactNode;
-  /** The page's count line ("40 artifacts · 1 saved today"), last before the body, under the open search field. */
+  /** The page's count line ("40 artifacts · 1 saved today"), last before the body: the owner's counts, one per part. */
+  count?: readonly (string | null | undefined | false)[];
+  /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
+  countPending?: boolean;
+  /** What the open search reports (its scope, "Search everything"), under the field. Never a count. */
   status?: React.ReactNode;
 }>;
 
@@ -80,6 +96,8 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
   const search = props.search ?? null;
   const searchState = useMainScreenSearch(search);
   const columnMaxWidth = useLayoutMaxWidth();
+  const countLine = props.count ? formatMainScreenCount(props.count) : null;
+  const countReserved = countLine === null && props.countPending === true;
   const createControl =
     props.createTrigger !== undefined
       ? props.createTrigger
@@ -130,7 +148,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
           }
         />
       </NavigationLargeTitleProvider>
-      {props.band != null || (search && searchState.open) || props.status != null ? (
+      {props.band != null || (search && searchState.open) || props.status != null || countLine !== null || countReserved ? (
         // The sheets' measure (capped and centred like `ItemGroup`), so the rows stand on the cards' edge at any width.
         <View style={styles.underBand}>
           <View style={[styles.under, { maxWidth: columnMaxWidth, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }]}>
@@ -143,6 +161,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
               placeholder={search.placeholder}
               autoFocus={searchState.focusOnOpen}
               onKeyPress={searchState.onKeyPress}
+              {...(search.onSubmitEditing === undefined ? {} : { onSubmitEditing: search.onSubmitEditing })}
               // The field ends with what narrows it (a funnel), then its close (My work's field, owner 11-11).
               trailing={
                 <>
@@ -161,6 +180,13 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
             />
           ) : null}
           {props.status}
+          {countLine !== null ? (
+            <Text testID={props.testID === undefined ? undefined : `${props.testID}:count`} variant="meta"
+              numberOfLines={1} style={styles.count}>{countLine}</Text>
+          ) : countReserved ? (
+            <Text variant="meta" numberOfLines={1} style={styles.count} accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants">{' '}</Text>
+          ) : null}
           </View>
         </View>
       ) : null}
@@ -217,6 +243,10 @@ const styles = StyleSheet.create((theme) => ({
   underBand: {
     alignSelf: 'stretch',
     alignItems: 'center',
+  },
+  count: {
+    color: theme.colors.text.secondary,
+    fontVariant: ['tabular-nums'],
   },
   under: {
     width: '100%',

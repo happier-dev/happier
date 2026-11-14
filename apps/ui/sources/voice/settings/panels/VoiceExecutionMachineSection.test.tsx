@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { act } from 'react-test-renderer';
 
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -92,6 +92,10 @@ const VoiceExecutionMachineSection = await loadSection();
 const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
 
 it('opens the Machine picker when typed Voice recovery navigates to the Conversations screen', async () => {
+  // The opened chooser is a phone sheet that follows the browser window's resizes: stub that boundary here.
+  vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {}, setTimeout, clearTimeout,
+    visualViewport: undefined, innerWidth: 390, innerHeight: 844 });
+  onTestFinished(() => { vi.unstubAllGlobals(); });
   account.replaceVoice(localVoice('local_conversation'));
   const writesBeforeRecovery = account.writes.length;
   const target = VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET;
@@ -104,7 +108,10 @@ it('opens the Machine picker when typed Voice recovery navigates to the Conversa
     </AuthProvider>,
   );
   try {
-    expect(screen.findHostByTestId('settings.voice.executionMachine.chip:auto')).not.toBeNull();
+    // Recovery opens the header's "Runs on" chooser: New Session's Machine picker, led by Automatic.
+    const chip = screen.tree.root.findAll((node) => node.props.filter?.testID === 'settings.voice.executionMachine.chip')[0];
+    expect(chip?.props.filter.open).toBe(true);
+    expect(screen.findHostByTestId('settings.voice.executionMachine.chip-machine-option:default')).not.toBeNull();
     expect(account.writes.length - writesBeforeRecovery).toBe(0);
   } finally {
     await screen.unmount();
@@ -117,9 +124,9 @@ it('keeps the Advanced Voice computer available for model management when conver
   } };
   const setVoice = vi.fn();
   const view = await renderSettingsView(<VoiceExecutionMachineSection voice={voice} setVoice={setVoice} intent="advanced" />);
-  const picker = view.tree.root.findAll((node) => node.type === DropdownMenu)[0];
+  const picker = view.tree.root.findAll((node) => node.type === SessionMachineField)[0];
   expect(picker).toBeDefined();
-  await act(async () => { picker!.props.onSelect('machine-1'); });
+  await act(async () => { picker!.props.onSelectMachine(createMachineFixture({ id: 'machine-1' })); });
   expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
     providerId: null, executionMachine: { mode: 'fixed', machineId: 'machine-1' },
   }));
@@ -221,18 +228,16 @@ describe('VoiceExecutionMachineSection', () => {
       return <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} intent="advanced" />;
     }
     const screen = await renderSettingsView(<Surface />);
-    const subtitle = () => screen.tree.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'machine-1')?.subtitle;
     expect(latest?.selectionKind).toBe('resolved');
-    expect(subtitle()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
     const rows = storage.getState().machineListByServerId;
     await act(async () => { vi.advanceTimersByTime(60_001); });
     expect(storage.getState().machineListByServerId).toBe(rows);
     expect(latest?.selectionKind).toBe('selected_unreachable');
-    expect(subtitle()).toBe(t('settingsVoice.local.executionMachine.offlineLabel'));
     await screen.unmount();
   });
 
-  it.each(['section', 'chip'] as const)('retains mounted %s presence through transport withdrawal until activity updates', async (presentation) => {
+  it('retains the mounted chip presence through transport withdrawal until activity updates', async () => {
+    const presentation = 'chip' as const;
     onTestFinished(clearMachineRequestReachabilityForTest);
     onTestFinished(() => { vi.useRealTimers(); });
     const voice = localVoice('local_conversation');
@@ -242,23 +247,17 @@ describe('VoiceExecutionMachineSection', () => {
     const screen = await renderSettingsView(<VoiceExecutionMachineSection voice={voice} setVoice={() => {}}
       intent="advanced" presentation={presentation} />);
     const chip = () => screen.tree.root.findAll((node) => node.props.filter?.testID === 'settings.voice.executionMachine.chip')[0]!;
-    const read = () => presentation === 'section'
-      ? screen.tree.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'machine-1')?.subtitle
-      : chip().props.filter.options.find((item: { id: string }) => item.id === 'machine-1')?.subtitle;
-    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
-    if (presentation === 'section') {
-      await act(async () => { screen.tree.root.findByType(DropdownMenu).props.onOpenChange(true); });
-    }
+    const read = () => chip().props.filter.presence;
+    expect(read()).toBe('online');
     const rows = storage.getState().machineListByServerId;
     await act(async () => { withdrawMachinePresenceForScope(account.scope); });
     expect(storage.getState().machineListByServerId).toBe(rows);
     // Transport withdrawal supplies no Machine activity fact; the existing activity remains authoritative.
-    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
-    if (presentation === 'chip') expect(chip().props.filter.presence).toBe('online');
+    expect(read()).toBe('online');
     await act(async () => { captureMachinePresenceObservation({ ...account.scope, accountId: 'other-account' })(['machine-1']); });
-    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
+    expect(read()).toBe('online');
     await act(async () => { captureMachinePresenceObservation(account.scope)(['machine-1']); });
-    expect(read()).toBe(t('settingsVoice.local.executionMachine.onlineLabel'));
+    expect(read()).toBe('online');
     const lastSeenAt = Date.now();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(lastSeenAt + 60_002);
@@ -266,8 +265,7 @@ describe('VoiceExecutionMachineSection', () => {
       storage.getState().applyMachines([createMachineFixture({ active: false, activeAt: lastSeenAt + 1 })], true,
         { sourceServerId: account.scope.serverId, sourceAccountId: account.scope.accountId });
     });
-    expect(read()).toBe(t('settingsVoice.local.executionMachine.offlineLabel'));
-    if (presentation === 'chip') expect(chip().props.filter.presence).toBe('offline');
+    expect(read()).toBe('offline');
     await screen.unmount();
   });
 
@@ -284,17 +282,15 @@ describe('VoiceExecutionMachineSection', () => {
         <VoiceExecutionMachineSection voice={localVoice(providerId)} setVoice={() => {}} />,
       );
 
-      const dropdown = screen.findAll(
-        (node) => node.type === DropdownMenu
-          && node.props?.itemTrigger?.title === t('settingsVoice.pages.conversations.runsOn'),
+      const field = screen.findAll(
+        (node) => node.type === SessionMachineField
+          && node.props?.title === t('settingsVoice.pages.conversations.runsOn'),
       )[0];
 
-      expect(dropdown).toBeTruthy();
-      expect(dropdown?.props.selectedId).toBe('machine-1');
-      expect(dropdown?.props.items.map((item: any) => item.title)).toEqual([
-        t('settingsVoice.local.executionMachine.autoTitle'),
-        'Primary Mac',
-      ]);
+      expect(field).toBeTruthy();
+      expect(field?.props.machineId).toBe('machine-1');
+      // New Session's Machine picker lists the Machines; Automatic leads it.
+      expect(field?.props.defaultChoice.title).toBe(t('settingsVoice.local.executionMachine.autoTitle'));
     },
   );
 
@@ -326,7 +322,7 @@ describe('VoiceExecutionMachineSection', () => {
       />,
     );
 
-      expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
+      expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(1);
     },
   );
 
@@ -351,7 +347,7 @@ describe('VoiceExecutionMachineSection', () => {
       />,
     );
 
-    expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(0);
+    expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(0);
   });
 
   it.each([
@@ -395,7 +391,7 @@ describe('VoiceExecutionMachineSection', () => {
         />,
       );
 
-      expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
+      expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(1);
     },
   );
 
@@ -417,10 +413,10 @@ describe('VoiceExecutionMachineSection', () => {
         registry={agentRealtimeRegistry()}
       />,
     );
-    const dropdown = screen.findAll((node) => node.type === DropdownMenu)[0];
+    const dropdown = screen.findAll((node) => node.type === SessionMachineField)[0];
 
     expect(dropdown).toBeTruthy();
-    dropdown?.props.onSelect('machine-1');
+    dropdown?.props.onSelectMachine(createMachineFixture({ id: 'machine-1' }));
     expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
       executionMachine: expect.objectContaining({ mode: 'fixed', machineId: 'machine-1' }),
     }));
@@ -435,9 +431,9 @@ describe('VoiceExecutionMachineSection', () => {
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={setVoice} />,
     );
-    const dropdown = screen.findAll((node) => node.type === DropdownMenu)[0];
+    const dropdown = screen.findAll((node) => node.type === SessionMachineField)[0];
 
-    dropdown?.props.onSelect('auto');
+    dropdown?.props.defaultChoice.onChoose();
     expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(scope)]).toBeNull();
 
     expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
@@ -469,10 +465,10 @@ describe('VoiceExecutionMachineSection', () => {
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} />,
     );
-    const dropdown = screen.findAll((node) => node.type === DropdownMenu)[0];
+    const dropdown = screen.findAll((node) => node.type === SessionMachineField)[0];
 
-    expect(dropdown?.props.itemTrigger.detailFormatter()).toBe(t('machine.unlistedMachine'));
-    expect(dropdown?.props.selectedId).toBe('missing-machine');
+    expect(dropdown?.props.machineName).toBe(t('machine.unlistedMachine'));
+    expect(dropdown?.props.machineId).toBe('missing-machine');
   });
 
   it('names the machine Automatic uses before any conversation has remembered one', async () => {
@@ -490,9 +486,9 @@ describe('VoiceExecutionMachineSection', () => {
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} intent="advanced" />,
     );
-    const dropdown = screen.findAll((node) => node.type === DropdownMenu)[0];
+    const dropdown = screen.findAll((node) => node.type === SessionMachineField)[0];
 
-    expect(dropdown?.props.itemTrigger.detailFormatter()).toBe(`${t('settingsVoice.local.executionMachine.autoTitle')} · Primary Mac`);
+    expect(dropdown?.props.defaultChoice.value).toBe(`${t('settingsVoice.local.executionMachine.autoTitle')} · Primary Mac`);
   });
 
   it('shows the sticky resolved machine in the Automatic selection', async () => {
@@ -505,9 +501,9 @@ describe('VoiceExecutionMachineSection', () => {
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} />,
     );
-    const dropdown = screen.findAll((node) => node.type === DropdownMenu)[0];
+    const dropdown = screen.findAll((node) => node.type === SessionMachineField)[0];
 
-    expect(dropdown?.props.itemTrigger.detailFormatter()).toContain('Primary Mac');
+    expect(dropdown?.props.defaultChoice.value).toContain('Primary Mac');
   });
 
   it.each([
@@ -523,7 +519,7 @@ describe('VoiceExecutionMachineSection', () => {
       />,
     );
 
-    expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(expectedCount);
+    expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(expectedCount);
   });
 
   it.each(['happier.voice.openai/realtime-openai', 'happier.voice.xai/realtime-grok'] as const)(
@@ -538,7 +534,7 @@ describe('VoiceExecutionMachineSection', () => {
         />,
       );
 
-      expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
+      expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(1);
     },
   );
 
@@ -597,11 +593,11 @@ describe('VoiceExecutionMachineSection', () => {
       const screen = await renderSettingsView(
         <VoiceExecutionMachineSection voice={selected.settings.voice} setVoice={setVoice} />,
       );
-      const dropdowns = screen.findAll((node) => node.type === DropdownMenu);
+      const dropdowns = screen.findAll((node) => node.type === SessionMachineField);
       expect(dropdowns).toHaveLength(expectedCount);
       const dropdown = dropdowns[0];
       expect(dropdown).toBeTruthy();
-      dropdown?.props.onSelect('machine-1');
+      dropdown?.props.onSelectMachine(createMachineFixture({ id: 'machine-1' }));
       expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
         executionMachine: expect.objectContaining({ mode: 'fixed', machineId: 'machine-1' }),
       }));
@@ -634,8 +630,8 @@ describe('VoiceExecutionMachineSection', () => {
       />,
     );
 
-    expect((await renderMode('byo')).findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
-    expect((await renderMode('happier')).findAll((node) => node.type === DropdownMenu)).toHaveLength(1);
+    expect((await renderMode('byo')).findAll((node) => node.type === SessionMachineField)).toHaveLength(1);
+    expect((await renderMode('happier')).findAll((node) => node.type === SessionMachineField)).toHaveLength(1);
   });
 
   it.each([
@@ -653,6 +649,6 @@ describe('VoiceExecutionMachineSection', () => {
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} registry={modeRegistry()} />,
     );
 
-    expect(screen.findAll((node) => node.type === DropdownMenu)).toHaveLength(0);
+    expect(screen.findAll((node) => node.type === SessionMachineField)).toHaveLength(0);
   });
 });

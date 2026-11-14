@@ -1,12 +1,16 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import {
+    HostCollection as Collection,
+    useHappierCollection,
+    type CollectionAnatomy,
+} from '@happier-dev/plugin-ui';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Item } from '@/components/ui/lists/Item';
-import { useViewportClass } from '@/utils/platform/useViewportClass';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { openSessionGoalControl } from '@/components/sessions/workState/openSessionGoalControl';
 import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -18,31 +22,71 @@ import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionR
 import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
+type BuiltinRow = Readonly<{ key: string; entry: BuiltinWorkflowCatalogEntryV1 }>;
+
+const BUILTIN_GROUPS = {
+    get axis() {
+        return [{ key: 'builtin', title: t('workflows.page.blocks.builtin'), description: t('workflows.examples.builtInDescription') }];
+    },
+    groupOf: () => 'builtin',
+};
+const readBuiltinKey = (row: BuiltinRow) => row.key;
+const BUILTIN_MIN_WIDTH_PX = 320;
+const COMPLETE = { kind: 'complete' as const };
+const passThroughPageScroller = (children: React.ReactNode) => children;
+const builtinTitle = (row: BuiltinRow) => tLoose(row.entry.titleKey);
+
 /**
- * Built-in rows are projections of Protocol's catalog, never Account library records. Each is a quiet
- * destination row (lab `nav-N1`): mark, name, what it does, its size as the value, and the chevron. Run now and
- * Choose a session… live on the built-in's own page, so the section carries no action per row.
+ * Built-in rows are projections of Protocol's catalog, never Account library records. They take the library's own
+ * row anatomy from the same shared Collection (PHONE-ROWS-HUNT-1113): the purpose mark as the row's glyph, the name,
+ * then "{n} steps · what it does". Run now and Choose a session… live on the built-in's own page, so a row carries
+ * no action; pressing it opens that page.
  */
 export function WorkflowBuiltinsSection(props: Readonly<{ isVisible?: (id: string) => boolean }> = {}): React.ReactElement | null {
-    // On the library home the built-ins narrow with the Workflow space and search (R8-7); none left, no section.
-    const entries = getBuiltinWorkflowCatalogV1().filter((entry) => props.isVisible?.(entry.id) ?? true);
-    if (entries.length === 0) return null;
-    return <ItemGroup title={t('workflows.page.blocks.builtin')} description={t('workflows.examples.builtInDescription')}>
-        {entries.map((entry) => <BuiltinRow key={entry.id} entry={entry} />)}
-    </ItemGroup>;
-}
-
-function BuiltinRow({ entry, showDivider }: Readonly<{ entry: BuiltinWorkflowCatalogEntryV1; showDivider?: boolean }>) {
     const router = useRouter();
-    // "{n} steps" and the description only (04 §3.3, F15): a built-in's runs carry no library key for a strip.
-    const count = t('workflows.examples.stepCount', { count: countWorkflowStepsV1(entry.definition.blocks) });
-    // A phone keeps the description's full width beside the chevron (only a chevron sits right of a label there);
-    // the size is on the built-in's own page.
-    const phone = useViewportClass() === 'compact';
-    return <Item testID={`workflow-builtins:${entry.id}`} title={tLoose(entry.titleKey)} subtitle={tLoose(entry.descriptionKey)} detail={phone ? undefined : count}
-        detailTestID={`workflow-builtins:${entry.id}:count`} showDivider={showDivider} showChevron
-        icon={<WorkflowBuiltinMark icon={entry.icon} />}
-        onPress={() => router.push(createWorkflowDefinitionRoute(entry.id) as never)} />;
+    const { isVisible } = props;
+    // On the library home the built-ins narrow with the Workflow space and search (R8-7); none left, no section.
+    const rows = React.useMemo(() => getBuiltinWorkflowCatalogV1()
+        .filter((entry) => isVisible?.(entry.id) ?? true)
+        .map((entry): BuiltinRow => ({ key: entry.id, entry })), [isVisible]);
+    const open = React.useCallback((key: string | null) => {
+        if (key !== null) router.push(createWorkflowDefinitionRoute(key) as never);
+    }, [router]);
+    const model = useHappierCollection<BuiltinRow>({
+        items: rows,
+        keyOf: readBuiltinKey,
+        groups: BUILTIN_GROUPS,
+        window: COMPLETE,
+        openKey: null,
+        onOpenChange: open,
+    });
+    const anatomy = React.useMemo((): CollectionAnatomy<BuiltinRow> => ({
+        glyph: (row) => <WorkflowBuiltinMark icon={row.entry.icon} />,
+        loadingGlyph: false,
+        title: builtinTitle,
+        where: (row) => [
+            t('workflows.examples.stepCount', { count: countWorkflowStepsV1(row.entry.definition.blocks) }),
+            tLoose(row.entry.descriptionKey),
+        ].join(' · '),
+        accessibilityLabel: builtinTitle,
+        testID: (row) => `workflow-builtins:${row.entry.id}`,
+        columnTitles: { title: t('workflows.page.blocks.builtin') },
+    }), []);
+    if (rows.length === 0) return null;
+    // Its own block and scope, as the examples' cards have: a Collection root fills its parent (flex 1, clipped), so
+    // as a bare sibling of the library's Collection the two split the page column and the library's rows were cut short.
+    return <View><CoreCollectionScope renderPageScroller={passThroughPageScroller}><Collection<BuiltinRow>
+        testID="workflows-home:builtins"
+        model={model}
+        anatomy={anatomy}
+        accessibilityLabel={t('workflows.page.blocks.builtin')}
+        presentation="list"
+        detail="none"
+        scroll="page"
+        minListWidth={BUILTIN_MIN_WIDTH_PX}
+        minDetailWidth={BUILTIN_MIN_WIDTH_PX}
+        preferredListRatio={1}
+    /></CoreCollectionScope></View>;
 }
 
 /** Uses the same Session candidacy and Home identity as continuation and trigger pickers. */

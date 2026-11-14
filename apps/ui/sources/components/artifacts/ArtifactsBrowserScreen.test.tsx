@@ -700,7 +700,7 @@ describe('Artifacts browser recovery', () => {
         await screen.pressByTestIdAsync('artifacts:search:toggle');
         expect(screen.findByTestId('artifacts:search')).not.toBeNull();
         expect(screen.findByTestId('artifacts:kind')).not.toBeNull();
-        expect(screen.findByTestId('artifacts:present')).not.toBeNull();
+        expect(screen.findByTestId('artifacts:header:count')).not.toBeNull();
     });
 
     it('opens the phone title\'s filters: a kind chosen there narrows the library as the kind chip does', async () => {

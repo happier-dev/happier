@@ -18224,6 +18224,8 @@ La meva pregunta: `,
             addressPlaceholder: "github.com/owner/repository",
             addressInvalid: "Introdueix l’adreça d’un repositori, com github.com/owner/repository.",
             defaultRef: "Branca o revisió per defecte",
+        /** The Projects page's count line: the projects the list owner reports. */
+        projectCount: ({ count }: { count: number }) => count === 1 ? '1 projecte' : `${count} projectes`,
             folder: "Carpeta",
             folderDescription: "Obre només una part del repositori",
             wholeRepository: "Tot el repositori",

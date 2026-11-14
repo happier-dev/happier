@@ -19525,6 +19525,8 @@ settingsSession: {
         defaultRef: "Branch ou revisão padrão",
         folder: "Pasta",
         folderDescription: "Abrir apenas parte do repositório",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => count === 1 ? '1 projeto' : `${count} projetos`,
         wholeRepository: "Repositório inteiro",
         repositoryDefault: "Padrão do repositório",
         repositoryTitle: "Repositório",

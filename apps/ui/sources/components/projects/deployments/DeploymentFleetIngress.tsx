@@ -1,11 +1,10 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Item } from '@/components/ui/lists/Item';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner } from './DeploymentEnvironmentDetail';
@@ -44,48 +43,44 @@ function FleetIngressChoice(props: Readonly<{
   draft?: FleetIngressDraft;
   machineName: (machineId: string) => string;
 }>) {
-  const machines = useMachineListForServer(props.draft?.serverId ?? props.editing!.serverId);
-  const [open, setOpen] = React.useState(false);
+  const serverId = props.draft?.serverId ?? props.editing!.serverId;
+  const machines = useMachineListForServer(serverId);
   const change = useDeploymentChangePress(props.editing?.review ?? null, props.editing?.onChanged ?? noop);
   const ingress = props.draft ? props.draft.value : props.detail.content.ingress;
-  const choices = React.useMemo(() => [
-    { id: 'tunnel', title: t('projects.deployments.settingsSections.fleetIngressTunnel'),
-      value: { kind: 'cloudflareTunnel' } satisfies DeploymentIngressV1 },
-    ...(machines ?? []).filter(machine => machine.installationId).map(machine => ({
-      id: `edge:${machine.id}`,
-      title: `${t('projects.deployments.settingsSections.fleetIngressEdge')} · ${getMachineDisplayName(machine, machines ?? [])}`,
-      value: { kind: 'edgeCaddy', edgeMachineId: machine.id } satisfies DeploymentIngressV1,
-    })),
-  ], [machines]);
+  // An edge runs on a Machine with an installation; the tunnel needs none, so it leads the Machine picker.
+  const edgeMachines = React.useMemo(() => (machines ?? []).filter(machine => machine.installationId), [machines]);
   const suggestedMachineId = React.useMemo(() => suggestFleetEdgeMachineId(machines ?? [],
     props.detail.runtimeTargetLink?.members?.filter(member => member.state === 'active').map(member => member.machineId) ?? []),
     [machines, props.detail.runtimeTargetLink]);
-  const suggested = choices.find(choice => choice.id === `edge:${suggestedMachineId}`);
+  const suggested = suggestedMachineId && edgeMachines.some(machine => machine.id === suggestedMachineId) ? suggestedMachineId : null;
   React.useEffect(() => {
-    if (props.draft && !props.draft.value && suggested) props.draft.onChange(suggested.value);
+    if (props.draft && !props.draft.value && suggested) props.draft.onChange({ kind: 'edgeCaddy', edgeMachineId: suggested });
   }, [props.draft, suggested]);
-  const savedId = ingress?.kind === 'cloudflareTunnel' ? 'tunnel'
-    : ingress?.kind === 'edgeCaddy' ? `edge:${ingress.edgeMachineId}` : null;
-  const selectedId = savedId ?? suggested?.id ?? null;
-  const items: DropdownMenuItem[] = choices.map(choice => ({ id: choice.id, title: choice.title,
-    checked: choice.id === selectedId }));
-  const current = ingress?.kind === 'cloudflareTunnel' ? t('projects.deployments.settingsSections.fleetIngressTunnel')
-    : ingress ? `${t('projects.deployments.settingsSections.fleetIngressEdge')} · ${props.machineName(ingress.edgeMachineId)}`
-      : suggested?.title ?? t('projects.deployments.settingsSections.fleetIngressChoose');
+  const choose = (value: DeploymentIngressV1) => {
+    if (change.running) return;
+    if (props.draft) { props.draft.onChange(value); return; }
+    if (props.editing) void change.press(() => props.editing!.actions.updateEnvironment(props.detail.environment, { ingress: value }));
+  };
+  // The field holds what is saved; an unsaved suggestion is its placeholder, so choosing it saves it.
+  const edgeMachineId = ingress?.kind === 'edgeCaddy' ? ingress.edgeMachineId : null;
   return <>
-    <DropdownMenu testID={id} open={open} onOpenChange={setOpen} items={items} selectedId={selectedId}
-      onSelect={choiceId => {
-        setOpen(false);
-        const choice = choices.find(choice => choice.id === choiceId);
-        if (!choice || change.running || choiceId === savedId) return;
-        if (props.draft) { props.draft.onChange(choice.value); return; }
-        if (props.editing) void change.press(() => props.editing!.actions.updateEnvironment(props.detail.environment, { ingress: choice.value }));
-      }} itemTrigger={{ title: t('projects.deployments.settingsSections.fleetIngressTitle'),
-        subtitle: ingress?.kind === 'cloudflareTunnel' ? t('projects.deployments.settingsSections.fleetIngressTunnelBody')
-          : ingress?.kind === 'edgeCaddy' ? t('projects.deployments.settingsSections.fleetIngressEdgeBody')
-            : t(suggested ? 'projects.deployments.settingsSections.fleetIngressSuggestedBody'
-              : 'projects.deployments.settingsSections.fleetIngressUnobserved'),
-        detailFormatter: () => current, itemProps: { disabled: change.running, accessoryLayout: 'stacked' } }} />
+    <SessionMachineField testID={id} serverId={serverId} machines={edgeMachines} machineId={edgeMachineId}
+      {...(edgeMachineId ? { machineName: props.machineName(edgeMachineId) } : {})}
+      title={t('projects.deployments.settingsSections.fleetIngressTitle')}
+      subtitle={ingress?.kind === 'cloudflareTunnel' ? t('projects.deployments.settingsSections.fleetIngressTunnelBody')
+        : ingress?.kind === 'edgeCaddy' ? t('projects.deployments.settingsSections.fleetIngressEdgeBody')
+          : t(suggested ? 'projects.deployments.settingsSections.fleetIngressSuggestedBody'
+            : 'projects.deployments.settingsSections.fleetIngressUnobserved')}
+      placeholder={!ingress && suggested
+        ? `${t('projects.deployments.settingsSections.fleetIngressEdge')} · ${props.machineName(suggested)}`
+        : t('projects.deployments.settingsSections.fleetIngressChoose')}
+      defaultChoice={{
+        title: t('projects.deployments.settingsSections.fleetIngressTunnel'),
+        selected: ingress?.kind === 'cloudflareTunnel',
+        onChoose: () => { if (ingress?.kind !== 'cloudflareTunnel') choose({ kind: 'cloudflareTunnel' }); },
+      }}
+      awayMachinesChoosable disabled={change.running}
+      onSelectMachine={machine => choose({ kind: 'edgeCaddy', edgeMachineId: machine.id })} />
     {change.outcome ? <DeployOutcomeBanner controller={change.banner}
       machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
   </>;

@@ -424,22 +424,14 @@ function BrowserHeader(props: Readonly<{
     const limit = props.usage?.limitBytes ?? null;
     const phone = useDeviceType() === 'phone';
     const overQuota = props.usage !== null && limit !== null && props.usage.usedBytes >= limit;
-    const present = props.showPresent ? (
-        <View style={styles.present} testID="artifacts:present">
-            <Text style={styles.presentText}>
-                {props.partial ? t('artifacts.browser.countSoFar', { count: props.total })
-                    : props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total })}
-            </Text>
-            {props.savedToday > 0 && !props.partial ? (
-                <Text style={styles.presentText}>{`· ${t('artifacts.browser.savedToday', { count: props.savedToday })}`}</Text>
-            ) : null}
-            {props.usage !== null && limit !== null ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null}
-        </View>
-    ) : props.reservePresent ? (
-        <View style={styles.present} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <Text style={styles.presentText}>{' '}</Text>
-        </View>
-    ) : undefined;
+    // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
+    const count = props.showPresent ? [
+        props.partial ? t('artifacts.browser.countSoFar', { count: props.total })
+            : props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total }),
+        props.savedToday > 0 && !props.partial ? t('artifacts.browser.savedToday', { count: props.savedToday }) : null,
+    ] : undefined;
+    const meter = props.showPresent && props.usage !== null && limit !== null
+        ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null;
     return (
         // The main-screen head (owner 11-11): the title opens the library's choices on a phone, its row ends with the
         // magnifier and the "+" (the bar's "+" runs the same action); the chips sit right under it, the count line last.
@@ -449,7 +441,9 @@ function BrowserHeader(props: Readonly<{
             titleControl={props.titleFilters ? <ArtifactTitleFilters {...props.titleFilters} /> : undefined}
             alwaysShowTitle
             description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
-            details={phone ? undefined : present}
+            details={phone ? undefined : meter ?? undefined}
+            {...(count === undefined ? {} : { count })}
+            countPending={!props.showPresent && props.reservePresent}
             search={props.search}
             create={props.create}
             band={props.toolbar || overQuota ? <>
@@ -459,9 +453,9 @@ function BrowserHeader(props: Readonly<{
                     <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.usedBytes, limitBytes: limit }} />
                 ) : null}
             </> : undefined}
-            status={phone && (present || props.viewSwitch) ? (
+            status={phone && (meter || props.viewSwitch) ? (
                 <View style={styles.phoneStatusRow}>
-                    <View style={styles.phonePresentSlot}>{present}</View>
+                    <View style={styles.phonePresentSlot}>{meter}</View>
                     {props.viewSwitch}
                 </View>
             ) : undefined}
@@ -485,7 +479,6 @@ function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number }>
             accessibilityLabel={t('artifacts.browser.storage.a11y', { used, limit })}
             accessibilityValue={{ min: 0, max: 100, now: Math.round(ratio * 100) }}
         >
-            <Text style={styles.presentText}>·</Text>
             <View style={styles.meterTrack}>
                 <View style={[styles.meterFill, full ? styles.meterFillFull : null, { width: `${Math.round(ratio * 100)}%` }]} />
             </View>
@@ -711,13 +704,6 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
 const stylesheet = StyleSheet.create((theme) => ({
     screen: {
         flex: 1,
-    },
-    present: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: theme.space.s6,
-        marginTop: theme.space.s8,
     },
     phonePresentSlot: {
         flex: 1,

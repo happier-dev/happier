@@ -98,6 +98,8 @@ it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial
     expect(screen.findAllByTestId('store.kind.app.loading').length).toBeGreaterThan(0);
     if (outcome === 'populated') {
         // Explicit search does not render the unknown browsing layout and must remain usable while it loads.
+        // The shared main-screen search sits behind its magnifier (owner 11-13).
+        await act(async () => { screen.findAllHostsByTestId('store.kind.app.search:toggle')[0]!.props.onPress?.(); });
         const changeQuery = (text: string) => screen.findAllByTestId('store.kind.app.search')
             .find(node => typeof node.props.onChangeText === 'function')!.props.onChangeText(text);
         await act(async () => { changeQuery('WordPress'); });

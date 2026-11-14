@@ -19293,6 +19293,8 @@ settingsSession: {
         defaultRef: "Branche ou révision par défaut",
         folder: "Dossier",
         folderDescription: "N’ouvrir qu’une partie du dépôt",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => count === 1 ? '1 projet' : `${count} projets`,
         wholeRepository: "Tout le dépôt",
         repositoryDefault: "Par défaut du dépôt",
         repositoryTitle: "Dépôt",

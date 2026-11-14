@@ -17,7 +17,8 @@ import type { NewSessionMachinePickerInventory } from '@/components/sessions/new
 import { buildServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-import { useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -70,6 +71,23 @@ export type SessionPlacementChoiceProps = Readonly<{
     /** Saved projects the folder picker lists first (New Session's "Suggested"); one may move the Machine. */
     placementCandidates?: SessionPathChoiceParams['placementCandidates'];
 }>;
+
+/**
+ * A Machine's name as every list of this Home's Machines says it: told apart from a same-named peer
+ * ("NLDW3 · 6420"). Peers are the host's list when it has one, else this Home's, read through a selector so
+ * the field wakes only when its own label changes.
+ */
+function usePlacementMachineLabel(serverId: string, machine: Machine | null, hostMachines: readonly Machine[] | undefined): string | null {
+  const machineId = machine?.id ?? null;
+  const select = React.useCallback((machines: readonly Machine[]) => {
+    if (hostMachines !== undefined || machineId === null) return null;
+    const own = machines.find((candidate) => candidate.id === machineId);
+    return own ? getMachineDisplayName(own, machines) ?? null : null;
+  }, [hostMachines, machineId]);
+  const homeLabel = useMachineListForServerSelection(serverId, select);
+  if (!machine) return null;
+  return (hostMachines !== undefined ? getMachineDisplayName(machine, hostMachines) : homeLabel ?? getMachineDisplayName(machine)) ?? null;
+}
 
 /** New Session's Machine and folder popovers for a host's place; the chips and run-composer chips open these. */
 export function useSessionPlacementPopovers(props: SessionPlacementChoiceProps): Readonly<{
@@ -164,7 +182,8 @@ export function SessionPlacementChips(
   const [open, setOpen] = React.useState<'machine' | 'folder' | null>(null);
   const chip = useSessionAuthoringChipRenderContext(machineAnchor);
   const { machinePopover, pathPopover } = useSessionPlacementPopovers(props);
-  const machineLabel = props.machine ? getMachineDisplayName(props.machine) : (props.machineName ?? null);
+  const qualifiedLabel = usePlacementMachineLabel(props.serverId, props.machine, props.machines);
+  const machineLabel = props.machine ? qualifiedLabel : (props.machineName ?? null);
   const machineKnown = props.machine !== null || Boolean(props.machineName);
   // The folder reads home-relative, as New Session's own (whose paths already are).
   const folderHome = props.machineHomeDir ?? props.machine?.metadata?.homeDir ?? undefined;
@@ -291,16 +310,36 @@ export function SessionMachineField(props: Readonly<{
   subtitle?: string;
   icon?: React.ReactNode;
   placeholder?: string;
-  /** Listed first and shown while no Machine is chosen ("Your usual Machine"). */
-  defaultChoice?: Omit<NonNullable<SessionMachineChoiceParams['defaultChoice']>, 'selected'>;
+  /**
+   * Listed first and shown while no Machine is chosen ("Your usual Machine", "Automatic"). `value` is what the
+   * field says while it holds, when the host knows more ("Automatic · Studio"). `selected` (default: no Machine
+   * chosen) is for a host whose empty value is neither ("Choose…" before a first answer).
+   */
+  defaultChoice?: Omit<NonNullable<SessionMachineChoiceParams['defaultChoice']>, 'selected'>
+    & Readonly<{ value?: string; selected?: boolean }>;
   awayMachinesChoosable?: boolean;
   disabled?: boolean;
   showDivider?: boolean;
   testID?: string;
-  onSelectMachine: (machine: Machine) => void;
+  /** Absent: the Machine is fixed by the host, and the field only names it. */
+  onSelectMachine?: (machine: Machine) => void;
+  /** `field` (default): a form row. `chip`: the bordered chip of a page or sheet header ("Runs on ⌄"). */
+  presentation?: 'field' | 'chip';
+  /** The chip's presence dot follows this Machine (the one a default resolves to); default: the chosen one. */
+  presenceMachineId?: string | null;
+  /** A host that opens the picker itself (a card asking for a Machine) controls it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }>): React.ReactElement {
   const anchor = React.useRef<View | null>(null);
-  const [open, setOpen] = React.useState(false);
+  const [ownOpen, setOwnOpen] = React.useState(false);
+  const open = props.open ?? ownOpen;
+  const { onOpenChange } = props;
+  const setOpen = React.useCallback((next: boolean) => {
+    setOwnOpen(next);
+    onOpenChange?.(next);
+  }, [onOpenChange]);
+  const choosable = props.onSelectMachine !== undefined && props.disabled !== true;
   const hostMachine = props.machines?.find((machine) => machine.id === props.machineId) ?? null;
   const homeMachine = useServerScopedMachine(props.serverId, props.machines === undefined ? props.machineId : null);
   const machine = hostMachine ?? homeMachine;
@@ -320,10 +359,10 @@ export function SessionMachineField(props: Readonly<{
   }], [hostMachines, props.serverId]);
   // Choosing the value already held is no change.
   const select = useEventCallback((next: Machine) => {
-    if (next.id !== props.machineId) props.onSelectMachine(next);
+    if (next.id !== props.machineId) props.onSelectMachine?.(next);
   });
   const defaultChoice = props.defaultChoice;
-  const defaultSelected = props.machineId === null;
+  const defaultSelected = props.machineId === null && defaultChoice?.selected !== false;
   const machinePopover = useSessionMachineChoicePopover({
     selectedMachine: machine,
     selectedServerId: props.serverId,
@@ -335,11 +374,35 @@ export function SessionMachineField(props: Readonly<{
     ...(defaultChoice ? { defaultChoice: { ...defaultChoice, selected: defaultSelected } } : {}),
     ...(props.testID === undefined ? {} : { testIdPrefix: `${props.testID}-machine` }),
   });
-  const value = machine ? getMachineDisplayName(machine) ?? props.machineName ?? null
+  const machineLabel = usePlacementMachineLabel(props.serverId, machine, props.machines);
+  const value = machine ? machineLabel ?? props.machineName ?? null
     : props.machineId !== null ? props.machineName ?? null
-      : defaultChoice?.title ?? null;
-  const close = React.useCallback(() => setOpen(false), []);
-  const openPicker = React.useCallback(() => setOpen(true), []);
+      : defaultChoice && defaultSelected ? defaultChoice.value ?? defaultChoice.title : null;
+  const close = React.useCallback(() => setOpen(false), [setOpen]);
+  const openPicker = React.useCallback(() => setOpen(true), [setOpen]);
+  const presence = useMachinePresenceSummary(props.serverId, props.presentation === 'chip'
+    ? (props.presenceMachineId ?? props.machineId) : null);
+  if (props.presentation === 'chip') {
+    const presenceShown = (props.presenceMachineId ?? props.machineId) != null;
+    return (
+      <SelectionListFilterChip filter={{
+        id: props.testID ?? 'session-machine',
+        label: props.title,
+        showLabel: true,
+        valueLabel: value ?? props.placeholder ?? t('agentInput.runOn'),
+        icon: <PlacementIcon name="desktop" />,
+        ...(presenceShown ? { reservePresence: true } : {}),
+        ...(presenceShown && presence.reachability === 'reachable' ? { presence: 'online' as const }
+          : presenceShown && presence.reachability === 'unreachable' ? { presence: 'offline' as const } : {}),
+        muted: value === null || (props.machineId !== null && machine === null),
+        disabled: !choosable,
+        open,
+        onOpenChange: setOpen,
+        renderPopoverContent: (context) => renderPlacementContent(machinePopover, context),
+        ...(props.testID === undefined ? {} : { testID: props.testID }),
+      }} />
+    );
+  }
   return (
     <Item
       {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -350,16 +413,16 @@ export function SessionMachineField(props: Readonly<{
       fieldAccessory
       showChevron={false}
       selected={false}
-      disabled={props.disabled}
+      disabled={!choosable}
       {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
       accessibilityExpanded={open}
       webRole="button"
-      {...(props.disabled ? {} : { onPress: openPicker })}
+      {...(choosable ? { onPress: openPicker } : {})}
       rightElement={
         <>
           <PlacementField anchorRef={anchor} testID={`${props.testID ?? 'session-machine-field'}.field`}
             label={props.title} value={value} placeholder={props.placeholder ?? t('agentInput.runOn')}
-            open={open} disabled={props.disabled === true} span="column" />
+            open={open} disabled={!choosable} span="column" />
           {open ? <PlacementPopover config={machinePopover} anchorRef={anchor} onClose={close} anchor="field" /> : null}
         </>
       }

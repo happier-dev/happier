@@ -19419,6 +19419,8 @@ settingsSession: {
         defaultRef: "Rama o revisión predeterminada",
         folder: "Carpeta",
         folderDescription: "Abre solo una parte del repositorio",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => count === 1 ? '1 proyecto' : `${count} proyectos`,
         wholeRepository: "Todo el repositorio",
         repositoryDefault: "Predeterminada del repositorio",
         repositoryTitle: "Repositorio",

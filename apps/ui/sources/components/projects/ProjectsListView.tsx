@@ -130,6 +130,8 @@ export const ProjectsListView = React.memo(() => {
                 testID="projects-header"
                 title={t('tabs.projects')}
                 search={{ value: query, onChangeText: setQuery, placeholder: t('projects.searchPlaceholder'), testID: 'projects-search' }}
+                // The same count the Projects column shows, from the list's owner.
+                {...(model.projectCount > 0 ? { count: [t('projects.projectCount', { count: model.projectCount })] } : {})}
                 create={create}
                 createTrigger={addMenu((open) => {
                     openAddRef.current = open;

@@ -19333,6 +19333,8 @@ settingsSession: {
         defaultRef: "既定のブランチまたはリビジョン",
         folder: "フォルダー",
         folderDescription: "リポジトリの一部だけを開く",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => `${count} 件のプロジェクト`,
         wholeRepository: "リポジトリ全体",
         repositoryDefault: "リポジトリの既定",
         repositoryTitle: "リポジトリ",

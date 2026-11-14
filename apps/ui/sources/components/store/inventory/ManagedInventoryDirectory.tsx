@@ -15,6 +15,7 @@ import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { skillDisplayName } from '@/components/settings/skills/skillsCollectionModel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { StoreItemMark } from '../catalog/StoreItemMark';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -343,6 +344,7 @@ export function RowMark(
 }
 
 /** Both inventory doors offer native removal only for an installation this viewer can manage. */
+/** Removal is a rare, consequential act: it lives in the row's "…" menu, never as an inline button (J50). */
 function SoftwareRecipeRemovalAction(props: Readonly<{
   row: Extract<InstalledRow, { kind: 'software'; subject: 'recipe' }>;
   name: string;
@@ -352,8 +354,9 @@ function SoftwareRecipeRemovalAction(props: Readonly<{
   const selectCanRemove = React.useCallback((machines: readonly Machine[]) =>
     machines.some(machine => machineIds.has(machine.id) && canManageMachine(machine)), [machineIds]);
   const canRemove = useMachineListForServerSelection(props.row.scope.serverId, selectCanRemove);
-  return canRemove ? <SectionActionButton testID={props.testID} icon="trash" title={t('common.remove')}
-    onPress={() => showStoreSoftwareRemovalReview({ name: props.name, row: props.row })} /> : null;
+  return canRemove ? <ItemRowActions title={props.name} overflowOnly overflowTriggerTestID={`${props.testID}.more`}
+    actions={[{ id: `${props.testID}.remove`, title: t('common.remove'), icon: 'trash', destructive: true,
+      onPress: () => showStoreSoftwareRemovalReview({ name: props.name, row: props.row }) }]} /> : null;
 }
 
 function InventorySection(
@@ -435,7 +438,7 @@ function InventorySection(
         rowRole={titleOnly ? 'item' : undefined}
         divider={false}
         action={row.kind === 'software' && row.subject === 'recipe' ? (
-          <SoftwareRecipeRemovalAction row={row} name={title} testID={`${props.testID}.row.${row.key}.remove`} />
+          <SoftwareRecipeRemovalAction row={row} name={title} testID={`${props.testID}.row.${row.key}`} />
         ) : undefined}
         onPress={home ? () => props.go(home) : undefined}
       />

@@ -22902,6 +22902,8 @@ const enProjects = {
     changed: 'This source changed. Review the current version before saving.',
     changedBody: 'Your edits are kept. Reload shows the current version.',
     reload: 'Reload',
+  /** The Projects page's count line: the projects the list owner reports. */
+  projectCount: ({ count }: { count: number }) => count === 1 ? '1 project' : `${count} projects`,
     saveFailed: 'Couldn’t save this source. Your edits are kept.',
     backendUnavailable: 'This repository source is not supported here yet.',
     delete: 'Delete source',

@@ -894,9 +894,13 @@ describe('Environment → manager edits', () => {
       expect(await settle('project-deployments.environment.settings.servers-build')).not.toBeNull();
       expect(await settle(id)).not.toBeNull();
       expect(effects).toEqual([]);
-      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-      const picker = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === id)!;
-      expect(picker().props.selectedId).toBe(hasEdgeFacts ? 'edge:machine-b' : null);
+      const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+      const picker = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === id)!;
+      // Nothing is saved on mount: the suggested edge is the field's placeholder until chosen.
+      expect(picker().props.machineId).toBeNull();
+      const { t } = await import('@/text');
+      const choose = t('projects.deployments.settingsSections.fleetIngressChoose');
+      expect(picker().props.placeholder === choose).toBe(!hasEdgeFacts);
       if (!hasEdgeFacts) {
         await publishMachineInventoryForTest({ serverId, accountId: scope.accountId }, [
           createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
@@ -904,14 +908,14 @@ describe('Environment → manager edits', () => {
           createMachineFixture({ id: 'machine-b', installationId: 'installation-b',
             daemonState: { reachability: reachability(true) } }),
         ]);
-        await vi.waitFor(() => expect(picker().props.selectedId).toBe('edge:machine-b'));
+        await vi.waitFor(() => expect(picker().props.placeholder).not.toBe(choose));
         expect(effects).toEqual([]);
       }
-      await act(async () => picker().props.onSelect('edge:machine-b'));
+      await act(async () => picker().props.onSelectMachine(picker().props.machines.find((machine: { id: string }) => machine.id === 'machine-b')));
       await vi.waitFor(() => expect(effects).toHaveLength(1));
       expect(effects[0]).toMatchObject({ environmentId: detail.environment.id,
         patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'machine-b' } } });
-      await act(async () => picker().props.onSelect('tunnel'));
+      await act(async () => picker().props.defaultChoice.onChoose());
       await vi.waitFor(() => expect(effects).toHaveLength(2));
       expect(effects[1]).toMatchObject({ patch: { ingress: { kind: 'cloudflareTunnel' } } });
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
@@ -920,10 +924,11 @@ describe('Environment → manager edits', () => {
   it('moves the controller and the build Machine, and changes who may deploy, through the Environment Actions', async () => {
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+    const machineB = createMachineFixture({ id: 'machine-b', installationId: 'installation-b' });
     await publishMachineInventoryForTest({ serverId: scope.serverId, accountId: scope.accountId }, [
       createMachineFixture({ id: 'machine-a', installationId: 'installation-a' }),
-      createMachineFixture({ id: 'machine-b', installationId: 'installation-b' }),
+      machineB,
     ]);
     const detail = createDeploymentEnvironmentDetailV1();
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
@@ -931,16 +936,17 @@ describe('Environment → manager edits', () => {
     const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
     const environmentActions = { setController, updateEnvironment };
     const picker = (screen: Awaited<ReturnType<typeof renderTab>>['screen'], testID: string) =>
-      screen.findAllByType(DropdownMenu).find((node) => node.props.testID === testID);
+      screen.findAllByType(SessionMachineField).find((node) => node.props.testID === testID);
     const settings = await renderTab('settings', detail, {}, { environmentActions });
     try {
       expect(await settings.settle('project-deployments.environment.settings.controller')).not.toBeNull();
       const controllerPicker = picker(settings.screen, 'project-deployments.environment.settings.controller.machine');
-      expect(controllerPicker?.props.items).toMatchObject([{ id: 'machine-a', checked: true }, { id: 'machine-b' }]);
-      await act(async () => controllerPicker!.props.onSelect('machine-b'));
+      // New Session's Machine picker lists this Home's Machines; the field holds the current controller.
+      expect(controllerPicker?.props.machineId).toBe('machine-a');
+      await act(async () => controllerPicker!.props.onSelectMachine(machineB));
       expect(setController).toHaveBeenCalledExactlyOnceWith(detail.environment, 'machine-b');
       await act(async () => picker(settings.screen, 'project-deployments.environment.settings.servers-build.buildsOn')!
-        .props.onSelect('machine-b'));
+        .props.onSelectMachine(machineB));
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { buildMachineId: 'machine-b' });
       // How it deploys (review/howitdeploys): rollout, restore-on-fail and kept-for-rollback save through the same Action.
       const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');

@@ -1041,6 +1041,10 @@ describe('workflow library page anatomy', () => {
         expect(divider('10000000-0000-4000-8000-000000000006')).toBe(true);
         expect(divider('10000000-0000-4000-8000-000000000007')).toBe(false);
         const { t } = await import('@/text');
+        // Built-in takes the library's row anatomy from the same shared Collection, its mark as the row glyph,
+        // never a page-local sheet of icon rows beside the library's rows (PHONE-ROWS-HUNT-1113).
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
+        expect(screen.findAll((node) => node.type === HostCollection && node.props.testID === 'workflows-home:builtins')).toHaveLength(1);
         const plan = screen.tree.findHostByTestId('workflow-builtins:builtin:plan-with-a-panel');
         expect(plan).not.toBeNull();
         const planCopy = plan!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n').replace(/\u00a0/g, ' ');

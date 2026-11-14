@@ -12,6 +12,8 @@ const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/ser
 const { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { useLegacyProfileMigrationTarget } = await import('./useLegacyProfileMigrationTarget');
 const { useAllProfileMachineInventorySnapshots } = await import('@/sync/domains/machines/useMachineInventorySnapshots');
+// The inventory owner admits a Machine on its published Activity, as the live socket delivers it (495ca32fab6).
+const { publishMachineActivityForTest } = await import('@/dev/testkit/harness/machinePresence');
 const before = storage.getState();
 afterEach(async () => { await standardCleanup(); storage.setState(before, true); clearMachineRequestReachabilityForTest(); network.resetRequests(); });
 afterAll(() => network.dispose());
@@ -39,6 +41,7 @@ it('offers only executable migration targets and withdraws a selected target aft
     ];
     storage.setState({ profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    publishMachineActivityForTest(machines);
     const hook = await renderHook(() => useLegacyProfileMigrationTarget());
     await act(async () => { await vi.waitFor(() => {
         expect(hook.getCurrent().targetMachines.map(machine => machine.id)).toEqual(['first', 'second']);
@@ -63,6 +66,7 @@ it('resolves the focused Home inventory through its portable identity, keeps it 
     storage.setState({ profileScope: scope, machines: {},
         machineListByServerId: { [scope.serverId]: [machine], 'foreign-home': [createMachineFixture({ id: 'foreign' })] },
         machineListStatusByServerId: { [scope.serverId]: 'idle', 'foreign-home': 'idle' } });
+    publishMachineActivityForTest([machine]);
     const hook = await renderHook(() => useLegacyProfileMigrationTarget());
     await act(async () => { await vi.waitFor(() => {
         expect(hook.getCurrent().machineId).toBe(machine.id);
@@ -81,6 +85,7 @@ it.each(['migration', 'conflict'] as const)('keeps %s target selection available
     const machines = ['first', 'second'].map(id => createMachineFixture({ id, activeAt: Date.now() }));
     storage.setState({ profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    publishMachineActivityForTest(machines);
     const [{ LegacyProfileMigrationFlow }, { LegacyProfileMigrationConflictFlow }, { LegacyProfileMigrationReview },
         { LegacyProfileMigrationConflictReview }, { SessionMachineField }] = await Promise.all([
         import('./LegacyProfileMigrationFlow'), import('./LegacyProfileMigrationConflictFlow'), import('./LegacyProfileMigrationReview'),
@@ -113,6 +118,7 @@ it.each(['home', 'account'] as const)('does not carry an explicit preference acr
     const machines = ['first', 'second'].map(id => createMachineFixture({ id, activeAt: Date.now() }));
     storage.setState({ profileScope: first.scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [first.scope.serverId]: machines }, machineListStatusByServerId: { [first.scope.serverId]: 'idle' } });
+    publishMachineActivityForTest(machines);
     const hook = await renderHook(() => ({ target: useLegacyProfileMigrationTarget(), snapshots: useAllProfileMachineInventorySnapshots() }));
     await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().target.targetMachines).toHaveLength(2)); });
     await act(async () => hook.getCurrent().target.setPreferredMachineId('second'));
@@ -122,6 +128,7 @@ it.each(['home', 'account'] as const)('does not carry an explicit preference acr
         next = await activateMigrationHome(kind === 'home' ? 'preference-next-home' : `preference-${kind}`, 'next-account');
         storage.setState({ profileScope: next.scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
             machineListByServerId: { [next.scope.serverId]: machines }, machineListStatusByServerId: { [next.scope.serverId]: 'idle' } });
+        publishMachineActivityForTest(machines);
     });
     await act(async () => { await vi.waitFor(() => {
         expect(hook.getCurrent().snapshots.find(snapshot => snapshot.kind === 'resolved'

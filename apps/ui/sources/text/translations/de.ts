@@ -19527,6 +19527,8 @@ settingsSession: {
             defaultRef: "Standard-Branch oder Revision",
             folder: "Ordner",
             folderDescription: "Nur einen Teil des Repositorys öffnen",
+        /** The Projects page's count line: the projects the list owner reports. */
+        projectCount: ({ count }: { count: number }) => count === 1 ? '1 Projekt' : `${count} Projekte`,
             wholeRepository: "Ganzes Repository",
             repositoryDefault: "Standard des Repositorys",
             repositoryTitle: "Repository",

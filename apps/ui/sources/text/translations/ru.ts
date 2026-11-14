@@ -19372,6 +19372,8 @@ settingsSession: {
         defaultRef: "Ветка или ревизия по умолчанию",
         folder: "Папка",
         folderDescription: "Открывать только часть репозитория",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => `Проектов: ${count}`,
         wholeRepository: "Весь репозиторий",
         repositoryDefault: "По умолчанию в репозитории",
         repositoryTitle: "Репозиторий",

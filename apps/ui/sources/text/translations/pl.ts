@@ -19244,6 +19244,8 @@ settingsSession: {
         defaultRef: "Domyślna gałąź lub rewizja",
         folder: "Folder",
         folderDescription: "Otwórz tylko część repozytorium",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => count === 1 ? '1 projekt' : `Projekty: ${count}`,
         wholeRepository: "Całe repozytorium",
         repositoryDefault: "Domyślna repozytorium",
         repositoryTitle: "Repozytorium",

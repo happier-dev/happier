@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { buildDeploymentFleetWorkflowDefinition, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -39,7 +39,6 @@ export function DeploymentFleetSheet(props: DeploymentFleetSheetInput & CustomMo
     const [ingress, setIngress] = React.useState<DeploymentIngressV1 | undefined>(() => detail.content.ingress
         ?? (props.receipt?.content.platform === undefined ? props.receipt?.content.ingress : undefined));
     const [destinationId, setDestinationId] = React.useState<string | null>(null);
-    const [menuOpen, setMenuOpen] = React.useState(false);
     const [change, setChange] = React.useState<{ kind: 'add' } | { kind: 'remove'; machineId: string }>({ kind: 'add' });
     const [starting, setStarting] = React.useState(false);
     const destinations = machines.filter((machine): machine is typeof machine & { installationId: string } =>
@@ -92,11 +91,10 @@ export function DeploymentFleetSheet(props: DeploymentFleetSheetInput & CustomMo
             <ItemGroup header="none">
                 <Item testID="project-deployments.fleet.add" title={t('projects.deployments.settingsSections.fleet.add')}
                     onPress={() => setChange({ kind: 'add' })} disabled={busy} />
-                {change.kind === 'add' ? <DropdownMenu testID="project-deployments.fleet.destination"
-                    open={menuOpen} onOpenChange={setMenuOpen} selectedId={destinationId}
-                    items={destinations.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine, machines) }))}
-                    onSelect={id => { setDestinationId(id); setMenuOpen(false); }}
-                    itemTrigger={{ title: t('projects.deployments.machine'), showSelectedSubtitle: false }} /> : null}
+                {change.kind === 'add' ? <SessionMachineField testID="project-deployments.fleet.destination"
+                    serverId={lifetime.scope.serverId} machines={destinations} machineId={destinationId}
+                    title={t('projects.deployments.machine')} awayMachinesChoosable
+                    onSelectMachine={machine => setDestinationId(machine.id)} /> : null}
                 {change.kind === 'add' ? <DeploymentFleetIngress detail={detail} editing={null} machineName={name}
                     draft={{ serverId: lifetime.scope.serverId, value: ingress, onChange: setIngress }} /> : null}
                 {runtimeLink.members.map(member => <Item key={member.machineId}

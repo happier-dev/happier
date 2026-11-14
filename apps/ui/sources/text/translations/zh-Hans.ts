@@ -19038,6 +19038,8 @@ settingsSession: {
         defaultRef: "默认分支或修订",
         folder: "文件夹",
         folderDescription: "只打开仓库的一部分",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => `${count} 个项目`,
         wholeRepository: "整个仓库",
         repositoryDefault: "仓库默认",
         repositoryTitle: "仓库",

@@ -19421,6 +19421,8 @@ settingsSession: {
         defaultRef: "Branch o revisione predefinita",
         folder: "Cartella",
         folderDescription: "Apri solo una parte del repository",
+    /** The Projects page's count line: the projects the list owner reports. */
+    projectCount: ({ count }: { count: number }) => count === 1 ? '1 progetto' : `${count} progetti`,
         wholeRepository: "Intero repository",
         repositoryDefault: "Predefinito del repository",
         repositoryTitle: "Repository",

@@ -44,7 +44,8 @@ it.each([false, true])('offers Docker removal only for manageable installations 
     </ManagedInventorySections>,
   );
   try {
-    const remove = () => screen.findAllByTestId('inventory.section.software.row.docker.remove')
+    // Removal sits behind the row's "…" menu, offered only to a manager of an installed Machine.
+    const remove = () => screen.findAllByTestId('inventory.section.software.row.docker.more')
       .filter(node => typeof node.type === 'string');
     expect(screen.getTextContent()).toContain('Docker Engine');
     expect(remove()).toHaveLength(0);

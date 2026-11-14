@@ -3,15 +3,9 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol/voice/realtime/capabilities';
-import { useUnistyles } from 'react-native-unistyles';
 
-import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Icon } from '@/components/ui/icons/Icon';
-import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
-import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
-import { useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import {
   voiceSettingsParse,
   type VoiceSettings,
@@ -51,18 +45,15 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   chooserOpen?: boolean;
   onChooserOpenChange?: (open: boolean) => void;
 }>) {
-  const { theme } = useUnistyles();
   const machines = useActiveMachineFacts();
   const voiceSettingsV1 = useSetting('voiceSettingsV1');
   const secrets = useSetting('secrets');
   const accountSettings = React.useMemo(() => ({ voiceSettingsV1, secrets }), [voiceSettingsV1, secrets]);
   const settingsScope = useAccountSettingsScope();
-  const presenceMembership = useMachinePresenceMembership(settingsScope?.serverId ?? null);
   const purposes = useConnectedAccountCatalog('purposes', settingsScope);
   // The one machine projection the runtime uses: Automatic names the machine it would use now,
   // whether a conversation has already remembered it or it is the first online candidate.
   const executionMachinePresentation = useVoiceExecutionMachinePresentation();
-  const [open, setOpen] = React.useState(false);
   const setting = props.intent === 'advanced'
     ? VOICE_ADVANCED_SETTINGS.settings.executionMachine : props.intent === 'dictation'
       ? VOICE_DICTATION_SETTINGS.settings.executionMachine : VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine;
@@ -124,17 +115,6 @@ export function VoiceExecutionMachineSection(props: Readonly<{
       ? true // Advanced also owns speech-model management, independently of the selected service.
       : conversationRequiresExecutionMachine;
 
-  const items = React.useMemo(() => getMachineDropdownMenuItems({
-    machines,
-    scope: settingsScope,
-    iconColor: theme.colors.text.secondary,
-    includeAuto: true,
-    autoTitle: t('settingsVoice.local.executionMachine.autoTitle'),
-    autoSubtitle: t('settingsVoice.local.executionMachine.autoSubtitle'),
-    onlineLabel: t('settingsVoice.local.executionMachine.onlineLabel'),
-    offlineLabel: t('settingsVoice.local.executionMachine.offlineLabel'),
-  }), [machines, settingsScope, theme.colors.text.secondary, presenceMembership]);
-
   if (!requiresExecutionMachine && !revealRequested) return null;
 
   const fixedMachineId = voice.executionMachine.mode === 'fixed'
@@ -143,12 +123,18 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   const stickyAutoMachineId = voice.executionMachine.mode === 'auto'
     ? String(executionMachinePresentation.selectedMachineId ?? '').trim()
     : '';
-  const selectedId = fixedMachineId || 'auto';
-  const selectedItem = items.find((item) => item.id === selectedId) ?? null;
   const missingMachineLabel = getMachineDisplayName({ id: fixedMachineId, absence: 'unlisted' });
-  const stickyAutoItem = stickyAutoMachineId
-    ? items.find((item) => item.id === stickyAutoMachineId) ?? null
+  const stickyAutoMachine = stickyAutoMachineId
+    ? machines.find((machine) => machine.id === stickyAutoMachineId) ?? null
     : null;
+  const autoTitle = t('settingsVoice.local.executionMachine.autoTitle');
+  // Automatic names the Machine it would use now, beside its own name.
+  const autoChoice = {
+    title: autoTitle,
+    subtitle: t('settingsVoice.local.executionMachine.autoSubtitle'),
+    value: stickyAutoMachine ? `${autoTitle} · ${getMachineDisplayName(stickyAutoMachine, machines)}` : autoTitle,
+    onChoose: () => selectMachine('auto'),
+  };
 
   const selectMachine = (id: string) => {
     const machineId = String(id ?? '').trim();
@@ -157,39 +143,28 @@ export function VoiceExecutionMachineSection(props: Readonly<{
       useVoiceTargetStore.getState().rememberAutoTargetMachine(settingsScope, null);
     }
     props.setVoice(applyVoiceExecutionMachineChoice(voice, machineId));
-    setOpen(false);
   };
+  // New Session's Machine picker, with Automatic first; a fixed Machine away right now stays chosen and choosable.
+  const field = (presentation: 'field' | 'chip') => (
+    <SessionMachineField
+      presentation={presentation}
+      testID={presentation === 'chip' ? 'settings.voice.executionMachine.chip' : 'settings.voice.executionMachine.field'}
+      serverId={settingsScope?.serverId ?? ''}
+      machineId={fixedMachineId || null}
+      machineName={missingMachineLabel}
+      title={t('settingsVoice.pages.conversations.runsOn')}
+      {...(presentation === 'field' && !fixedMachineId ? { subtitle: autoChoice.subtitle } : {})}
+      defaultChoice={autoChoice}
+      awayMachinesChoosable
+      presenceMachineId={fixedMachineId || stickyAutoMachineId || null}
+      onSelectMachine={(machine) => selectMachine(machine.id)}
+      {...(props.chooserOpen !== undefined ? { open: props.chooserOpen } : {})}
+      {...(props.onChooserOpenChange ? { onOpenChange: props.onChooserOpenChange } : {})}
+    />
+  );
 
   if (props.presentation === 'chip') {
-    const fixedMachine = fixedMachineId ? machines.find((machine) => machine.id === fixedMachineId) ?? null : null;
-    const shownMachineId = fixedMachineId || stickyAutoMachineId;
-    const shownMachine = shownMachineId ? machines.find((machine) => machine.id === shownMachineId) ?? null : null;
-    const reachability = shownMachine ? resolveMachineReachability(settingsScope, shownMachine) : 'unknown';
-    const valueLabel = selectedId === 'auto'
-      ? (stickyAutoItem ? `${t('settingsVoice.local.executionMachine.autoTitle')} · ${stickyAutoItem.title}` : t('settingsVoice.local.executionMachine.autoTitle'))
-      : (selectedItem?.title ?? missingMachineLabel);
-    return (
-      <SettingAnchor setting={setting}>
-      <SelectionListFilterChip
-        filter={{
-          id: 'voiceComputer',
-          label: t('settingsVoice.pages.conversations.runsOn'),
-          showLabel: true,
-          valueLabel,
-          icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
-          ...(shownMachine ? { reservePresence: true } : {}),
-          ...(reachability === 'reachable' ? { presence: 'online' as const }
-            : reachability === 'unreachable' ? { presence: 'offline' as const } : {}),
-          options: items.map((item) => ({ id: item.id, label: item.title, subtitle: item.subtitle, icon: item.icon })),
-          selectedId,
-          onChange: selectMachine,
-          ...(props.chooserOpen !== undefined ? { open: props.chooserOpen, onOpenChange: props.onChooserOpenChange } : {}),
-          testID: 'settings.voice.executionMachine.chip',
-          ...(fixedMachine === null && fixedMachineId ? { muted: true } : {}),
-        }}
-      />
-      </SettingAnchor>
-    );
+    return <SettingAnchor setting={setting}>{field('chip')}</SettingAnchor>;
   }
 
   return (
@@ -198,28 +173,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
       description={t('settingsVoice.pages.advanced.computerDescription')}
     >
       <SettingAnchor setting={setting}>
-      <DropdownMenu
-        open={open}
-        onOpenChange={setOpen}
-        variant="selectable"
-        search={false}
-        selectedId={selectedId}
-        showCategoryTitles={false}
-        matchTriggerWidth={true}
-        connectToTrigger={true}
-        rowKind="item"
-        popoverBoundaryRef={props.popoverBoundaryRef}
-        itemTrigger={{
-          // The section already says "Voice computer"; the row says what it decides.
-          title: t('settingsVoice.pages.conversations.runsOn'),
-          subtitleFormatter: () => selectedItem?.subtitle ?? t('settingsVoice.local.executionMachine.fallbackSubtitle'),
-          detailFormatter: () => selectedId === 'auto' && stickyAutoItem
-            ? `${selectedItem?.title ?? t('settingsVoice.local.executionMachine.autoTitle')} · ${stickyAutoItem.title}`
-            : selectedItem?.title ?? missingMachineLabel,
-        }}
-        items={items}
-        onSelect={selectMachine}
-      />
+      {field('field')}
       </SettingAnchor>
     </ItemGroup>
   );

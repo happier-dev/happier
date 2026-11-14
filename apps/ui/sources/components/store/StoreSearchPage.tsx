@@ -1,5 +1,6 @@
 import { rankByTitleMatch } from './catalog/storeSearchRank';
 import * as React from 'react';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import type { CollectionGroupAction } from '@happier-dev/plugin-ui';
 import { StoreProjectScopeChip } from './StoreProjectScopeChip';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
@@ -19,10 +20,8 @@ import {
   buildPluginListingRoute,
   buildPluginsHomeRoute,
 } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { StoreBrowserExtensionLinkResult } from './StoreBrowserExtensionLinkResult';
 import { readWebStoreExtensionId } from './catalog/storeBrowserExtensions';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
@@ -366,16 +365,30 @@ function useStoreSearchSections(props: SearchSectionsInput) {
   const failedReads = [lists.app, lists.browserExtension, lists.mcpServer, lists.skill, lists.agent]
     .flatMap((list) => list?.error && !list.loading && list.sourceFailures.length === 0
       ? [{ status: list.status, retry: list.refresh }] : []);
-  const list: DirectoryList = {
-      loading,
-      hasNextPage: continuations.length > 0,
-      nextPage: async () => {
-        await Promise.all(continuations.map((next) => next()));
-      },
+  // Every kind publishes loading and then its value on each query, about ten commits per keystroke. The directory
+  // reads only what the lines say, so the list keeps its identity until one of them changes; the actions read the
+  // current kinds through a render-synced handle instead of being rebuilt with every publication.
+  const current = React.useRef({ continuations, failures, failedReads });
+  current.current = { continuations, failures, failedReads };
+  const nextPage = React.useCallback(async () => {
+    await Promise.all(current.current.continuations.map((next) => next()));
+  }, []);
+  const failureLines = [...failures.map((failure) => [failure.sourceId, failure.status ?? null, failure.message ?? null]),
+    ...(failedReads.length ? [[null, failedReads[0]!.status ?? null, null]] : [])];
+  const failureSignature = JSON.stringify(failureLines);
+  const sourceFailures = React.useMemo((): NonNullable<DirectoryList['sourceFailures']> => {
+    const { failures: named, failedReads: unnamed } = current.current;
+    return [
+      ...named.map((failure, index) => ({ sourceId: failure.sourceId, status: failure.status, message: failure.message,
+        onRetry: () => current.current.failures[index]?.onRetry() })),
       // Reads that failed without naming a catalog are one "Couldn't reach the catalogs" line.
-      sourceFailures: [...failures, ...(failedReads.length ? [{ sourceId: null, status: failedReads[0]!.status,
-        onRetry: async () => { await Promise.all(failedReads.map(failure => failure.retry())); } }] : [])],
-  };
+      ...(unnamed.length ? [{ sourceId: null, status: unnamed[0]!.status,
+        onRetry: async () => { await Promise.all(current.current.failedReads.map(failure => failure.retry())); } }] : []),
+    ];
+  }, [failureSignature]);
+  const hasNextPage = continuations.length > 0;
+  const list = React.useMemo((): DirectoryList => ({ loading, hasNextPage, nextPage, sourceFailures }),
+    [loading, hasNextPage, nextPage, sourceFailures]);
 
   const count = sections.reduce((sum, kind) => sum + byKind[kind].length, 0);
   return { allContributedKinds, contributedKinds, byKind, sections, selectedKind, setKind, totalKnown, preview, rows, groups,
@@ -407,6 +420,51 @@ export function StoreCatalogShelves(props: SearchSectionsInput & Readonly<{ onOp
   );
 }
 
+
+/** Kinds narrow what is fetched before it is fetched; the pills change only with the chosen kind or the contributed kinds. */
+const SearchKindBar = React.memo(function SearchKindBar(props: Readonly<{
+  selectedKind: string;
+  setKind: (kind: string) => void;
+  contributedKinds: ReturnType<typeof useContributedStoreKinds>;
+}>): React.ReactNode {
+  const localize = useProjectedPluginLocalizedTextResolver();
+  return (
+    <View style={[styles.inset, styles.kinds]}>
+      <SegmentedTabBar<string>
+        role="radiogroup"
+        // Seven kinds are a list filter, not a 2–4 segment choice: separate pills, each with what it found.
+        presentation="pills"
+        // A narrow page (a pane beside it) shows the kinds as one field select instead of wrapping them.
+        overflow={{ label: t('common.more') }}
+        segmentSizing="content"
+        accessibilityLabel={t('capabilities.store.search.kind')}
+        activeTabId={props.selectedKind}
+        tabs={[
+          {
+            id: 'all',
+            label: t('capabilities.store.search.all'),
+            testID: 'store.search.kind.all',
+          },
+          ...KIND_ORDER.map((kind) => ({
+            id: kind,
+            label: kindCopy(kind).title,
+            // No counts on the kinds: only some kinds can know theirs (paged or unreached catalogs can't), and a
+            // count on just those reads as a fact about the others. The field says how many matched; each
+            // section's All N › says its own.
+            testID: `store.search.kind.${kind}`,
+          })),
+          ...props.contributedKinds.map(kind => ({ id: kind.key,
+            label: localize(kind.pluginId, kind.definition.title), testID: `store.search.kind.${kind.key}` })),
+        ]}
+        onSelectTab={props.setKind}
+      />
+    </View>
+  );
+});
+
+/** The results re-render when what they show changes, not on every kind's loading publication. */
+const SearchDirectory = React.memo(Directory);
+
 function SearchResults(
   props: SearchSectionsInput,
 ): React.ReactNode {
@@ -414,99 +472,53 @@ function SearchResults(
   const { lists, filter } = state;
   const { allContributedKinds, contributedKinds, selectedKind, setKind, preview, rows, groups,
     groupAction, list, loading, count, sourceTitle } = useStoreSearchSections(props);
-  const localize = useProjectedPluginLocalizedTextResolver();
   const phone = !useAppShellColumn().columnVisible;
   const query = state.query.trim();
   // A warm read changes activity, not what the held rows cover or the page's height.
   const partial = filter.result.coverage === 'partial' && count > 0;
-  const clearAll = () => {
-    state.setQuery('');
-    filter.clearFilters();
-  };
+  const { setQuery } = state;
+  const { clearFilters } = filter;
+  const clearAll = React.useCallback(() => {
+    setQuery('');
+    clearFilters();
+  }, [setQuery, clearFilters]);
 
   return (
     <ItemList pageColumn="wide" testID="store.search">
       <PageContentColumn>
-        {/* A phone's navigation bar already names the Store; the page opens on its search (lab hp:search). */}
-        {phone ? null : (
-          <PageHeader
-            actions={<StoreProjectScopeChip />}
-            actionsPlacement="page"
+        {/* The main-screen head every main page draws (ruling 11-13). The Store is search-first: its field arrives
+            open (unfocused); the funnel ends it, the result count reports under it, and kinds and conditions narrow it. */}
+        <View ref={filter.searchAnchorRef as never}>
+          <MainScreenHeader
+            testID="store.search.header"
             title={t('capabilities.store.discover.title')}
             description={t('capabilities.store.discover.purpose')}
-          />
-        )}
-        <View ref={filter.searchAnchorRef as never}>
-          <CompactSearchField
-            testID="store.search.field"
-            placement="page"
-            value={state.query}
-            onChangeText={state.setQuery}
-            placeholder={t(
-              phone
-                ? 'capabilities.store.discover.searchShort'
-                : 'capabilities.store.discover.search',
-            )}
-            autoFocus={query.length === 0}
-            // The result count, then the funnel that ends the field (lab `spfield` B).
-            trailing={
-              <>
-                {query.length > 0 && !loading && count > 0 ? (
-                  <Text
-                    variant="meta"
-                    style={styles.count}
-                    testID="store.search.count"
-                  >
-                    {t('capabilities.store.search.results', { count })}
-                  </Text>
-                ) : null}
-                {filter.filterButton}
-              </>
-            }
+            actions={<StoreProjectScopeChip />}
+            search={{
+              value: state.query,
+              onChangeText: state.setQuery,
+              placeholder: t(phone ? 'capabilities.store.discover.searchShort' : 'capabilities.store.discover.search'),
+              testID: 'store.search.field',
+              ...(filter.filterButton ? { trailing: filter.filterButton } : {}),
+            }}
+            band={!phone || filter.tokenRow ? <>
+              {/* Kinds narrow what is fetched before it is fetched; a phone reaches the same choice in the filter editor. */}
+              {phone ? null : <SearchKindBar selectedKind={selectedKind} setKind={setKind} contributedKinds={allContributedKinds} />}
+              {filter.tokenRow ?? null}
+            </> : undefined}
+            status={query.length > 0 && !loading && count > 0 ? (
+              <Text variant="meta" style={styles.count} testID="store.search.count">
+                {t('capabilities.store.search.results', { count })}
+              </Text>
+            ) : undefined}
           />
         </View>
-        {/* Kinds narrow what is fetched before it is fetched; a phone reaches the same choice in the filter editor. */}
-        {phone ? null : (
-          <View style={[styles.inset, styles.kinds]}>
-            <SegmentedTabBar<string>
-              role="radiogroup"
-              // Seven kinds are a list filter, not a 2–4 segment choice: separate pills, each with what it found.
-              presentation="pills"
-              // A narrow page (a pane beside it) shows the kinds as one field select instead of wrapping them.
-              overflow={{ label: t('common.more') }}
-              segmentSizing="content"
-              accessibilityLabel={t('capabilities.store.search.kind')}
-              activeTabId={selectedKind}
-              tabs={[
-                {
-                  id: 'all',
-                  label: t('capabilities.store.search.all'),
-                  testID: 'store.search.kind.all',
-                },
-                ...KIND_ORDER.map((kind) => ({
-                  id: kind,
-                  label: kindCopy(kind).title,
-                  // No counts on the kinds: only some kinds can know theirs (paged or unreached catalogs can't), and a
-                  // count on just those reads as a fact about the others. The field says how many matched; each
-                  // section's All N › says its own.
-                  testID: `store.search.kind.${kind}`,
-                })),
-                ...allContributedKinds.map(kind => ({ id: kind.key,
-                  label: localize(kind.pluginId, kind.definition.title), testID: `store.search.kind.${kind.key}` })),
-              ]}
-              onSelectTab={setKind}
-            />
-          </View>
-        )}
-        {filter.tokenRow ? (
-          <View style={styles.inset}>{filter.tokenRow}</View>
-        ) : null}
         {/* The Machine chooser narrows Software results: it stands only where Software is asked for, found, or failed to load. */}
         {lists.software && (selectedKind === 'software' || lists.software.items.length > 0 || !!lists.software.error)
           ? <SoftwareSource list={lists.software} target={props.softwareTarget} /> : null}
         {/* A pasted Chrome Web Store link or ID is one result: install that extension. */}
         {selectedKind === 'all' || selectedKind === 'browserExtension' ? <StoreBrowserExtensionLinkResult query={query} /> : null}
-        <Directory
+        <SearchDirectory
           kind="search"
           label={t('capabilities.store.discover.title')}
           rows={rows}

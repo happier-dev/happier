@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -35,12 +35,11 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
     const move = useDeploymentMoveWorkflow(lifetime, detail.environment.projectSourceId, detail.environment.id);
     const [sourceId, setSourceId] = React.useState(sourceLink.members[0]?.machineId ?? null);
     const [destinationId, setDestinationId] = React.useState<string | null>(null);
-    const [sourceOpen, setSourceOpen] = React.useState(false);
-    const [destinationOpen, setDestinationOpen] = React.useState(false);
     const [stateless, setStateless] = React.useState(false);
     const [starting, setStarting] = React.useState(false);
     const destinations = machines.filter((machine): machine is typeof machine & { installationId: string } =>
         Boolean(machine.installationId) && !sourceLink.machines.includes(machine.id));
+    const members = machines.filter(machine => sourceLink.members.some(member => member.machineId === machine.id));
     const destination = destinations.find(machine => machine.id === destinationId) ?? null;
     const sourceIntent = 'sourceIntent' in receipt.content ? receipt.content.sourceIntent : null;
     const primaryService = sourceIntent?.kind === 'repository' ? sourceIntent.compose?.primaryService : null;
@@ -83,14 +82,15 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
                 : <SurfaceStateCard testID="project-deployments.move.scope" size="line" kind="unavailable"
                     title={t('projects.deployments.move.restriction')} />}
             {supported ? <ItemGroup header="none">
-                <DropdownMenu testID="project-deployments.move.source" open={sourceOpen} onOpenChange={setSourceOpen}
-                    items={sourceLink.members.map(member => ({ id: member.machineId, title: name(member.machineId) }))}
-                    selectedId={sourceId} onSelect={id => { setSourceId(id); setSourceOpen(false); }}
-                    itemTrigger={{ title: t('projects.deployments.move.source'), showSelectedSubtitle: false }} />
-                <DropdownMenu testID="project-deployments.move.destination" open={destinationOpen} onOpenChange={setDestinationOpen}
-                    items={destinations.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine, machines) }))}
-                    selectedId={destinationId} onSelect={id => { setDestinationId(id); setDestinationOpen(false); }}
-                    itemTrigger={{ title: t('projects.deployments.move.destination'), showSelectedSubtitle: false }} />
+                {/* The link's own Machines, then the ones it can move to, both in New Session's Machine picker. */}
+                <SessionMachineField testID="project-deployments.move.source" serverId={lifetime.scope.serverId}
+                    machines={members} machineId={sourceId} machineName={sourceId ? name(sourceId) : null}
+                    title={t('projects.deployments.move.source')} awayMachinesChoosable
+                    onSelectMachine={machine => setSourceId(machine.id)} />
+                <SessionMachineField testID="project-deployments.move.destination" serverId={lifetime.scope.serverId}
+                    machines={destinations} machineId={destinationId}
+                    title={t('projects.deployments.move.destination')} awayMachinesChoosable
+                    onSelectMachine={machine => setDestinationId(machine.id)} />
                 <Item testID="project-deployments.move.stateless" title={t('projects.deployments.move.stateless')}
                     disabled={busy} rightElement={<Switch value={stateless} onValueChange={setStateless} disabled={busy} />} />
             </ItemGroup> : null}

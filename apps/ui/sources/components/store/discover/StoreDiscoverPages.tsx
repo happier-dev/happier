@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -8,9 +9,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Stack, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
-import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
-import { PhonePageBackLine } from '@/components/ui/layout/usePageBackControl';
-import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import {
   RegistryShelf,
   resolveRegistryShelfUnavailable,
@@ -20,7 +18,6 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { useStoreOpenReference, useOpenStoreCategory } from '../catalog/useStoreOpenReference';
 import { StoreDiscoverRegistryIdentityScope } from '../catalog/StoreDiscoverRegistryIdentityScope';
 import { StoreListingPaneHost, useOpenStoreListing } from '../StoreListing';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
@@ -354,29 +351,6 @@ function PhoneInstalledRow(props: Readonly<{ onOpen: () => void; onOpenUpdates: 
   );
 }
 
-function DiscoverSearch(
-  props: Readonly<{ onSubmit: (query: string) => void; short?: boolean; autoFocus?: boolean }>,
-) {
-  const [query, setQuery] = React.useState('');
-  return (
-    <View style={styles.search}>
-      <CompactSearchField
-        testID="store.discover.search"
-        placement="page"
-        value={query}
-        onChangeText={setQuery}
-        placeholder={t(props.short ? 'capabilities.store.discover.searchShort' : 'capabilities.store.discover.search')}
-        {...(props.autoFocus ? { autoFocus: true } : {})}
-        onSubmitEditing={() => {
-          if (!query.trim()) return;
-          props.onSubmit(query.trim());
-          // The query moves to the Search page; Discover never filters, so its field must not keep words it ignores.
-          setQuery('');
-        }}
-      />
-    </View>
-  );
-}
 
 /** The curated sources' one quiet outage line with its Retry (the shared owner); the rest of the page stays useful. */
 function CurationUnavailable(
@@ -474,7 +448,7 @@ export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Re
     {mainScreen ? <Stack.Screen options={STORE_MAIN_SCREEN_BAR} /> : null}
     <StoreDiscover demand={PRESENTED} project={props.project}>
       {({ curation, suggestions, presented }) => <StoreDiscoverView curation={curation} suggestions={suggestions}
-        presented={presented} mainScreen={mainScreen} />}
+        presented={presented} />}
     </StoreDiscover>
   </>;
 });
@@ -487,54 +461,42 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
   suggestions: Parameters<Parameters<typeof StoreDiscover>[0]['children']>[0]['suggestions'];
   /** Live acquisition comes from StoreDiscover; the tour's static preview has no read demand. */
   presented?: boolean;
-  /** The Store's own route on a phone draws its main-screen title row (see `StoreDiscoverPage`). */
-  mainScreen?: boolean;
 }>) {
   const nav = useStoreNavigation();
   const columnVisible = useAppShellColumn().columnVisible;
-  // A phone's main-screen title row keeps the search behind its magnifier; a query moves on to the Search page.
-  const [searchOpen, setSearchOpen] = React.useState(false);
-  const toggleSearch = React.useCallback(() => setSearchOpen(open => !open), []);
+  // The Store is search-first: Discover's field arrives open; a query moves on to the Search page.
+  const [query, setQuery] = React.useState('');
+  const submitQuery = React.useCallback(() => {
+    if (!query.trim()) return;
+    nav.search(query.trim());
+    // Discover never filters, so its field must not keep words it ignores.
+    setQuery('');
+  }, [nav, query]);
   const page = React.useMemo(() => projectStoreDiscover(props.curation.curation, props.suggestions),
     [props.curation.curation, props.suggestions]);
   const identityItems = React.useMemo(() => [
     ...(page.featured ? [page.featured.item] : []), ...page.suggestions,
     ...page.sections.flatMap(section => section.items),
   ], [page]);
-  // A phone main screen: the shared head line stands above the page's scroller (inside it, iOS would add the
-  // status bar's inset a second time), and the title is the page's large title on that line, as on Settings.
-  const phoneMainScreen = !columnVisible && props.mainScreen === true;
   return (
     <View style={styles.page}>
-    {phoneMainScreen ? <PhonePageBackLine control={null} page /> : null}
     <DiscoverFrame title={t('capabilities.store.discover.title')} testID="store.discover"
       identityItems={identityItems} presented={props.presented}>
-        {columnVisible ? (
-          <DiscoverHeader
-            testID="store.discover.header"
-            title={t('capabilities.store.discover.title')}
-            description={t('capabilities.store.discover.purpose')}
-          />
-        ) : props.mainScreen ? (
-          <>
-            {/* A phone's Store is a main screen: its title row with the search behind the magnifier. */}
-            <NavigationLargeTitleProvider largeTitle>
-              <PageHeader
-                testID="store.discover.header"
-                title={t('settingsPlugins.surfaces.storeTitle')}
-                alwaysShowTitle
-                actionsPlacement="page"
-                actionsLayout="inline"
-                actions={<CollectionSearchToggle testID="store.discover.searchToggle" open={searchOpen}
-                  onPress={toggleSearch} accessibilityLabel={t('capabilities.store.discover.searchShort')} />}
-              />
-            </NavigationLargeTitleProvider>
-            <View style={styles.inset}><StoreProjectScopeChip /></View>
-          </>
-        ) : <View style={styles.inset}><StoreProjectScopeChip /></View>}
-        {columnVisible || searchOpen || !props.mainScreen
-          ? <DiscoverSearch onSubmit={nav.search} short={!columnVisible} autoFocus={searchOpen} />
-          : null}
+        {/* The main-screen head every main page draws (ruling 11-13); on a phone it is the Store's title row. */}
+        <MainScreenHeader
+          testID="store.discover.header"
+          title={t(columnVisible ? 'capabilities.store.discover.title' : 'settingsPlugins.surfaces.storeTitle')}
+          alwaysShowTitle
+          {...(columnVisible ? { description: t('capabilities.store.discover.purpose') } : {})}
+          actions={<StoreProjectScopeChip />}
+          search={{
+            value: query,
+            onChangeText: setQuery,
+            placeholder: t(columnVisible ? 'capabilities.store.discover.search' : 'capabilities.store.discover.searchShort'),
+            testID: 'store.discover.search',
+            onSubmitEditing: submitQuery,
+          }}
+        />
         {/* A phone has no Store column: Installed, Updates and the kinds are pinned under the search. */}
         {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
         <DiscoverBody curation={props.curation} page={page} nav={nav} presented={props.presented === true} />
@@ -889,7 +851,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s4,
   },
   page: { flex: 1, minHeight: 0 },
-  search: { marginBottom: theme.space.s8 },
   // A phone's scope chip sits on the page gutter beside nothing, hugging its label (as in a page header).
   // A source's state line sits where every Store page puts it: on the page edge, its Try again right after the words.
   stateLines: { marginBottom: theme.space.s8 },

@@ -414,11 +414,11 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     ], [language, theme.colors.text.secondary]);
     // An empty fleet says nothing about counts (its add section below says what to do) and has nothing to view two ways.
     const emptyFleet = props.machineCount === 0;
-    const meta = React.useMemo(() => emptyFleet ? freshness : [
-        ...(props.machineCount === null ? [] : [{ key: 'machines', text: t('allMachines.machinesCount', { count: props.machineCount }), testID: 'machines.index.count' }]),
-        { key: 'working', text: t('allMachines.sessionsWorking', { count: working }), testID: 'machines.index.working' },
-        ...freshness,
-    ], [emptyFleet, freshness, language, props.machineCount, working]);
+    // The shared count line reads the fleet's reported counts; freshness ("As of …") stays a header fact.
+    const count = React.useMemo(() => emptyFleet ? undefined : [
+        props.machineCount === null ? null : t('allMachines.machinesCount', { count: props.machineCount }),
+        t('allMachines.sessionsWorking', { count: working }),
+    ], [emptyFleet, language, props.machineCount, working]);
     const viewSwitch = emptyFleet ? null : (
         <SettingAnchor setting={MACHINES_INDEX_SETTINGS.settings.indexView}>
             <SegmentedTabBar<MachinesIndexView>
@@ -440,7 +440,8 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
             description={[props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
                 : [props.sentence, props.description].filter(Boolean).join('. '), props.scopeLabel].filter(Boolean).join(' · ')}
-            meta={meta}
+            meta={freshness}
+            {...(count === undefined ? {} : { count })}
             search={props.search}
             actions={props.phone ? undefined : viewSwitch}
             create={props.create}

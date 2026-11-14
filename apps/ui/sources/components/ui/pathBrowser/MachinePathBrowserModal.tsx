@@ -46,7 +46,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
-import { MachinePathBrowserMachineChip } from './MachinePathBrowserMachineChip';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     currentUiContextCommandScope?: string;
@@ -931,7 +931,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         // beneath the title on a phone).
         return (
             <>
-            <MachinePathBrowserMachineChip serverId={props.serverId} machineId={props.machineId} onChange={props.onMachineChange} />
+            {/* New Session's Machine picker as a chip; a browser that cannot move Machines only names it. */}
+            <SessionMachineField presentation="chip" testID={`${PATH_BROWSER_MODAL_TEST_ID}.machine`}
+                serverId={deepSearchServerId ?? ''} machineId={props.machineId} title={t('newSession.pathPicker.machine')}
+                {...(props.onMachineChange ? { onSelectMachine: (machine: Readonly<{ id: string }>) => props.onMachineChange?.(machine.id) } : {})} />
             <HappierPressable
                 testID={PATH_BROWSER_CREATE_FOLDER_TEST_ID}
                 onPress={() => invokeBrowserCommand('createFolder')}
@@ -947,7 +950,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             </HappierPressable>
             </>
         );
-    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, props.serverId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
+    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, deepSearchServerId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
 
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;

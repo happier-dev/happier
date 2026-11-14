@@ -206,8 +206,11 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
         ? <MachineInventoryBlock serverId={scope.serverId} machineId="software-a" scope={scope} /> : <InstalledPage />}</PluginSurfaceFocusEligibilityProvider>);
     const id = `${prefix}.section.software.row.${row.key}`;
     await vi.waitFor(() => expect(page.findByTestId(id)).not.toBeNull());
-    expect(page.findAllHostsByTestId(`${id}.remove`)).toHaveLength(1);
+    // Removal sits behind the row's "…" menu (J50), not inline on the row.
+    expect(page.findAllHostsByTestId(`${id}.remove`)).toHaveLength(0);
+    expect(page.findAllHostsByTestId(`${id}.more`)).toHaveLength(1);
     expect(planned).toEqual([]);
+    await page.pressByTestIdAsync(`${id}.more`);
     await page.pressByTestIdAsync(`${id}.remove`);
     const config = show.mock.calls[0]![0];
     const close = vi.fn();

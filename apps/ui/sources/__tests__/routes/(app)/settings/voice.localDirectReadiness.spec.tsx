@@ -242,9 +242,11 @@ describe('VoiceSettingsScreen local_direct daemon readiness', () => {
         await account.replaceConnectedPurposes(selected.connectedPurposes);
         account.replaceSettings(selected.settings);
         const view = await render(<VoiceConversationsSettingsScreen />);
-        const chip = view.findAll(node => node.props?.filter?.id === 'voiceComputer')[0];
-        expect(chip?.props.filter.options).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'machine-1', label: 'Primary Mac' })]));
-        await act(async () => chip!.props.filter.onChange('machine-1'));
+        // The header's "Runs on" chip opens New Session's Machine picker; choosing Primary Mac fixes it.
+        const chip = view.findAll(node => node.props?.testID === 'settings.voice.executionMachine.chip'
+            && typeof node.props?.onSelectMachine === 'function')[0];
+        expect(chip).toBeDefined();
+        await act(async () => chip!.props.onSelectMachine(storage.getState().machines['machine-1']));
         await vi.waitFor(() => expect(account.persistedSettings.voice.executionMachine).toMatchObject({ mode: 'fixed', machineId: 'machine-1' }));
         expect(account.writes.length).toBeGreaterThan(0);
     });

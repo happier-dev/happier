@@ -1,6 +1,7 @@
 import type { MarketplaceCatalogReferenceV1 } from '@happier-dev/protocol/marketplace';
 import type { HappierCapabilityFactsInput } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { StoreProjectScopeChip } from './StoreProjectScopeChip';
 import { StoreAppDefinitionEntries } from './StoreAppDefinitionEntries';
 import { View } from 'react-native';
@@ -21,7 +22,6 @@ import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -265,22 +265,27 @@ export function StoreKindFrame(
     <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
       <PageContentColumn>
-        {/* A phone's description keeps the line's width; the scope chip stands under it, as on Discover (TASTE-S4060 D8). */}
-        {/* A phone's bar names the kind, with Back when the kind was opened from the Store (lab wp/kind); the body keeps the purpose line. */}
-        <PageHeader title={copy.title} description={copy.description} {...(stacked || !scoped ? {} : { actions: props.kind === 'app'
-          ? <View style={styles.headerActions}><StoreAppDefinitionEntries />{scopeChip}</View> : scopeChip, actionsPlacement: 'page' as const })} />
-        {/* Everything that says what the page shows stands on one line; the search keeps its own. */}
-        {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View> : null}
-        <CompactSearchField
-          placement="page"
-          testID={`store.kind.${props.kind}.search`}
-          value={props.query}
-          onChangeText={props.onQueryChange}
-          placeholder={copy.search}
-          trailing={props.filter?.filterButton}
-          {...(stacked ? {} : { accessory })}
+        {/* The main-screen head every main page draws (ruling 11-13): its search behind the magnifier like any main
+            page, the funnel ending the field; what narrows the page (catalog, Machine, conditions) sits in its band. */}
+        <MainScreenHeader
+          testID={`store.kind.${props.kind}.header`}
+          title={copy.title}
+          description={copy.description}
+          {...(stacked || !scoped ? {} : { actions: props.kind === 'app'
+            ? <View style={styles.headerActions}><StoreAppDefinitionEntries />{scopeChip}</View> : scopeChip })}
+          search={{
+            value: props.query,
+            onChangeText: props.onQueryChange,
+            placeholder: copy.search,
+            testID: `store.kind.${props.kind}.search`,
+            ...(props.filter?.filterButton ? { trailing: props.filter.filterButton } : {}),
+          }}
+          band={stacked || accessory || props.filter?.tokenRow ? <>
+            {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View>
+              : accessory ? <View style={styles.phoneScope}>{accessory}</View> : null}
+            {props.filter?.tokenRow ?? null}
+          </> : undefined}
         />
-        {props.filter?.tokenRow ? <View style={styles.tokenRow}>{props.filter.tokenRow}</View> : null}
         {props.children}
       </PageContentColumn>
     </ItemList>

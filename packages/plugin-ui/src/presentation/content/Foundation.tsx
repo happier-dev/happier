@@ -249,6 +249,9 @@ export function HappierMetadata(
     ...resolveHappierTextStepStyle({ ...HAPPIER_PAGE_TEXT.rowDescription, weight: 'medium' }, typography),
     textAlign: 'right' as const,
     flexShrink: 1,
+    minWidth: 0,
+    // An unbroken value (an image URL, a path) wraps inside its column instead of running over the label.
+    ...(Platform.OS === 'web' ? { wordBreak: 'break-word' as const } : {}),
   };
   const valueCellStyle = {
     flexDirection: 'row' as const,
@@ -256,6 +259,7 @@ export function HappierMetadata(
     justifyContent: 'flex-end' as const,
     gap: props.theme.spacing.xsmall,
     flexShrink: 1,
+    minWidth: 0,
     // A long label wraps before it squeezes the value into a sliver.
     maxWidth: '65%' as const,
   };

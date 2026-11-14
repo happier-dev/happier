@@ -612,8 +612,8 @@ describe('All machines (the Settings door index)', () => {
 
   it('counts the current fleet before an archived creation removes its Machine from the display collection', async () => {
     const text = await import('@/text');
-    vi.spyOn(text, 't').mockImplementation((key, params) => key === 'allMachines.machinesCount'
-      ? `${params && 'count' in params ? params.count : ''} Machines` : key);
+    vi.spyOn(text, 't').mockImplementation((key: string, params?: unknown) => key === 'allMachines.machinesCount'
+      ? `${typeof params === 'object' && params !== null && 'count' in params ? params.count : ''} Machines` : key);
     const archived: ManagedMachineV1 = {
       id: 'archived-creation', homeId: 'srv_a', custodianAccountId: 'owner',
       launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Old build box', choices: {} },
@@ -626,7 +626,7 @@ describe('All machines (the Settings door index)', () => {
       machine('current', 'Current box', 'current.local'), machine('still-current', 'Retained machine', 'retained.local'),
     ] }], { managedByServerId: { srv_a: [archived] } });
     const tree = await renderPage();
-    const count = tree.findHostByTestId('machines.index.count');
+    const count = tree.findHostByTestId('machines.index.header:count');
     expect(count).not.toBeNull();
     expect(findAllHostTestInstances(count!, () => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')).toContain('2 Machines');
     expect(tree.findAll(node => node.props.testID === 'machines.index.row.machine:srv_a:still-current')).toHaveLength(0);
@@ -911,8 +911,7 @@ describe('All machines (the Settings door index)', () => {
     // The pool is added from its own section, so the tiles do not offer it twice.
     expect(tiles.props.options.map((option) => option.id)).toEqual(['machine']);
     // F7: an empty fleet has no "0 Machines · 0 sessions working" line and no view switch with nothing to switch.
-    expect(tree.findAll((node) => node.props?.testID === 'machines.index.count')).toHaveLength(0);
-    expect(tree.findAll((node) => node.props?.testID === 'machines.index.working')).toHaveLength(0);
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.header:count')).toHaveLength(0);
     expect(tree.findAll((node) => typeof node.props?.testIDPrefix === 'string' && node.props.testIDPrefix === 'machines.index.view')).toHaveLength(0);
     expect(addMenuItemIds(tree)).toEqual(['machine', 'preset', 'pool']);
     const menu = tree.findByType('DropdownMenu' as never) as unknown as {
@@ -953,16 +952,19 @@ describe('All machines (the Settings door index)', () => {
     home.answer(profileId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: managedFirstReply.promise });
     const rowId = 'machines.index.row.machine:srv_a:machine-a1';
     const has = (tree: Awaited<ReturnType<typeof renderPage>>, testID: string) => tree.findAll(node => node.props?.testID === testID).length > 0;
+    // The shared count line names the Machine count only once the fleet has answered.
+    const countsMachines = (tree: Awaited<ReturnType<typeof renderPage>>) => tree.findAll(node => node.props?.testID === 'machines.index.header:count')
+      .some(node => /\d+ Machines?\b/.test(String(node.props.children ?? '')));
     const screen = await renderScreen(React.createElement(MachinesSettingsView));
     await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/managed/actions/list')).toBe(true));
     await flushHookEffects();
     // One machine is already known, but the created machines have not answered: no partial row, no count.
     expect(screen.tree.findAll(node => node.props?.testID === 'machines.index.collection' && node.props?.loading === true).length).toBeGreaterThan(0);
     expect(has(screen.tree, rowId)).toBe(false);
-    expect(has(screen.tree, 'machines.index.count')).toBe(false);
+    expect(countsMachines(screen.tree)).toBe(false);
     await act(async () => managedFirstReply.resolve());
     await waitForHomeGovernance(() => expect(has(screen.tree, rowId)).toBe(true));
-    expect(has(screen.tree, 'machines.index.count')).toBe(true);
+    expect(countsMachines(screen.tree)).toBe(true);
     // A later read keeps the answer already shown.
     const rereply = createDeferred<void>();
     home.answer(profileId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: rereply.promise });
@@ -971,7 +973,7 @@ describe('All machines (the Settings door index)', () => {
     await act(async () => publishHomeAccountChange('srv_a'));
     await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length).toBeGreaterThan(requests));
     expect(has(screen.tree, rowId)).toBe(true);
-    expect(has(screen.tree, 'machines.index.count')).toBe(true);
+    expect(countsMachines(screen.tree)).toBe(true);
     await act(async () => rereply.resolve());
     await screen.unmount();
   });
