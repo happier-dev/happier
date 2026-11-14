@@ -72,6 +72,7 @@ beforeEach(() => {
     if (url.endsWith(`/v2/sessions/${sessionId}/pending`)) return { status: 200, data: {
       didWrite: true, terminal: false, suppressed: false,
     } };
+    if (url.endsWith('/discard')) return { status: 200, data: { ok: true } };
     throw new Error(`Unexpected HTTP request: ${url}`);
   });
 });
@@ -341,7 +342,17 @@ it('marks accepted input visibly blocked when Machine wake admission is refused'
   ]);
 });
 
-it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('maps the Machine resume refusal %s to resume_failed while retaining accepted input', async (errorCode) => {
+it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('settles the carried input when Machine resume is refused with %s', async (errorCode) => {
+  let pendingCount = 0;
+  http.post.mockImplementation(async (url: string, body: unknown) => {
+    if (url.endsWith('/pending')) { pendingCount += 1; return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } }; }
+    if (url.endsWith('/pending/resume-refusal-input/discard')) {
+      expect(body).toEqual({ reason: 'resume_failed' });
+      pendingCount -= 1;
+      return { status: 200, data: { ok: true, pendingCount } };
+    }
+    throw new Error(`Unexpected HTTP request: ${url}`);
+  });
   const machineResumeTransport = vi.fn(async () => ({ type: 'error', errorCode, errorMessage: 'Machine could not resume' }));
   await expect(sendSessionMessage({
     credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
@@ -350,8 +361,10 @@ it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('maps the Machine resume 
   })).resolves.toMatchObject({
     ok: false, code: 'resume_failed', message: 'Machine could not resume',
     admissionResult: { status: 'accepted', localId: 'resume-refusal-input' },
+    settlementResult: { status: 'failed', code: 'resume_failed', localId: 'resume-refusal-input' },
   });
   expect(machineResumeTransport).toHaveBeenCalledOnce();
+  expect(pendingCount).toBe(0);
 });
 
 it('retains the typed Machine refusal through ordinary Send after accepting Pending custody', async () => {
@@ -368,14 +381,20 @@ it('retains the typed Machine refusal through ordinary Send after accepting Pend
   });
 });
 
-it.each(['service', 'action'] as const)('returns a typed startup refusal for a waiting send through the %s while retaining its exact Pending input for recovery', async entry => {
+it.each(['service', 'action', 'continuity-action'] as const)('returns a typed startup refusal for a waiting send through the %s and settles its exact Pending input', async entry => {
   const localId = 'failed-start-later-send';
   receiverMetadata = { lifecycleState: 'failed' };
-  const errorDetail = { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
+  const errorDetail = entry === 'continuity-action' ? { kind: 'connected_service_resume_unreachable',
+    continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini',
+    reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume',
+      failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false,
+      suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'],
+      diagnostics: { reason: 'gemini_resume_unreachable' } } } as const
+    : { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
     message: 'Review the selected model.', failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } as const;
   let retainedInput: unknown;
-  let blocked = false;
+  let settled = false;
   const readSession = http.get.getMockImplementation();
   http.get.mockImplementation(async (url: string) => {
     if (url.endsWith(`/messages/by-local-id/${localId}`)) {
@@ -392,9 +411,9 @@ it.each(['service', 'action'] as const)('returns a typed startup refusal for a w
       retainedInput = body;
       return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
     }
-    if (url.endsWith(`/pending/${localId}/delivery/block`)) {
-      expect(body).toEqual({ reason: 'session_input_target_unavailable' });
-      blocked = true;
+    if (url.endsWith(`/pending/${localId}/discard`)) {
+      expect(body).toEqual({ reason: 'resume_failed' });
+      settled = true;
       return { status: 200, data: { ok: true, didUpdate: true } };
     }
     throw new Error(`Unexpected HTTP request: ${url}`);
@@ -408,7 +427,7 @@ it.each(['service', 'action'] as const)('returns a typed startup refusal for a w
     }
     if (method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE) {
       expect(request).toMatchObject({ spawnNonce: admittedSpawnNonce });
-      return { status: 'error', errorCode: 'SPAWN_FAILED', errorMessage: errorDetail.message, errorDetail };
+      return { status: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Resume refused', errorDetail };
     }
     throw new Error(`Unexpected Machine request: ${method}`);
   });
@@ -431,7 +450,7 @@ it.each(['service', 'action'] as const)('returns a typed startup refusal for a w
     if (!outcome.ok) throw new Error(outcome.error);
     expect(SessionMessageSendResultV1Schema.parse(outcome.result)).toEqual(expectedFailure);
   }
-  expect(blocked).toBe(true);
+  expect(settled).toBe(true);
   expect(retainedInput).toMatchObject({ localId, content: { t: 'plain', v: {
     content: { text: 'Keep this prompt for recovery' },
   } } });

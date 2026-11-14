@@ -8,6 +8,7 @@ import { SessionAccessErrorCodeV1Schema } from './access/sessionAccessOperations
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
+  ConnectedServiceUxDiagnosticCurrentV1Schema,
   isConnectedServiceUxDiagnosticV1,
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceUxDiagnosticV1,
@@ -291,6 +292,32 @@ export type SpawnSessionErrorDetail =
   | ConnectedServiceUxDiagnosticSpawnErrorDetail
   | ProviderSpawnErrorDetail
   | SessionCreationTerminalSpawnErrorDetail;
+
+/** Projectable current wire detail; the spawn owner's privacy checks still apply. */
+export const SpawnSessionErrorDetailSchema = lazyZodSchema(() => z.union([
+  SessionSpawnLaunchErrorV1Schema,
+  SessionLaunchRetiredV1Schema,
+  RequesterHomeUnavailableSpawnErrorDetailSchema,
+  SpawnFailureSpawnErrorDetailSchema,
+  TerminalHostUnavailableSpawnErrorDetailSchema,
+  z.strictObject({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_RESUME_UNREACHABLE),
+    continuityErrorCode: z.literal('provider_session_state_unavailable_for_resume'),
+    failurePhase: z.literal('continuity'),
+    agentId: z.string().check(z.minLength(1)),
+    reason: z.string().check(z.minLength(1)),
+    uxDiagnostic: ConnectedServiceUxDiagnosticCurrentV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_UX_DIAGNOSTIC),
+    uxDiagnostic: ConnectedServiceUxDiagnosticCurrentV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR),
+    providerError: ProviderErrorV1Schema,
+  }),
+  SessionCreationTerminalSpawnErrorDetailSchema,
+]).check(z.refine(isSpawnSessionErrorDetail)));
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;

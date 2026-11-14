@@ -6,7 +6,7 @@ import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceProfileIdSchema,
 } from './connectedServiceSchemas.js';
-import { ConnectedAccountServiceKeyIngressSchema } from './connectedServiceBindings.js';
+import { ConnectedAccountServiceKeyIngressSchema, ConnectedAccountServiceKeySchema } from './connectedServiceBindings.js';
 import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
@@ -70,7 +70,7 @@ export function normalizeLegacyConnectedServiceUxDiagnosticCode(value: unknown):
   }
 }
 
-export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.pipe(z.transform(normalizeLegacyConnectedServiceUxDiagnosticCode), z.enum([
+const ConnectedServiceUxDiagnosticCurrentCodeV1Schema = lazyZodSchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing,
@@ -85,7 +85,11 @@ export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.pi
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported,
-])));
+]));
+
+export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.pipe(
+  z.transform(normalizeLegacyConnectedServiceUxDiagnosticCode), ConnectedServiceUxDiagnosticCurrentCodeV1Schema,
+));
 
 export type ConnectedServiceUxDiagnosticCodeV1 = z.infer<typeof ConnectedServiceUxDiagnosticCodeV1Schema>;
 
@@ -210,6 +214,14 @@ const ConnectedServiceUxDiagnosticV1ObjectSchema = lazyZodSchema(() => z.strictO
   suggestedActions: z._default(z.array(ConnectedServiceUxDiagnosticSuggestedActionV1Schema), []),
   diagnostics: z.optional(ConnectedServiceUxDiagnosticDiagnosticsV1Schema),
 }));
+
+/** Current emitted diagnostics, without the historical ingress transforms. */
+export const ConnectedServiceUxDiagnosticCurrentV1Schema = lazyZodSchema(() => z.extend(
+  ConnectedServiceUxDiagnosticV1ObjectSchema, {
+    code: ConnectedServiceUxDiagnosticCurrentCodeV1Schema,
+    serviceId: z.optional(ConnectedAccountServiceKeySchema),
+  },
+));
 
 // legacy `providerId` read-compat (pre-rename persisted diagnostics in transcripts)
 function normalizeLegacyConnectedServiceUxDiagnosticAgentId(value: unknown): unknown {

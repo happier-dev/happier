@@ -26,7 +26,7 @@ import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
 import { SessionMessageRefV1Schema } from './sessionMessageRefV1.js';
 import { SessionMessageReplyResolvedOutcomeV1Schema } from './sessionMessageReplyV1.js';
-import { SessionSpawnLaunchErrorV1Schema } from '../creation/sessionSpawnLaunchErrorV1.js';
+import { SpawnSessionErrorDetailSchema } from '../spawnSession.js';
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
 import {
   SessionMutationEqualityBase64UrlSha256V1Schema,
@@ -1126,7 +1126,7 @@ export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
       SessionInputEnqueueResultV1Schema._zod.def.options[0],
       SessionInputEnqueueResultV1Schema._zod.def.options[1],
     ]),
-    errorDetail: z.optional(SessionSpawnLaunchErrorV1Schema),
+    errorDetail: z.optional(SpawnSessionErrorDetailSchema),
   }),
   z.strictObject({
     status: z.literal('cancelled'),

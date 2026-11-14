@@ -124,6 +124,36 @@ const updatePendingRequestedAction = (params: WithoutAuthentication<Parameters<t
     updatePendingRequestedActionWithAuthentication(withPresentUserAuthentication(params));
 
 describe("pendingMessageService (shared sessions)", () => {
+    it('settles a refused resume as failed through the existing Pending discard route', async () => {
+        const owner = await createAccount('resume-refused');
+        const session = await createSession(owner.id);
+        const localId = 'resume-refused-input';
+        expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId,
+            ciphertext: 'retained-input', reply: { mode: 'wait' } })).toMatchObject({ ok: true });
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const response = await app.inject({ method: 'POST',
+                url: `/v2/sessions/${session.id}/pending/${localId}/discard`,
+                headers: { 'x-test-user-id': owner.id }, payload: { reason: 'resume_failed' } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, pendingCount: 0, pendingBlockedCount: 0 });
+            const row = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } });
+            expect(row).toMatchObject({ status: 'discarded', discardedReason: 'resume_failed',
+                replyProgress: { outcome: { kind: 'failed' } } });
+        });
+    });
+
+    it('does not settle a refused resume over an input already claimed by a runner', async () => {
+        const owner = await createAccount('resume-refused-claimed');
+        const session = await createSession(owner.id);
+        const localId = 'claimed-input';
+        await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, ciphertext: 'input' });
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id }))
+            .toMatchObject({ ok: true, didMaterialize: true });
+        expect(await discardPendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, reason: 'resume_failed' }))
+            .toMatchObject({ ok: false, error: 'delivery-settlement-conflict' });
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingCount: 1 });
+    });
+
     it.each(['spawn-rejected', 'identity-unavailable'] as const)('retains activation through publisher presence and settles a definite runtime refusal through the exact failure route (%s)', async reason => {
         const { owner, session, homeId, controller, guest, managed } = await createManagedPendingFixture();
         const localId = `diagnostic-${randomUUID()}`;

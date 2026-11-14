@@ -1033,16 +1033,22 @@ export async function discardPendingQueueV2Messages(params: {
     token: string;
     sessionId: string;
     localIds: string[];
-    reason: 'switch_to_local' | 'manual' | 'session_input_cancelled';
+    reason: 'switch_to_local' | 'manual' | 'session_input_cancelled' | 'resume_failed';
+    signal?: AbortSignal;
+    resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<number> {
     let discarded = 0;
     const serverUrl = resolveServerHttpBaseUrl();
     for (const localId of params.localIds) {
         try {
+            const path = `/v2/sessions/${params.sessionId}/pending/${encodeURIComponent(localId)}/discard`;
+            const body = { reason: params.reason };
+            const authorization = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body });
+            if (params.resolveAuthorizationHeaders && !authorization) throw new Error('Session input settlement authorization unavailable');
             await axios.post(
-                `${serverUrl}/v2/sessions/${params.sessionId}/pending/${encodeURIComponent(localId)}/discard`,
-                { reason: params.reason },
-                { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` }, timeout: 10_000 },
+                `${serverUrl}${path}`, body,
+                { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...(authorization ?? { Authorization: `Bearer ${params.token}` }) }, timeout: 10_000,
+                    ...(params.signal ? { signal: params.signal } : {}) },
             );
             discarded += 1;
         } catch (error) {

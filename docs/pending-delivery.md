@@ -2,6 +2,12 @@
 
 ## Resumed Session input targets (0.3 development)
 
+A definite Machine refusal during resume-and-send settles the carried input as
+failed through the existing Pending discard owner (`resume_failed`), for every
+Agent. Send preserves the spawn owner’s typed cause. Inputs already claimed by a
+runner cannot be retired by this refusal. Transport uncertainty and informational
+deliveries retain their recoverable custody.
+
 UI Pending input and CLI Session input prefer the Session's observed Machine over
 the immutable Machine in its creation recipe. The creation recipe remains a
 fallback when no observed Machine is available; explicit conflicting targets
@@ -1024,6 +1030,7 @@ ordinary Machine. Owner-authored input retains its existing explicit-resume beha
 - The banner action **Process when online** re-arms the exact Session authorization. **Retry** uses the existing manual resume action when the machine is reachable. **Keep queued** clears that authorization while preserving FIFO delivery. These actions do not change the account preference or create a second activation path.
 - For confirmed stopped or suspended managed compute with queued input and no submitted native effect, **Process when online** remains available even when the retained authorization still says waiting. A Start Ask can lose its live invocation across restart and settle stale without a remaining invocation to report activation failure. Explicit rearming replaces the accepted origin through the same Pending Action; canonical managed-role admission and the existing Action review still decide power. Inactive held rows use this recovery rather than **Send now**; native progress, lost storage and uncertain delivery retain their existing presentations.
 - The server transaction that mutates Pending rows is the only writer of the current activation authorization. The current main-conversation Pending wire accepts `resumeWhenAvailable` as a mutation command, applies it atomically to the existing Session authorization, and never persists it as a second row-level desired state. Execution-run-targeted input cannot author this Session activation command.
+- Explicit `steer_now` requests authorize runtime activation like `send_now`, unless the mutation sets `resumeWhenAvailable: false`. Inactive and offline composer submission preserves that explicit choice and its non-interrupting delivery action. Ordinary `enqueue` and conditional `steer_if_active` requests need an explicit resume authorization. Existing admission, managed-wake policy, and person-Stop holds still apply.
 - UI recovery and Agent/MCP/CLI callers share `session.pending.action.set` (`session pending action set` in the CLI). It updates the exact `sessionId`/`localId` through that existing PATCH owner, preserving `requestedAction` when explicitly rearming with `resumeWhenAvailable: true`. The Action uses the ordinary approval policy; unattended managed wake uses canonical managed-role admission and its existing policy Ask. Reset holds retain their separate witnessed reset-start Action.
 - Activation stays bound to its exact `requestId` and `requestedAt`. Publisher registration and keepalive prove process presence before Agent admission; they preserve the authorization so a later definite startup refusal can still settle it.
 - The Pending activation hint is lossy notification only. The durable server-owned session authorization is authoritative, and the daemon consults it both after a live hint and during one finite reconnect scan.

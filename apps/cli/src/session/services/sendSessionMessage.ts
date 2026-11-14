@@ -39,6 +39,7 @@ import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTranspo
 import {
   enqueuePendingQueueV2MessageViaHttp,
   blockPendingQueueV2Delivery,
+  discardPendingQueueV2Messages,
   enqueuePendingExecutionRunMessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer,
   readPendingQueueV2DeliveryStatusByLocalIdFromServer,
@@ -2130,8 +2131,16 @@ export async function sendSessionMessage(
       ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
     });
     if (!resumeResult.ok) {
-      if (resumeResult.code === 'authority_unavailable'
-        || params.wait === true && resumeResult.code === 'resume_failed' && resumeResult.errorDetail?.kind === 'launch_error') {
+      const refusedResume = !informationDelivery
+        && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
+        && resumeResult.spawnErrorCode !== undefined;
+      if (refusedResume) {
+        // The Machine refused this attempt before a runner claimed the input.
+        // Retire that exact custody through Pending's existing settlement owner.
+        await discardPendingQueueV2Messages({ token: params.credentials.token, sessionId, localIds: [localId],
+          reason: 'resume_failed', ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
+      } else if (resumeResult.code === 'authority_unavailable') {
         // The input is already in custody. Keep it recoverable and visible as
         // blocked rather than claiming it is still waiting for a runner.
         await blockPendingQueueV2Delivery({ token: params.credentials.token, sessionId, localId,
@@ -2146,11 +2155,11 @@ export async function sendSessionMessage(
         ...resumeResult,
         code: resumeResult.code === 'SESSION_DIRECTORY_MISSING' ? 'resume_failed' : resumeResult.code,
         ...(admissionResult ? { admissionResult } : {}),
-        ...(params.wait === true
+        ...((params.wait === true || refusedResume)
           && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
           && admissionResult && (admissionResult.status === 'accepted' || admissionResult.status === 'alreadyAccepted')
           ? { settlementResult: { status: 'failed' as const, code: 'resume_failed' as const, localId, admissionResult,
-            ...(resumeResult.errorDetail?.kind === 'launch_error' ? { errorDetail: resumeResult.errorDetail } : {}) } }
+            ...(resumeResult.errorDetail ? { errorDetail: resumeResult.errorDetail } : {}) } }
           : {}),
         ...(receiverDelivery ? { receiverDelivery } : {}),
       };

@@ -4589,6 +4589,10 @@ export async function discardPendingMessage(params: {
                 select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true },
             });
             if (!existing) return { ok: false, error: "not-found" } as const;
+            // A refused resume cannot retire custody already claimed by a runner.
+            if (reason === 'resume_failed' && isOrdinaryPendingMutationFenced(existing)) {
+                return { ok: false, error: 'delivery-settlement-conflict' } as const;
+            }
             // Explicit discard is a durable user cancellation, so the delivery
             // status transition protocol owns the decision below: delivering
             // and external-handoff custody may be discarded, while archived
@@ -4620,7 +4624,7 @@ export async function discardPendingMessage(params: {
                     discardedReason: persisted.discardedReason,
                 },
             });
-            await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'cancelled');
+            await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, reason === 'resume_failed' ? 'failed' : 'cancelled');
             await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx, sessionId, requestId: localId });
 
             const { pendingVersion, pendingCount, pendingBlockedCount, recipientCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({

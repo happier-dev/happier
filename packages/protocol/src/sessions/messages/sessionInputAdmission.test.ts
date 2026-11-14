@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SessionMessageProvenanceV1Schema as publicSessionMessageProvenanceV1Schema } from '../general.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
+import { compilePluginJsonSchema } from '../../plugins/actions/jsonSchemaValidation.js';
 import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '../../runtime/input/composerAttachmentV1.js';
 import { RawIngressStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
 import { deriveSessionMutationEqualityTagV1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '../mutations/sessionMutationEqualityV1.js';
@@ -16,6 +17,23 @@ import {
 const protocol = { ...sessionInputAdmission, SessionMessageMetaSchema };
 
 describe('session input admission metadata', () => {
+  it('publishes a projectable failed-resume result retaining the typed continuity cause', () => {
+    const errorDetail = { kind: 'connected_service_resume_unreachable',
+      continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+      agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: {
+        code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume',
+        agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account'],
+      } };
+    const result = { status: 'failed', code: 'resume_failed', localId: 'refused-input',
+      admissionResult: { status: 'accepted', localId: 'refused-input' }, errorDetail };
+    const validate = compilePluginJsonSchema(protocol.SessionMessageSendResultV1ProtocolSchema.jsonSchema);
+    expect(validate(result)).toBe(true);
+    expect(protocol.SessionMessageSendResultV1Schema.parse(result)).toEqual(result);
+    expect(validate({ ...result, errorDetail: { ...errorDetail, failurePhase: 'unknown' } })).toBe(false);
+    expect(protocol.SessionMessageSendResultV1Schema.safeParse({ ...result,
+      errorDetail: { ...errorDetail, uxDiagnostic: { ...errorDetail.uxDiagnostic,
+        diagnostics: { persistedSessionFile: '/private/native-session' } } } }).success).toBe(false);
+  });
   it('settles onboarding as host input with the recipient permission mode and no person attribution', () => {
     const request = protocol.SessionInputRequestV1Schema.parse({ v: 1, producer: 'hostOnboarding',
       caller: { kind: 'host' }, permission: {} });

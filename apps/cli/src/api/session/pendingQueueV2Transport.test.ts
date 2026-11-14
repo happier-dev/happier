@@ -6,6 +6,7 @@ import { SocketAckError } from '@/session/transport/shared/socketAck';
 import {
     blockPendingQueueV2Delivery,
     blockPendingExecutionRunDelivery,
+    discardPendingQueueV2Messages,
     enqueuePendingQueueV2MessageViaHttp,
     PendingQueueAcceptedSettlementError,
     isAcceptedPendingQueueV2DeliveryAckResponseLoss,
@@ -85,6 +86,25 @@ describe('pendingQueueV2Transport', () => {
         vi.spyOn(axios, 'patch').mockImplementation(mockPatch);
     });
     afterEach(() => vi.restoreAllMocks());
+
+    it('settles a refused resume using exact scoped authorization and cancellation', async () => {
+        const signal = new AbortController().signal;
+        const authorize = vi.fn(() => ({ 'x-execution-proof': 'signed-refusal' }));
+        mockPost.mockResolvedValueOnce({ data: { ok: true } });
+        await expect(discardPendingQueueV2Messages({ token: 'must-not-cross', sessionId: 'session',
+            localIds: ['input/one'], reason: 'resume_failed', signal, resolveAuthorizationHeaders: authorize })).resolves.toBe(1);
+        const path = '/v2/sessions/session/pending/input%2Fone/discard';
+        expect(authorize).toHaveBeenCalledWith({ method: 'POST', path, body: { reason: 'resume_failed' } });
+        expect(mockPost).toHaveBeenCalledWith(expect.stringContaining(path), { reason: 'resume_failed' },
+            expect.objectContaining({ signal, headers: expect.objectContaining({ 'x-execution-proof': 'signed-refusal' }) }));
+        expect(mockPost.mock.calls[0]?.[2]?.headers).not.toHaveProperty('Authorization');
+    });
+
+    it('does not borrow the daemon bearer when refusal settlement authorization is unavailable', async () => {
+        await expect(discardPendingQueueV2Messages({ token: 'must-not-cross', sessionId: 'session',
+            localIds: ['input'], reason: 'resume_failed', resolveAuthorizationHeaders: () => null })).rejects.toThrow();
+        expect(mockPost).not.toHaveBeenCalled();
+    });
 
     it('marks delivery handled with the exact signed request and cancellation, without borrowing the daemon bearer', async () => {
         const signal = new AbortController().signal;
