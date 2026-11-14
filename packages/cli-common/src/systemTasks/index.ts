@@ -28,6 +28,10 @@ export {
   type ParsedSshTarget,
 } from './ssh/sshTarget.js';
 export {
+  createDiscoverConfiguredSshHostsSystemTaskKind,
+  DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
+} from './ssh/discoverConfiguredSshHosts.js';
+export {
   buildRemoteBootstrapCommand,
   buildRemoteHappierInvocationCommand,
   type RemoteBootstrapCommandLabel,

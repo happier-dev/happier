@@ -201,6 +201,10 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   const daemonServiceRelayDisconnectHandler = createDaemonServiceRelayDisconnectHandler();
 
   return systemTasks.createSystemTaskRegistry([
+    {
+      kind: systemTasks.DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
+      handler: systemTasks.createExecutionRunnerFromKind(systemTasks.createDiscoverConfiguredSshHostsSystemTaskKind()),
+    },
     ...createDaemonSshTunnelRegistryEntries(),
     { kind: 'daemon.service.autostart.set.v1', handler: createDaemonServiceAutostartSetHandler() },
     {

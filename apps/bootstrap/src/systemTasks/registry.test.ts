@@ -123,6 +123,62 @@ async function prepareBootstrapPersonalHomeFixture(homeDir: string): Promise<Rea
 }
 
 describe('createHsetupSystemTaskRegistry', () => {
+  it.each([false, true])('discovers local SSH hosts through the native task (configured: %s)', async (configured) => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'hsetup-ssh-catalog-'));
+    // Redirect the OS home boundary; discovery and filesystem reads stay real.
+    const homeEnvKey = process.platform === 'win32' ? 'USERPROFILE' : 'HOME';
+    const previousHome = process.env[homeEnvKey];
+    process.env[homeEnvKey] = homeDir;
+    onTestFinished(() => {
+      restoreEnvVar(homeEnvKey, previousHome);
+      rmSync(homeDir, { recursive: true, force: true });
+    });
+    if (configured) {
+      mkdirSync(join(homeDir, '.ssh', 'conf.d'), { recursive: true });
+      writeFileSync(join(homeDir, '.ssh', 'config'), 'Include conf.d/work.conf\n');
+      writeFileSync(join(homeDir, '.ssh', 'conf.d', 'work.conf'), [
+        'Host work',
+        '  HostName work.example.test',
+        '  User deploy',
+        '  Port 2222',
+        '  IdentityFile ~/.ssh/id_ed25519',
+      ].join('\n'));
+      writeFileSync(join(homeDir, '.ssh', 'known_hosts'), 'known.example.test ssh-ed25519 fixture-public-key\n');
+      writeFileSync(join(homeDir, '.ssh', 'id_ed25519'), 'fixture-private-key-must-not-be-returned');
+    }
+    const result = await executeSystemTask({
+      spec: { protocolVersion: 1, kind: 'local.ssh.discoverConfiguredHosts.v1', params: {} },
+      taskId: 'task_ssh_catalog',
+      registry: createHsetupSystemTaskRegistry(),
+      now: () => 1700000000000,
+      emitEvent() {},
+    });
+    expect(result).toEqual({
+      protocolVersion: 1,
+      taskId: 'task_ssh_catalog',
+      ok: true,
+      data: configured ? [
+        {
+          id: expect.any(String), alias: 'work', hostname: 'work.example.test',
+          port: 2222, username: 'deploy', source: 'ssh-config', sourcePath: join(homeDir, '.ssh', 'conf.d', 'work.conf'),
+        },
+        {
+          id: expect.any(String), alias: 'known.example.test', hostname: 'known.example.test',
+          port: null, username: null, source: 'known-hosts', sourcePath: join(homeDir, '.ssh', 'known_hosts'),
+        },
+      ] : [],
+    });
+  });
+
+  it('rejects caller-supplied SSH discovery paths at the native task boundary', async () => {
+    const result = await executeSystemTask({
+      spec: { protocolVersion: 1, kind: 'local.ssh.discoverConfiguredHosts.v1', params: { homeDir: '/other-home' } },
+      taskId: 'task_ssh_catalog_invalid',
+      registry: createHsetupSystemTaskRegistry(),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_params' } });
+  });
+
   it('runs daemon.service.status.v1 and reports the local daemon status snapshot', async () => {
     const fakeCli = createFakeHappierCli({
       daemonStatuses: [
