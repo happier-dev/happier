@@ -71,4 +71,56 @@ describe('deployment Activity history read', () => {
         expect(source.listEnvironments).not.toHaveBeenCalled();
         expect(source.listOperations).not.toHaveBeenCalled();
     });
+    it('passes requester and time selection to each history owner before paging and selects one item kind', async () => {
+        const filters = { actorAccountId: scope.accountId, requestedAtFromMs: 10, requestedAtToMs: 30 };
+        const source = owners();
+        const page = await readDeploymentActivityPageV1({ scope, owners: source, machineIds: ['machine-a'],
+            query: { limit: 1, kind: 'operation', ...filters } });
+        expect(page.items.map(item => item.id)).toEqual(['operation:machine-a:restart']);
+        expect(source.listReceipts).toHaveBeenCalledWith(environment.id, undefined, filters);
+        expect(source.listOperations).toHaveBeenCalledWith('machine-a', undefined, {
+            actorAccountId: scope.accountId, createdAtFromMs: 10, createdAtToMs: 30,
+        });
+        const receiptsOnly = owners();
+        const receipts = await readDeploymentActivityPageV1({ scope, owners: receiptsOnly, machineIds: ['machine-a'],
+            query: { limit: 1, kind: 'receipt' } });
+        expect(receipts.items.map(item => item.id)).toEqual(['receipt:new']);
+        expect(receiptsOnly.listOperations).not.toHaveBeenCalled();
+    });
+    it('keeps operation-only pages independent of unseen receipt pages and retains independent operations', async () => {
+        const source = owners();
+        const deploymentRef = { kind: 'deployment' as const, serverId: 'home', environmentId: environment.id, deploymentId: 'old' };
+        source.listOperations.mockResolvedValue({ items: [
+            { ...operation('older-root', 50), actionId: 'deployments.teardown', domainRef: deploymentRef },
+            { ...operation('backup', 40), actionId: 'deployments.backups.run', domainRef: deploymentRef },
+            { ...operation('unadmitted-root', 30), actionId: 'deployments.deploy', state: 'failed' },
+            { ...operation('template-root', 20), actionId: 'deployments.templates.instantiate', domainRef: deploymentRef },
+        ], nextCursor: null });
+        const page = await readDeploymentActivityPageV1({ scope, owners: source, machineIds: ['machine-a'],
+            query: { limit: 10, kind: 'operation' } });
+        expect(page.items.map(item => item.id)).toEqual([
+            'operation:machine-a:older-root', 'operation:machine-a:backup',
+            'operation:machine-a:unadmitted-root', 'operation:machine-a:template-root',
+        ]);
+        expect(source.listReceipts).toHaveBeenCalledTimes(1);
+        expect(page.nextCursor).toBeNull();
+    });
+    it.each([undefined, 'operation'] as const)('keeps a repeated teardown with its own operation and requester visible for kind %s', async kind => {
+        const source = owners();
+        source.listReceipts.mockImplementation(async (_environmentId, cursor) => ({
+            items: cursor ? [] : [{ ...receipt('reused-teardown', 10),
+                actionOperationId: 'original-teardown', requestedByAccountId: 'original-requester' }],
+            nextCursor: cursor ? null : 'older',
+        }));
+        source.listOperations.mockResolvedValue({ items: [{ ...operation('repeated-teardown', 40),
+            actionId: 'deployments.teardown', domainRef: { kind: 'deployment', serverId: 'home',
+                environmentId: environment.id, deploymentId: 'reused-teardown' } }], nextCursor: null });
+        const page = await readDeploymentActivityPageV1({ scope, owners: source, machineIds: ['machine-a'],
+            query: { limit: 10, ...(kind ? { kind } : {}) } });
+        expect(page.items.map(item => item.id)).toEqual(kind === 'operation'
+            ? ['operation:machine-a:repeated-teardown']
+            : ['operation:machine-a:repeated-teardown', 'receipt:reused-teardown']);
+        expect(source.listReceipts).toHaveBeenCalledTimes(kind === 'operation' ? 1 : 2);
+        expect(page.nextCursor).toBeNull();
+    });
 });

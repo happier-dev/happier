@@ -11,6 +11,11 @@ export const DeploymentActivityQueryV1Schema = lazyZodSchema(() => z.strictObjec
     projectSourceId: z.optional(DeploymentIdentifierV1Schema),
     environmentId: z.optional(DeploymentIdentifierV1Schema),
     machineId: z.optional(DeploymentIdentifierV1Schema),
+    actorAccountId: z.optional(DeploymentIdentifierV1Schema),
+    kind: z.optional(z.enum(['receipt', 'operation'])),
+    /** Inclusive start and exclusive end, applied by each history owner before paging. */
+    requestedAtFromMs: z.optional(DeploymentTimestampV1Schema),
+    requestedAtToMs: z.optional(DeploymentTimestampV1Schema),
     // Page size is chosen by the consuming collection; this read invents no ceiling.
     limit: z.number().check(z.int(), z.positive()),
     cursor: z.optional(DeploymentActivityCursorV1Schema),

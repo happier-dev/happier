@@ -1,5 +1,23 @@
 # Deployment
 
+## Activity selection (0.3 development)
+
+The existing `readDeploymentActivityPage` accepts `actorAccountId`,
+`kind: 'receipt' | 'operation'`, `requestedAtFromMs` (inclusive) and
+`requestedAtToMs` (exclusive), alongside its existing placement and cursor
+selectors. Receipt history applies requester and requested-time predicates in
+the server storage query before pagination. Action operation history applies
+requester and the corresponding created-time predicates at the daemon store
+before pagination. The shared Activity owner merges those pages and keeps a
+receipt as the canonical representation of its observed invocation ID. A retained
+receipt reference alone does not identify the same invocation: repeated teardown
+can have a different operation and requester. Operation-only demand reads one
+receipt page for observed matches; an unobserved older receipt can leave its
+operation visible, without a full receipt census or inferred identity. Pages
+pass selections to this read rather than filtering the rows they already hold.
+Filtered Action operation reads require the current V2 RPC and never downgrade
+to a released V1 reader that cannot enforce the selection.
+
 ## Prepare with an Agent (0.3 development)
 
 Project, Environment and creation-draft Prepare/Import entries use the returning

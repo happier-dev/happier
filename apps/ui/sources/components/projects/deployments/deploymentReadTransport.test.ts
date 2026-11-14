@@ -208,11 +208,17 @@ describe('deployment scoped read transport', () => {
         homes.answer(serverId, `${root}/${detail.environment.id}`, { body: { ok: true, environment: detail.environment,
             targetLinks: detail.targetLinks.map(item => item.targetLink) } });
         homes.answer(serverId, `${root}/${detail.environment.id}/deployments`, {
-            body: { ok: true, items: [receipt.deployment], nextCursor: null } });
+            select: (_input, request) => {
+                const query = new URL(request.url).searchParams;
+                expect(Object.fromEntries(query)).toMatchObject({ actorAccountId: 'account-owner',
+                    requestedAtFromMs: '1000', requestedAtToMs: '2000' });
+                return { body: { ok: true, items: [receipt.deployment], nextCursor: null } };
+            } });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const { readDeploymentActivityPage } = await import('./deploymentActivityRead');
-        const page = await readDeploymentActivityPage(lifetime, { limit: 10, projectSourceId: detail.environment.projectSourceId }, [],
+        const page = await readDeploymentActivityPage(lifetime, { limit: 10, projectSourceId: detail.environment.projectSourceId,
+            kind: 'receipt', actorAccountId: 'account-owner', requestedAtFromMs: 1000, requestedAtToMs: 2000 }, [],
             { signal: new AbortController().signal });
         expect(page.unavailableSources).toEqual([]);
         expect(page).toMatchObject({ coverage: 'complete', nextCursor: null,

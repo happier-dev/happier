@@ -160,10 +160,12 @@ describe('deployment demand read controller', () => {
             controller.acquireHistory(base.environment.id, { ...filters, state: 'succeeded' }, active),
             controller.acquireHistory(base.environment.id, { ...filters, actorAccountId: 'other-account' }, active),
             controller.acquireHistory(base.environment.id, { ...filters, operation: 'deploy' }, active),
+            controller.acquireHistory(base.environment.id, { ...filters, requestedAtFromMs: 1000 }, active),
+            controller.acquireHistory(base.environment.id, { ...filters, requestedAtToMs: 2000 }, active),
         ];
         try {
             await Promise.all([filtered.refresh(), unfiltered.refresh(), ...variants.map(lease => lease.refresh())]);
-            expect(base.transport.listHistory, 'each filter dimension owns an independent page').toHaveBeenCalledTimes(5);
+            expect(base.transport.listHistory, 'each filter dimension owns an independent page').toHaveBeenCalledTimes(7);
             expect(base.transport.listHistory).toHaveBeenCalledWith(scope, base.environment.id, filters, expect.anything());
             filtered.nextPage();
             await vi.waitFor(() => expect(filtered.getSnapshot().value?.items[0]?.id).toBe(second.id));
@@ -172,7 +174,7 @@ describe('deployment demand read controller', () => {
             expect(unfiltered.getSnapshot().value?.items[0]?.id).toBe(first.id);
             filtered.previousPage();
             expect(filtered.getSnapshot().value?.items[0]?.id).toBe(first.id);
-            expect(base.transport.listHistory, 'previous matching page is retained').toHaveBeenCalledTimes(6);
+            expect(base.transport.listHistory, 'previous matching page is retained').toHaveBeenCalledTimes(8);
         } finally { filtered.release(); unfiltered.release(); variants.forEach(lease => lease.release()); controller.retire(); }
     });
 

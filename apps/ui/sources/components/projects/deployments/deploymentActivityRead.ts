@@ -30,11 +30,12 @@ export async function readDeploymentActivityPage(lifetime: ServerAccountScopeLif
                     { cursor, ...(query.environmentId ? { environmentIds: [query.environmentId] } : {}) }, readOptions)));
                 return { ...page, items: page.items.map(item => item.environment) };
             },
-            async listReceipts(environmentId, cursor) {
-                return DeploymentReceiptHistoryV1Schema.parse(unwrap(await transport.listHistory(scope, environmentId, { cursor }, readOptions)));
+            async listReceipts(environmentId, cursor, filters) {
+                return DeploymentReceiptHistoryV1Schema.parse(unwrap(await transport.listHistory(scope, environmentId,
+                    { cursor, ...filters }, readOptions)));
             },
-            async listOperations(machineId, cursor) {
-                return listActionOperations({ ...lifetime.scope, machineId, request: { cursor },
+            async listOperations(machineId, cursor, filters) {
+                return listActionOperations({ ...lifetime.scope, machineId, request: { cursor, ...filters },
                     requireCurrentDomainFacts: true, signal: controller.signal });
             },
         } });

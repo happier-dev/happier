@@ -16,6 +16,7 @@ import {
   DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
 } from '@happier-dev/deployment-protocol/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { FleetActivityFilter } from './useFleetActivityPage';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -143,7 +144,9 @@ it('narrows Activity to the chosen Machine through the read, never by filtering 
   homes.answer(serverId, root, {
     body: { ok: true, items: [detail.environment], nextCursor: null },
   });
+  let historyQuery = new URLSearchParams();
   homes.answer(serverId, `${root}/${detail.environment.id}/deployments`, {
+    select: (_input, request) => { historyQuery = new URL(request.url).searchParams; return undefined; },
     body: {
       ok: true,
       items: [receipt.deployment],
@@ -161,8 +164,8 @@ it('narrows Activity to the chosen Machine through the read, never by filtering 
   };
 
   const hook = await renderHook(
-    (machineId: string | null) => useFleetActivityPage(lifetime, [], true, { machineId }),
-    { initialProps: 'machine-elsewhere' as string | null },
+    (filter: FleetActivityFilter) => useFleetActivityPage(lifetime, [], true, filter),
+    { initialProps: { machineId: 'machine-elsewhere' } as FleetActivityFilter },
   );
   await settle(hook);
   expect(hook.getCurrent().state.status).toBe('ready');
@@ -170,9 +173,17 @@ it('narrows Activity to the chosen Machine through the read, never by filtering 
 
   // The receipt ran on the Machines its opened content names.
   expect(receipt.content.machines.length).toBeGreaterThan(0);
-  await hook.rerender(receipt.content.machines[0]!);
+  await hook.rerender({ machineId: receipt.content.machines[0]!, kind: 'receipt', actorAccountId: 'account-owner',
+    requestedAtFromMs: 1000, requestedAtToMs: 2000 });
   await settle(hook);
   expect(hook.getCurrent().state.items).toMatchObject([
     { kind: 'receipt', receipt: { id: receipt.deployment.id } },
   ]);
+  expect(Object.fromEntries(historyQuery)).toMatchObject({ actorAccountId: 'account-owner',
+    requestedAtFromMs: '1000', requestedAtToMs: '2000' });
+  await hook.rerender({ machineId: receipt.content.machines[0]!, kind: 'receipt', actorAccountId: 'another-account',
+    requestedAtFromMs: 0, requestedAtToMs: 1000 });
+  await settle(hook);
+  expect(Object.fromEntries(historyQuery)).toMatchObject({ actorAccountId: 'another-account',
+    requestedAtFromMs: '0', requestedAtToMs: '1000' });
 });

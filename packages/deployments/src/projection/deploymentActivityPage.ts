@@ -1,5 +1,5 @@
 import type { DeploymentEnvironmentHeaderV1, DeploymentReceiptHistoryV1 } from '@happier-dev/deployment-protocol/v1';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionOperationListV2Request, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentActivityQueryV1, DeploymentActivityCursorV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import type { DeploymentReadScopeV1 } from '../controller/deploymentReadControllerTypes.js';
 import { DeploymentActivityQueryV1Schema } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
@@ -9,8 +9,10 @@ type Page<T> = Readonly<{ items: readonly T[]; nextCursor: string | null; covera
 type Receipt = DeploymentReceiptHistoryV1['items'][number];
 export type DeploymentActivityReadOwnersV1 = Readonly<{
     listEnvironments(cursor?: string): Promise<Page<DeploymentEnvironmentHeaderV1>>;
-    listReceipts(environmentId: string, cursor?: string): Promise<Page<Receipt>>;
-    listOperations(machineId: string, cursor?: string): Promise<Page<ActionOperationSnapshotV1>>;
+    listReceipts(environmentId: string, cursor?: string,
+        filters?: Pick<DeploymentActivityQueryV1, 'actorAccountId' | 'requestedAtFromMs' | 'requestedAtToMs'>): Promise<Page<Receipt>>;
+    listOperations(machineId: string, cursor?: string,
+        filters?: Pick<ActionOperationListV2Request, 'actorAccountId' | 'createdAtFromMs' | 'createdAtToMs'>): Promise<Page<ActionOperationSnapshotV1>>;
 }>;
 export type DeploymentActivityItemV1 = Readonly<{ id: string; requestedAtMs: number }> & (
     | Readonly<{ kind: 'receipt'; environment: DeploymentEnvironmentHeaderV1; receipt: Receipt }>
@@ -30,6 +32,10 @@ export async function readDeploymentActivityPageV1(input: Readonly<{
 }>): Promise<DeploymentActivityPageV1> {
     const { scope, owners, signal } = input;
     const query = DeploymentActivityQueryV1Schema.parse(input.query);
+    const receiptFilters = { actorAccountId: query.actorAccountId,
+        requestedAtFromMs: query.requestedAtFromMs, requestedAtToMs: query.requestedAtToMs };
+    const operationFilters = { actorAccountId: query.actorAccountId,
+        createdAtFromMs: query.requestedAtFromMs, createdAtToMs: query.requestedAtToMs };
     const items: DeploymentActivityItemV1[] = [];
     const unavailableSources: Array<DeploymentActivityPageV1['unavailableSources'][number]> = [];
     let partial = false;
@@ -66,10 +72,11 @@ export async function readDeploymentActivityPageV1(input: Readonly<{
         try {
             do {
                 signal?.throwIfAborted();
-                const page = await owners.listReceipts(environment.id, cursor);
+                const page = await owners.listReceipts(environment.id, cursor, receiptFilters);
                 partial ||= page.coverage === 'partial';
                 for (const receipt of page.items) {
                     representedOperations.add(receipt.actionOperationId);
+                    if (query.kind === 'operation') continue;
                     const row = { id: `receipt:${receipt.id}`, requestedAtMs: receipt.requestedAtMs,
                         kind: 'receipt' as const, environment, receipt };
                     if (!after(row)) continue;
@@ -81,23 +88,27 @@ export async function readDeploymentActivityPageV1(input: Readonly<{
                     items.push(row);
                     count++;
                 }
+                // Operation-only reads use one receipt page for invocation dedupe,
+                // without making receipt continuation part of their output demand.
+                if (query.kind === 'operation') break;
                 cursor = page.nextCursor ?? undefined;
                 if (count === query.limit) { more ||= cursor !== undefined; break; }
             } while (cursor);
         } catch (error) { failed('environment', environment.id, error); }
     }));
-    const machineIds = query.machineId ? [query.machineId] : [...new Set(input.machineIds)];
+    const machineIds = query.kind === 'receipt' ? [] : query.machineId ? [query.machineId] : [...new Set(input.machineIds)];
     await Promise.all(machineIds.map(async machineId => {
         let cursor: string | undefined;
         try {
             do {
                 signal?.throwIfAborted();
-                const page = await owners.listOperations(machineId, cursor);
+                const page = await owners.listOperations(machineId, cursor, operationFilters);
                 partial ||= page.coverage === 'partial';
                 for (const operation of page.items) {
                     if (operation.scope.accountId !== scope.accountId || operation.scope.machineId !== machineId) continue;
                     const domain = operation.domainRef;
-                    // The deployment receipt is the canonical history for this same invocation.
+                    // A receipt represents its recorded invocation, not every operation
+                    // that later refers to it (a repeated teardown may reuse the receipt).
                     if (representedOperations.has(operation.operationId)) continue;
                     const environmentId = domain?.kind === 'deploymentTargetLink' || domain?.kind === 'deployment'
                         ? domain.environmentId : undefined;

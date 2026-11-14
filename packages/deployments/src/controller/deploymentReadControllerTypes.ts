@@ -11,7 +11,7 @@ import type {
     DeploymentEnvironmentHealthAggregateV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentEnvironmentListInputV1, DeploymentReceiptListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDatabaseSizeV1, DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
@@ -79,12 +79,8 @@ export type DeploymentCollectionQueryV1 = Readonly<Omit<DeploymentEnvironmentLis
     environmentIds?: readonly string[];
     previewPullRequestIds?: readonly string[];
 }>;
-export type DeploymentHistoryQueryV1 = Readonly<{
-    cursor?: string;
-    state?: DeploymentReceiptHeaderV1['state'];
-    actorAccountId?: DeploymentReceiptHeaderV1['requestedByAccountId'];
-    operation?: DeploymentReceiptHeaderV1['operation'];
-}>;
+export type DeploymentHistoryQueryV1 = Readonly<Pick<DeploymentReceiptListInputV1,
+    'cursor' | 'state' | 'actorAccountId' | 'operation' | 'requestedAtFromMs' | 'requestedAtToMs'>>;
 export type DeploymentDomainReadItemV1 = Readonly<{
     domain: DeploymentDomainHeaderV1; title: string; content: DeploymentDomainContentV1;
     health?: DeploymentDomainHealthFactsV1;

@@ -608,6 +608,8 @@ export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictOb
   ...deploymentEnvironmentReadAddress,
   state: z.optional(DeploymentReceiptMetadataV1Schema.shape.state),
   actorAccountId: z.optional(DeploymentReceiptMetadataV1Schema.shape.requestedByAccountId),
+  requestedAtFromMs: z.optional(DeploymentTimestampV1Schema),
+  requestedAtToMs: z.optional(DeploymentTimestampV1Schema),
   operation: z.optional(DeploymentReceiptMetadataV1Schema.shape.operation),
   inProgressOnly: z.optional(z.literal(true)),
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,

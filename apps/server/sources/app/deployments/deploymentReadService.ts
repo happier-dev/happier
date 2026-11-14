@@ -422,6 +422,10 @@ export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string,
     const filters: Prisma.DeploymentWhereInput = { environmentId: input.environmentId,
         ...(input.state ? { state: input.state } : {}),
         ...(input.actorAccountId ? { requestedByAccountId: input.actorAccountId } : {}),
+        ...(input.requestedAtFromMs !== undefined || input.requestedAtToMs !== undefined ? { requestedAt: {
+            ...(input.requestedAtFromMs === undefined ? {} : { gte: new Date(input.requestedAtFromMs) }),
+            ...(input.requestedAtToMs === undefined ? {} : { lt: new Date(input.requestedAtToMs) }),
+        } } : {}),
         ...(input.operation ? { operation: input.operation } : {}) };
     if (input.inProgressOnly) {
         // The Environment lock admits one in-progress receipt, so observing
