@@ -213,23 +213,36 @@ export function renderWorkerMemoryReservationRows(sample) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  if (process.argv.includes('--admission-status')) {
+  if (process.argv.includes('--admission-status') || process.argv.includes('--admission-watch')) {
     if (process.platform !== 'linux') {
       process.stdout.write(JSON.stringify({ state: 'unsupported' }) + '\n');
     } else {
       const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
       const root = argument?.slice('--admission-root='.length) ?? spawnSync('/bin/sh', ['-c', '. "$1" && resolve_native_host_admission_root',
         'admission-observation', fileURLToPath(new URL('./native_host_admission_state.sh', import.meta.url))], { encoding: 'utf8' }).stdout?.trim();
-      const { requestAdmissionSample } = await import('./admission_client.mjs');
-      const sample = await requestAdmissionSample(root);
-      let disk;
-      if (process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR) {
+      const { requestAdmissionSample, watchAdmissionSamples } = await import('./admission_client.mjs');
+      if (process.argv.includes('--admission-watch')) {
+        const controller = new AbortController();
+        const stop = () => controller.abort();
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
         try {
-          const { inspectWorkerDiskBudget } = await import('../dev_targets/worker_disk_budget.mjs');
-          disk = { state: 'observed', ...await inspectWorkerDiskBudget({ repoDir: process.cwd(), cacheBaseDir: process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR }) };
-        } catch (error) { disk = { state: 'unavailable', error: error.message }; }
+          for await (const sample of watchAdmissionSamples(root, { signal: controller.signal })) {
+            process.stdout.write(JSON.stringify({ state: 'observed', ...sample }) + '\n');
+          }
+        } catch (error) { if (!controller.signal.aborted) throw error; }
+        finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+      } else {
+        const sample = await requestAdmissionSample(root);
+        let disk;
+        if (process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR) {
+          try {
+            const { inspectWorkerDiskBudget } = await import('../dev_targets/worker_disk_budget.mjs');
+            disk = { state: 'observed', ...await inspectWorkerDiskBudget({ repoDir: process.cwd(), cacheBaseDir: process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR }) };
+          } catch (error) { disk = { state: 'unavailable', error: error.message }; }
+        }
+        process.stdout.write(JSON.stringify({ state: 'observed', ...sample, ...(disk ? { disk } : {}) }) + '\n');
       }
-      process.stdout.write(JSON.stringify({ state: 'observed', ...sample, ...(disk ? { disk } : {}) }) + '\n');
     }
   } else {
     const sample = readWorkerMemoryReservations();

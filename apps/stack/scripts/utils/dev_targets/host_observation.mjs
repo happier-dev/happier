@@ -4,3 +4,8 @@ const identity = 'process.stdout.write("HSTACK_QA_HOST="+JSON.stringify({platfor
 const memory = 'const cp=require("node:child_process");const result=cp.spawnSync("./apps/stack/bin/hstack-exec",["--heavyweight-memory-sample"],{encoding:"utf8"});if(result.status!==0)throw new Error("Host memory observation unavailable: "+result.stderr);process.stdout.write("HSTACK_QA_HOST="+JSON.stringify({platform:process.platform,arch:process.arch,remote:process.env.HAPPIER_DEV_TARGET_EXECUTION==="1",...JSON.parse(result.stdout)})+"\\n")';
 
 export const HOST_OBSERVATION_PROGRAMS = Object.freeze({ identity, memory });
+
+export const HOST_ADMISSION_OBSERVATION = Object.freeze({
+  entry: 'apps/stack/scripts/utils/proc/service_memory.mjs',
+  flags: Object.freeze(['--admission-status', '--admission-watch']),
+});

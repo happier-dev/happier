@@ -25,7 +25,7 @@ import { resolveRemoteServerRuntimeConfig, projectRemoteIrohEnvironment, project
 export { resolveRemoteServerRuntimeConfig } from './server_environment.mjs';
 import { resolveRemoteValidationPlacementClass } from './validation_preparation_policy.mjs';
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
-import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
+import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
 import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
@@ -699,6 +699,8 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     formatterCheck: args.some(arg => REMOTE_COMMAND_CLASSIFICATION.formatterCheckFlags.includes(arg)) ? '1' : '0',
     admissionWrapper: command === 'hstack-exec' && args[1] === '--heavyweight-admission' ? '1' : '0',
     hostObservation: (command === 'hstack-exec' && args.length === 2 && args[1] === '--heavyweight-memory-sample')
+      || (['node', 'nodejs'].includes(command) && args.length === 3
+        && entryRepositoryPath === HOST_ADMISSION_OBSERVATION.entry && HOST_ADMISSION_OBSERVATION.flags.includes(args[2]))
       || (['node', 'nodejs'].includes(command) && args.length === 3 && args[1] === '-e'
         && Object.values(HOST_OBSERVATION_PROGRAMS).includes(args[2])) ? '1' : '0',
     noCheck,
@@ -1584,6 +1586,10 @@ native_resolve_command_policy_arguments() {
     policy_hostObservation=1
   elif { [ "$policy_command" = node ] || [ "$policy_command" = nodejs ]; } && [ "$#" -eq 3 ] && [ "\${2-}" = -e ]; then
     case "\${3-}" in ${Object.values(HOST_OBSERVATION_PROGRAMS).map(posixQuote).join('|')}) policy_hostObservation=1 ;; esac
+  elif { [ "$policy_command" = node ] || [ "$policy_command" = nodejs ]; } && [ "$#" -eq 3 ]; then
+    case "\${2#./}" in ${posixQuote(HOST_ADMISSION_OBSERVATION.entry)})
+      case "\${3-}" in ${HOST_ADMISSION_OBSERVATION.flags.map(posixQuote).join('|')}) policy_hostObservation=1 ;; esac ;;
+    esac
   fi
   if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
     policy_admissionWrapper=1

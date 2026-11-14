@@ -9,6 +9,21 @@ import {
   appendExecutionProvenance,
 } from './execution_provenance.mjs';
 
+test('duration p99 uses successful completed records of the requested class without a fallback threshold', async t => {
+  const { readExecutionDurationP99 } = await import('./execution_provenance.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-duration-history-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation'), null);
+  for (let durationMs = 1; durationMs <= 100; durationMs++) {
+    await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'targeted-validation', exitCode: 0, durationMs });
+  }
+  await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'source-search', exitCode: 0, durationMs: 99999 });
+  await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'targeted-validation', exitCode: 1, durationMs: 99999 });
+  await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'targeted-validation', exitCode: 0, durationMs: 0 });
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation'), 99);
+  assert.equal(await readExecutionDurationP99(root, 'unknown-class'), null);
+});
+
 test('execution provenance preserves existing observations past the former rotation cap without command arguments', async (t) => {
   const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-execution-provenance-'));
   t.after(async () => rm(stackBaseDir, { recursive: true, force: true }));

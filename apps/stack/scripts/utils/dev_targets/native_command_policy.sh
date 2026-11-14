@@ -873,6 +873,10 @@ native_resolve_command_policy_arguments() {
     policy_hostObservation=1
   elif { [ "$policy_command" = node ] || [ "$policy_command" = nodejs ]; } && [ "$#" -eq 3 ] && [ "${2-}" = -e ]; then
     case "${3-}" in 'process.stdout.write("HSTACK_QA_HOST="+JSON.stringify({platform:process.platform,arch:process.arch,remote:process.env.HAPPIER_DEV_TARGET_EXECUTION==="1"})+"\n")'|'const cp=require("node:child_process");const result=cp.spawnSync("./apps/stack/bin/hstack-exec",["--heavyweight-memory-sample"],{encoding:"utf8"});if(result.status!==0)throw new Error("Host memory observation unavailable: "+result.stderr);process.stdout.write("HSTACK_QA_HOST="+JSON.stringify({platform:process.platform,arch:process.arch,remote:process.env.HAPPIER_DEV_TARGET_EXECUTION==="1",...JSON.parse(result.stdout)})+"\n")') policy_hostObservation=1 ;; esac
+  elif { [ "$policy_command" = node ] || [ "$policy_command" = nodejs ]; } && [ "$#" -eq 3 ]; then
+    case "${2#./}" in 'apps/stack/scripts/utils/proc/service_memory.mjs')
+      case "${3-}" in '--admission-status'|'--admission-watch') policy_hostObservation=1 ;; esac ;;
+    esac
   fi
   if [ "$policy_command" = hstack-exec ] && [ "${2-}" = --heavyweight-admission ]; then
     policy_admissionWrapper=1

@@ -21,6 +21,9 @@ export { brokerAddress } from './admission_socket.mjs';
 const HEAD_RESERVATION_DELAY_MS = 1_344_000;
 
 const socketGone = error => error.code === 'ECONNREFUSED' || error.code === 'ENOENT';
+const validDuration = value => (value.p99DurationMs === undefined && value.durationClass === undefined)
+  || (Number.isFinite(value.p99DurationMs) && value.p99DurationMs > 0
+    && typeof value.durationClass === 'string' && /^[a-z][a-z0-9-]*$/.test(value.durationClass));
 
 async function lockFile(fd) {
   // flock locks the inherited open-file description. Retaining the original
@@ -114,6 +117,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   const waiting = [];
   const controls = new Set();
   const pendingConnections = new Set();
+  const subscribers = new Map();
+  let overrunWake;
   const watchers = new Map();
   const pendingResourceChanges = new Set();
   let resourceCatchUp;
@@ -187,6 +192,23 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       && minimumCpuCores(item) <= totalCpuCores;
   }
   function status() {
+    const now = Date.now();
+    const overruns = [];
+    let nextOverrunAt = null;
+    let durationHistoryUnavailableCount = 0;
+    for (const slot of slots.values()) {
+      if (!(slot.p99DurationMs > 0)) {
+        durationHistoryUnavailableCount += 1;
+        continue;
+      }
+      if (!Number.isFinite(slot.admittedAt)) continue;
+      const ageMs = Math.max(0, now - slot.admittedAt);
+      const thresholdAt = slot.admittedAt + 2 * slot.p99DurationMs;
+      if (now > thresholdAt) overruns.push({ slotId: slot.slotId,
+        className: Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, slot.className) ? slot.className : 'unknown',
+        durationClass: slot.durationClass, ageMs, p99DurationMs: slot.p99DurationMs });
+      else nextOverrunAt = nextOverrunAt === null ? thresholdAt + 1 : Math.min(nextOverrunAt, thresholdAt + 1);
+    }
     const budget = slotResourceBudget();
     const head = waiting.find(canReserveHead);
     const reservation = headReservation(head);
@@ -207,7 +229,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     }
     // Publish the same head reservation used by drain and read-only checks.
     // Publication-blocked demand has no memory reservation.
-    return { ...sample, ...budget,
+    return { ...sample, ...budget, overruns, nextOverrunAt, durationHistoryUnavailableCount,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
         ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB,
         reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS,
@@ -237,8 +259,28 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
       // The failed pass does not decide the fate of unrelated waiters. Keep
       // their order, watchers and existing catch-up so the next pass can decide.
-    }).then(publishQueuePositions);
+    }).then(publishQueuePositions).then(publishAdmissionStatus);
     return serial;
+  }
+  function publishAdmissionStatus() {
+    clearTimeout(overrunWake);
+    overrunWake = undefined;
+    if (closing || subscribers.size === 0) return;
+    const snapshot = status();
+    const identity = JSON.stringify({ activeCount: snapshot.activeCount,
+      durationHistoryUnavailableCount: snapshot.durationHistoryUnavailableCount,
+      nextOverrunAt: snapshot.nextOverrunAt, overruns: snapshot.overruns.map(({ ageMs, ...slot }) => slot) });
+    for (const [socket, previous] of subscribers) {
+      if (previous === identity) continue;
+      subscribers.set(socket, identity);
+      send(socket, { kind: 'sample' }, snapshot);
+    }
+    if (snapshot.nextOverrunAt !== null) {
+      // Node timers support signed 32-bit milliseconds. Long recorded classes
+      // wake at that platform boundary and then retain their real deadline.
+      overrunWake = setTimeout(() => enqueue(async () => {}),
+        Math.min(2_147_483_647, Math.max(1, snapshot.nextOverrunAt - Date.now())));
+    }
   }
   function publishQueuePositions() {
     if (closing) return;
@@ -483,8 +525,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       // leave a slot that its client was never offered.
       const resources = readResources(item);
       if (!resources) continue;
-      const address = slotAddress(root, item.pid, floorKiB, randomUUID(), cpuCores);
+      const slotId = randomUUID();
+      const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
+        slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
@@ -508,6 +552,21 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       peer.once('error', reject);
     });
     peer.on('error', () => {});
+    // Current clients retain admitted duration metadata with their existing
+    // lifetime socket. A successor adopts it without another job or timer.
+    const lines = createInterface({ input: peer });
+    lines.on('error', () => {});
+    lines.on('line', line => {
+      let metadata;
+      try { metadata = JSON.parse(line); } catch { return; }
+      if (metadata.kind !== 'slot-duration' || !validDuration(metadata)
+        || !Number.isSafeInteger(metadata.admittedAt) || metadata.admittedAt < 0
+        || !/^[a-f0-9-]{36}$/.test(metadata.slotId ?? '')
+        || !Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, metadata.className)) return;
+      enqueue(() => { Object.assign(slot, { admittedAt: metadata.admittedAt,
+        slotId: metadata.slotId, className: metadata.className,
+        durationClass: metadata.durationClass, p99DurationMs: metadata.p99DurationMs }); });
+    });
     peer.once('close', () => enqueue(() => release(slot)));
     return slot;
   }
@@ -521,6 +580,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     lines.on('line', line => enqueue(async () => {
       let request;
       try { request = JSON.parse(line); } catch { socket.destroy(); return; }
+      if (request.kind === 'watch') { subscribers.set(socket, null); return; }
       if (request.kind === 'sample') { send(socket, { kind: 'sample' }); socket.end(); return; }
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
@@ -539,10 +599,11 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         try {
           await connectSlot(item.slot);
           item.slot.admitted = true;
-          item.slot.lastSampleAt = Date.now();
+          item.slot.admittedAt = item.slot.lastSampleAt = Date.now();
           item.settled = true;
           removeWaiting(item);
-          send(socket, { kind: 'admitted', floorKiB: item.slot.floorKiB, cpuCores: item.slot.clientCpuCores ?? item.slot.cpuCores, workers: item.slot.workers });
+          send(socket, { kind: 'admitted', slotId: item.slot.slotId, admittedAt: item.slot.admittedAt,
+            floorKiB: item.slot.floorKiB, cpuCores: item.slot.clientCpuCores ?? item.slot.cpuCores, workers: item.slot.workers });
           refreshWatchers();
         } catch { refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); await releaseDecision(); }
         return;
@@ -561,7 +622,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         await drain();
         return;
       }
-      if (!validCpuRequest(request)
+      if (!validCpuRequest(request) || !validDuration(request)
         || request.kind !== 'acquire' || item || !Number.isSafeInteger(request.floorKiB) || request.floorKiB <= 0
         || (request.arrivedAt !== undefined && (!Number.isSafeInteger(request.arrivedAt) || request.arrivedAt < 0))
         || !Number.isSafeInteger(request.pid) || request.pid <= 1 || typeof request.className !== 'string'
@@ -604,6 +665,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     socket.on('error', () => {});
     socket.once('close', () => {
       controls.delete(socket);
+      if (subscribers.delete(socket)) publishAdmissionStatus();
       if (!item || item.settled) return;
       enqueue(async () => {
         if (item.slot) { removeWaiting(item); await release(item.slot); }
@@ -678,6 +740,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     async close() {
       if (closing) return;
       closing = true;
+      clearTimeout(overrunWake);
       clearTimeout(resourceCatchUp);
       resourceCatchUp = undefined;
       for (const watcher of watchers.values()) watcher.close();

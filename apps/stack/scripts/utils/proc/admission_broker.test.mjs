@@ -11,15 +11,102 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { brokerAddress, createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
-import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionCommand } from './admission_client.mjs';
+import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionCommand, watchAdmissionSamples } from './admission_client.mjs';
 import { slotAddress } from './admission_socket.mjs';
 import { tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 import { HEAVYWEIGHT_COMMAND_RESOURCES } from '../dev_targets/command_resources.mjs';
+import { createLoadSentinel } from '../../perf/load-sentinel.mjs';
+import { postBoardEntry } from '../../../../../scripts/board/postBoardEntry.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
+
+test('status flags each admitted slot once only after twice its recorded class p99 and never releases it', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root, broker } = await fixture(t);
+  const duration = { durationClass: 'targeted-validation', p99DurationMs: 100 };
+  await (await acquire(root, 1, t, duration)).admit();
+  await (await acquire(root, 1, t, duration)).admit();
+  await (await acquire(root, 1, t, { durationClass: 'source-search', p99DurationMs: 1000 })).admit();
+  await (await acquire(root, 1, t)).admit();
+  now += 200;
+  assert.deepEqual((await requestAdmissionSample(root)).overruns, []);
+  now += 1;
+  const first = await requestAdmissionSample(root);
+  assert.equal(first.overruns.length, 2);
+  assert.equal(new Set(first.overruns.map(slot => slot.slotId)).size, 2);
+  assert.ok(first.overruns.every(slot => slot.durationClass === duration.durationClass && slot.p99DurationMs === 100 && slot.ageMs === 201));
+  assert.deepEqual(broker.status().overruns, first.overruns);
+  assert.equal(first.activeCount, 4, 'overrun reporting never releases a reservation or stops the job');
+  assert.equal(first.durationHistoryUnavailableCount, 1, 'no-history jobs remain explicitly observable without an invented threshold');
+  const posts = [];
+  const board = join(root, 'HANDOFF.md');
+  const notice = join(root, 'notice.md');
+  await writeFile(board, '# Fixture board\n');
+  const sentinel = createLoadSentinel({ repoDir: root, graphs: [], signal: t.signal,
+    readAdmissionSamples: async () => [{ target: 'fixture', ...await requestAdmissionSample(root) }],
+    post: async post => {
+      await writeFile(notice, post);
+      await postBoardEntry(board, notice);
+      posts.push(post);
+    } });
+  await sentinel.request();
+  await sentinel.request();
+  assert.equal(posts.length, 2, 'each overrun slot posts once through the existing sentinel board writer');
+  assert.ok(posts.every(post => post.includes('admission overrun') && post.includes('targeted-validation')));
+  assert.equal(((await readFile(board, 'utf8')).match(/— admission overrun \[/g) ?? []).length, 2);
+});
+
+test('watch pushes a deadline crossing without new commands or resource observations', linux, async t => {
+  const { root, broker } = await fixture(t);
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const watch = watchAdmissionSamples(root, { signal: controller.signal });
+  assert.equal((await watch.next()).value.activeCount, 0);
+  await (await acquire(root, 1, t, { durationClass: 'targeted-validation', p99DurationMs: 50 })).admit();
+  const samples = broker.status().sampleCount;
+  let observed;
+  do { observed = (await watch.next()).value; } while (!observed.overruns.length);
+  assert.equal(observed.overruns.length, 1);
+  assert.equal(observed.sampleCount, samples, 'crossing a duration deadline performs no process or memory sampling');
+  assert.equal(observed.activeCount, 1);
+  controller.abort();
+  await watch.return();
+});
+
+test('current admission clients retain duration metadata across broker succession', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root, broker, sampleResources } = await fixture(t);
+  const started = Promise.withResolvers();
+  const finished = Promise.withResolvers();
+  const task = runAdmittedTask({ root, className: 'validation', floorKiB: 1, repoDir: root,
+    env: { HAPPIER_ADMISSION_DURATION_CLASS: 'targeted-validation', HAPPIER_ADMISSION_DURATION_P99_MS: '100' } }, async () => {
+    started.resolve();
+    return await finished.promise;
+  });
+  t.after(() => finished.resolve());
+  await started.promise;
+  const slotId = broker.status().nextOverrunAt;
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources });
+  t.after(() => replacement.close());
+  await replacement.start();
+  now += 201;
+  // A sample is an ordered control boundary after the retained client socket
+  // advertises the metadata to the replacement broker.
+  await new Promise(resolve => setImmediate(resolve));
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.overruns.length, 1);
+  assert.equal(sample.overruns[0].ageMs, 201);
+  assert.equal(sample.overruns[0].p99DurationMs, 100);
+  assert.ok(slotId > 0);
+  finished.resolve();
+  await task;
+});
 
 test('CPU admission grants reach the real payload worker controls', linux, async t => {
   const { root } = await fixture(t, { cpuCores: 2 });
@@ -1464,12 +1551,11 @@ test('a control stream EPIPE drops only that client and preserves broker admissi
 
 
 test('measured package floors fit at capacity and queued work resumes after release', linux, async t => {
-  const gibKiB = 1024 * 1024;
-  const { root, broker } = await fixture(t, {
-    readMemory: () => ({ availableMemoryKiB: 10 * gibKiB, totalMemoryKiB: 10 * gibKiB }),
-  });
   const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB;
-  assert.equal(floorKiB, 5 * gibKiB);
+  const capacityKiB = 2 * floorKiB;
+  const { root, broker } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: capacityKiB }),
+  });
   // Isolate memory from CPU admission: package publishers normally reserve host CPU.
   const options = { className: 'package-dist', cpuCost: 1 };
   const first = await acquire(root, floorKiB, t, options);
@@ -1480,7 +1566,7 @@ test('measured package floors fit at capacity and queued work resumes after rele
   await request(root, { kind: 'sample' }).then(async client => {
     await client.next(); client.socket.destroy();
   });
-  assert.equal(broker.status().reservedMemoryKiB, 10 * gibKiB);
+  assert.equal(broker.status().reservedMemoryKiB, capacityKiB);
   assert.equal(broker.status().waitingCount, 1);
   await held.release();
   const resumed = await third.admit();

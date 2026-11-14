@@ -8,6 +8,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { ENTRY_GRAPHS, loadEntryGraph } from './entry-load.mjs';
 import { isPublicRuntimeImportDiagnostic } from '../utils/proc/runtimeImportProbe.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../packages/cli-common/fileChangeObserver.mjs';
+import { loadDevTargetsConfig } from '../utils/dev_targets/config.mjs';
+import { watchDevTargetAdmission } from '../utils/dev_targets/executor.mjs';
+import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../utils/stack/repo_stack_identity.mjs';
 
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
@@ -79,8 +82,37 @@ async function recentImportFiles(repoDir, graph, result) {
 }
 
 export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, env = process.env, post, onResult = () => {},
+  readAdmissionSamples = async () => [],
   waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
+  const announcedOverruns = new Map();
+  let admissionPending = false;
+  let admissionRunning;
+  async function sampleAdmissions() {
+    do {
+      admissionPending = false;
+      const samples = await readAdmissionSamples();
+      for (const sample of samples) {
+        if (!/^[a-z0-9][a-z0-9._-]*$/.test(sample.target ?? '') || !Array.isArray(sample.overruns)) continue;
+        const announced = announcedOverruns.get(sample.target) ?? new Set();
+        for (const slot of sample.overruns) {
+          if (!/^[a-f0-9-]{36}$/.test(slot.slotId ?? '') || !/^[a-z][a-z0-9-]*$/.test(slot.durationClass ?? '')
+            || !Number.isFinite(slot.ageMs) || !Number.isFinite(slot.p99DurationMs)) continue;
+          if (announced.has(slot.slotId)) continue;
+          const details = `target=${sample.target}; slot=${slot.slotId}; class=${slot.durationClass}; ageMs=${slot.ageMs}; recordedP99Ms=${slot.p99DurationMs}`;
+          if (await announce('admission', 'overrun', details)) announced.add(slot.slotId);
+        }
+        // A successor can report an empty snapshot before retained client
+        // metadata arrives. Notices remain once per slot for this sentinel.
+        if (announced.size) announcedOverruns.set(sample.target, announced);
+      }
+    } while (admissionPending && !signal?.aborted);
+  }
+  function requestAdmissionSample() {
+    admissionPending = true;
+    if (!admissionRunning) admissionRunning = sampleAdmissions().finally(() => { admissionRunning = undefined; });
+    return admissionRunning;
+  }
   async function load(graph) {
     const startedAt = new Date().toISOString();
     let result;
@@ -111,6 +143,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
   async function run() {
     do {
       pending = false;
+      await requestAdmissionSample();
       for (const graph of graphs) {
         signal?.throwIfAborted();
         let result = await load(graph);
@@ -156,24 +189,45 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
     } while (pending && !signal?.aborted);
   }
   return {
+    sampleAdmissions: requestAdmissionSample,
     request() {
       pending = true;
       if (!running) running = run().finally(() => { running = undefined; });
       return running;
     },
-    async idle() { await running; },
+    async idle() { await Promise.all([running, admissionRunning]); },
   };
 }
 
 function formatPost(graph, state, details, notice) {
   const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  if (state === 'overrun') return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ALL leads — URGENT — admission overrun [${process.pid}:${notice}]\n`
+    + '- Inspect the named admitted slot and cancel through its execution handle if needed; the broker leaves it running.\n'
+    + `${details}\n`;
   // Board readers remember whole headings; distinguish same-minute transitions.
   return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ${state === 'broken' ? 'ALL leads' : 'ORCH-TOP'} — ${state === 'broken' ? 'URGENT' : 'RESULT'} — ${graph} ${state} [${process.pid}:${notice}]\n`
     + `- ${state === 'broken' ? 'Inspect the named import path and repair the shared-source load break.' : 'ORCH-TOP: release any reload hold for this cleared break.'}\n`
     + `${details}\n`;
 }
 
-export async function watchLoadSentinel({ repoDir, signal, post, onResult, graphs }) {
+async function watchConfiguredAdmissions({ repoDir, env, signal, onSample }) {
+  const { stackBaseDir } = resolveRepoStackIdentity({ repoRoot: repoDir, stacksStorageRoot: resolveStacksStorageRoot(env) });
+  const { config } = await loadDevTargetsConfig({ path: join(stackBaseDir, 'dev-targets.json'), env });
+  await Promise.all(config.targets.filter(target => target.platform === 'posix').map(async target => {
+    try {
+      await watchDevTargetAdmission({ target, stackBaseDir, env, signal,
+        onSample: sample => onSample({ ...sample, target: target.name }) });
+    } catch (error) {
+      if (signal.aborted) return;
+      const code = error?.code ?? error?.name;
+      console.error(JSON.stringify({ event: 'load-sentinel-admission-watch-unavailable', target: target.name,
+        code: isPublicRuntimeImportDiagnostic(code) && /^[\w-]+$/.test(code) ? code : 'redacted' }));
+    }
+  }));
+}
+
+export async function watchLoadSentinel({ repoDir, signal, post, onResult, graphs, env = process.env,
+  watchAdmissions = watchConfiguredAdmissions }) {
   let debounce;
   let quiet;
   let requestAfterQuiet = false;
@@ -198,7 +252,24 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
     }, DEFAULT_FILE_CHANGE_CATCH_UP_MS);
     return quiet.promise;
   };
-  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs, waitForQuiet });
+  const admissionSamples = new Map();
+  const admissionController = new AbortController();
+  const abortAdmissions = () => admissionController.abort();
+  signal.addEventListener('abort', abortAdmissions, { once: true });
+  if (signal.aborted) abortAdmissions();
+  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs, waitForQuiet, env,
+    readAdmissionSamples: async () => [...admissionSamples.values()] });
+  // A broker stream is independent of graph checks: launches and clock-only
+  // overruns never start expensive source loads or process/memory walks.
+  const admissionWatch = watchAdmissions({ repoDir, env, signal: admissionController.signal, onSample: sample => {
+    admissionSamples.set(sample.target, sample);
+    sentinel.sampleAdmissions().catch(error => { failure = error; stopped.resolve(); });
+  } }).catch(error => {
+    if (signal.aborted) return;
+    const code = error?.code ?? error?.name;
+    console.error(JSON.stringify({ event: 'load-sentinel-admission-watch-unavailable',
+      code: isPublicRuntimeImportDiagnostic(code) && /^[\w-]+$/.test(code) ? code : 'redacted' }));
+  });
   signal.addEventListener('abort', abort, { once: true });
   observer.subscribe(() => {
     requestAfterQuiet = true;
@@ -210,8 +281,11 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
     clearTimeout(debounce);
     quiet?.resolve();
     observer.close();
+    admissionController.abort();
+    signal.removeEventListener('abort', abortAdmissions);
     signal.removeEventListener('abort', abort);
     await sentinel.idle();
+    await admissionWatch;
   }
   if (failure && !signal.aborted) throw failure;
 }

@@ -22,6 +22,36 @@ async function fixtureGraph(t) {
   return { fixture, graph, entry };
 }
 
+test('admission pushes post once per slot without rerunning source graphs', async t => {
+  const { fixture, graph } = await fixtureGraph(t);
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const ready = Promise.withResolvers();
+  const posted = Promise.withResolvers();
+  const posts = [];
+  let publish;
+  let graphLoads = 0;
+  const watching = watchLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: controller.signal,
+    onResult: () => { graphLoads += 1; ready.resolve(); },
+    post: async notice => { posts.push(notice); posted.resolve(); },
+    watchAdmissions: async ({ signal, onSample }) => {
+      publish = onSample;
+      await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    } });
+  await ready.promise;
+  const sample = { target: 'fixture', overruns: [{ slotId: '11111111-2222-3333-4444-555555555555',
+    durationClass: 'targeted-validation', ageMs: 201, p99DurationMs: 100 }] };
+  publish(sample);
+  await posted.promise;
+  publish({ target: 'fixture', overruns: [] });
+  await new Promise(resolve => setImmediate(resolve));
+  publish(sample);
+  controller.abort();
+  await watching;
+  assert.equal(posts.length, 1, 'repeated producer observations announce the slot once');
+  assert.equal(graphLoads, 1, 'admission-only pushes perform zero additional source graph loads');
+});
+
 test('real graph load transitions post one failure and one clear; unchanged failures stay quiet', async t => {
   const { fixture, graph, entry } = await fixtureGraph(t);
   const posts = [];

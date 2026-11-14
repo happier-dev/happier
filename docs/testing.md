@@ -602,6 +602,19 @@ Waiting clients block on their control sockets without polling or process walks.
 Admission uses no owner/waiter files, PID reaper, separate backfill allowance or fixed
 job-count ceiling. Process and scratch custody retain their separate lifecycle owners.
 
+In current 0.3 development, dispatchers derive each admitted command's nearest-rank
+p99 from its recorded successful, positive completed durations. The broker reports
+an `overruns` entry for each slot strictly older than twice that class p99, and
+`durationHistoryUnavailableCount` when a slot lacks usable duration metadata.
+It never kills overrun work or invents a threshold when history is unavailable.
+The existing load sentinel watches one broker stream per configured POSIX target
+and posts each overrun slot once per sentinel lifetime. Slot changes and one
+broker-derived threshold wake push updates without polling or rerunning source
+graphs. Current clients re-advertise duration metadata through their existing slot
+socket on succession; older clients retain capacity reservations without duration
+attribution. Existing brokers and the sentinel adopt this through normal succession
+and reload; dispatchers do not restart them.
+
 In current 0.3 development, the controller alone holds the dispatch reservation
 lifetime lock; transport and control children close their inherited descriptor.
 The existing custody sweep can therefore retire a remote execution after its

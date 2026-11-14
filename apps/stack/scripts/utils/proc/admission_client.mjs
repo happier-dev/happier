@@ -85,6 +85,24 @@ export async function requestAdmissionSample(root, request = { kind: 'sample' })
   }
 }
 
+/** The broker pushes admission/release and deadline crossings on the existing
+ * control transport. Reconnection uses the same succession owner as samples. */
+export async function* watchAdmissionSamples(root, { signal } = {}) {
+  while (!signal?.aborted) {
+    const socket = await connectAdmissionBroker(root);
+    const abort = () => socket.destroy();
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      for await (const response of brokerResponses(socket, { kind: 'watch' }, signal)) {
+        if (response.kind !== 'sample') {
+          throw Object.assign(new Error('Admission broker watch requires succession'), { code: 'HSTACK_ADMISSION_WATCH_UNAVAILABLE' });
+        }
+        yield response;
+      }
+    } finally { signal?.removeEventListener('abort', abort); socket.destroy(); }
+  }
+}
+
 function failure(reason, failureId, cause) {
   const label = { HSTACK_MEMORY_BUSY: 'BUSY', HSTACK_CPU_BUSY: 'BUSY', HSTACK_WORKSPACE_RESOURCE_BUSY: 'BUSY',
     HSTACK_MEMORY_CAPACITY: 'CAPACITY', HSTACK_CPU_CAPACITY: 'CAPACITY', HSTACK_DISK_UNAVAILABLE: 'DISK' }[reason] ?? 'UNAVAILABLE';
@@ -184,7 +202,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     // Reuse the first arrival when this same waiter reconnects after broker loss.
     // Resolve policy from the current catalog, rather than a retained broker's
     // older module. The broker alone owns host capacity and reservations.
+    const durationClass = env.HAPPIER_ADMISSION_DURATION_CLASS;
+    const p99DurationMs = Number(env.HAPPIER_ADMISSION_DURATION_P99_MS);
+    let admittedDuration;
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
+      ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost: resolveAdmissionCpuCost(className),
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
@@ -230,6 +252,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               slotConnections.add(socket);
               socket.once('close', () => slotConnections.delete(socket));
               socket.on('error', () => socket.destroy());
+              if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
             });
             await new Promise((ready, reject) => {
               slotServer.once('error', reject);
@@ -238,6 +261,10 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             control.write(JSON.stringify({ kind: 'ready' }) + '\n');
           }
           if (response.kind === 'admitted' && !payload) {
+            if (request.p99DurationMs && response.slotId && response.admittedAt !== undefined) {
+              admittedDuration = { kind: 'slot-duration', slotId: response.slotId, admittedAt: response.admittedAt,
+                className: request.className, durationClass: request.durationClass, p99DurationMs: request.p99DurationMs };
+            }
             const acquiredEnv = { ...resources.env, HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: root,
               HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: machine,
               HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: String(process.pid),

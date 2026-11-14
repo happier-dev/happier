@@ -17,7 +17,7 @@ import {
   resolveDevTargetSshConfigFile,
 } from './mutagen_runtime.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
-import { appendExecutionProvenance } from './execution_provenance.mjs';
+import { appendExecutionProvenance, readExecutionDurationP99 } from './execution_provenance.mjs';
 import { buildDevTargetControlLaunch } from './sync_project.mjs';
 import { classifyDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
 
@@ -140,6 +140,29 @@ export async function inspectDevTargetAdmission({ target, env = process.env },
   } catch (error) {
     return { state: 'unavailable', error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** The broker pushes observations; transport lifetime/cancellation stays with
+ * the ordinary remote execution owner, independent of source readiness. */
+export async function watchDevTargetAdmission({ target, stackBaseDir, env = process.env, signal, onSample }) {
+  if (target.platform === 'windows') return { state: 'unsupported' };
+  const result = await runDevTargetCommand({
+    target, stackBaseDir, env, signal,
+    commandArgs: ['node', './apps/stack/scripts/utils/proc/service_memory.mjs', '--admission-watch'],
+    environment: { HAPPIER_STACK_PM_CACHE_BASE_DIR: `${target.cliHomeDir.replace(/[\\/]+$/, '')}/cache` },
+    sourceAdmission: 'skip', dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip',
+    silent: true, persistOutput: false,
+    onLine: ({ stream, line }) => {
+      if (stream !== 'stdout') return;
+      let sample;
+      try { sample = JSON.parse(line); } catch { return; }
+      onSample(sample);
+    },
+  });
+  if (result.code !== 0 && !signal?.aborted) {
+    throw Object.assign(new Error('Worker admission watch unavailable'), { code: 'HSTACK_ADMISSION_WATCH_UNAVAILABLE' });
+  }
+  return result;
 }
 
 async function flushDevTarget(
@@ -365,6 +388,8 @@ export async function runDevTargetCommand(
   const executionId = createExecutionId();
   signal?.throwIfAborted();
   const lifetimeStdin = target.platform !== 'windows' && !tty;
+  const durationP99 = commandPolicy.heavyClass
+    ? await readExecutionDurationP99(stackBaseDir, commandPolicy.commandClass) : null;
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
     cwd,
@@ -380,7 +405,13 @@ export async function runDevTargetCommand(
       } : null,
       admissionClass: commandPolicy.heavyClass,
     }),
-    environment,
+    environment: {
+      ...environment,
+      ...(durationP99 === null ? {} : {
+        HAPPIER_ADMISSION_DURATION_CLASS: commandPolicy.commandClass,
+        HAPPIER_ADMISSION_DURATION_P99_MS: String(durationP99),
+      }),
+    },
     admissionMode,
     lifetimeStdin,
     controlStdin,

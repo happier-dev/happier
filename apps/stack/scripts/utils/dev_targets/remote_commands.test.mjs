@@ -145,6 +145,20 @@ test('retained daemon-only connection survives an exited native worker for recov
     assert.equal(windowsProjection.includes(`HAPPIER_CANONICAL_SERVER_URL=${signingOrigin}`), true);
   });
 
+test('broker watch observations consume no admission or workspace preparation in either dispatcher', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-admission-watch-policy-' });
+  const artifact = join(fixture.root, 'policy.sh');
+  writeFileSync(artifact, renderNativeCommandPolicy());
+  const args = ['node', './apps/stack/scripts/utils/proc/service_memory.mjs', '--admission-watch'];
+  const policy = resolveRemoteCommandPolicy(args);
+  assert.equal(policy.commandClass, 'host-observation');
+  assert.equal(policy.heavyClass, '');
+  const native = spawnSync('/bin/sh', ['-c', '. "$1"; shift; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_commandClass" "$policy_heavyClass" "$policy_bootstrap"',
+    'policy', artifact, ...args], { encoding: 'utf8' });
+  assert.equal(native.status, 0);
+  assert.equal(native.stdout, 'host-observation,,0');
+});
+
 for (const [observation, program] of Object.entries(HOST_OBSERVATION_PROGRAMS)) {
 test(`execution config validation and QA host observation (${observation}) do not consume dependencies behind an inherited source preload`,
   { skip: process.platform !== 'linux' }, async t => {
