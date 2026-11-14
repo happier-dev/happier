@@ -3,6 +3,7 @@ import * as z from 'zod/mini';
 import {
   SessionMessageV1Schema,
   SessionMessagesPageV1Schema,
+  type SessionMessagePageActivityV1,
 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
 const MessageFixtureInputSchema = lazyZodSchema(() => z.extend(SessionMessageV1Schema, {
@@ -14,6 +15,7 @@ export function createReplayMessagesPage(params: Readonly<{
   messages: readonly unknown[];
   hasMore: boolean;
   direction?: 'backward' | 'forward';
+  activity?: SessionMessagePageActivityV1;
 }>) {
   const messages = params.messages.map((input, index) => {
     const message = MessageFixtureInputSchema.parse(input);
@@ -24,6 +26,7 @@ export function createReplayMessagesPage(params: Readonly<{
   });
   const continuationSeq = params.hasMore ? messages.at(-1)?.seq ?? null : null;
   return SessionMessagesPageV1Schema.parse({
+    ...(params.activity ? { activity: params.activity } : {}),
     messages,
     hasMore: params.hasMore,
     nextBeforeSeq: params.direction === 'forward' ? null : continuationSeq,

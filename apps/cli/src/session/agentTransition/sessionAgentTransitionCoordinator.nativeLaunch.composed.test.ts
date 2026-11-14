@@ -16,7 +16,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeStoredCredentials, writeStoredCredentialsForServerId } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
@@ -75,6 +75,9 @@ describe('Agent transition requester identity through target native activation',
             machineIdByServerId: { [serverId]: 'machine' }, lastTokenSubByServerId: { [serverId]: 'requester' } });
         reloadConfiguration();
         expect(configuration.activeServerId).toBe(serverId);
+        // The source client is signed in as the requester; the already-created
+        // daemon retains its independent Machine owner credentials.
+        await writeStoredCredentialsForServerId(serverId, credentials);
         const settings = accountSettingsParse({});
         const catalog = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['before', 'after'].map(id => ({
             id, name: id, title: id, launch: { kind: 'command', command: `${id}-acp`, args: ['--stdio'] }, env: {},
@@ -84,7 +87,7 @@ describe('Agent transition requester identity through target native activation',
         setActiveAccountSettingsSnapshot({ source: 'cache', settings, settingsVersion: 1, loadedAtMs: Date.now(),
             settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
             acpCatalog: { status: 'ready', revision: 1, record: catalog } });
-        let row = createSessionRecordFixture({ id: h.sessionId, seq: 0, active: false, encryptionMode: 'plain', dataEncryptionKey: null,
+        let row = createSessionRecordFixture({ id: h.sessionId, seq: 0, active: actor === 'owner-admitted-unconfirmed', encryptionMode: 'plain', dataEncryptionKey: null,
             share: null, metadata: JSON.stringify({ machineId: 'machine', path: h.cwd,
                 ...(actor === 'owner-admitted' ? { terminal: SessionTerminalMetadataSchema.parse({ mode: 'tmux' }) } : {}),
                 ...buildConfiguredAcpBackendSessionMetadata({ backendId: 'before', title: 'before' }) }) });
@@ -108,7 +111,10 @@ describe('Agent transition requester identity through target native activation',
             if (path === '/v1/account/profile') return { status: 200, data: { id: requester } };
             if (path === `/v2/sessions/${h.sessionId}`) return { status: 200, data: { session: row } };
             if (path === `/v1/sessions/${h.sessionId}/messages`) return { status: 200,
-                data: createReplayMessagesPage({ hasMore: false, messages: [] }) };
+                data: createReplayMessagesPage({ hasMore: false, messages: [], activity: {
+                    pendingCount: row.pendingCount ?? 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+                    pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, latestTurnStatus: null,
+                } }) };
             return await previousGet(url, options);
         });
         let cutovers = 0;
@@ -208,9 +214,8 @@ describe('Agent transition requester identity through target native activation',
         let rawStops = 0;
         vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async input => {
             expect(input.credentials?.token).toBe(credentials.token);
-            // This source is already inactive and has no remote native runner.
-            // Its network stop answer is consumed by the real Stop owner,
-            // which independently confirms the inactive Home row.
+            // The Stop owner confirms inactive sources from their Home row.
+            // The unconfirmed case deliberately retains an active Home row.
             if (input.method === RPC_METHODS.STOP_SESSION) {
                 rawStops++;
                 return admittedActor ? { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Invalid RPC caller input authorization' }
@@ -274,18 +279,21 @@ describe('Agent transition requester identity through target native activation',
             expect(effects).toHaveLength(0);
             return;
         }
-        expect(cutovers).toBe(1);
+        expect(cutovers, JSON.stringify({ result, targetAdmission })).toBe(1);
         expect(pendingInputs).toBe(1);
-        expect(identityChecks).toBeGreaterThan(0);
         if (isOwner) {
+            expect(identityChecks).toBeGreaterThan(0);
             expect(result).toMatchObject({ type: 'accepted' });
             expect(launched).toMatchObject({ existingSessionId: h.sessionId,
                 backendTarget: { sourceKind: 'configured', configuredBackendId: 'after' } });
             expect(output).toBe('transition-target-native-ready');
             expect(effects).toHaveLength(1);
         } else {
-            expect(targetAdmission).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
-            expect(result).toMatchObject({ type: 'current_view_committed', code: 'target_start_failed' });
+            // A raw cross-Account request has no admitted Action authorization;
+            // the Machine receiver refuses it before native isolation setup.
+            expect(targetAdmission).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+            expect(result).toMatchObject({ type: 'partially_applied', applied: 'current_view_committed',
+                localId: `transition-${actor}`, code: 'target_start_failed' });
             expect(launched).toBeUndefined();
             expect(effects).toHaveLength(0);
         }
