@@ -17,7 +17,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 export { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
-import { assertInheritedWorkspaceBuildResources, runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
+import { runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../../apps/stack/scripts/utils/proc/workspaceBuildWaitNotifier.mjs';
 import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
@@ -391,14 +391,10 @@ export async function collectWorkspaceBuildBatchResources(componentDirs, { env =
 function workspaceBuildBatchResources(demand) {
   const { monorepoRoot, componentInputs, packageNames, consumerOnlyPackageNames, packageDirsByName, packageJsonByDir } = demand;
   const admissionClass = demand.admissionClass;
-  const locks = [
-    // Actual consuming components finish their existing bundled-host sync.
-    { path: resolveWorkspaceBundleLockPath(monorepoRoot) },
-    ...packageNames.map(name => {
-      const dir = packageDirsByName.get(name);
-      return { path: resolveWorkspacePackageBuildLockPath(dir, packageJsonByDir.get(dir)) };
-    }),
-  ];
+  // Capacity covers the closure, but publication custody belongs to each
+  // package's compile/publish transaction (and the final bundled-host sync).
+  // Current and completed packages must remain available to other publishers.
+  const locks = [];
   const identity = createHash('sha256').update(JSON.stringify({ componentInputs, locks, admissionClass,
     packages: packageNames.map(name => {
       const dir = packageDirsByName.get(name);
@@ -1520,10 +1516,6 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   const workspaceBundleLockPath = hasBundledWorkspaceDependencies(packageJson)
     ? resolveWorkspaceBundleLockPath(monorepoRoot)
     : null;
-  if (inheritedAdmission) assertInheritedWorkspaceBuildResources({
-    locks: [...(workspaceBundleLockPath ? [{ path: workspaceBundleLockPath }] : []), { path: lockPath }],
-    env,
-  });
   // Real process adapters run the complete publication transaction beneath
   // the joint admission owner. Injected compiler boundaries remain in-process
   // so tests can exercise this same deterministic publisher without mocking it.
@@ -1560,7 +1552,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       }
     };
     try {
-      const terminal = await runWorkspaceBuildAdmission({
+      const runWorker = async env => runWorkspaceBuildAdmission({
         command: process.execPath,
         args: [fileURLToPath(import.meta.url), '--workspace-package-worker', JSON.stringify(request)],
         locks: request.locks.map(path => ({ path })),
@@ -1575,6 +1567,12 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         captureStdout: false,
         onStdout: consumeStdout,
       });
+      // Reuse the batch's capacity, acquiring the same publication leases as
+      // an independent package build only until this worker has published.
+      const terminal = inheritedAdmission
+        ? await withWorkspaceBuildResources({ locks: request.locks.map(path => ({ path })),
+          env, signal, admittedResourceWait: true }, runWorker)
+        : await runWorker(env);
       buffered += decoder.end();
       if (buffered) consumeLine(buffered);
       await callbacks;
@@ -1623,10 +1621,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     buildMode,
     dependencyDirs,
   });
-  if (inheritedAdmission) {
-    return await publish(env, { waited: false });
-  }
-  return await withWorkspaceBuildResources(resources, publish);
+  return await withWorkspaceBuildResources({ ...resources, admittedResourceWait: inheritedAdmission }, publish);
 }
 
 // Wait for already admitted siblings before returning a failure.

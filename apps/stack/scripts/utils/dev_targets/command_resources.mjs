@@ -10,9 +10,11 @@ export const SOURCE_WEB_EXPORT_MEMORY = Object.freeze({ serialKiB: 8236000, para
 export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
   'focused-validation': Object.freeze({ samples: 18, p95KiB: 779072, maxKiB: 779072, roundingKiB: 1024 * 1024 }),
   // 2026-11-10 completed-slot-memory.jsonl across linux1, windows2-linux, nl1, nl3:
-  // package-dist n=310, sampled RSS max 5,095,936 KiB; round to next 0.5 GiB.
+  // package-dist n=310; retain that sample count and p95 below.
+  // P03-BUILD-REUSE/run2-batch-cold/rss-peaks.jsonl (2026-11-13):
+  // K=2 batch tree RSS peak 5,327,920 KiB; round to next 0.5 GiB.
   // Owner GO (Continuation 2); no extra margin beyond rounding.
-  'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5095936, roundingKiB: 512 * 1024 }),
+  'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5327920, roundingKiB: 512 * 1024 }),
 });
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,

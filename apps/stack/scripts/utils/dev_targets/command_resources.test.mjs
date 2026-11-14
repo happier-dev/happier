@@ -22,9 +22,9 @@ test('every calibrated class uses its recorded measured maximum without a margin
 });
 
 
-// Continuation 2 owner GO: completed package publishers fit the measured 5 GiB envelope.
+// The K=2 package batch peak rounds to a 5.5 GiB envelope.
 test('package publishers admit at the measured half-GiB-rounded envelope', () => {
-  assert.equal(resolveHeavyweightMemoryFloorKiB('package-dist'), 5 * 1024 * 1024);
+  assert.equal(resolveHeavyweightMemoryFloorKiB('package-dist'), 5.5 * 1024 * 1024);
   assert.equal(resolveHeavyweightMemoryFloorKiB('source-bundle'), 12 * 1024 * 1024,
     'producer startup has no separate heavy reservation; retain the source envelope');
 });
@@ -69,7 +69,7 @@ for (const [compiler, expectedGiB] of [['tsrs', 10], ['microsoft', 20]]) {
       platform: 'linux', arch: 'x64' });
     assert.ok(build.argsPrefix.includes('--class=compilation'));
     assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES.compilation.memoryKiB, 38 * 1024 * 1024);
-    assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB, 5 * 1024 * 1024);
+    assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB, 5.5 * 1024 * 1024);
     const general = resolveTypeScriptCliInvocation({ args: ['--noEmit'], admissionClass: 'compilation', env,
       platform: 'linux', arch: 'x64' });
     assert.ok(general.argsPrefix.includes('--class=compilation'));

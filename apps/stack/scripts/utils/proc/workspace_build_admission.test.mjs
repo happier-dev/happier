@@ -796,7 +796,7 @@ test('batch resource closure covers transitive publishers and detects graph chan
   const before = await collectWorkspaceBuildBatchResources(selected, { admissionClass: 'package-dist' });
   assert.deepEqual(before.packageNames, ['@happier-dev/alpha', '@happier-dev/beta']);
   assert.deepEqual(before.locks.filter(lock => lock.kind === 'dependency'), []);
-  assert.equal(before.locks.length, 3, 'bundle publisher and two package publishers');
+  assert.deepEqual(before.locks, [], 'publication leases are acquired per package inside the batch admission');
   assert.equal(before.admissionClass, 'compilation', 'choose the producer requirement before acquiring the lower reader envelope');
   assert.deepEqual(await collectWorkspaceBuildBatchResources([...selected].reverse(), { admissionClass: 'package-dist' }), before);
   const uiReader = await collectWorkspaceBuildBatchResources(selected, { admissionClass: 'compilation-ui' });
@@ -826,7 +826,7 @@ test('batch resource closure covers transitive publishers and detects graph chan
   const after = await collectWorkspaceBuildBatchResources(selected);
   assert.notEqual(after.identity, before.identity);
   assert.deepEqual(after.packageNames, ['@happier-dev/alpha', '@happier-dev/beta', '@happier-dev/unrelated']);
-  assert.equal(after.locks.length, before.locks.length + 1);
+  assert.deepEqual(after.locks, [], 'expanding the closure does not retain more publication leases');
 });
 
 for (const failure of ['none', 'lease', 'producer', 'identity', 'larger-leaf-class']) test(`composed batch inherits its sole reservation and exact publication custody (${failure})`, { skip: process.platform !== 'linux', timeout: 15000 }, async t => {

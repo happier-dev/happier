@@ -260,6 +260,11 @@ test('one named build of a package closure takes one compiler admission, and non
   const pnpm = join(root, 'pnpm.mjs');
   writeFileSync(pnpm, `import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {connect} from 'node:net';
+if(process.env.BATCH_LOCK_TEST_PORT) {
+  const socket=connect(Number(process.env.BATCH_LOCK_TEST_PORT),'127.0.0.1');
+  await new Promise(resolve=>socket.once('data',resolve));socket.end();
+}
 const output=process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
 mkdirSync(output,{recursive:true});writeFileSync(join(output,'index.js'),'export const ready = true;\\n');
 `);
@@ -282,6 +287,33 @@ mkdirSync(output,{recursive:true});writeFileSync(join(output,'index.js'),'export
   const warm = await build();
   assert.deepEqual(warm.built, []);
   assert.equal(admissionCount(), 1, 'a current closure takes no admission');
+  let compilerSocket;
+  let notifyCompiler;
+  const compilerStarted = new Promise(resolve => { notifyCompiler = resolve; });
+  const server = createServer(socket => { compilerSocket = socket; notifyCompiler(); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  env.BATCH_LOCK_TEST_PORT = String(server.address().port);
+  writeFileSync(join(repoRoot, 'packages/transfers/src/index.ts'), 'export const ready = false;\n');
+  const { tryWorkspaceBuildResources } = await import('../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs');
+  const rebuilding = build();
+  try {
+    await compilerStarted;
+    const currentDir = join(repoRoot, 'packages/agents');
+    const lease = await tryWorkspaceBuildResources({ locks: [{ path: resolveWorkspacePackageBuildLockPath(
+      currentDir, JSON.parse(readFileSync(join(currentDir, 'package.json'), 'utf8'))) }], env });
+    if (lease.acquired) await lease.release();
+    assert.equal(lease.acquired, true, 'a second publisher gets the current package lease before the batch ends');
+    const staleDir = join(repoRoot, 'packages/transfers');
+    const activeLease = await tryWorkspaceBuildResources({ locks: [{ path: resolveWorkspacePackageBuildLockPath(
+      staleDir, JSON.parse(readFileSync(join(staleDir, 'package.json'), 'utf8'))) }], env });
+    if (activeLease.acquired) await activeLease.release();
+    assert.equal(activeLease.acquired, false, 'the package being compiled stays under its publication lease');
+  } finally {
+    compilerSocket?.end('release');
+    await rebuilding;
+    await new Promise(resolve => server.close(resolve));
+  }
+  assert.equal(admissionCount(), 2, 'the partially stale closure still takes exactly one admission');
   const idle = await native.brokerStatus();
   assert.equal(idle.activeCount, 0);
   assert.equal(idle.waitingCount, 0);
