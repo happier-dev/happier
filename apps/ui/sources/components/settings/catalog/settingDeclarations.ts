@@ -29,6 +29,8 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from '@happier-dev/protocol/actions/set
 import type { AtmospherePresentation, ProjectAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { homeAtmosphereStorageBinding } from '@/components/atmosphere/atmosphereSettings';
+import { COLLECTION_RAIL_WIDTH_SETTING_ANCHOR, COLLECTION_RAIL_WIDTH_SETTING_OWNER,
+    collectionRailWidthStorageBinding } from '@/components/ui/lists/collection/collectionRailWidthSetting';
 
 export type SettingValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
 export type SettingScalarValue = Extract<SettingValue, string | number | boolean | null>;
@@ -362,6 +364,9 @@ export function builtInSettingsPageSections(anchorPrefix: string): Record<string
 function portableStorageBinding(declaration: PortableSettingDeclarationV1): SettingStorageBinding | undefined {
     const binding = declaration.storage;
     if (!binding) return undefined;
+    if (declaration.anchor === COLLECTION_RAIL_WIDTH_SETTING_ANCHOR && binding.owner === COLLECTION_RAIL_WIDTH_SETTING_OWNER) {
+        return collectionRailWidthStorageBinding;
+    }
     if (binding.owner === 'homeAtmosphereStorageBinding'
         && (declaration.anchor === 'appearance.homeAtmosphere' || declaration.anchor === 'appearance.atmosphereLooks')) {
         return homeAtmosphereStorageBinding(declaration.anchor);
@@ -455,8 +460,11 @@ export function readBuiltInSettingUiRef(anchor: string, ownerBinding?: Readonly<
     if (!portable || !labels || portable.operation) return null;
     if (ownerBinding && portable.storage?.owner !== ownerBinding.owner) return null;
     const declaration = projectPortableDeclaration(anchor, ownerBinding ? { storage: ownerBinding.storage } : {});
+    const resolvedRailOwner = anchor === COLLECTION_RAIL_WIDTH_SETTING_ANCHOR
+        && portable.storage?.owner === COLLECTION_RAIL_WIDTH_SETTING_OWNER
+        && declaration.storage === collectionRailWidthStorageBinding;
     if ((declaration.storage?.scope !== 'account' && declaration.storage?.scope !== 'local')
-        || !('key' in declaration.storage) && !ownerBinding) return null;
+        || !('key' in declaration.storage) && !ownerBinding && !resolvedRailOwner) return null;
     return { ...declaration, description: portable.description, anchor, sectionId: portable.sectionId,
         sectionTitleKey: labels.sectionTitleKey, featureId: labels.featureId };
 }
