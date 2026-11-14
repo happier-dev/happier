@@ -1,11 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
 import AjvCore from 'ajv/dist/core.js';
+import { CodeGen } from 'ajv/dist/compile/codegen/index.js';
 import { Session } from 'node:inspector';
 import { setImmediate } from 'node:timers/promises';
 
 import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';
+import { HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, HAPPIER_MAX_UTF8_BYTES_KEYWORD } from './protocolComposableSchema.js';
 
 describe('Protocol JSON Schema compiler lifetime', () => {
+  it.each(['draft-07', 'draft-2020-12'] as const)(
+    'admits cold %s schemas without rewriting the generated validator AST',
+    dialect => {
+      // Observe the real compiler's optional rewrite passes, leaving compilation and validation intact.
+      // Large configured-action schemas otherwise spend seconds rewriting code before dispatch.
+      const optimize = vi.spyOn(CodeGen.prototype, 'optimize');
+      try {
+        const validate = compileProtocolJsonSchema({
+          $id: `https://happier.dev/tests/cold-schema-admission/${dialect}`,
+          type: 'object', properties: { name: { type: 'string', minLength: 1 } },
+          required: ['name'], additionalProperties: false,
+        }, dialect);
+        expect(validate({ name: 'Révision 東京' })).toBe(true);
+        expect(validate({ name: '' })).toBe(false);
+        expect(validate({ name: 'valid', extra: true })).toBe(false);
+        expect(optimize.mock.calls.length).toBeGreaterThan(0);
+        expect(optimize.mock.calls.reduce((passes, [count = 1]) => passes + count, 0)).toBe(0);
+      } finally {
+        optimize.mockRestore();
+      }
+    },
+  );
   it.each(['draft-07', 'draft-2020-12'] as const)(
     'retains only live %s schemas and validators across balanced mount cycles',
     async dialect => {
@@ -119,6 +143,37 @@ describe('Protocol JSON Schema compiler lifetime', () => {
       } finally {
         compile.mockRestore();
       }
+    },
+  );
+
+  it.each(['draft-07', 'draft-2020-12'] as const)(
+    'builds no keyword meta-schema validator per %s engine and still refuses invalid keyword values',
+    dialect => {
+      // Every distinct content owns an engine (P03-COLDSTART2); a cold UI load builds ~50.
+      // Keyword values are checked where the keyword compiles, so an engine compiles only its schema.
+      const compile = vi.spyOn(AjvCore.prototype, 'compile');
+      try {
+        for (const maximum of [8, 16, 32]) {
+          const validate = compileProtocolJsonSchema({
+            type: 'object',
+            properties: { name: { type: 'string', enum: ['a', 'bb'], [HAPPIER_MAX_UTF8_BYTES_KEYWORD]: maximum } },
+            [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: maximum * 4,
+          }, dialect);
+          expect(validate({ name: 'bb' })).toBe(true);
+          expect(validate({ name: 'c' })).toBe(false);
+        }
+        expect(compile.mock.calls.filter(call => call[1] === true)).toHaveLength(0);
+      } finally {
+        compile.mockRestore();
+      }
+      expect(compileProtocolJsonSchema({ type: 'string', [HAPPIER_MAX_UTF8_BYTES_KEYWORD]: 2 }, dialect)('ééé')).toBe(false);
+      expect(compileProtocolJsonSchema({ [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: 4 }, dialect)('ab')).toBe(true);
+      for (const invalid of [0, 1.5, -1, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(() => compileProtocolJsonSchema({ type: 'string', [HAPPIER_MAX_UTF8_BYTES_KEYWORD]: invalid }, dialect)).toThrow();
+        expect(() => compileProtocolJsonSchema({ [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: invalid }, dialect)).toThrow();
+      }
+      expect(() => compileProtocolJsonSchema({ type: 'string', enum: [] }, dialect)).toThrow();
+      expect(() => compileProtocolJsonSchema({ type: 'string', enum: 'a' }, dialect)).toThrow();
     },
   );
 

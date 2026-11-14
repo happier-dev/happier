@@ -54,9 +54,21 @@ function createPluginJsonEnumValidator(allowed: readonly unknown[]): PluginJsonS
   };
 }
 
+// Keyword values are checked where each keyword compiles. An AJV keyword
+// metaSchema would compile one more validator per engine, and every distinct
+// schema content owns an engine.
+function readByteLimitKeywordValue(keyword: string, maximum: unknown): number {
+  if (typeof maximum !== 'number' || !Number.isSafeInteger(maximum) || maximum < 1) {
+    throw new Error(`Plugin JSON Schema ${keyword} must be a positive safe integer`);
+  }
+  return maximum;
+}
+
 function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
   const options = {
     allErrors: true, ownProperties: true, strict: false,
+    // Cold Action schemas spend seconds in optional generated-code rewrites.
+    code: { optimize: false },
     // Plugin declarations have already passed their closed vocabulary. Native
     // Action projections use the selected dialect's schema/keyword admission.
     strictSchema: dialect === 'draft-2020-12',
@@ -68,12 +80,11 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
   // Bun. Share the executable schema's structural byte grammar instead.
   ajv.addFormat('byte', { type: 'string', validate: value => readPaddedBase64DecodedLength(value) !== null });
   // Compile the dialect's own meta-schema with its native vocabulary before
-  // replacing value-equality keywords. Keyword meta-schemas use this validator.
+  // replacing value-equality keywords.
   if (dialect === 'draft-2020-12') ajv.getSchema('https://json-schema.org/draft/2020-12/schema');
   ajv.removeKeyword('enum');
   ajv.addKeyword({
     keyword: 'enum',
-    metaSchema: { type: 'array', minItems: 1 },
     compile: (allowed: unknown) => {
       if (!Array.isArray(allowed) || allowed.length === 0) {
         throw new Error('Plugin JSON Schema enum must contain at least one value');
@@ -105,27 +116,31 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
     keyword: HAPPIER_MAX_UTF8_BYTES_KEYWORD,
     type: 'string',
     schemaType: 'number',
-    metaSchema: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-    validate: (maximumBytes: number, value: unknown) => {
-      try {
-        return typeof value === 'string' && measurePluginJsonUtf8Bytes(value, 'value') <= maximumBytes;
-      } catch {
-        return false;
-      }
+    compile: (maximum: unknown) => {
+      const maximumBytes = readByteLimitKeywordValue(HAPPIER_MAX_UTF8_BYTES_KEYWORD, maximum);
+      return (value: unknown) => {
+        try {
+          return typeof value === 'string' && measurePluginJsonUtf8Bytes(value, 'value') <= maximumBytes;
+        } catch {
+          return false;
+        }
+      };
     },
     errors: false,
   });
   ajv.addKeyword({
     keyword: HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD,
     schemaType: 'number',
-    metaSchema: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-    validate: (maximumBytes: number, value: unknown) => {
-      try {
-        assertStrictPluginJsonValue(value, 'value');
-        return measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'value', maximumBytes) <= maximumBytes;
-      } catch {
-        return false;
-      }
+    compile: (maximum: unknown) => {
+      const maximumBytes = readByteLimitKeywordValue(HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, maximum);
+      return (value: unknown) => {
+        try {
+          assertStrictPluginJsonValue(value, 'value');
+          return measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'value', maximumBytes) <= maximumBytes;
+        } catch {
+          return false;
+        }
+      };
     },
     errors: false,
   });
