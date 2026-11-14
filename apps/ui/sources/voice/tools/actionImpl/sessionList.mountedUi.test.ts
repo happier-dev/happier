@@ -14,7 +14,6 @@ vi.mock('socket.io-client', async original =>
 await loadSyncSingletonForTests();
 const { listSessionsForVoiceTool } = await import('./sessionList');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const runtimeFetchBoundary = await import('@/utils/system/runtimeFetch');
 
 describe('mounted Session lists and Voice disclosure', () => {
     beforeEach(async () => { await home.reset(); });
@@ -42,8 +41,9 @@ describe('mounted Session lists and Voice disclosure', () => {
             storage.setState({ sessionMessages: { recent: createSessionMessagesFixture({
                 messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message }, isLoaded: true,
             }) } });
-            // Observe the external HTTP port before the fixture translates read-batch requests.
-            const requests = vi.spyOn(runtimeFetchBoundary, 'runtimeFetch');
+            // The captured Home transport owns physical requests, including reads
+            // issued through an already-bound connection.
+            const requestsBefore = home.requests.length;
             const mountedRequest = { view: 'summary' as const, serverId, includeLastMessagePreview: true,
                 context: { sessionListAccess: 'mounted_ui' as const } };
             const mounted = await listSessionsForVoiceTool(mountedRequest);
@@ -66,7 +66,8 @@ describe('mounted Session lists and Voice disclosure', () => {
             const unqualified = await listSessionsForVoiceTool(unqualifiedRequest);
             expect(unqualified).toMatchObject({ sessions: [{ id: 'recent', serverId, title: 'Investigate sign in',
                 path: '/work/happier', runtimeActivityState: 'active', lastMessagePreview: { text: message.text } }] });
-            const requestedPaths = requests.mock.calls.map(([url]) => new URL(String(url)).pathname);
+            const requestedPaths = home.requests.slice(requestsBefore)
+                .map(request => new URL(request.path, request.serverUrl).pathname);
             expect(requestedPaths.filter(path => path === '/v2/sessions')).toHaveLength(3);
             expect(requestedPaths.filter(path => /^\/v2\/sessions\/(?!read-batch$)[^/]+$/.test(path))).toEqual([]);
         } finally { await connection.dispose(); }

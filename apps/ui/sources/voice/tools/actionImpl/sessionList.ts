@@ -21,6 +21,7 @@ import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sess
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { HappyError } from '@/utils/errors/errors';
+import { StaleServerGenerationError } from '@/sync/http/client';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { readAwarenessPresence } from '@/sync/domains/session/attention/runtimePresentation';
@@ -274,7 +275,9 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         return markSessionListQueryResultV1(result);
       }
     } catch (error) {
-      return failure(params.signal?.aborted ? 'tool_cancelled' : error instanceof HappyError && error.code ? error.code : 'network_error');
+      if (params.signal?.aborted) return failure('tool_cancelled');
+      if (error instanceof StaleServerGenerationError) return failure('stale_response');
+      return failure(error instanceof HappyError && error.code ? error.code : 'network_error');
     }
   }
   const initialState = storage.getState();

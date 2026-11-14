@@ -464,18 +464,12 @@ describe('listSessionsForVoiceTool privacy', () => {
     const response = createDeferred<void>();
     const bodyRead = createDeferred<void>();
     const controller = new AbortController();
-    home.answer(serverId, '/v2/sessions', { body: ordinaryPage([row('retired')]) });
-    // Hold the genuine Fetch response-body boundary after transport acceptance.
-    // The real parser/hydrator then observes Account retirement, not a failed dispatch.
-    const readText = Response.prototype.text;
-    const bodyBoundary = vi.spyOn(Response.prototype, 'text').mockImplementation(async function (this: Response) {
-      const value = await readText.call(this);
-      if (value.includes('"retired"')) {
-        bodyRead.resolve();
-        await response.promise;
-      }
-      return value;
-    });
+    // Hold the genuine Fetch body. The HTTP lifetime owner supplies its own
+    // Response implementation, so spying on the platform text() misses this read.
+    home.answer(serverId, '/v2/sessions', { select: () => {
+      bodyRead.resolve();
+      return { body: ordinaryPage([row('retired')]), bodyAfter: response.promise };
+    } });
     try {
       const result = listSessionsForVoiceTool({ view: 'awareness', signal: controller.signal });
       await bodyRead.promise;
@@ -487,7 +481,6 @@ describe('listSessionsForVoiceTool privacy', () => {
       expect(storage.getState().sessionListRowsByServerId[serverId]?.retired).toBeUndefined();
     } finally {
       response.resolve();
-      bodyBoundary.mockRestore();
     }
   });
 });
