@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
@@ -13,7 +14,7 @@ const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedR
   providerIdentity: { providerAccountId: 'a'.repeat(32), providerResourceId: 'project-exact', providerEnvironment: 'production' },
   providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'my-project' } };
 const owned = (key: string) => ({ key, providerId: key, desiredRevision: 1 });
-const binding = (name: string, value: string) => ({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'value', value } });
+const binding = (name: string, value: string) => createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } });
 const sync = { ...common, desiredRevision: 2, owned: [], set: [], remove: [], useOurs: [], keepTheirs: [] };
 const response = (result: unknown, status = 200) => ({ status, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: status === 200, result, errors: [], messages: [] })) });
@@ -170,9 +171,9 @@ it('does not send a secret write when Saved Secret custody is unavailable', asyn
     // This is the public testkit's absent-service boundary, not a simulated Account/keyless
     // custody refusal. Real plain/full-key/keyless behavior belongs to P42 conformance.
     await expect(kit.invokeAction('pages-variables-sync', { ...sync,
-      set: [binding('GOOD', 'plain'), { purpose: 'variable', phase: 'runtime', name: 'SECRET', source: {
+      set: [binding('GOOD', 'plain'), createDeploymentVariableBindingV1({ phase: 'runtime', name: 'SECRET', source: {
         kind: 'secret', ref: 'happier:shared-secret:v1:fixture', resourceRevision: 3,
-      } }] })).resolves.toMatchObject({
+      } })] })).resolves.toMatchObject({
         owned: [{ key: 'GOOD', providerId: 'GOOD', desiredRevision: 2 }],
         failures: [{ key: 'SECRET', code: 'outcome_unknown' }],
       });
