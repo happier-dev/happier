@@ -313,20 +313,24 @@ export function buildActionExecutorContextForRpc(
             ...(params.sessionActionOrigin.workspaceWrites ? { workspaceWrites: params.sessionActionOrigin.workspaceWrites } : {}),
         } : {}),
         ...(workflowAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(workflowAuthorization) : {}),
-        ...(workflowAuthorization && workflowBinding && workflowOrigin && workflowWitness ? {
+        // Machine-only leaves retain their verified Run identity without a
+        // Session witness; Session authority remains in the witness branch.
+        ...(workflowAuthorization && workflowBinding && workflowOrigin ? {
             surface: 'agent' as const,
             authority: 'account_automation' as const,
-            actionCaller: { kind: 'workflowRun' as const, runId: workflowOrigin.runId,
-                authorization: workflowWitness.authorization },
             actionRequestId: workflowOrigin.requestId,
             executionRunWorkflowRunId: workflowOrigin.runId,
             executionRunTargetMachineId: workflowBinding.machineId,
-            callerPermissionMode: workflowWitness.authorization.admittedPermissionCeiling,
-            workspaceWrites: workflowWitness.workspaceWrites,
             externalActionExecutionAuthorization: workflowAuthorization,
             externalActionTarget: workflowBinding.target,
             serverIdentityId: workflowBinding.serverIdentityId,
             runtimeAccountId: workflowBinding.accountId,
+        } : {}),
+        ...(workflowWitness && workflowOrigin ? {
+            actionCaller: { kind: 'workflowRun' as const, runId: workflowOrigin.runId,
+                authorization: workflowWitness.authorization },
+            callerPermissionMode: workflowWitness.authorization.admittedPermissionCeiling,
+            workspaceWrites: workflowWitness.workspaceWrites,
             defaultSessionId: workflowWitness.runOriginSessionId ?? null,
         } : {}),
         ...(params.reviewedChildActionContext ? {

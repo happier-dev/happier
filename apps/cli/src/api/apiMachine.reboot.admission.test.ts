@@ -36,6 +36,7 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, Actio
     ActionOperationSnapshotV1Schema, FeaturesResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';
 
 // The network boundary settles deterministically while the actual Account
 // observer, socket adapter and connection supervisor retain their real wiring.
@@ -59,7 +60,8 @@ afterEach(async () => {
 });
 
 async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: MachineElevationSpawn;
-    readReferences?: () => Promise<void> }> = {}) {
+    readReferences?: () => Promise<void>; workflowRunId?: string; callerWorkflowRunId?: string; machineWorkflowCaller?: boolean;
+    unadmittedWorkflowCaller?: boolean }> = {}) {
         const profile = await addServerProfile({ name: 'reboot', serverUrl: 'https://home.invalid', webappUrl: 'https://home.invalid' });
         // Captured Home descriptor through its actual profile-adoption owner.
         // Raw capability admission must not invent custody from Account equality.
@@ -96,7 +98,23 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
             readActivity: async () => { throw new Error('No started Session exists'); } });
         const runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: directory, runtimeOptions: { pluginIds: [] } });
         const services = runtime.registry.projectManagedServices;
-        const inventory = createManagedActivityInventory({ producers: [sessions, services.activity] });
+        const workflowEntered = createDeferred(), releaseWorkflow = createDeferred();
+        const workflow = options.workflowRunId ? createTestWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(),
+            resolveWorkspace: async () => ({ ok: true, workspace: { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' } }),
+            executeStep: async params => {
+                workflowEntered.resolve(); await releaseWorkflow.promise;
+                await params.beforeInputAdmission();
+                await params.onInputAccepted({ kind: 'session', sessionId: 'workflow-session', localInputId: 'workflow-input' });
+                return { kind: 'completed', result: 'done' };
+            } }) : undefined;
+        const workflowRunning = workflow?.run({ runId: options.workflowRunId!, inputs: {}, executionTarget: { kind: 'session' },
+            authorization: { admittedPermissionCeiling: 'yolo', principal: { kind: 'host' } },
+            definition: { version: 1, inputs: [], defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+                blocks: [{ kind: 'step', id: 'held', document: { text: 'Hold', references: [], attachments: [] },
+                    input: [], result: { kind: 'text' } }] } });
+        if (workflow) await workflowEntered.promise;
+        const inventory = createManagedActivityInventory({ producers: [sessions, services.activity,
+            ...(workflow ? [workflow.liveWorkProducer] : [])] });
         // Count actual owner reads without replacing any inventory or producer behavior.
         const inventoryReads = vi.spyOn(inventory, 'read');
         const vitals = createMachineVitalsSampler({
@@ -195,6 +213,9 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
                     // The person confirmed at the UI boundary; the canonical
                     // policy still evaluates the exact Action/input normally.
                     presentUserConfirmation: { actionId: id },
+                    // This case enters at the admitted Workflow-child replay,
+                    // after its independent exact-input approval has settled.
+                    ...(options.callerWorkflowRunId ? { bypassApprovals: true } : {}),
                 }) };
             },
         });
@@ -207,7 +228,10 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
                 installationId: installation.installationId, role: 'manage', encryptionMode: 'plain',
             }, method: 'machine:machines.reboot', privateKey: Buffer.from(installation.privateKey, 'base64url'),
                 daemonToken: token, serverHttpBaseUrl: 'https://home.invalid', signal: context.signal }),
-            localActionContext: { surface: 'cli', authority: 'present_user', actionRequestId: 'one-existing-request-envelope' },
+            localActionContext: { surface: 'cli', authority: 'present_user', actionRequestId: 'one-existing-request-envelope',
+                ...(options.callerWorkflowRunId ? { ...(options.unadmittedWorkflowCaller ? {} : { executionRunWorkflowRunId: options.callerWorkflowRunId }),
+                    ...(options.machineWorkflowCaller ? {} : { actionCaller: { kind: 'workflowRun', runId: options.callerWorkflowRunId,
+                        authorization: { admittedPermissionCeiling: 'yolo', principal: { kind: 'host' } } } }) } : {}) },
         };
         const contextForActor = (actorAccountId: string): RpcHandlerContext => {
             const admission = { ...context.machineAdmission!, actorAccountId };
@@ -267,6 +291,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
                 }
             }
             lifetime.abort(); nativeSpawn.resolve(); await pending;
+            releaseWorkflow.resolve(); await workflowRunning;
             await control.close(); await client.shutdown(); inventory.dispose(); await vitals.stop(); await runtime.dispose(); releaseHome();
         })();
         cleanups.push(close);
@@ -331,6 +356,26 @@ async function answerReboot(f: Awaited<ReturnType<typeof setupReboot>>,
 }
 
 describe('installed reboot public Action admission', () => {
+    it.each(['own', 'machine', 'foreign', 'forged'] as const)('excludes only the authenticated caller workflow from restart maintenance (%s)', async caller => {
+        const boundary = rebootProcessBoundary();
+        const f = await setupReboot({ spawn: boundary.spawn, workflowRunId: 'active-workflow',
+            callerWorkflowRunId: caller === 'foreign' ? 'another-workflow' : 'active-workflow', machineWorkflowCaller: caller === 'machine',
+            unadmittedWorkflowCaller: caller === 'forged' });
+        const invocation = f.invoke();
+        try {
+            if (caller === 'foreign' || caller === 'forged') {
+                expect(await invocation).toMatchObject({ kind: 'blocked', reasons: ['workflow_run'] });
+                expect(boundary.commands).toEqual([]);
+                return;
+            }
+            const question = await Promise.race([f.prompt.promise, invocation.then(result => {
+                throw new Error(`Workflow restart returned before Ask: ${JSON.stringify(result)}`);
+            })]);
+            expect(await answerReboot(f, question)).toMatchObject({ ok: true });
+            expect(await invocation).toMatchObject({ kind: 'accepted', bootedAt: 1000 });
+            expect(boundary.commands).toEqual([{ executable: 'systemctl', args: ['--no-block', 'reboot'], signal: expect.any(AbortSignal) }]);
+        } finally { await f.close(); await invocation; }
+    });
     it('publishes the admitted before-basis before the sole OS dispatch and keeps ingress closed after dispatch', async () => {
         let rootFrameAdmissionBaseline: number | undefined;
         let finalMaintenanceBaseline: number | undefined;

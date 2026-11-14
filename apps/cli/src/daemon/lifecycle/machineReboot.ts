@@ -81,6 +81,12 @@ export function createMachineRebootAction(input: Readonly<{
             const retained = operations.store.get(scope, operationId);
             if (retained?.actionId !== 'machines.reboot' || retained.state !== 'running') return failure('admission_unavailable');
             const signal = lifetime ? AbortSignal.any([lifetime, operation.signal]) : operation.signal;
+            // The admitted workflow's orchestration marker is the caller of
+            // this restart; its other live work and every other Run still block.
+            // Only the host/verified transport stamps this private Run identity.
+            const maintenanceExclusions = { excludeOperationId: operationId,
+                ...(request.context.executionRunWorkflowRunId
+                    ? { excludeWorkflowRunId: request.context.executionRunWorkflowRunId } : {}) };
             let lifecycleRefusal: 'daemon_shutting_down' | 'daemon_draining' | undefined;
             const lifecycleCurrent = () => {
                 if (routes.admissionDrain.isPublicationQuiescing()) {
@@ -105,7 +111,7 @@ export function createMachineRebootAction(input: Readonly<{
                     try {
                         // Exclusion precedes this fresh all-owner read. An earlier
                         // async startup remains in its incumbent owner's custody.
-                        const maintenance = await readMachineMaintenanceAdmission(routes.inventory, { excludeOperationId: operationId });
+                        const maintenance = await readMachineMaintenanceAdmission(routes.inventory, maintenanceExclusions);
                         if (maintenance.kind !== 'eligible') return domain({ kind: 'blocked', reasons: [...maintenance.reasons] });
                         const host = routes.vitals.host();
                         if (!host) return domain({ kind: 'unavailable', reason: 'required_fact_unavailable' });
@@ -166,7 +172,7 @@ export function createMachineRebootAction(input: Readonly<{
                                     if (boundary !== 'reboot_dispatch') return true;
                                     // Only final dispatch reads all live work again.
                                     // Earlier root frames check local custody only.
-                                    const maintenance = await readMachineMaintenanceAdmission(routes.inventory, { excludeOperationId: operationId });
+                                    const maintenance = await readMachineMaintenanceAdmission(routes.inventory, maintenanceExclusions);
                                     if (maintenance.kind !== 'eligible') { finalMaintenance = maintenance; return false; }
                                     return !taskSignal.aborted && await verifyCurrent();
                                 } });

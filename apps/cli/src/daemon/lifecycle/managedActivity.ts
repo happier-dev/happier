@@ -67,11 +67,13 @@ export type MachineMaintenanceAdmission =
 /** Fresh all-owner confirmation; residency and retention remain facts of the same inventory. */
 export async function readMachineMaintenanceAdmission(
     inventory: Pick<ManagedActivityInventory, 'read'>,
-    options?: Readonly<{ excludeOperationId?: string }>,
+    options?: Readonly<{ excludeOperationId?: string; excludeWorkflowRunId?: string }>,
 ): Promise<MachineMaintenanceAdmission> {
     const current = await inventory.read();
     const items = current.items.filter(item => item.state !== 'settled'
         && !(options?.excludeOperationId !== undefined && item.actionOperationId === options.excludeOperationId)
+        && !(item.category === 'workflow_run' && options?.excludeWorkflowRunId !== undefined
+            && item.ownerRef === options.excludeWorkflowRunId)
         && !(item.category === 'service' && item.state === 'active'
             && item.lifecyclePurpose !== undefined && item.serviceActivity === 'residency'));
     const active = [...new Set(items.filter(item => item.state === 'active').map(item => item.category))];
