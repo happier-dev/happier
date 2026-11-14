@@ -1,9 +1,7 @@
 import * as React from 'react';
 
 import { Platform } from 'react-native';
-import { router } from 'expo-router';
 
-import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
 import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
@@ -19,6 +17,7 @@ import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotificati
 import { sendWebLocalNotification } from '../channels/sendWebLocalNotification';
 import { subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
 import { useDesktopNotificationClickRouting } from './useDesktopNotificationClickRouting';
+import { navigateToLocalNotificationSession } from './navigateToLocalNotificationSession';
 import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
 
 type ActivityLocalNotificationSettings = Readonly<{
@@ -155,19 +154,20 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 fireAndForget(sendTauriLocalNotification({
                     title: notification.title,
                     body: notification.body,
-                    sessionId: event.sessionId,
+                    data: notification.data,
                 }), { tag: 'ActivityLocalNotificationRuntime.sendTauriLocalNotification' });
                 return;
             }
 
             if (Platform.OS === 'web') {
-                const sessionId = event.sessionId;
                 fireAndForget(sendWebLocalNotification({
                     title: notification.title,
                     body: notification.body,
                     tag: resolveWebNotificationTag(event),
                     silent: foregroundBehavior === 'silent',
-                    onClick: () => navigateToSessionRoute({ router, sessionId }),
+                    onClick: () => {
+                        fireAndForget(navigateToLocalNotificationSession(notification.data, () => false), { tag: 'notificationSessionNavigation' });
+                    },
                 }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
                 return;
             }

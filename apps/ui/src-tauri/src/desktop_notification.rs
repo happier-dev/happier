@@ -7,26 +7,21 @@
 #[cfg(desktop)]
 pub const DESKTOP_NOTIFICATION_CLICKED_EVENT: &str = "desktop-notification-clicked";
 
-#[cfg(desktop)]
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopNotificationClickedPayload {
-    pub session_id: Option<String>,
-}
-
-/// The session of the last clicked toast that the UI has not yet taken. A click can recreate the
+/// The data of the last clicked toast that the UI has not yet taken. A click can recreate the
 /// main window (menu-bar mode), whose page is not listening yet when the event fires; the UI asks
-/// for this on start-up instead.
+/// for this on start-up instead. The UI owns the notification schema; the shell preserves it.
 #[cfg(desktop)]
 #[derive(Default)]
-pub struct PendingNotificationSession(std::sync::Mutex<Option<String>>);
+pub struct PendingNotificationData(
+    std::sync::Mutex<Option<serde_json::Map<String, serde_json::Value>>>,
+);
 
-/// Returns and clears the session id of a clicked toast the UI has not handled yet.
+/// Returns and clears the data of a clicked toast the UI has not handled yet.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn desktop_take_pending_notification_session(
-    state: tauri::State<'_, PendingNotificationSession>,
-) -> Option<String> {
+pub fn desktop_take_pending_notification_data(
+    state: tauri::State<'_, PendingNotificationData>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     state.0.lock().ok().and_then(|mut pending| pending.take())
 }
 
@@ -38,7 +33,7 @@ pub fn desktop_show_clickable_notification(
     app: tauri::AppHandle,
     title: String,
     body: String,
-    session_id: Option<String>,
+    data: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
@@ -59,17 +54,13 @@ pub fn desktop_show_clickable_notification(
                 {
                     // Cleared by the UI once it has handled the click.
                     use tauri::Manager;
-                    if let Ok(mut pending) = handle.state::<PendingNotificationSession>().0.lock() {
-                        *pending = session_id.clone();
+                    if let Ok(mut pending) = handle.state::<PendingNotificationData>().0.lock() {
+                        *pending = data.clone();
                     }
                 }
                 crate::window_chrome::request_show_main_window(&handle);
-                if let Err(error) = handle.emit(
-                    DESKTOP_NOTIFICATION_CLICKED_EVENT,
-                    DesktopNotificationClickedPayload {
-                        session_id: session_id.clone(),
-                    },
-                ) {
+                // The event only wakes the UI; taking pending data is the sole delivery path.
+                if let Err(error) = handle.emit(DESKTOP_NOTIFICATION_CLICKED_EVENT, ()) {
                     log::warn!("failed to emit the notification click: {error}");
                 }
                 Ok(())
@@ -80,7 +71,7 @@ pub fn desktop_show_clickable_notification(
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, title, body, session_id);
+        let _ = (app, title, body, data);
         Ok(false)
     }
 }

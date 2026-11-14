@@ -14,7 +14,6 @@ import {
 import { EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS, loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { withTimeout } from '@/utils/timing/time';
 import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
-import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { readSessionIdFromPathname } from '@/components/sessions/shell/readSessionIdFromPathname';
 import { executeNotificationPermissionAction } from './notificationPermissionActions';
 import { markNotificationResponseHandled, wasNotificationResponseHandled } from './notificationResponseConsumption';
@@ -22,6 +21,7 @@ import { consumeNotificationPermissionRecoveryNotice, markNotificationPermission
 import { findSavedNotificationServerProfile as findSavedServerProfileForUrl, resolveNotificationPermissionTarget } from './resolveNotificationPermissionTarget';
 
 import { isNotificationExecutionAction, isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
+import { navigateWithNotificationAccount, type NotificationAccountNavigationTarget } from './navigateWithNotificationAccount';
 
 type ExpoNotificationsWithClear = ExpoNotificationsModule & Readonly<{
     clearLastNotificationResponseAsync?: () => Promise<void>;
@@ -103,53 +103,16 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
         };
 
-        const navigateWithNotificationAccount = (
-            target: Readonly<{ serverUrl: string | null; route: string; accountId?: string | null }>,
+        const navigateToNotificationAccount = (
+            target: NotificationAccountNavigationTarget,
             navigate: () => void,
         ): void => {
-            if (!target.accountId) {
-                navigate();
-                return;
-            }
-            fireAndForget((async () => {
-                try {
-                    const scope = target.serverUrl
-                        ? await resolveNotificationPermissionTarget(target.serverUrl, target.accountId)
-                        : null;
-                    if (!scope) throw new Error('Notification Account unavailable');
-                    const routeServerId = readSessionRouteServerId({
-                        serverId: new URL(target.route, 'https://happier.invalid').searchParams.get('serverId'),
-                    });
-                    if (routeServerId && !areServerProfileIdentifiersEquivalent(routeServerId, scope.serverId)) {
-                        throw new Error('Notification route Home does not match');
-                    }
-                    const profile = getServerProfileById(scope.serverId);
-                    if (!profile) throw new Error('Notification Home unavailable');
-                    if (disposed) return;
-                    await setActiveServerAndSwitch({
-                        serverId: profile.id,
-                        scope: 'device',
-                        refreshAuth: refreshAuthRef.current,
-                    });
-                    const currentProfile = getServerProfileById(scope.serverId);
-                    if (!currentProfile || !areServerAccountScopesEqual(
-                        await resolveNotificationPermissionTarget(currentProfile.serverUrl, target.accountId), scope,
-                    ) || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, scope.serverId)) {
-                        throw new Error('Notification Account changed');
-                    }
-                    if (!disposed) navigate();
-                } catch {
-                    console.warn('[notifications] Session navigation Account unavailable');
-                    const [{ Modal }, { t }] = await withTimeout(
-                        () => Promise.all([import('@/modal'), import('@/text')]),
-                        EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS,
-                        'notification navigation UI module load',
-                    );
-                    if (!disposed && AppState.currentState === 'active') {
-                        Modal.alert(t('common.error'), t('notifications.permissionActionReviewUnavailable'));
-                    }
-                }
-            })(), { tag: 'notificationSessionNavigation' });
+            fireAndForget(navigateWithNotificationAccount({
+                target,
+                navigate,
+                refreshAuth: refreshAuthRef.current,
+                isDisposed: () => disposed,
+            }), { tag: 'notificationSessionNavigation' });
         };
 
         const pendingAction = getPendingNotificationAction();
@@ -182,7 +145,7 @@ export function useNotificationResponseRouting(params: Readonly<{
             const active = normalizeServerUrl(getActiveServerUrl());
             if (normalizeServerUrl(pending.serverUrl) === active) {
                 clearPendingNotificationNav();
-                navigateWithNotificationAccount(pending, () => { router.push(pending.route); });
+                navigateToNotificationAccount(pending, () => { router.push(pending.route); });
                 return () => { disposed = true; };
             }
         }
@@ -228,7 +191,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                 });
             };
             const navigateToRoute = (serverId?: string) => {
-                navigateWithNotificationAccount(navigationTarget, () => {
+                navigateToNotificationAccount(navigationTarget, () => {
                     if (routeSessionId) {
                         navigateToSessionRoute({ router, sessionId: routeSessionId, serverId, refreshAuth: refreshAuthRef.current });
                     } else {
@@ -269,7 +232,7 @@ export function useNotificationResponseRouting(params: Readonly<{
 
                     if (isUnsafeNotificationServerUrl(serverUrl)) {
                         // Unsafe/mismatched server url: fail closed for actions; navigate only.
-                        navigateWithNotificationAccount(navigationTarget, () => { router.push(route); });
+                        navigateToNotificationAccount(navigationTarget, () => { router.push(route); });
                         return;
                     }
 
@@ -299,7 +262,7 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
 
             if (parsed.isOpenAction) {
-                navigateWithNotificationAccount(navigationTarget, () => { router.push(route); });
+                navigateToNotificationAccount(navigationTarget, () => { router.push(route); });
             }
         };
 

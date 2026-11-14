@@ -13,15 +13,16 @@ import {
 async function showClickableDesktopNotification(params: Readonly<{
     title: string;
     body: string;
-    sessionId?: string;
+    data?: Readonly<Record<string, unknown>>;
 }>): Promise<boolean> {
     try {
         return (await invokeTauri<boolean>('desktop_show_clickable_notification', {
             title: params.title,
             body: params.body,
-            sessionId: params.sessionId ?? null,
+            data: params.data ?? null,
         })) === true;
     } catch {
+        console.warn('[notifications] Clickable desktop delivery unavailable; using notification plugin');
         return false;
     }
 }
@@ -29,7 +30,7 @@ async function showClickableDesktopNotification(params: Readonly<{
 export async function sendTauriLocalNotification(params: Readonly<{
     title: string;
     body: string;
-    sessionId?: string;
+    data?: Readonly<Record<string, unknown>>;
 }>): Promise<boolean> {
     let granted = await isPermissionGranted();
     if (!granted) {

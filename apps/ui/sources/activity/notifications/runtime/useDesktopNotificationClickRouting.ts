@@ -1,50 +1,40 @@
-import { router } from 'expo-router';
 import * as React from 'react';
 
-import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
 import { invokeTauri, isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
+import { navigateToLocalNotificationSession } from './navigateToLocalNotificationSession';
 
 export const DESKTOP_NOTIFICATION_CLICKED_EVENT = 'desktop-notification-clicked';
 
-type DesktopNotificationClickedPayload = Readonly<{ sessionId?: string | null }>;
-
-const TAKE_PENDING_COMMAND = 'desktop_take_pending_notification_session';
-
-/** Opens the session a clicked desktop toast was about (the shell has already focused the window). */
+/** The native pending slot owns click data; events only wake its consumer. */
 export function useDesktopNotificationClickRouting(): void {
     React.useEffect(() => {
         if (!isTauriDesktop()) return;
 
         let disposed = false;
         let unlisten: (() => void) | null = null;
-        const open = (sessionId: string) => navigateToSessionRoute({ router, sessionId });
-        // Takes (and so clears) the click the shell remembered; used on start-up and after each
-        // event so the same click is never opened twice.
-        const takePending = async (): Promise<string> => {
+        const takePending = async (): Promise<void> => {
+            if (disposed) return;
             try {
-                const pending = await invokeTauri<string | null>(TAKE_PENDING_COMMAND);
-                return typeof pending === 'string' ? pending.trim() : '';
+                const data = await invokeTauri<unknown>('desktop_take_pending_notification_data');
+                if (!disposed && data) {
+                    await navigateToLocalNotificationSession(data, () => disposed);
+                }
             } catch {
-                return '';
+                console.warn('[notifications] Desktop notification click unavailable');
             }
         };
-        void listenTauriEvent<DesktopNotificationClickedPayload>(
-            DESKTOP_NOTIFICATION_CLICKED_EVENT,
-            (payload) => {
-                const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : '';
-                if (!sessionId) return;
-                open(sessionId);
+        void listenTauriEvent<unknown>(DESKTOP_NOTIFICATION_CLICKED_EVENT, () => { void takePending(); })
+            .then((dispose) => {
+                if (disposed) {
+                    dispose();
+                    return;
+                }
+                unlisten = dispose;
+                // Register first, then consume: clicks during registration remain in the shell.
+                // Startup and live wakes both take the same slot, so a click opens only once.
                 void takePending();
-            },
-        ).then((dispose) => {
-            if (disposed) dispose();
-            else unlisten = dispose;
-        }).catch(() => undefined);
-
-        // A click that recreated the window fired before this listener existed.
-        void takePending().then((sessionId) => {
-            if (!disposed && sessionId) open(sessionId);
-        });
+            })
+            .catch(() => { console.warn('[notifications] Desktop notification click listener unavailable'); });
 
         return () => {
             disposed = true;
