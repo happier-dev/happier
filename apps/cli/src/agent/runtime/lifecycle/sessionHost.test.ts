@@ -15,7 +15,7 @@ import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { endLocalSessionHostSession } from '@/session/transport/rpc/localSessionRpcChannel';
 
 import { onHostedSessionHandover } from './hostedSessionScope';
-import { registerRunnerTerminationHandlers } from './runnerTerminationHandlers';
+import { bindHostedSessionStop, registerRunnerTerminationHandlers } from './runnerTerminationHandlers';
 import { startSessionHost, type SessionHost } from './sessionHost';
 
 type Deferred = { promise: Promise<void>; resolve: () => void };
@@ -100,6 +100,29 @@ describe('session host', () => {
     } finally {
       turn.resolve();
       await ended;
+    }
+  });
+
+  it('keeps startup Stop with its Session when a child delegates lifecycle to its caller', async () => {
+    const stopped = deferred();
+    const sibling = deferred();
+    await startHost(async argv => {
+      if (argv[0] === 'sibling') return await sessionInTurn(sibling)();
+      bindHostedSessionStop(async () => { stopped.resolve(); });
+      bindHostedSessionStop(async () => { throw new Error('Child must not own parent Stop'); }, 'caller');
+      await stopped.promise;
+    });
+    const siblingEnded = add('sibling');
+    const ended = add('startup');
+    try {
+      await expect(endLocalSessionHostSession({ hostPid: process.pid, trackingKey: 'startup' }))
+        .resolves.toEqual({ status: 'termination_requested' });
+      expect(await settledWithin(ended)).toEqual({ exitCode: 0 });
+      expect(await settledWithin(siblingEnded, 50)).toBe('pending');
+      expect(hostExit).not.toHaveBeenCalled();
+    } finally {
+      stopped.resolve(); sibling.resolve();
+      await Promise.all([ended, siblingEnded]);
     }
   });
 

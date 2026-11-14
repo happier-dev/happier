@@ -265,6 +265,7 @@ import {
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
 import { bindHostedSessionId, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindHostedSessionStop } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import {
   consumePersistedTakeoverAdmissionFromEnv,
   parsePersistedTakeoverAdmission,
@@ -1128,6 +1129,7 @@ async function runHostedSessionRuntime(
   // This is the stable ordinary Session/process terminal owner. Expose it before
   // deferred Session attachment so a materialization/Stop race cannot fall back
   // to bootstrap-key cleanup or admit an Agent before termination is observed.
+  bindHostedSessionStop(requestRuntimeStop, config.processLifecycleOwnership);
   config.onRuntimeStopReady?.(requestRuntimeStop);
 
   const initializeBackendApiContextFn = deps.initializeBackendApiContextFn ?? initializeBackendApiContext;

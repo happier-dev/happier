@@ -2,6 +2,8 @@
 
 The host owns the executable Session and turn lifecycle. An Agent plugin supplies its native protocol, correlation and evidence through the public SDK; the host admits input, coordinates work, publishes lifecycle and writes the canonical transcript. Session interaction and finite Execution Runs use that same ownership boundary.
 
+Hosted Sessions bind physical Stop to the runtime's ordinary Stop callback before native construction. A native-open refusal can therefore keep serving Pending input and still stop through its existing cleanup owner. Caller-owned child runtimes retain their caller's Stop binding; ending one Session never signals the shared host.
+
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
 Native Agent adapters read their inherited configuration selectors through
@@ -1169,6 +1171,13 @@ Session available until the host's bounded loop settles. A first native turn can
 require the profile's structured-output repair turn; it does not complete the
 host Run. The existing conversation adapter serves those turns, and host
 settlement disposes the Session, including for ephemeral Runs.
+
+In 0.3 development source, a Run's structured result uses the last assistant
+message of the turn, including corrections to that message. Plain-text results
+retain earlier message artifacts, and the sidechain transcript keeps all messages.
+The execution Run message handler selects the result using the admitted turn's
+prepared contract; strict decoders receive no commentary
+prefix. This covers bounded, direct and retained-input completion paths.
 
 In 0.3 development source, Session-owned Run output enters the Session's durable
 transcript journal with sidechain provenance, including final results rendered

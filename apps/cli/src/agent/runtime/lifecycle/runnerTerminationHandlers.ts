@@ -4,6 +4,8 @@ import { writeSessionExitReportSync } from '@/session/diagnostics/sessionExitRep
 import { logger } from '@/ui/logger';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 
+import { readHostedSessionScope, type HostedSessionScope } from './hostedSessionScope';
+
 import {
   computeRunnerTerminationOutcome,
   type RunnerTerminationEvent,
@@ -63,6 +65,127 @@ function writeRunnerTerminationSessionExitReport(params: Readonly<{
   }
 }
 
+type SessionRegistration = Readonly<{
+  terminate: (event: RunnerTerminationEvent) => void;
+  shouldTerminateOnUnhandledRejection?: (reason: unknown) => boolean;
+}>;
+
+/**
+ * One owner per process for process signals, fatal errors and exit. Sessions
+ * register with it; the process exits when its last Session has terminated.
+ */
+type ProcessTerminationHost = {
+  sessions: Set<SessionRegistration>;
+  dispose: () => void;
+};
+const processTerminationHosts = new WeakMap<ProcessLike, ProcessTerminationHost>();
+
+function reportUnattributedFatal(failure: unknown): void {
+  try {
+    logger.fatal(failure);
+  } catch {
+    // Fatal diagnostics must never stop the other hosted Sessions.
+  }
+}
+
+function attachProcessTerminationHost(processLike: ProcessLike): ProcessTerminationHost {
+  const existing = processTerminationHosts.get(processLike);
+  if (existing) return existing;
+  const sessions = new Set<SessionRegistration>();
+  // A failure raised inside a Session's work belongs to it. With exactly one
+  // Session every failure is that Session's (today's runner). With several, an
+  // unattributable failure is reported and no Session is ended for it.
+  const owningSession = (): SessionRegistration | null => {
+    const scoped = readHostedSessionScope()?.termination;
+    for (const session of sessions) if (session === scoped) return session;
+    if (sessions.size === 1) return sessions.values().next().value ?? null;
+    return null;
+  };
+  const onSigterm = () => { for (const session of [...sessions]) session.terminate({ kind: 'signal', signal: 'SIGTERM' }); };
+  const onSigint = () => { for (const session of [...sessions]) session.terminate({ kind: 'signal', signal: 'SIGINT' }); };
+  const onUnhandledRejection = (reason: unknown) => {
+    const session = owningSession();
+    if (!session) {
+      reportUnattributedFatal(reason);
+      return;
+    }
+    const shouldTerminate = session.shouldTerminateOnUnhandledRejection;
+    if (typeof shouldTerminate === 'function') {
+      try {
+        if (!shouldTerminate(reason)) {
+          return;
+        }
+      } catch {
+        // Defensive: if policy throws, treat as fatal.
+      }
+    }
+    session.terminate({ kind: 'unhandledRejection', reason });
+  };
+  const onUncaughtException = (error: unknown) => {
+    const session = owningSession();
+    if (!session) {
+      reportUnattributedFatal(error);
+      return;
+    }
+    session.terminate({ kind: 'uncaughtException', error });
+  };
+  processLike.on('SIGTERM', onSigterm);
+  processLike.on('SIGINT', onSigint);
+  processLike.on('unhandledRejection', onUnhandledRejection);
+  processLike.on('uncaughtException', onUncaughtException);
+  const host: ProcessTerminationHost = {
+    sessions,
+    dispose: () => {
+      processLike.removeListener('SIGTERM', onSigterm);
+      processLike.removeListener('SIGINT', onSigint);
+      processLike.removeListener('unhandledRejection', onUnhandledRejection);
+      processLike.removeListener('uncaughtException', onUncaughtException);
+      processTerminationHosts.delete(processLike);
+    },
+  };
+  processTerminationHosts.set(processLike, host);
+  return host;
+}
+
+function leaveProcessTerminationHost(processLike: ProcessLike, session: SessionRegistration): ProcessTerminationHost | null {
+  const host = processTerminationHosts.get(processLike);
+  if (!host || !host.sessions.delete(session)) return null;
+  if (host.sessions.size === 0) host.dispose();
+  return host;
+}
+
+/**
+ * End the current Session's command with `exitCode`: a Session added to a session host ends only
+ * itself (the host reports its end), a one-Session runner exits its process as before.
+ */
+export function endSessionCommand(exitCode: number): void {
+  const end = readHostedSessionScope()?.end;
+  if (end) {
+    end(exitCode);
+    return;
+  }
+  process.exit(exitCode);
+}
+
+/** Bind the runtime's ordinary Stop before native construction can enter its refusal receiver. */
+export function bindHostedSessionStop(stop: () => Promise<void>, processLifecycleOwnership?: 'self' | 'caller'): void {
+  const scope = readHostedSessionScope();
+  if (!scope?.end || processLifecycleOwnership === 'caller') return;
+  scope.termination = { terminate: () => {
+    void stop().catch((error: unknown) => {
+      logger.infoFile('[RunnerTermination] Hosted Stop failed', { cause: formatErrorForUi(error) });
+    });
+  } } satisfies SessionRegistration;
+}
+
+/** Request termination of the Session whose scope this is (a host's per-Session Stop); false before it registered. */
+export function requestHostedSessionTermination(scope: HostedSessionScope, event: RunnerTerminationEvent): boolean {
+  const registration = scope.termination as SessionRegistration | null;
+  if (!registration || typeof registration.terminate !== 'function') return false;
+  registration.terminate(event);
+  return true;
+}
+
 export function registerRunnerTerminationHandlers(params: Readonly<{
   process: ProcessLike;
   exit: (code: number) => void;
@@ -76,7 +199,7 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
   sessionExitReport?: RunnerTerminationSessionExitReportOptions | null;
   /**
    * Optional policy hook to decide whether an unhandled rejection should
-   * terminate the runner process.
+   * terminate this Session.
    *
    * Defaults to terminating on all unhandled rejections.
    */
@@ -89,6 +212,8 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
   });
 
   const terminationTimeoutMs = readRunnerTerminationTimeoutMs(process.env);
+  const ownsProcessLifecycle = params.processLifecycleOwnership !== 'caller';
+  const sessionScope = ownsProcessLifecycle ? readHostedSessionScope() : undefined;
 
   const terminate = (event: RunnerTerminationEvent) => {
     if (terminated) return;
@@ -130,45 +255,32 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
       .catch(() => undefined)
       .finally(() => {
         resolveWhenTerminated({ event, outcome });
-        if (params.processLifecycleOwnership !== 'caller') {
-          params.exit(outcome.exitCode);
-        }
+        if (!ownsProcessLifecycle) return;
+        const host = leaveProcessTerminationHost(params.process, registration);
+        // A Session added to a session host ends only itself and reports its end to the host.
+        sessionScope?.end?.(outcome.exitCode);
+        // The process ends with its last registration (a session host holds its own while it runs).
+        if (host && host.sessions.size === 0) params.exit(outcome.exitCode);
       });
   };
 
-  const onSigterm = () => terminate({ kind: 'signal', signal: 'SIGTERM' });
-  const onSigint = () => terminate({ kind: 'signal', signal: 'SIGINT' });
-  const onUnhandledRejection = (reason: unknown) => {
-    const shouldTerminate = params.shouldTerminateOnUnhandledRejection;
-    if (typeof shouldTerminate === 'function') {
-      try {
-        if (!shouldTerminate(reason)) {
-          return;
-        }
-      } catch {
-        // Defensive: if policy throws, treat as fatal.
-      }
-    }
-    terminate({ kind: 'unhandledRejection', reason });
+  const registration: SessionRegistration = {
+    terminate,
+    ...(params.shouldTerminateOnUnhandledRejection
+      ? { shouldTerminateOnUnhandledRejection: params.shouldTerminateOnUnhandledRejection }
+      : {}),
   };
-  const onUncaughtException = (error: unknown) => terminate({ kind: 'uncaughtException', error });
-
-  if (params.processLifecycleOwnership !== 'caller') {
-    params.process.on('SIGTERM', onSigterm);
-    params.process.on('SIGINT', onSigint);
-    params.process.on('unhandledRejection', onUnhandledRejection);
-    params.process.on('uncaughtException', onUncaughtException);
+  if (ownsProcessLifecycle) {
+    attachProcessTerminationHost(params.process).sessions.add(registration);
+    if (sessionScope) sessionScope.termination = registration;
   }
 
   return {
     requestTermination: terminate,
     whenTerminated,
     dispose: () => {
-      if (params.processLifecycleOwnership === 'caller') return;
-      params.process.removeListener('SIGTERM', onSigterm);
-      params.process.removeListener('SIGINT', onSigint);
-      params.process.removeListener('unhandledRejection', onUnhandledRejection);
-      params.process.removeListener('uncaughtException', onUncaughtException);
+      if (!ownsProcessLifecycle || terminated) return;
+      leaveProcessTerminationHost(params.process, registration);
     },
   };
 }

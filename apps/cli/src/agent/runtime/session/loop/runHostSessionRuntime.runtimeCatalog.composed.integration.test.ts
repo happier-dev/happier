@@ -8444,7 +8444,7 @@ describe('runHostSessionRuntime', () => {
     },
   );
 
-  it('settles late originals after a typed native startup refusal without reporting Ready or dispatching them', async () => {
+  it.each(['native_agent_session_mode_unavailable', 'team_credential_provider_selection_not_current'] as const)('stops a hosted native startup refusal (%s) while preserving its Pending disposition', async code => {
     const harness = createHarness();
     await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata,
       mcpSelectionV1: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] },
@@ -8463,6 +8463,7 @@ describe('runHostSessionRuntime', () => {
     let stop: (() => Promise<void>) | undefined;
     harness.config.onRuntimeStopReady = value => { stop = value; };
     const pending = new Set<string>();
+    if (code === 'team_credential_provider_selection_not_current') pending.add('undeliverable-original');
     harness.session.hasPendingProviderInput = (localId?: string) => localId === undefined ? pending.size > 0 : pending.has(localId);
     const rejected: unknown[] = [];
     harness.session.observeProviderInputSettlement = async (outcome: import('@/agent/runtime/session/input/providerInputOutcome').SessionProviderInputOutcome) => {
@@ -8470,7 +8471,9 @@ describe('runHostSessionRuntime', () => {
       if (outcome.kind === 'rejected_before_effect' && !outcome.retryable) pending.delete(outcome.localId);
       return false;
     };
+    const { SessionTeamCredentialLaunchUnavailableError } = await import('@/session/services/sessionTeamCredentialLaunchError');
     setSessionRuntimeFactory(harness.config, () => {
+      if (code === 'team_credential_provider_selection_not_current') throw new SessionTeamCredentialLaunchUnavailableError(code);
       const publications = createNativeAgentSessionPublications({ agentId: 'acme.external', session: null,
         signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: false });
       // The external Agent publishes its real catalog; the host owns refusal.
@@ -8480,29 +8483,51 @@ describe('runHostSessionRuntime', () => {
         model: { value: null, updatedAtMs: 0 }, permissionIntent: { value: null, updatedAtMs: 0 }, options: {} }, publications);
       throw new Error('Expected the real native mode refusal');
     });
-    const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    const [{ EventEmitter }, { startSessionHost }, { endLocalSessionHostSession }] = await Promise.all([
+      import('node:events'), import('@/agent/runtime/lifecycle/sessionHost'),
+      import('@/session/transport/rpc/localSessionRpcChannel'),
+    ]);
+    const hostProcess = new EventEmitter();
+    const hostExit = vi.fn();
+    const host = await startSessionHost({ process: hostProcess, exit: hostExit,
+      readTrustedCallerPid: async () => process.pid,
+      runSessionCommand: () => runHostSessionRuntime(harness.opts, harness.config, harness.deps) });
+    const running = host.addSession({ trackingKey: 'startup-refused', argv: [], env: {}, cwd: '/repo' });
     // Observe early rejection without allowing an unhandled promise in RED.
     let finished = false;
     const result = running.then(() => { finished = true; return null; }, error => { finished = true; return error; });
+    const retryable = code === 'team_credential_provider_selection_not_current';
+    // Team construction refusal waits for an original before retiring. Stop
+    // must reach that receiver even when no original is deliverable yet.
+    const localIds = retryable ? [] : ['late-protected-original', 'another-protected-original'];
     try {
-      for (const localId of ['late-protected-original', 'another-protected-original']) {
+      if (retryable) await vi.waitFor(() => expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalled());
+      for (const localId of localIds) {
         pending.add(localId);
         harness.queue.pushIsolate({ text: 'Must not execute', localId }, { permissionMode: 'default' });
         await vi.waitFor(() => expect(rejected).toContainEqual(expect.objectContaining({
-          localId, kind: 'rejected_before_effect', retryable: false,
-          reason: 'provider_rejected_before_acceptance', diagnostic: { code: 'native_agent_session_mode_unavailable', severity: 'error' },
+          localId, kind: 'rejected_before_effect', retryable,
+          reason: retryable ? 'provider_unavailable_before_acceptance' : 'provider_rejected_before_acceptance', diagnostic: { code, severity: 'error' },
         })));
       }
-      expect(pending.size).toBe(0);
+      expect(pending.size).toBe(retryable ? 1 : 0);
       expect(harness.runtime.sendPrompt).not.toHaveBeenCalled();
       expect(harness.metrics.defaultReadyCalls).toBe(0);
       expect(harness.metrics.onAfterStartCalls).toBe(0);
       expect(harness.session.close).not.toHaveBeenCalled();
-      expect(harness.session.enqueueSessionTurnMutation).not.toHaveBeenCalled();
+      if (!retryable) expect(harness.session.enqueueSessionTurnMutation).not.toHaveBeenCalled();
       expect(harness.session.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
+      // Physical Stop must reach the existing refusal receiver before the live
+      // loop has registered its normal termination handler. No host-wide signal.
+      await expect(endLocalSessionHostSession({ hostPid: process.pid, trackingKey: 'startup-refused' }))
+        .resolves.toEqual({ status: 'termination_requested' });
+      await result;
+      expect(harness.session.endSessionAndClose).toHaveBeenCalledOnce();
     } finally {
       if (!finished) await stop?.();
       await result;
+      hostProcess.emit('SIGTERM');
+      await host.whenEnded;
     }
     expect(harness.session.endSessionAndClose).toHaveBeenCalledOnce();
     expect(contextReadyObservations).toBe(0);
