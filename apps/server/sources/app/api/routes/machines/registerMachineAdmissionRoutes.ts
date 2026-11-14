@@ -14,7 +14,7 @@ import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSync
     resolveReceivingMachineRpcAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { resolveMachineAdmission, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmission, resolveMachineAdmissionFromFactsInTx, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
@@ -26,7 +26,6 @@ import { RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protoco
 import { hasCurrentSessionScopedMachineAccessInTx } from '@/app/api/socket/sessionScopedBinding';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
-import { auth } from '@/app/auth/auth';
 import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import type { Fastify } from '../../types';
@@ -66,7 +65,9 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || context.machineId !== request.params.id || context.role !== 'manage') {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const machine = await db.machine.findUnique({ where: { id: request.params.id } });
+            // One Machine read serves the installation proof and the Manage admission.
+            const machine = await db.machine.findUnique({ where: { id: request.params.id },
+                select: { ...buildMachineAdmissionFactsSelect(request.userId), installationPublicKey: true } });
             if (!machine?.installationPublicKey || machine.accountId !== request.userId
                 || machine.installationId !== context.installationId || classifyMachineAvailabilityState(machine) !== 'available'
                 || !verifyMachineInstallationProof({ payload: { version: 1, machineId: machine.id,
@@ -74,18 +75,18 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     proof, publicKey: encodeBase64(machine.installationPublicKey, 'base64url') })) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const current = await resolveMachineAdmission({ actorAccountId: request.userId, machineId: machine.id, requiredRole: 'manage' });
+            const current = await resolveMachineAdmissionFromFactsInTx(db, machine,
+                { actorAccountId: request.userId, machineId: machine.id, requiredRole: 'manage' });
+            if (current.kind !== 'admitted') return reply.code(403).send({ error: 'access_denied' });
             const session = await db.session.findUnique({ where: { id: sessionDecision.sessionId }, select: { accountId: true } });
-            const committedTarget = await readCurrentCommittedSessionInputMachineTargetInTx(db, sessionDecision.sessionId);
+            // A Manage admission of this Machine also decides the committed placement's (Use) admission.
+            const committedTarget = await readCurrentCommittedSessionInputMachineTargetInTx(db, sessionDecision.sessionId, { admitted: current });
             const currentSessionMachineId = committedTarget?.accountId === request.userId
                 ? committedTarget.machineId
                 : await app.resolveCurrentSessionMachine?.({ accountId: request.userId, sessionId: sessionDecision.sessionId });
-            if (current.kind !== 'admitted' || current.installationId !== context.installationId
+            if (current.installationId !== context.installationId
                 || current.encryptionMode !== context.encryptionMode || session?.accountId !== request.userId
                 || currentSessionMachineId !== machine.id) {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            if (!await auth.isSignedCredentialCurrent(db, sessionDecision.actor.accountId, sessionDecision.authentication.tokenEpoch)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             // Reuse the deciding credential's exact evidence; the canonical Team
@@ -126,7 +127,8 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || purpose || custodySubjectAccountId || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting || workspaceSyncSeedRouting) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const receiver = await db.machine.findUnique({ where: { id: request.params.id } });
+            const receiver = await db.machine.findUnique({ where: { id: request.params.id },
+                select: { ...buildMachineAdmissionFactsSelect(context.actorAccountId), installationPublicKey: true } });
             if (!receiver?.installationId || !receiver.installationPublicKey || receiver.accountId !== request.userId
                 || receiver.installationId !== context.installationId || receiver.accountId !== context.custodianAccountId
                 || classifyMachineAvailabilityState(receiver) !== 'available'
@@ -159,7 +161,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 // its own installation; the original requester is attribution.
                 return reply.send({ v: 1, ok: true });
             }
-            const current = await resolveMachineAdmission({ actorAccountId: context.actorAccountId, machineId: receiver.id,
+            const current = await resolveMachineAdmissionFromFactsInTx(db, receiver, { actorAccountId: context.actorAccountId, machineId: receiver.id,
                 callerAuthority: verified.effectiveAuthority, sessionActionOrigin: verified.binding.sessionActionOrigin,
                 executionBinding: verified.binding,
                 operationRpcMethod: method.slice(method.indexOf(':') + 1),

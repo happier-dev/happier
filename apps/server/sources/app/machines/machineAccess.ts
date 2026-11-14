@@ -365,6 +365,13 @@ interface AccessibleMachineOpening {
 }
 
 /** Acquire row material and its opening together; callers never reacquire admitted content. */
+/** Caller-openable key from one access derivation: the custodian's envelope or the caller's current recipient envelope. */
+function callerDataEncryptionKeyFromFacts(row: Pick<MachineFacts, 'id' | 'dataEncryptionKey'>, facts: MachineAccessFacts,
+    material: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>> | undefined): Uint8Array<ArrayBuffer> | null {
+    const key = facts.owned ? row.dataEncryptionKey
+        : facts.accessState === 'ready' && facts.encryptionMode === 'e2ee' ? material?.envelopes.get(row.id)?.encryptedDataKey : null;
+    return key ? new Uint8Array(key) : null;
+}
 export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineIds: readonly string[];
     includeRecipientWork?: true;
@@ -396,15 +403,14 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
         const facts = await accessFromFactsInTx(tx, row, input.actorAccountId, material,
             admission?.role ?? roles?.get(row.id)?.get(input.actorAccountId) ?? null);
         if (!facts) continue;
-        const key = facts.owned ? row.dataEncryptionKey
-            : facts.accessState === 'ready' && facts.encryptionMode === 'e2ee' ? material?.envelopes.get(row.id)?.encryptedDataKey : null;
+        const key = callerDataEncryptionKeyFromFacts(row, facts, material);
         result.set(row.id, {
             machine: row,
             access: { custodian: { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) ?? '' },
                 role: facts.role, resourceMode: facts.encryptionMode, accessState: facts.accessState,
                 ...(facts.accessState !== 'ready' && facts.reason ? { reason: facts.reason } : {}) },
             owned: facts.owned,
-            callerDataEncryptionKey: key ? new Uint8Array(key) : null,
+            callerDataEncryptionKey: key,
         });
     }
     const managed = input.includeRecipientWork ? [...result.values()].filter(opening => opening.access.role === 'manage'
@@ -581,12 +587,23 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
         }) };
 }
 
-async function managerInTx(tx: Tx, input: MachineActor, options: Readonly<{ requireCurrentKeyHolder?: boolean }> = {}) {
+async function managerInTx(tx: Tx, input: MachineActor) {
     const row = await readFactsInTx(tx, input.machineId);
     const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
     return row && access?.role === 'manage' && resourceContentMatchesMode(row, access.encryptionMode)
-        && (!options.requireCurrentKeyHolder || access.accessState === 'ready')
         && classifyMachineAvailabilityState(row) === 'available' ? row : null;
+}
+/** Key-holder Manage for the envelope census and commit: one access derivation, and the caller key comes from its recipient material. */
+async function managerAccessInTx(tx: Tx, input: MachineActor, options: Readonly<{ requireCurrentKeyHolder?: boolean }> = {}) {
+    const row = await readFactsInTx(tx, input.machineId);
+    if (!row) return null;
+    const material = row.accountId !== input.actorAccountId && resourceMode(row) === 'e2ee'
+        ? await readRecipientAccessMaterialInTx(tx, input.actorAccountId, [row.id]) : undefined;
+    const access = await accessFromFactsInTx(tx, row, input.actorAccountId, material);
+    return access?.role === 'manage' && resourceContentMatchesMode(row, access.encryptionMode)
+        && (!options.requireCurrentKeyHolder || access.accessState === 'ready')
+        && classifyMachineAvailabilityState(row) === 'available'
+        ? { row, callerDataEncryptionKey: callerDataEncryptionKeyFromFacts(row, access, material) } : null;
 }
 async function mutationImpactInTx(tx: Tx, machineId: string, accountIds: readonly string[]) {
     return captureMachineAccessImpactsInTx(tx, { machineIds: [machineId], accountIds });
@@ -710,12 +727,13 @@ export async function removeMachineAccessGrantInTx(tx: Tx, input: MachineActor &
 
 /** Current holder worklist; returns caller-openable bytes but never the custodian's private envelope. */
 export async function readMachineRecipientCensusInTx(tx: Tx, input: MachineActor & Readonly<{ query?: MachineRecipientKeyEnvelopePageQueryV1 }>): Promise<MachineAccessRecipientCensusResponseV1 | MachineAccessRefusalV1> {
-    const row = await managerInTx(tx, input, { requireCurrentKeyHolder: true });
-    if (!row) return refusal('access_denied');
+    const admitted = await managerAccessInTx(tx, input, { requireCurrentKeyHolder: true });
+    if (!admitted) return refusal('access_denied');
+    const { row } = admitted;
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null || !resourceContentMatchesMode(row, encryptionMode)) return refusal('encryption_material_unavailable');
     if (encryptionMode === 'plain' && !safePlainContent(row)) return refusal('content_unpublished');
-    const callerKey = encryptionMode === 'plain' ? null : await readMachineDataKeyForCallerInTx(tx, input);
+    const callerKey = encryptionMode === 'plain' ? null : admitted.callerDataEncryptionKey;
     if (encryptionMode === 'e2ee' && (!callerKey || !row.dataEncryptionKey || !parseEncryptedDataKeyEnvelopeV1(row.dataEncryptionKey))) return refusal('encryption_material_unavailable');
     const query = input.query ?? MachineRecipientKeyEnvelopePageQueryV1Schema.parse({});
     const after = query.cursor ? decodeSessionDataKeyEnvelopeCursorV1(query.cursor) : null;
@@ -741,8 +759,9 @@ export async function readMachineRecipientCensusInTx(tx: Tx, input: MachineActor
 /** Atomic opaque tuple commit after current Manage, holder, whole-blob versions and recipient binding recheck. */
 export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: MachineRecipientKeyEnvelopeCommitInputV1 & Readonly<{ actorAccountId: string }>): Promise<MachineRecipientKeyEnvelopeCommitResponseV1 | MachineAccessRefusalV1> {
     await acquireMachineAccessPublicationLocksInTx(tx, input.machineId);
-    const row = await managerInTx(tx, input, { requireCurrentKeyHolder: true });
-    if (!row) return refusal('access_denied');
+    const admitted = await managerAccessInTx(tx, input, { requireCurrentKeyHolder: true });
+    if (!admitted) return refusal('access_denied');
+    const { row } = admitted;
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null || !resourceContentMatchesMode(row, encryptionMode)) return refusal('encryption_material_unavailable');
     if (encryptionMode === 'plain') return refusal('data_key_not_required');
@@ -753,7 +772,7 @@ export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: Mach
     const expectedBasis = { machineOwnerEnvelopeFingerprint: input.expectedMachineOwnerEnvelopeFingerprint,
         metadataVersion: input.expectedMetadataVersion, daemonStateVersion: input.expectedDaemonStateVersion };
     if (!isDeepStrictEqual(currentBasis, expectedBasis)) return refusal('machine_key_changed');
-    const callerKey = await readMachineDataKeyForCallerInTx(tx, input);
+    const callerKey = admitted.callerDataEncryptionKey;
     if (!callerKey || !isDeepStrictEqual(callerKey, decodeBase64(input.expectedCallerDataEncryptionKey))) return refusal('recipient_binding_changed');
     const recipientIds = [...new Set(input.recipientKeyEnvelopes.map(envelope => envelope.recipientAccountId))];
     const accounts = recipientIds.length === 0 ? [] : await tx.account.findMany({

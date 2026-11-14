@@ -5,7 +5,7 @@ import type {
 } from "../types";
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
 import type { AuthTokenAuthenticationEvidenceV1, AuthTokenAuthority, AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
-import { isApiTokenGrantRestrictedV1, type ApiTokenGrantV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
+import { evaluateApiTokenGrantV1, isApiTokenGrantRestrictedV1, type ApiTokenGrantV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import { canCredentialDecideV1 } from "@happier-dev/protocol/actions/decisionAuthority";
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { type ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -19,6 +19,21 @@ import type { ExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/pro
 
 export const PRESENT_USER_REQUIRED_ERROR = "present_user_required" as const;
 export const SESSION_RUNTIME_PUBLIC_AUTH_FORBIDDEN_ERROR = "session_runtime_public_auth_forbidden" as const;
+
+/**
+ * HTTP ingress keeps the PAT's exact Action/target restriction. Session access
+ * itself is decided once, by the route's Session access owner (which also caps
+ * capabilities at the token ceiling), so the hook does not resolve it a second time.
+ */
+export function isApiTokenSessionRouteGranted(input: Readonly<{
+    principal: VerifiedApiTokenPrincipal;
+    sessionId: string;
+    actionId: ActionId;
+    targetMachineId?: string | null;
+}>): boolean {
+    return evaluateApiTokenGrantV1({ grant: input.principal.grant, actionId: input.actionId,
+        target: { kind: 'session', sessionId: input.sessionId }, targetMachineId: input.targetMachineId }).ok;
+}
 
 /** The same grant, target and effective Session access admission for every direct PAT transport. */
 export async function admitApiTokenSessionOperation(input: Readonly<{

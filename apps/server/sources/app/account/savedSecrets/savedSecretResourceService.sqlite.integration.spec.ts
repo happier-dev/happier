@@ -2641,7 +2641,11 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const recipientRows = await inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, recipient.id));
         expect(recipientRows).toHaveLength(2);
         const corruptRecipientRow = recipientRows.find((row) => row.entry.materialStatus === "resource_corrupt");
+        // ownerAccountId/revision are server-internal row facts for the route's single decision;
+        // the material route serializes only `entry` for a corrupt row.
         expect(corruptRecipientRow).toEqual({
+            ownerAccountId: owner.id,
+            revision: 3,
             entry: {
                 materialStatus: "resource_corrupt",
                 relationship: "recipient",

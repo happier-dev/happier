@@ -996,7 +996,9 @@ export async function readSavedSecretResourcesForPrincipalInTx(tx: Tx,
     return result;
 }
 
-export type SavedSecretResourceMaterialProjection = Readonly<{
+/** The loader's row facts (owner, revision) let one qualified read decide management and currentness. */
+type SavedSecretResourceMaterialRowFacts = Readonly<{ ownerAccountId: string; revision: number }>;
+export type SavedSecretResourceMaterialProjection = SavedSecretResourceMaterialRowFacts & (Readonly<{
     resourceId: string;
     entry: SavedSecretCatalogEntryV1;
     encryptionMode: "plain" | "e2ee";
@@ -1005,7 +1007,7 @@ export type SavedSecretResourceMaterialProjection = Readonly<{
     recipientContentPublicKeyFingerprint: string | null;
 }> | Readonly<{
     entry: SavedSecretCatalogCorruptEntryV1;
-}>;
+}>);
 
 export type SavedSecretResourceEnvelopeCensusProjection = Readonly<{
     resourceId: string;
@@ -1168,12 +1170,14 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
             authorized.qualifiedTeamIds,
         );
         if (!entry) continue;
+        const facts = { ownerAccountId: row.ownerAccountId, revision: row.revision };
         if (entry.materialStatus === "resource_corrupt") {
-            projectedRows.push({ entry });
+            projectedRows.push({ ...facts, entry });
             continue;
         }
         const usableEnvelope = readUsableRecipientEnvelope(envelope);
         projectedRows.push({
+            ...facts,
             resourceId: row.id,
             entry: deploymentReferences ? { ...entry, deploymentReferenceState: deploymentReferences.get(row.id) ?? 'unavailable' } : entry,
             encryptionMode: row.encryptionMode === "plain" ? "plain" : "e2ee",

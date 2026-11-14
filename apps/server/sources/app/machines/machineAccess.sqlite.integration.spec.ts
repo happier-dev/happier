@@ -9,6 +9,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
+import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import * as access from './machineAccess';
 import { applyMachineReplacement } from './applyMachineReplacement';
 import { validateMachineReplacement } from './validateMachineReplacement';
@@ -1365,6 +1366,28 @@ describe('Machine current access (real SQLite)', () => {
         expect(await admittedOpening()).toMatchObject({ access: { accessState: 'key_pending' }, callerDataEncryptionKey: null });
         await db.machine.update({ where: { id: f.machine.id }, data: { dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: f.owner.keys.publicKey, randomBytes: tweetnacl.randomBytes })) } });
         expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, input))).toEqual({ kind: 'refused', code: 'machine_key_changed' });
+    });
+
+    it('derives data-key-envelope census access once per request for owner and foreign manager', async () => {
+        const f = await fixture('e2ee'); const manager = await account('e2ee');
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        await db.machineKeyEnvelope.create({ data: { machineId: f.machine.id, recipientAccountId: manager.id,
+            encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: f.key, recipientPublicKey: manager.keys.publicKey, randomBytes: tweetnacl.randomBytes })),
+            machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(f.machine.dataEncryptionKey!),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(manager.keys.publicKey) } });
+        const census = (actorAccountId: string) => inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machine', 'account', 'machineKeyEnvelope']);
+            const value = await access.readMachineRecipientCensusInTx(observed.tx, { actorAccountId, machineId: f.machine.id });
+            if ('kind' in value) throw new Error(value.code);
+            return { value, reads: observed.reads };
+        });
+        const owned = await census(f.owner.id);
+        expect(owned.value.callerDataEncryptionKey).not.toBeNull();
+        expect(owned.reads.filter(read => read.startsWith('machine.'))).toHaveLength(1);
+        const foreign = await census(manager.id);
+        expect(foreign.value.callerDataEncryptionKey).not.toBeNull();
+        expect(foreign.reads.filter(read => read.startsWith('machine.'))).toHaveLength(1);
+        expect(foreign.reads.filter(read => read.startsWith('machineKeyEnvelope.'))).toHaveLength(1);
     });
 
     it('set-acquires recipient material while preserving exception paging and all-before-write refusal', async () => {

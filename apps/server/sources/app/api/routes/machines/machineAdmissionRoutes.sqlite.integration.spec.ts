@@ -10,6 +10,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { machinesRoutes } from './machinesRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 
 describe('Machine receiver current admission on SQLite', () => {
     let harness: LightSqliteHarness | undefined;
@@ -59,14 +60,24 @@ describe('Machine receiver current admission on SQLite', () => {
                 url: `/v1/machines/${machine.id}/admission/verify`,
                 headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': alice.id }, payload: body });
             const body = { v: 1, context, method, sessionDecision, proof };
-            expect((await verify(body)).statusCode).toBe(200);
+            // R8: one Machine read serves the installation proof and the Manage admission.
+            const machineReads: string[] = [];
+            const stopObserving = observeSqliteRequests({ before: request => {
+                if (request.model === 'Machine' && request.action.startsWith('find')) machineReads.push(request.action);
+            } });
+            try {
+                expect((await verify(body)).statusCode).toBe(200);
+            } finally { stopObserving(); }
+            expect(machineReads).toHaveLength(1);
             expect((await verify({ ...body, sessionDecision: { ...sessionDecision,
                 actor: { ...sessionDecision.actor, accountId: alice.id } } })).statusCode).toBe(403);
             await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: 'view' } });
             expect((await verify(body)).statusCode).toBe(403);
             await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: 'edit' } });
+            // Ruled (P03 R8, "next request"): a decision taken before the approver's credential
+            // was revoked is not re-read here; current Session approval access still decides.
             await db.account.update({ where: { id: bob.id }, data: { tokenEpoch: { increment: 1 } } });
-            expect((await verify(body)).statusCode).toBe(403);
+            expect((await verify(body)).statusCode).toBe(200);
             await db.account.update({ where: { id: bob.id }, data: { tokenEpoch: bob.tokenEpoch } });
             await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             const team = await db.team.create({ data: { name: `Bot Team ${randomUUID()}`,

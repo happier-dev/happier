@@ -14,7 +14,7 @@ import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/au
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import {
     isRestrictedAuthTokenDeniedForRoute,
-    admitApiTokenSessionOperation,
+    isApiTokenSessionRouteGranted,
     readRestrictedCredentialRouteSessionIds,
     resolveApiTokenSessionActionForRoute,
     isExternalActionSessionRoutePurposeAllowed,
@@ -382,13 +382,13 @@ export function enableAuthentication(app: Fastify) {
                 return reply.code(403).send({ error: "credential_scope_denied" });
             }
             for (const sessionId of sessionIds) {
-                const admitted = await admitApiTokenSessionOperation({
+                const granted = isApiTokenSessionRouteGranted({
                     principal: apiTokenPrincipal, sessionId, actionId: sessionAction,
                     targetMachineId: await app.resolveCurrentSessionMachine?.({
                         accountId: apiTokenPrincipal.accountId, sessionId,
                     }),
                 });
-                if (!admitted.ok) return reply.code(403).send({ error: admitted.error });
+                if (!granted) return reply.code(403).send({ error: "credential_scope_denied" });
             }
         }
         captureAccountStoredContentCompatibilityForHttpRequest(request);

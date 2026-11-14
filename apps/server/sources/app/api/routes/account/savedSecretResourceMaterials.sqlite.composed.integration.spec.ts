@@ -29,6 +29,7 @@ import {
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { registerSavedSecretResourceRoutes } from "./registerSavedSecretResourceRoutes";
 import { registerAccountEncryptionRoutes } from "./registerAccountEncryptionRoutes";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
@@ -203,8 +204,23 @@ describe("Saved Secret material route (SQLite integration)", () => {
         registerSavedSecretResourceRoutes(app);
         try {
             const path = '/v1/account/saved-secrets/resources/materials?resourceId=managed-reveal&expectedRevision=1&requireManage=true';
-            const current = await app.inject({ method: 'GET', url: path });
-            expect(current.statusCode).toBe(200);
+            // R8: the qualified loader is the one resource decision for management and currentness.
+            const resourceReads: string[] = [];
+            const stopObserving = observeSqliteRequests({ before: request => {
+                if (request.model === 'SavedSecretResource' && request.action.startsWith('find')) resourceReads.push(request.action);
+            } });
+            let current: Awaited<ReturnType<typeof app.inject>>;
+            try {
+                current = await app.inject({ method: 'GET', url: path });
+                expect(current.statusCode).toBe(200);
+                expect(resourceReads).toHaveLength(1);
+                resourceReads.length = 0;
+                accountId = recipient.id;
+                const useCurrent = await app.inject({ method: 'GET', url: path.replace('&requireManage=true', '') });
+                expect(useCurrent.statusCode).toBe(200);
+                expect(resourceReads).toHaveLength(1);
+                accountId = owner.id;
+            } finally { stopObserving(); }
             expect(current.json().resources.map((row: { resourceId: string }) => row.resourceId)).toEqual(['managed-reveal']);
             expect(current.body).not.toContain('unrelated-reveal-sentinel');
             const stale = await app.inject({ method: 'GET', url: path.replace('expectedRevision=1', 'expectedRevision=2') });

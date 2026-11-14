@@ -7,24 +7,32 @@ import type { Tx } from '@/storage/inTx';
 import { resolveMachineAdmissionInTx, resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
+import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
+
+/** A Machine admission the caller already decided in this request for one exact actor and Machine. */
+type AdmittedMachine = Extract<MachineAdmission, { kind: 'admitted' }>;
 
 /** Exact placement uses the requester tuple; new work also passes current C41 admission. */
 export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Readonly<{
     accountId: string; sessionId: string; machineId: string;
-}>, options?: Readonly<{ admittedWork: true }>): Promise<SessionInputMachineTargetV1 | undefined> {
+}>, options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
+    const admittedWork = options !== undefined && 'admittedWork' in options;
     const binding = { accountId: input.accountId, sessionId: input.sessionId, machineId: input.machineId };
     const key = await tx.accessKey.findUnique({ where: { accountId_machineId_sessionId: binding },
         select: { session: { select: { accountId: true } },
-            machine: options?.admittedWork ? { select: { installationId: true, revokedAt: true, replacedByMachineId: true } } : false } });
+            machine: admittedWork ? { select: { installationId: true, revokedAt: true, replacedByMachineId: true } } : false } });
     if (!key || key.session.accountId !== input.accountId) return undefined;
     let installationId: string;
-    if (options?.admittedWork) {
+    if (admittedWork) {
         // The root already admitted the grant; only the retained tuple and
         // installed resource remain structural requirements at this effect.
         if (!key.machine.installationId || classifyMachineAvailabilityState(key.machine) !== 'available') return undefined;
         installationId = key.machine.installationId;
     } else {
-        const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
+        // Reuse this request's decision only for its exact actor and Machine.
+        const supplied = options !== undefined && 'admitted' in options && options.admitted.actorAccountId === input.accountId
+            && options.admitted.machineId === input.machineId ? options.admitted : null;
+        const admission = supplied ?? await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
         if (admission.kind !== 'admitted') return undefined;
         installationId = admission.installationId;
     }
@@ -89,7 +97,7 @@ function sameMachineTarget(left: SessionInputMachineTargetV1, right: SessionInpu
 
 /** Only an actual publisher commit establishes cold placement; keys alone never select it. */
 export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, sessionId: string,
-    options?: Readonly<{ admittedWork: true }>): Promise<SessionInputMachineTargetV1 | undefined> {
+    options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
     const session = await tx.session.findUnique({ where: { id: sessionId },
         select: { accountId: true, archivedAt: true, runtimeMachineTarget: true } });
     if (!session || session.archivedAt !== null || session.runtimeMachineTarget == null) return undefined;

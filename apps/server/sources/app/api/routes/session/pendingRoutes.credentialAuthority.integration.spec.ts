@@ -9,6 +9,7 @@ import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { sessionPendingRoutes } from "./pendingRoutes";
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
@@ -164,6 +165,33 @@ describe("Pending HTTP credential authority (integration)", () => {
                 payload: { requestedAction: { v: 1, kind }, resumeWhenAvailable: true } });
             expect(owner.statusCode, owner.body).toBe(200);
             expect((await db.session.findUniqueOrThrow({ where: { id: fixture.sessionId } })).pendingActivationRequestId).toBe(localId);
+        } finally { await app.close(); }
+    });
+
+    it("decides Session access once for a granted PAT: no Session read beyond the present-user request", async () => {
+        const fixture = await createMaterializedEphemeralRunnerFixture();
+        const base = `/v2/sessions/${fixture.sessionId}/pending`;
+        const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
+            actions: { families: [], ids: ["session.message.send"] },
+            targets: { sessions: [fixture.sessionId], machines: [] },
+        });
+        const pat = await auth.createApiToken({ accountId: fixture.accountId, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.accountId, "Single decision"), grant });
+        const app = createApp();
+        const sessionReads = async (token: string) => {
+            const reads: string[] = [];
+            const stop = observeSqliteRequests({ before: request => {
+                if (request.model === "Session" && request.action.startsWith("find")) reads.push(request.action);
+            } });
+            try {
+                const response = await app.inject({ method: "POST", url: base, headers: headers(token),
+                    payload: { localId: randomUUID(), content: content("Counted input") } });
+                expect(response.statusCode, response.body).toBe(200);
+            } finally { stop(); }
+            return reads.length;
+        };
+        try {
+            const presentUser = await sessionReads(fixture.accountToken);
+            expect(await sessionReads(pat.token)).toBe(presentUser);
         } finally { await app.close(); }
     });
 
