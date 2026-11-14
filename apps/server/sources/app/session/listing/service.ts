@@ -11,7 +11,7 @@ import type { Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { readSessionObservationCursorInTx } from '@/app/session/access/readObservation';
 import { fetchSessionOrganizationPinnedSessionIds, fetchSessionTagAssignmentsForAdmittedSessionsInTx } from "@/app/session/organization/organizationQueries";
-import { createApplicableAudienceWhere, resolveEffectiveSessionAccessWhere, resolveLegacySessionPageAccessWhereInTx } from "@/app/session/access/sessionAccessWhere";
+import { createApplicableAudienceWhere, resolveEffectiveSessionAccessWhere, resolveLegacySessionPageAccessQueryInTx } from "@/app/session/access/sessionAccessWhere";
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
 import { isSessionCollaborationEnabled } from "@/app/session/access/sessionAccess";
 import { hasSessionTranscriptPublicationLiveFacts } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -141,7 +141,7 @@ export async function listSessionsForAccount(params: Readonly<{
         const observationCursor = await readSessionObservationCursorInTx(tx, params.userId, params.authentication);
         const now = Date.now();
         const accessResolution = {
-            where: await resolveLegacySessionPageAccessWhereInTx(tx, {
+            ...await resolveLegacySessionPageAccessQueryInTx(tx, {
                 accountId: params.userId,
                 capability: "readTranscript",
             }),
@@ -153,6 +153,7 @@ export async function listSessionsForAccount(params: Readonly<{
             kind: "effective",
             reader: tx,
             baseWhere: accessResolution.where,
+            baseWhereBranches: accessResolution.queryBranches,
             accessMode: "legacy_owner_or_direct",
             qualifiedTeamIds: accessResolution.qualifiedTeamIds,
             discussionReader: tx,
