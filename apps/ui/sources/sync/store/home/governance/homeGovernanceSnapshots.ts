@@ -1,5 +1,6 @@
 import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import {
     serverAccountScopeKeySuffix,
@@ -62,11 +63,17 @@ function notify(): void {
 }
 
 /**
- * A selection token that changes only when one of the requested exact
- * Home/Account snapshots changes, including its removal.
+ * A selection token over the authority facts only: the projection (identity retained while equal), its error and
+ * staleness. Load progress (`refreshing`) and the observation time change it not, so an equal revalidation reaches no
+ * reader that decides admission or navigation from the projection.
  */
-export function getHomeGovernanceSnapshotsSelectionKey(scopes: readonly ServerAccountScope[]): string {
-    return snapshotReferenceSelectionKey(scopes.map(getHomeGovernanceSnapshot));
+export function getHomeGovernanceAuthoritySelectionKey(scopes: readonly ServerAccountScope[]): string {
+    return scopes.map(scope => {
+        const snapshot = getHomeGovernanceSnapshot(scope);
+        if (!snapshot) return '-';
+        const error = snapshot.error ? `${snapshot.error.kind}:${snapshot.error.code ?? ''}:${snapshot.error.retryable}` : '';
+        return `${snapshotReferenceSelectionKey([snapshot.data])}|${snapshot.stale ? 1 : 0}|${error}`;
+    }).join(',');
 }
 
 function keyOf(scope: ServerAccountScope): string {
@@ -120,10 +127,11 @@ export function applyHomeGovernanceProjection(params: Readonly<{
     observedAt: number;
     current?: boolean;
 }>): void {
+    // An equal re-read keeps the projection's identity, so its readers see no change.
     write(params.scope, Object.freeze({
         scope: params.scope,
         status: 'ready',
-        data: params.projection,
+        data: retainDeep(getHomeGovernanceSnapshot(params.scope)?.data ?? undefined, params.projection),
         lastObservedAt: params.observedAt,
         stale: params.current === false,
         reachability: 'reachable',

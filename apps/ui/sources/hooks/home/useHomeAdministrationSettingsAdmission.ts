@@ -10,7 +10,7 @@ import { observeHomeGovernance, refreshHomeGovernanceSnapshot } from '@/sync/eng
 import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import {
     getHomeGovernanceSnapshot,
-    getHomeGovernanceSnapshotsSelectionKey,
+    getHomeGovernanceAuthoritySelectionKey,
     subscribeHomeGovernanceSnapshots,
 } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
@@ -93,7 +93,7 @@ export function useHomeAdministrationSettingsAdmission(
     }, [boundScopesIdentity]);
 
     const getSelectionKey = React.useCallback(
-        () => getHomeGovernanceSnapshotsSelectionKey(boundScopesKey),
+        () => getHomeGovernanceAuthoritySelectionKey(boundScopesKey),
         // Only the exact bound scopes select governance snapshots.
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [boundScopesIdentity],

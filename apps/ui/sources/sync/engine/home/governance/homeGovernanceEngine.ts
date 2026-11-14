@@ -85,6 +85,9 @@ const loader = createScopedSnapshotLoader<HomeGovernanceTarget>({
         const current = getHomeGovernanceSnapshot(scope);
         if (!current) return true;
         if (current.stale) return true;
+        // A settled non-retryable refusal (e.g. owner setup required) is the Home's answer until a wake, an
+        // invalidation or an explicit retry asks again; another observer mounting is not new information.
+        if (current.status === 'error' && current.error?.retryable === false) return false;
         return current.data === null && current.status !== 'loading';
     },
     invalidateServer: (serverId) => {

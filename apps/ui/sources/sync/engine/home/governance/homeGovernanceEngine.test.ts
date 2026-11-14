@@ -436,6 +436,26 @@ describe('homeGovernanceEngine', () => {
         release();
     });
 
+    // P03-HOME-NATIVE round 3: a fresh Account's Home answers owner-setup-required; Settings mounts a second
+    // governance observer a moment later and re-read the same settled refusal (2 reads per first Settings open).
+    it('does not re-read a settled non-retryable refusal for a later observer; an explicit retry still reads', async () => {
+        const home = await addHome('Home A', 'https://home-a.example');
+        await setActiveServerId(home, { scope: 'device' });
+        runtimeFetchMock.mockImplementation(async () => jsonResponse({ error: 'home_governance_setup_required' }, 409));
+        const scope = createServerAccountScope(home, 'account')!;
+
+        const first = observeHomeGovernance(scope);
+        await vi.waitFor(() => expect(getHomeGovernanceSnapshot(scope)?.status).toBe('error'));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        const second = observeHomeGovernance(scope);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        await refreshHomeGovernanceSnapshot(scope);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        second();
+        first();
+    });
+
     it('records a Home without the operation as unsupported rather than as a denial', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await setActiveServerId(homeA, { scope: 'device' });

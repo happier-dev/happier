@@ -113,4 +113,31 @@ describe('Home snapshot selection locality', () => {
         await act(async () => { governanceStore.clearHomeGovernanceSnapshotsForServer(serverId); });
         expect(hook.getCurrent().homes).toEqual([{ serverId, state: 'unresolved', reason: 'loading' }]);
     });
+    // P03-HOME-NATIVE round 3: Settings sections re-rendered on every governance revalidation (refreshing, then ready
+    // with an equal projection and a new observation time). Admission reads projection, error and staleness only.
+    it('keeps administration admission silent through an equal revalidation and reflects a real change', async () => {
+        const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://admission-reval.example', accountId: 'account-a' });
+        const scope = { serverId, accountId: 'account-a' };
+        const projection = homeGovernanceProjectionFixture({ viewer: { accountId: 'account-a', homeRole: 'owner', status: 'active' } });
+        harness.answer(serverId, '/v1/home/governance/get', { body: projection });
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useHomeAdministrationSettingsAdmission({ serverIds: [serverId] });
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().admitted).toBe(true));
+        const before = hook.getCurrent();
+        counter.reset();
+
+        await act(async () => {
+            governanceStore.beginHomeGovernanceLoad(scope);
+            governanceStore.applyHomeGovernanceProjection({ scope, projection: structuredClone(projection), observedAt: 500 });
+        });
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(hook.getCurrent()).toBe(before);
+
+        const member = homeGovernanceProjectionFixture({ viewer: { accountId: 'account-a', homeRole: 'member', status: 'active' } });
+        await act(async () => { governanceStore.applyHomeGovernanceProjection({ scope, projection: member, observedAt: 600 }); });
+        expect(hook.getCurrent()).not.toBe(before);
+    });
 });
