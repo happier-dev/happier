@@ -967,20 +967,42 @@ fn apply_desktop_window_chrome_runtime_policy<R: Runtime>(
 }
 
 #[cfg(desktop)]
-fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
+fn emit_desktop_window_state<R: Runtime>(
+    window: &WebviewWindow<R>,
+    last_emitted: &Mutex<Option<DesktopWindowStatePayload>>,
+) {
     let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return;
     }
 
-    let _ = window.emit(
-        DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_policy(
-            policy,
-            window.is_maximized().unwrap_or(false),
-            window.is_fullscreen().unwrap_or(false),
-        ),
+    let next = resolve_desktop_window_state_payload_for_policy(
+        policy,
+        window.is_maximized().unwrap_or(false),
+        window.is_fullscreen().unwrap_or(false),
     );
+    let changed = match last_emitted.lock() {
+        Ok(mut last) => record_desktop_window_state_change(&mut last, next),
+        Err(_) => true,
+    };
+    if changed {
+        let _ = window.emit(DESKTOP_WINDOW_STATE_EVENT, next);
+    }
+}
+
+/// Moved and Resized fire for every frame of a drag or resize, but the controls state
+/// (maximized, fullscreen) changes rarely: the window hears only a real change. A webview
+/// that starts listening reads the current state with `desktop_get_window_state`.
+#[cfg(desktop)]
+fn record_desktop_window_state_change(
+    last_emitted: &mut Option<DesktopWindowStatePayload>,
+    next: DesktopWindowStatePayload,
+) -> bool {
+    if *last_emitted == Some(next) {
+        return false;
+    }
+    *last_emitted = Some(next);
+    true
 }
 
 /// Reveals the main window. In menu-bar mode there is none: it is created again from the app
@@ -1314,7 +1336,8 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
     }
 
     if desktop_window_chrome_policy_supports_controls(policy) {
-        emit_desktop_window_state(window);
+        let last_emitted = std::sync::Arc::new(Mutex::new(None));
+        emit_desktop_window_state(window, &last_emitted);
 
         let window_for_events = window.clone();
         window.on_window_event(move |event| {
@@ -1324,7 +1347,7 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
                     | WindowEvent::Resized(_)
                     | WindowEvent::ScaleFactorChanged { .. }
             ) {
-                emit_desktop_window_state(&window_for_events);
+                emit_desktop_window_state(&window_for_events, &last_emitted);
             }
         });
     }
@@ -1354,6 +1377,7 @@ pub(crate) fn configure_app_window(window: &WebviewWindow) {
         log::warn!("failed to apply app-window chrome policy: {error}");
     }
     let retained = window.clone();
+    let last_emitted = Mutex::new(None);
     window.on_window_event(move |event| {
         match event {
             WindowEvent::Destroyed => {
@@ -1370,7 +1394,7 @@ pub(crate) fn configure_app_window(window: &WebviewWindow) {
                     }
                 }
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => emit_desktop_window_state(&retained),
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => emit_desktop_window_state(&retained, &last_emitted),
             _ => {}
         }
     });
@@ -1379,6 +1403,19 @@ pub(crate) fn configure_app_window(window: &WebviewWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drag_of_unchanged_window_state_reaches_the_webview_once() {
+        let mut last = None;
+        let normal = build_desktop_window_state_payload(false, false);
+        let emitted = (0..40).filter(|_| record_desktop_window_state_change(&mut last, normal)).count();
+        assert_eq!(emitted, 1);
+
+        let maximized = build_desktop_window_state_payload(true, false);
+        assert!(record_desktop_window_state_change(&mut last, maximized));
+        assert!(!record_desktop_window_state_change(&mut last, maximized));
+        assert!(record_desktop_window_state_change(&mut last, normal));
+    }
 
     #[test]
     fn glass_requires_supported_live_material_and_respects_reduce_transparency() {

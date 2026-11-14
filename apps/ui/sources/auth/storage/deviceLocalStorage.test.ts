@@ -153,6 +153,55 @@ describe.each(['tauri', 'electron'] as const)('%s Desktop secure storage', (host
         expect(values.has('scope:key')).toBe(false);
     });
 
+    it('answers a burst of reads queued behind an in-flight read of the same key with one more host read', async () => {
+        let nativeValue: string | null = 'first';
+        let releaseFirst!: () => void;
+        const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        let held = true;
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
+            if (command !== READ_COMMAND) return null;
+            const value = nativeValue;
+            if (held) { held = false; await firstHeld; }
+            return value;
+        });
+
+        const inFlight = readDeviceLocalStorageString('scope:key');
+        await Promise.resolve();
+        nativeValue = 'current';
+        const queued = Array.from({ length: 10 }, () => readDeviceLocalStorageString('scope:key'));
+        releaseFirst();
+
+        await expect(inFlight).resolves.toBe('first');
+        await expect(Promise.all(queued)).resolves.toEqual(Array(10).fill('current'));
+        expect(invokeDesktopHostMock.mock.calls.filter(([command]) => command === READ_COMMAND)).toHaveLength(2);
+    });
+
+    it('never answers a read issued after a write with a read queued before that write', async () => {
+        let nativeValue: string | null = 'old';
+        let releaseFirst!: () => void;
+        const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        let held = true;
+        invokeDesktopHostMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === WRITE_COMMAND) { nativeValue = String(args?.value); return null; }
+            if (command !== READ_COMMAND) return null;
+            const value = nativeValue;
+            if (held) { held = false; await firstHeld; }
+            return value;
+        });
+
+        const inFlight = readDeviceLocalStorageString('scope:key');
+        await Promise.resolve();
+        const beforeWrite = readDeviceLocalStorageString('scope:key');
+        const write = writeDeviceLocalStorageString('scope:key', 'new');
+        const afterWrite = readDeviceLocalStorageString('scope:key');
+        releaseFirst();
+
+        await expect(inFlight).resolves.toBe('old');
+        await expect(beforeWrite).resolves.toBe('old');
+        await expect(write).resolves.toBeUndefined();
+        await expect(afterWrite).resolves.toBe('new');
+    });
+
     it('surfaces a native read failure without treating legacy plaintext as authoritative', async () => {
         const { values } = installLocalStorage({ 'scope:key': 'legacy-value' });
         invokeDesktopHostMock.mockRejectedValue(new Error('keychain locked'));

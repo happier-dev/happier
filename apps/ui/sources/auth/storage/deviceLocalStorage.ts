@@ -170,14 +170,32 @@ async function removeDeviceLocalStorageStringUnserialized(key: string): Promise<
     await removeNativeSecureStoreString(key);
 }
 
+/**
+ * A read of a key that is queued but has not started yet. It answers every later read of the same
+ * key: its storage call happens after all of them were issued, and a write or remove queued after it
+ * retires it, so a read never sees a value older than one this realm wrote before asking. Without it,
+ * a burst of credential reads (one per request, more on a Home switch) became one serialized host
+ * round trip each on desktop.
+ */
+const queuedDeviceLocalReads = new Map<string, Promise<string | null>>();
+
 export async function readDeviceLocalStorageString(key: string): Promise<string | null> {
-    return await serializeDeviceLocalStorageOperation(key, async () => await readDeviceLocalStorageStringUnserialized(key));
+    const queued = queuedDeviceLocalReads.get(key);
+    if (queued) return await queued;
+    const read: Promise<string | null> = serializeDeviceLocalStorageOperation(key, async () => {
+        if (queuedDeviceLocalReads.get(key) === read) queuedDeviceLocalReads.delete(key);
+        return await readDeviceLocalStorageStringUnserialized(key);
+    });
+    queuedDeviceLocalReads.set(key, read);
+    return await read;
 }
 
 export async function writeDeviceLocalStorageString(key: string, value: string): Promise<void> {
+    queuedDeviceLocalReads.delete(key);
     await serializeDeviceLocalStorageOperation(key, async () => await writeDeviceLocalStorageStringUnserialized(key, value));
 }
 
 export async function removeDeviceLocalStorageString(key: string): Promise<void> {
+    queuedDeviceLocalReads.delete(key);
     await serializeDeviceLocalStorageOperation(key, async () => await removeDeviceLocalStorageStringUnserialized(key));
 }
