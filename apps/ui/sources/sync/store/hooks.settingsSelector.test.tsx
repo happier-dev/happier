@@ -7,7 +7,7 @@ import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from './hooks';
-import { useSetting } from './settingsReadHooks';
+import { useLocalSetting, useSetting } from './settingsReadHooks';
 import { holdSettingWrite, useSettingsPreviewStore } from './settingsPreview';
 import { useAgentUiSettings, getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
 import { publishProjectedAgentUiBehaviorDescriptors, clearProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
@@ -184,6 +184,51 @@ it('shares status words with work columns without rerendering them for unrelated
     });
     expect(hook.getCurrent()).toBe(false);
     expect(commits - before).toBe(2);
+    await hook.unmount();
+});
+
+it('reads no stored Settings value when a useSetting consumer rerenders over an unchanged store', async () => {
+    let reads = 0;
+    const settings = storage.getState().settings;
+    const stored = settings.sessionListStatusWords;
+    // Count reads of the setting itself on the store's data, not inside the hook.
+    storage.setState({ settings: Object.defineProperty({ ...settings }, 'sessionListStatusWords', {
+        enumerable: true,
+        get: () => { reads++; return stored; },
+    }) });
+    const hook = await renderHook((tick: number) => {
+        void tick;
+        return useSetting('sessionListStatusWords');
+    }, { initialProps: 0 });
+    expect(hook.getCurrent()).toBe(stored);
+    const afterMount = reads;
+    for (let tick = 1; tick <= 5; tick++) await hook.rerender(tick);
+    expect(hook.getCurrent()).toBe(stored);
+    expect(reads - afterMount).toBe(0);
+    await act(async () => { storage.getState().applySettingsLocal({ sessionListStatusWords: !stored }); });
+    expect(hook.getCurrent()).toBe(!stored);
+    await hook.unmount();
+});
+
+it('reads no stored device-local value when a useLocalSetting consumer rerenders over an unchanged store', async () => {
+    let reads = 0;
+    const localSettings = storage.getState().localSettings;
+    const stored = localSettings.desktopOverlayEnabled;
+    storage.setState({ localSettings: Object.defineProperty({ ...localSettings }, 'desktopOverlayEnabled', {
+        enumerable: true,
+        get: () => { reads++; return stored; },
+    }) });
+    const hook = await renderHook((tick: number) => {
+        void tick;
+        return useLocalSetting('desktopOverlayEnabled');
+    }, { initialProps: 0 });
+    expect(hook.getCurrent()).toBe(stored);
+    const afterMount = reads;
+    for (let tick = 1; tick <= 5; tick++) await hook.rerender(tick);
+    expect(hook.getCurrent()).toBe(stored);
+    expect(reads - afterMount).toBe(0);
+    await act(async () => { storage.getState().applyLocalSettings({ desktopOverlayEnabled: !stored }); });
+    expect(hook.getCurrent()).toBe(!stored);
     await hook.unmount();
 });
 

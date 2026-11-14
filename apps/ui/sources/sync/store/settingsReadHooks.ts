@@ -6,6 +6,8 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '../domains/settings/settings';
 import { getStorage } from '../domains/state/storageStore';
+import type { StorageSubscriptionScope } from '../domains/state/storageSubscriptions';
+import type { StorageState } from './types';
 import { settingsPreviewScopeMatches, useLocalSettingPreviewValue, useSettingsPreviewStore } from './settingsPreview';
 
 // Shared presentation reads the existing store without importing command hooks.
@@ -72,10 +74,36 @@ export function useSettingsReady(): boolean {
   return getStorage()((state) => state.settingsVersion !== null);
 }
 
+const selectSettingsScope = (state: StorageState) => state.settingsScope;
+
+type SettingRead = Readonly<{
+  select: (state: StorageState) => unknown;
+  scope: StorageSubscriptionScope;
+}>;
+
+const settingReads = new Map<keyof Settings, SettingRead>();
+
+/**
+ * One selector and demand scope per Setting name, so a consumer's rerender over an unchanged store reuses its
+ * selection instead of re-running the tracked store read (the selector and scope are store-read cache inputs).
+ */
+function settingRead(name: keyof Settings): SettingRead {
+  let read = settingReads.get(name);
+  if (!read) {
+    read = Object.freeze({
+      select: (state: StorageState) => state.settings?.[name] ?? settingsDefaults[name],
+      scope: Object.freeze({ settings: Object.freeze([name]) }),
+    });
+    settingReads.set(name, read);
+  }
+  return read;
+}
+
 export function useSetting<K extends keyof Settings>(name: K): Settings[K] {
-  const scope = getStorage()(state => state.settingsScope);
+  const scope = getStorage()(selectSettingsScope);
   const preview = useSettingsPreviewStore(state => settingsPreviewScopeMatches(scope, state.scope) ? state.account[name] : undefined);
-  const value = getStorage()(useShallow((state) => state.settings?.[name] ?? settingsDefaults[name]), { settings: [name] });
+  const read = settingRead(name);
+  const value = getStorage()(read.select, read.scope, shallow) as Settings[K];
   return preview ? preview.value : value;
 }
 
@@ -87,8 +115,21 @@ export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSe
 export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select: (value: LocalSettings[K]) => T): T;
 export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select?: (value: LocalSettings[K]) => T): LocalSettings[K] | T {
   const preview = useLocalSettingPreviewValue(name);
-  return getStorage()(useShallow((state) => {
+  // Identity-stable unless the name, held preview or caller's projection changes (see `settingRead`).
+  const read = React.useCallback((state: StorageState) => {
     const value = preview === undefined ? state.localSettings[name] : preview;
     return select ? select(value) : value;
-  }), { localSettings: [name] });
+  }, [name, preview, select]);
+  return getStorage()(read, localSettingScope(name), shallow);
+}
+
+const localSettingScopes = new Map<keyof LocalSettings, StorageSubscriptionScope>();
+
+function localSettingScope(name: keyof LocalSettings): StorageSubscriptionScope {
+  let scope = localSettingScopes.get(name);
+  if (!scope) {
+    scope = Object.freeze({ localSettings: Object.freeze([name]) });
+    localSettingScopes.set(name, scope);
+  }
+  return scope;
 }
