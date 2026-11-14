@@ -8,12 +8,17 @@ import type { DetectCliRequest } from './cliSnapshot';
 
 describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   const previousOpenCodePath = process.env.HAPPIER_OPENCODE_PATH;
+  const previousVersionCache = process.env.HAPPIER_CLI_VERSION_CACHE;
 
   beforeEach(() => {
     // Some CLI unit lanes provide a default OpenCode stub for machine-agnostic tests.
     // Cache behavior tests need full control over PATH vs overrides, so clear the global
     // override by default and let individual tests set it when needed.
     delete process.env.HAPPIER_OPENCODE_PATH;
+    // These tests count fake-CLI spawns to observe whether a snapshot was recomputed. The
+    // binary-identity `--version` cache (covered by cliSnapshot.versionCache.test.ts) would
+    // hide that signal for an unchanged binary, so measure the snapshot cache on its own here.
+    process.env.HAPPIER_CLI_VERSION_CACHE = '0';
   });
 
   afterEach(() => {
@@ -21,6 +26,11 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
       delete process.env.HAPPIER_OPENCODE_PATH;
     } else {
       process.env.HAPPIER_OPENCODE_PATH = previousOpenCodePath;
+    }
+    if (previousVersionCache === undefined) {
+      delete process.env.HAPPIER_CLI_VERSION_CACHE;
+    } else {
+      process.env.HAPPIER_CLI_VERSION_CACHE = previousVersionCache;
     }
   });
 
