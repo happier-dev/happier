@@ -4,7 +4,11 @@ import type {
   ProviderAccountUsageSnapshotV1,
   ProviderAccountSubscriptionV1,
 } from '@happier-dev/protocol';
-import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import {
+  hasConnectedServiceQuotaCreditHeadroom,
+  isConnectedServiceQuotaCreditMeter,
+  readConnectedServiceLimitCategoryV1,
+} from '@happier-dev/protocol';
 
 import {
   normalizeQuotaMeter,
@@ -14,6 +18,7 @@ import {
 } from '../../quotas/normalization';
 import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import { selectConnectedServiceAuthGroupQuotaMeters } from './quotaLimitSelection';
+import { isConnectedServiceAuthGroupQuotaSnapshotExhausted } from './quotaUsability';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -60,14 +65,6 @@ function readProviderResetsAtMs(snapshot: Readonly<{ meters: readonly ConnectedS
   return resetValues.length > 0 ? Math.min(...resetValues) : null;
 }
 
-function isExhausted(meters: ReadonlyArray<NormalizedQuotaMeter>): boolean {
-  const effective = selectEffectiveQuotaMeter(meters);
-  if (effective?.remainingPct !== null && effective?.remainingPct !== undefined) {
-    return effective.remainingPct <= 0;
-  }
-  return false;
-}
-
 export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
   snapshot: ProviderAccountUsageSnapshotV1,
   selection?: ConnectedServiceAuthGroupQuotaLimitSelectionV1,
@@ -88,27 +85,36 @@ export function buildConnectedServiceAuthGroupRuntimeStateFromMeters(input: Read
   selection?: ConnectedServiceAuthGroupQuotaLimitSelectionV1;
 }>): ConnectedServiceAuthGroupMemberRuntimeState {
   const selectedMeters = selectConnectedServiceAuthGroupQuotaMeters(input.meters, input.selection);
-  const normalizedMeters = selectedMeters.map(normalizeConnectedServiceAuthGroupQuotaMeter);
+  // Credits are not an allowance: they never set the effective meter or its reset, and only
+  // decide whether a spent account still serves work.
+  const creditMeters = selectedMeters.filter(isConnectedServiceQuotaCreditMeter);
+  const allowanceMeters = selectedMeters.filter((meter) => !isConnectedServiceQuotaCreditMeter(meter));
+  const normalizedMeters = allowanceMeters.map(normalizeConnectedServiceAuthGroupQuotaMeter);
   const effectiveMeter = selectEffectiveQuotaMeter(normalizedMeters);
+  const quotaSnapshot = {
+    capturedAtMs: input.capturedAtMs,
+    effectiveMeterId: effectiveMeter?.meterId ?? null,
+    effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
+    meters: normalizedMeters.map((meter, index) => ({
+      meterId: meter.meterId,
+      limitCategory: meter.limitCategory,
+      remainingPct: meter.remainingPct,
+      resetAtMs: meter.resetAtMs,
+      providerLimitId: meter.providerLimitId,
+      windowDurationMs: allowanceMeters[index]?.windowDurationMs ?? null,
+      reliable: meter.reliable && meter.applicable,
+    })),
+    ...(creditMeters.length > 0 ? { creditsAvailable: creditMeters.some(hasConnectedServiceQuotaCreditHeadroom) } : {}),
+  };
   return {
     ...(input.subscription ? { subscription: input.subscription } : {}),
-    providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs({ meters: selectedMeters }),
+    providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs({ meters: allowanceMeters }),
     quotaSnapshot: {
-      capturedAtMs: input.capturedAtMs,
-      effectiveMeterId: effectiveMeter?.meterId ?? null,
-      effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
-      meters: normalizedMeters.map((meter, index) => ({
-        meterId: meter.meterId,
-        limitCategory: meter.limitCategory,
-        remainingPct: meter.remainingPct,
-        resetAtMs: meter.resetAtMs,
-        providerLimitId: meter.providerLimitId,
-        windowDurationMs: selectedMeters[index]?.windowDurationMs ?? null,
-        reliable: meter.reliable && meter.applicable,
-      })),
+      ...quotaSnapshot,
       ...(selectedMeters.length > 0 ? {
-        exhausted: isExhausted(normalizedMeters),
-        planUnavailable: selectedMeters.every((meter) => meter.status === 'unavailable'),
+        exhausted: isConnectedServiceAuthGroupQuotaSnapshotExhausted(quotaSnapshot),
+        planUnavailable: (allowanceMeters.length > 0 ? allowanceMeters : selectedMeters)
+          .every((meter) => meter.status === 'unavailable'),
       } : {}),
     },
   };

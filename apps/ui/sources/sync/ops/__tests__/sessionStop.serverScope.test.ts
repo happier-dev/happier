@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 const { mockSessionRpcWithServerScope, mockMachineRpcWithServerScope, mockStorageState } = vi.hoisted(
   () => ({
@@ -50,6 +52,40 @@ describe('sessionStopWithServerScope', () => {
     mockStorageState.machines = {};
     mockStorageState.applySessions.mockReset();
     mockStorageState.applySessionListRenderablePatches.mockReset();
+  });
+
+  it.each([
+    { active: false, status: 200, mismatchedId: false, readFails: false, success: true },
+    { active: true, status: 200, mismatchedId: false, readFails: false, success: false },
+    { active: undefined, status: 200, mismatchedId: false, readFails: false, success: false },
+    { active: false, status: 503, mismatchedId: false, readFails: false, success: false },
+    { active: false, status: 200, mismatchedId: true, readFails: false, success: false },
+    { active: false, status: 200, mismatchedId: false, readFails: true, success: false },
+  ])('confirms an absent cold runner only from an exact readable inactive Session: %j', async ({ active, status, mismatchedId, readFails, success }) => {
+    const sessionId = 'sid-cold';
+    mockStorageState.sessions = {
+      [sessionId]: { active: false, metadata: { machineId: 'machine-1', path: '/repo' } },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({ status: 'not_found' });
+    mockSessionRpcWithServerScope.mockResolvedValue({ status: 'not_found' });
+    // HTTP is the genuine server boundary; parsing and Stop classification remain real.
+    const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response(JSON.stringify({ session: {
+      id: mismatchedId ? 'another-session' : sessionId, seq: 1, createdAt: 1, updatedAt: 1, active, activeAt: 1,
+      metadata: '{}', metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+    } }), { status }));
+    if (readFails) request.mockRejectedValueOnce(new Error('HTTP read failed'));
+    try {
+      const result = await sessionStopWithServerScope(sessionId, { serverId: getActiveServerSnapshot().serverId });
+      expect(result).toEqual(success ? { success: true } : {
+        success: false, code: 'session_stop_not_found', message: 'Session not found',
+      });
+      expect(request).toHaveBeenCalledTimes(1);
+      if (success) expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+      expect(mockStorageState.applySessions).not.toHaveBeenCalled();
+    } finally { request.mockRestore(); }
   });
 
   it('treats the released machine Stop response as request acknowledgement without patching inactive', async () => {

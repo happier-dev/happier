@@ -5,6 +5,7 @@ import {
     mapPendingActivationAuthorization,
     markPendingActivationAuthorizationFailedInTx,
     reconcilePendingActivationAuthorizationForRemovedRequestInTx,
+    shouldArmPendingActivationAuthorization,
 } from './pendingActivationAuthorization';
 
 function createTx(session: Record<string, unknown>, rows: Array<Record<string, unknown>> = []) {
@@ -32,13 +33,22 @@ function createTx(session: Record<string, unknown>, rows: Array<Record<string, u
 }
 
 describe('pending activation authorization owner', () => {
-    it('arms send_now while Session.active is stale true and advances beyond lastActiveAt', async () => {
+    it('keeps conditional steering and queueing inactive and honors an explicit activation cancellation', () => {
+        expect(shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'steer_if_active' } })).toBe(false);
+        expect(shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'enqueue' } })).toBe(false);
+        expect(shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'steer_now' }, resumeWhenAvailable: false })).toBe(false);
+    });
+
+    it.each(['send_now', 'steer_now'] as const)('arms %s while Session.active is stale true and advances beyond lastActiveAt', async kind => {
         const session = {
             accountId: 'owner', active: true, lastActiveAt: new Date(100),
             pendingActivationRequestId: null, pendingActivationRequestedAt: null,
             pendingActivationStatus: null, pendingActivationFailureCode: null,
         };
-        const tx = createTx(session);
+        const tx = createTx(session, [{
+            localId: 'p1', messageRole: 'user', status: 'queued', deliveryState: null,
+            providerAction: null, requestedAction: { v: 1, kind },
+        }]);
         const result = await armPendingActivationAuthorizationInTx({ tx, sessionId: 's1', requestId: 'p1', now: new Date(50) });
         expect(result).toEqual({ accountId: 'owner', requestId: 'p1' });
         expect(session.pendingActivationRequestedAt).toEqual(new Date(101));

@@ -24,6 +24,7 @@ import {
   type ConnectedServiceCredentialHealthV1,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceOauthCredentialRawMetadata,
+  readClaudeOauthProfileSubscriptionStatus,
   readConnectedServiceCredentialOrganizationId as readCredentialOrganizationId,
 } from '@happier-dev/protocol';
 
@@ -193,7 +194,8 @@ function resolveExpiresAtFromPayload(input: Readonly<{
 
 export type ClaudeSubscriptionProfileContextResult =
   | Readonly<{ status: 'accepted'; raw: ConnectedServiceOauthCredentialRawMetadata | null;
-      providerAccountId: string | null; providerEmail: string | null }>
+      providerAccountId: string | null; providerEmail: string | null;
+      subscriptionStatus: ReturnType<typeof readClaudeOauthProfileSubscriptionStatus> }>
   | Readonly<{ status: 'rejected'; providerStatus: number; providerErrorCode: null }>
   | Readonly<{ status: 'unavailable' }>
   | Readonly<{ status: 'identity_mismatch' }>;
@@ -219,7 +221,8 @@ export async function fetchClaudeSubscriptionProfileContext(input: Readonly<{
   if (expectedProviderAccountId && !providerAccountId) return { status: 'unavailable' };
   if (expectedProviderAccountId && providerAccountId !== expectedProviderAccountId) return { status: 'identity_mismatch' };
   return { status: 'accepted', raw: normalizeClaudeOauthProfileEntitlement(payload),
-    providerAccountId, providerEmail: readString(account?.email_address) ?? readString(account?.email) };
+    providerAccountId, providerEmail: readString(account?.email_address) ?? readString(account?.email),
+    subscriptionStatus: readClaudeOauthProfileSubscriptionStatus(payload) };
 }
 
 export function readConnectedServiceCredentialOrganizationId(record: ConnectedServiceCredentialRecordV1): string | null {

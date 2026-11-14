@@ -1,22 +1,19 @@
-import type { MarkdownBlock, MarkdownSpan, MarkdownTableAlignment } from './parseMarkdown';
+import type { MarkdownBlock, MarkdownSpan } from './parseMarkdown';
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 import { Pressable, View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '../ui/text/Text';
-import { HorizontalOverflowScrollView } from '../ui/scroll/HorizontalOverflowScrollView';
 import { Typography } from '@/constants/Typography';
 import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
 import { MarkdownCodeBlock } from './MarkdownCodeBlock';
-import { serializeMarkdownTable } from './serializeMarkdownTable';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
-import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
-import { EnrichedMarkdownTextAdapter } from './enriched/EnrichedMarkdownTextAdapter';
 import type { MarkdownRenderingProfile } from './rendering/MarkdownRenderingProfile';
+import { MarkdownTableBlock } from './table/MarkdownTableBlock';
 
 // Option type for callback
 export type Option = {
@@ -80,7 +77,7 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
         return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} />;
     } else if (block.type === 'table') {
         return (
-            <RenderTableBlock
+            <MarkdownTableBlock
                 headers={block.headers}
                 rows={block.rows}
                 alignments={block.alignments}
@@ -316,156 +313,6 @@ function MarkdownOptionButton(props: {
 }
 
 // NOTE: span rendering extracted into MarkdownSpansView for unit-testable link hardening.
-
-// Table rendering uses column-first layout to ensure consistent column widths.
-// Each column is rendered as a vertical container with all its cells (header + data).
-// This ensures that cells in the same column have the same width, determined by the widest content.
-function RenderTableBlock(props: {
-    headers: string[],
-    rows: string[][],
-    alignments: MarkdownTableAlignment[],
-    first: boolean,
-    last: boolean,
-    selectable: boolean,
-    onLinkPress?: (url: string) => boolean | void,
-    textStyle?: StyleProp<TextStyle>,
-    profile: MarkdownRenderingProfile,
-    streamingReveal: boolean,
-    streamingRevealPreset?: StreamingTextRevealPreset,
-    agentTexMath: boolean,
-}) {
-  const columnCount = props.headers.length;
-  const rowCount = props.rows.length;
-  const isLastRow = (rowIndex: number) => rowIndex === rowCount - 1;
-  const resolveColumnAlignment = (columnIndex: number): MarkdownTableAlignment =>
-      props.alignments[columnIndex] ?? 'default';
-  const { headers, rows, alignments } = props;
-  const getTableMarkdown = React.useCallback(
-      () => serializeMarkdownTable({ headers, rows, alignments }),
-      [alignments, headers, rows],
-  );
-
-  const scrollContents = (
-      <View style={style.tableContent}>
-          {/* Render each column as a vertical container */}
-          {props.headers.map((header, colIndex) => {
-              const alignment = resolveColumnAlignment(colIndex);
-              const cellAlignmentStyle = getTableCellAlignmentStyle(alignment);
-              const textAlignmentStyle = getTableTextAlignmentStyle(alignment);
-
-              return (
-              <View
-                  key={`column-${colIndex}`}
-                  style={[
-                      style.tableColumn,
-                      colIndex === columnCount - 1 && style.tableColumnLast
-                  ]}
-              >
-                  {/* Header cell for this column */}
-                  <View style={[style.tableCell, cellAlignmentStyle, style.tableHeaderCell, style.tableCellFirst]}>
-                      <RenderTableCellContent
-                          markdown={header}
-                          selectable={props.selectable}
-                          onLinkPress={props.onLinkPress}
-                          textStyle={[style.tableHeaderText, textAlignmentStyle, props.textStyle]}
-                          profile={props.profile}
-                          streamingReveal={props.streamingReveal}
-                          streamingRevealPreset={props.streamingRevealPreset}
-                          agentTexMath={props.agentTexMath}
-                      />
-                  </View>
-                  {/* Data cells for this column */}
-                  {props.rows.map((row, rowIndex) => (
-                      <View
-                          key={`cell-${rowIndex}-${colIndex}`}
-                          style={[
-                              style.tableCell,
-                              cellAlignmentStyle,
-                              isLastRow(rowIndex) && style.tableCellLast
-                          ]}
-                      >
-                          <RenderTableCellContent
-                              markdown={row[colIndex] ?? ''}
-                              selectable={props.selectable}
-                              onLinkPress={props.onLinkPress}
-                              textStyle={[style.tableCellText, textAlignmentStyle, props.textStyle]}
-                              profile={props.profile}
-                              streamingReveal={props.streamingReveal}
-                              streamingRevealPreset={props.streamingRevealPreset}
-                              agentTexMath={props.agentTexMath}
-                          />
-                      </View>
-                  ))}
-              </View>
-              );
-          })}
-      </View>
-  );
-
-  return (
-      <View style={[style.tableContainer, props.first && style.first, props.last && style.last]}>
-          <HorizontalOverflowScrollView
-              testID="markdown-table-scroll"
-              showsHorizontalScrollIndicator={true}
-              style={style.tableScrollView}
-          >
-              {scrollContents}
-          </HorizontalOverflowScrollView>
-          <View style={style.tableFooter}>
-              <CopyIconButton testID="markdown-table-copy" text={getTableMarkdown} />
-          </View>
-      </View>
-  );
-}
-
-function RenderTableCellContent(props: Readonly<{
-    markdown: string;
-    selectable: boolean;
-    onLinkPress?: (url: string) => boolean | void;
-    textStyle?: StyleProp<TextStyle>;
-    profile: MarkdownRenderingProfile;
-    streamingReveal: boolean;
-    streamingRevealPreset?: StreamingTextRevealPreset;
-    agentTexMath: boolean;
-}>) {
-    if (!containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
-        return <Text selectable={props.selectable} style={props.textStyle}>{props.markdown}</Text>;
-    }
-
-    return (
-        <EnrichedMarkdownTextAdapter
-            markdown={props.markdown}
-            profile={props.profile}
-            selectable={props.selectable}
-            onLinkPress={props.onLinkPress}
-            textStyle={props.textStyle}
-            streamingAnimated={props.streamingReveal}
-            streamingRevealPreset={props.streamingRevealPreset}
-            testID="markdown-table-cell-enriched"
-            suppressLeadingTopMargin
-            fillContainer={false}
-            agentTexMath={props.agentTexMath}
-        />
-    );
-}
-
-function containsPotentialEnrichedMath(markdown: string, agentTexMath: boolean): boolean {
-    return markdown.includes('$')
-        || (agentTexMath && (markdown.includes('\\(') || markdown.includes('\\[')));
-}
-
-function getTableCellAlignmentStyle(alignment: MarkdownTableAlignment) {
-    if (alignment === 'center') return style.tableCellAlignCenter;
-    if (alignment === 'right') return style.tableCellAlignRight;
-    return style.tableCellAlignLeft;
-}
-
-function getTableTextAlignmentStyle(alignment: MarkdownTableAlignment) {
-    if (alignment === 'center') return style.tableTextAlignCenter;
-    if (alignment === 'right') return style.tableTextAlignRight;
-    return style.tableTextAlignLeft;
-}
-
 
 const style = StyleSheet.create((theme) => ({
 
@@ -729,90 +576,6 @@ const style = StyleSheet.create((theme) => ({
         right: 8,
         top: 9,
         backgroundColor: theme.colors.surface.elevated,
-    },
-
-    //
-    // Table
-    //
-
-    tableContainer: {
-        marginVertical: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 8,
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
-        overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
-    },
-    tableFooter: {
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-        paddingHorizontal: 4,
-        paddingVertical: 2,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border.default,
-    },
-    tableScrollView: {
-        flexGrow: 0,
-        flexShrink: 0,
-        maxWidth: '100%',
-    },
-    tableContent: {
-        flexDirection: 'row',
-    },
-    tableColumn: {
-        flexDirection: 'column',
-        borderRightWidth: 1,
-        borderRightColor: theme.colors.border.default,
-    },
-    tableColumnLast: {
-        borderRightWidth: 0,
-    },
-    tableCell: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border.default,
-        minWidth: 40,
-    },
-    tableCellAlignLeft: {
-        alignItems: 'flex-start',
-    },
-    tableCellAlignCenter: {
-        alignItems: 'center',
-    },
-    tableCellAlignRight: {
-        alignItems: 'flex-end',
-    },
-    tableTextAlignLeft: {
-        textAlign: 'left',
-    },
-    tableTextAlignCenter: {
-        textAlign: 'center',
-    },
-    tableTextAlignRight: {
-        textAlign: 'right',
-    },
-    tableCellFirst: {
-        borderTopWidth: 0,
-    },
-    tableCellLast: {
-        borderBottomWidth: 0,
-    },
-    tableHeaderCell: {
-        backgroundColor: theme.colors.surface.inset,
-    },
-    tableHeaderText: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-        fontSize: 16,
-        lineHeight: 24,
-    },
-    tableCellText: {
-        ...Typography.default(),
-        color: theme.colors.text.primary,
-        fontSize: 16,
-        lineHeight: 24,
     },
 
     // Add global style for Web platform (Unistyles supports this via compiler plugin)

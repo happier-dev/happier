@@ -1,5 +1,9 @@
 import type { UnistylesThemes } from 'react-native-unistyles';
-import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import {
+    summarizeConnectedServiceQuotaCredits,
+    type ConnectedServiceQuotaCreditSummary,
+    type ConnectedServiceQuotaMeterV1,
+} from '@happier-dev/protocol';
 
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
@@ -90,18 +94,31 @@ export function resolveAccountHealthDotColor(theme: Theme, health: AccountHealth
 /** One concentric capacity-ring: `ratio` is the remaining-capacity fraction it fills. */
 export type CapacityRingDatum = Readonly<{ ratio: number; tone: MeterTone }>;
 
+export type AccountCapacityView = Readonly<{
+    capacityPct: number | null;
+    rings: CapacityRingDatum[];
+    /** Provider credits (Codex credits, Claude extra usage); null when the account reports none. */
+    credits: ConnectedServiceQuotaCreditSummary | null;
+    /** Included limits are spent but credits keep the account usable — never "used up". */
+    creditsOnly: boolean;
+}>;
+
 /** Display-only windows never become capacity candidates; the gauge owner chooses the family. */
 export function resolveAccountCapacityView(
     meters: readonly ConnectedServiceQuotaMeterV1[],
     nowMs: number,
     formatter: ConnectedServiceQuotaGaugeLabelFormatter,
-): Readonly<{ capacityPct: number | null; rings: CapacityRingDatum[] }> {
+): AccountCapacityView {
     const rows = buildConnectedServiceQuotaGaugeMeterRows(
         selectComparableConnectedServiceQuotaMeters(meters), nowMs, formatter,
     );
+    const capacityPct = deriveAccountCapacityPct(rows);
+    const credits = summarizeConnectedServiceQuotaCredits(meters);
     return {
-        capacityPct: deriveAccountCapacityPct(rows),
+        capacityPct,
         rings: resolveAccountCapacityRings(resolveAccountUsageRows(rows)),
+        credits,
+        creditsOnly: capacityPct !== null && capacityPct <= 0 && credits?.available === true,
     };
 }
 
@@ -124,4 +141,24 @@ export function resolveAccountCapacityRings(
         .flatMap((row) => row.remaining === null ? [] : [{ ratio: row.remaining, tone: row.tone }])
         .sort((a, b) => a.ratio - b.ratio)
         .slice(0, MAX_CAPACITY_RINGS);
+}
+
+/**
+ * Human names for the provider limit ids a quota reset clears. The base window ids keep
+ * their localized family names; any other id the snapshot shows as a meter (matched by
+ * provider limit id or meter id) keeps that meter's name, so a reset reads in the same
+ * vocabulary as the USAGE list. Unknown ids stay visible verbatim rather than guessed.
+ */
+export function resolveResetLimitLabels(
+    providerLimitIds: ReadonlyArray<string>,
+    meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>,
+    familyLabels: Readonly<{ fiveHour: string; weekly: string }>,
+): string[] {
+    const labels = providerLimitIds.map((id) => {
+        if (id === 'five_hour') return familyLabels.fiveHour;
+        if (id === 'seven_day') return familyLabels.weekly;
+        const meter = meters.find((candidate) => (candidate.providerLimitId ?? candidate.meterId) === id || candidate.meterId === id);
+        return meter ? meter.label : id;
+    });
+    return [...new Set(labels)];
 }

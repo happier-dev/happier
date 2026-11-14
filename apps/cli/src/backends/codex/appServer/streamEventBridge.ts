@@ -1,13 +1,14 @@
 import { readCodexReasoningText } from '../utils/readCodexReasoningText';
 import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
+import { readCodexUserMessageContent } from '../utils/readCodexUserMessageContent';
 import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 import { extractCodexGeneratedMedia } from '../media/extractCodexGeneratedMedia';
 import type { SessionMediaSource } from '@/agent/core/AgentMessage';
 
 type RecordLike = Record<string, unknown>;
 
-type ToolKind = 'command' | 'mcp' | 'file-change' | 'web-search' | 'image-view' | 'sleep';
+type ToolKind = 'command' | 'mcp' | 'file-change' | 'web-search' | 'image-view' | 'sleep' | 'native-agent' | 'dynamic';
 type PermissionRequestToolName = 'request_permissions';
 
 type NotificationEnvelope = Readonly<{
@@ -27,7 +28,7 @@ type ToolContext = Readonly<{
 }>;
 
 export type CodexAppServerStreamUpdate =
-    | Readonly<{ type: 'provider-user-text'; itemId: string; clientId: string | null; text: string }>
+    | Readonly<{ type: 'provider-user-text'; itemId: string; clientId: string | null; text: string; nativeContent?: readonly Record<string, unknown>[] }>
     | Readonly<{ type: 'assistant-text-delta'; itemId: string; text: string }>
     | Readonly<{ type: 'assistant-text-final'; itemId: string; text: string }>
     | Readonly<{ type: 'async-user-input-request'; itemId: string; text: string; questions: unknown[] }>
@@ -140,6 +141,17 @@ function omitKeys(value: RecordLike, keys: readonly string[]): RecordLike {
 
 function readToolContextFromItem(item: RecordLike): ToolContext | null {
     const itemType = readItemType(item);
+    // These native records describe an activity/tool occurrence, not completion
+    // of the child agent itself. Keep its identity and reported state intact.
+    if (itemType === 'subagentactivity' || itemType === 'collabagenttoolcall' || itemType === 'dynamictoolcall') {
+        const name = itemType === 'subagentactivity' ? 'subAgentActivity' : readString(item.tool);
+        if (!name) return null;
+        return {
+            toolKind: itemType === 'dynamictoolcall' ? 'dynamic' : 'native-agent',
+            name,
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'status', 'agentsStates', 'contentItems', 'success', 'durationMs', 'completedAtMs', 'error']),
+        };
+    }
     if (itemType === 'commandexecution') {
         const command = readString(item.command);
         const cwd = readString(item.cwd);
@@ -269,13 +281,13 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                 if (item) {
                     if (readItemType(item) === 'usermessage') {
                         const itemId = readItemId(item);
-                        const text = readCodexMessageContentText(item.content);
-                        if (itemId && text) {
+                        const content = readCodexUserMessageContent(item.content);
+                        if (itemId && content) {
                             return [{
                                 type: 'provider-user-text',
                                 itemId,
                                 clientId: readString(item.clientId) ?? readString(item.client_id),
-                                text,
+                                ...content,
                             }];
                         }
                     }

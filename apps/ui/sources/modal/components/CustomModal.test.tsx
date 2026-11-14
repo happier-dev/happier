@@ -113,7 +113,6 @@ describe('CustomModal', () => {
 
     it('wraps chrome-backed modals in ModalCardFrame and closes through the shared handler', async () => {
         const onClose = vi.fn();
-        const onRequestClose = vi.fn();
         const chromeLeading = React.createElement('ChromeLeading');
         const chromeActions = React.createElement('ChromeActions');
         const chromeFooter = React.createElement('ChromeFooter');
@@ -124,7 +123,6 @@ describe('CustomModal', () => {
             props: {
                 label: 'browse',
             },
-            onRequestClose,
             chrome: {
                 kind: 'card',
                 leading: chromeLeading,
@@ -157,7 +155,6 @@ describe('CustomModal', () => {
             modalCardFrame.props.onClose();
         });
 
-        expect(onRequestClose).toHaveBeenCalledTimes(1);
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
@@ -275,7 +272,6 @@ describe('CustomModal', () => {
 
     it('does not invoke legacy `props.onRequestClose` when dismissing', async () => {
         const onClose = vi.fn();
-        const onRequestClose = vi.fn();
         const legacyOnRequestClose = vi.fn();
 
         const screen = await renderCustomModal({
@@ -285,14 +281,12 @@ describe('CustomModal', () => {
                 label: 'legacy',
                 onRequestClose: legacyOnRequestClose,
             },
-            onRequestClose,
         }, onClose);
 
         act(() => {
             screen.findByType('BaseModal' as any).props.onClose();
         });
 
-        expect(onRequestClose).toHaveBeenCalledTimes(1);
         expect(legacyOnRequestClose).toHaveBeenCalledTimes(0);
         expect(onClose).toHaveBeenCalledTimes(1);
     });

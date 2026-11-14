@@ -1,16 +1,22 @@
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, beforeAll } from 'vitest';
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildInitializeRequest, createAcpClientFsMethods } from '../AcpBackend';
 import type { AcpPermissionHandler } from '../AcpBackend';
+import { loadAcpSdk } from '../connection/acpSdk';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 const envScope = createEnvKeyScope(['HAPPIER_ACP_FS']);
 
 describe('AcpBackend ACP FS capability experiment', () => {
+  beforeAll(async () => {
+    // Handlers only run inside an open connection, where the SDK is already loaded.
+    await loadAcpSdk();
+  });
+
   afterEach(() => {
     envScope.restore();
   });
@@ -66,7 +72,10 @@ describe('AcpBackend ACP FS capability experiment', () => {
 
       await expect(
         clientFs.writeTextFile!({ sessionId: 's', path: targetPath, content: 'hi' })
-      ).rejects.toThrow(/denied/i);
+      ).rejects.toMatchObject({
+        message: expect.stringContaining(`Permission denied: writing ${targetPath} was not approved`),
+        data: { path: targetPath },
+      });
 
       expect(existsSync(targetPath)).toBe(false);
     });
@@ -86,7 +95,7 @@ describe('AcpBackend ACP FS capability experiment', () => {
     });
   });
 
-  it('does not treat missing files under a symlinked cwd as path traversal (reports ENOENT instead)', async () => {
+  it('reports a missing file as ACP resource-not-found', async () => {
     envScope.patch({ HAPPIER_ACP_FS: '1' });
 
     await withTempDir('happier-acp-fs-root-', async (root) => {
@@ -98,110 +107,66 @@ describe('AcpBackend ACP FS capability experiment', () => {
       const clientFs = createAcpClientFsMethods({ cwd: workspaceLink });
       const missing = join(workspaceLink, 'missing.txt');
 
-      await expect(clientFs.readTextFile!({ sessionId: 's', path: missing })).rejects.toThrow(/ENOENT/i);
+      await expect(clientFs.readTextFile!({ sessionId: 's', path: missing })).rejects.toMatchObject({
+        code: -32002,
+        message: expect.stringContaining(missing),
+      });
     });
   });
 
-  it('readTextFile rejects paths that escape cwd', async () => {
+  it('names the failing path and cause instead of a bare internal error', async () => {
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
+
+    await withTempDir('happier-acp-fs-', async (workspace) => {
+      const clientFs = createAcpClientFsMethods({ cwd: workspace });
+
+      await expect(clientFs.readTextFile!({ sessionId: 's', path: workspace })).rejects.toMatchObject({
+        code: -32603,
+        message: expect.stringMatching(/EISDIR/),
+      });
+    });
+  });
+
+  it('readTextFile reads files outside cwd, like the agent itself can', async () => {
     envScope.patch({ HAPPIER_ACP_FS: '1' });
 
     await withTempDir('happier-acp-fs-root-', async (root) => {
       const workspace = join(root, 'workspace');
       const outside = join(root, 'outside');
       const outsideFile = join(outside, 'outside.txt');
-      // Prepare test files.
       mkdirSync(workspace, { recursive: true });
       mkdirSync(outside, { recursive: true });
-      writeFileSync(outsideFile, 'nope', 'utf8');
+      writeFileSync(outsideFile, 'shared', 'utf8');
 
       const clientFs = createAcpClientFsMethods({ cwd: workspace });
-      await expect(clientFs.readTextFile!({ sessionId: 's', path: outsideFile })).rejects.toThrow(/permission denied|traversal/i);
-      await expect(clientFs.readTextFile!({ sessionId: 's', path: '../outside/outside.txt' })).rejects.toThrow(/permission denied|traversal/i);
+      await expect(clientFs.readTextFile!({ sessionId: 's', path: outsideFile })).resolves.toEqual({ content: 'shared' });
+      await expect(clientFs.readTextFile!({ sessionId: 's', path: '../outside/outside.txt' })).resolves.toEqual({ content: 'shared' });
     });
   });
 
-  it('writeTextFile rejects paths that escape cwd even when approved', async () => {
+  it('writeTextFile writes outside cwd once the session permission policy approves it', async () => {
     envScope.patch({ HAPPIER_ACP_FS: '1' });
 
     await withTempDir('happier-acp-fs-root-', async (root) => {
       const workspace = join(root, 'workspace');
-      const outside = join(root, 'outside');
-      const outsideFile = join(outside, 'outside.txt');
+      const outsideFile = join(root, 'analysis', 'report.md');
       mkdirSync(workspace, { recursive: true });
-      mkdirSync(outside, { recursive: true });
+      const approvedPaths: unknown[] = [];
 
       const clientFs = createAcpClientFsMethods({
         cwd: workspace,
         permissionHandler: {
-          async handleToolCall() {
+          async handleToolCall(_toolCallId, _toolName, input) {
+            approvedPaths.push((input as { path?: unknown }).path);
             return { decision: 'approved' };
           },
         } satisfies AcpPermissionHandler,
       });
 
-      await expect(clientFs.writeTextFile!({ sessionId: 's', path: outsideFile, content: 'nope' })).rejects.toThrow(/permission denied|traversal/i);
-      await expect(clientFs.writeTextFile!({ sessionId: 's', path: '../outside/outside.txt', content: 'nope' })).rejects.toThrow(/permission denied|traversal/i);
+      await clientFs.writeTextFile!({ sessionId: 's', path: '../analysis/report.md', content: 'done' });
 
-      expect(existsSync(outsideFile)).toBe(false);
-    });
-  });
-
-  it('writeTextFile rejects writes through symlinks that point outside cwd', async () => {
-    envScope.patch({ HAPPIER_ACP_FS: '1' });
-
-    await withTempDir('happier-acp-fs-root-', async (root) => {
-      const workspace = join(root, 'workspace');
-      const outside = join(root, 'outside');
-      const outsideFile = join(outside, 'outside.txt');
-      const linkPath = join(workspace, 'link.txt');
-      mkdirSync(workspace, { recursive: true });
-      mkdirSync(outside, { recursive: true });
-      writeFileSync(outsideFile, 'original', 'utf8');
-      symlinkSync(outsideFile, linkPath);
-
-      const clientFs = createAcpClientFsMethods({
-        cwd: workspace,
-        permissionHandler: {
-          async handleToolCall() {
-            return { decision: 'approved' };
-          },
-        } satisfies AcpPermissionHandler,
-      });
-
-      await expect(clientFs.writeTextFile!({ sessionId: 's', path: linkPath, content: 'nope' })).rejects.toThrow(/permission denied|traversal/i);
-      expect(readFileSync(outsideFile, 'utf8')).toBe('original');
-    });
-  });
-
-  it('writeTextFile rejects writes when a missing child is nested under a symlinked ancestor outside cwd', async () => {
-    envScope.patch({ HAPPIER_ACP_FS: '1' });
-
-    await withTempDir('happier-acp-fs-root-', async (root) => {
-      const workspace = join(root, 'workspace');
-      const outside = join(root, 'outside');
-      const linkDir = join(workspace, 'linkdir');
-      const escapedFile = join(outside, 'nested', 'via-symlink.txt');
-      mkdirSync(workspace, { recursive: true });
-      mkdirSync(outside, { recursive: true });
-      symlinkSync(outside, linkDir);
-
-      const clientFs = createAcpClientFsMethods({
-        cwd: workspace,
-        permissionHandler: {
-          async handleToolCall() {
-            return { decision: 'approved' };
-          },
-        } satisfies AcpPermissionHandler,
-      });
-
-      await expect(
-        clientFs.writeTextFile!({
-          sessionId: 's',
-          path: join(linkDir, 'nested', 'via-symlink.txt'),
-          content: 'nope',
-        })
-      ).rejects.toThrow(/permission denied|traversal/i);
-      expect(existsSync(escapedFile)).toBe(false);
+      expect(approvedPaths).toEqual([outsideFile]);
+      expect(readFileSync(outsideFile, 'utf8')).toBe('done');
     });
   });
 });

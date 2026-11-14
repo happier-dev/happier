@@ -1,3 +1,5 @@
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+import { LruMap } from '@/utils/cache/lruMap';
 import {
     createDefaultTranscriptItemHeightCache,
     isTranscriptItemHeightSignatureStable,
@@ -156,6 +158,14 @@ export type TranscriptMeasurementReconciler = Readonly<{
 export type TranscriptMeasurementReconcilerOptions = Readonly<{
     cache?: TranscriptItemHeightCache;
     cacheOptions?: TranscriptItemHeightCacheOptions;
+    /**
+     * Bound for the per-item floor table. Defaults to the same tuning value as the exact-height
+     * cache (`transcriptItemHeightCacheMaxEntries`); the two remain independent LRU maps. Reads
+     * refresh recency, so a mounted row keeps its floor while a long session that lays out more
+     * distinct rows than the bound evicts the stalest ones, which then fall back to the exact
+     * cache or a natural onLayout measurement.
+     */
+    floorMaxEntries?: number;
 }>;
 
 type FloorState = Readonly<{
@@ -330,10 +340,12 @@ export function createTranscriptMeasurementReconciler(
 ): TranscriptMeasurementReconciler {
     const cache = options.cache ?? createDefaultTranscriptItemHeightCache(options.cacheOptions);
 
-    // Per-item monotonic floor, keyed by itemId+width+font. `minHeight: null` marks reset-pending:
-    // the row was measured then structurally reset, so its next real onLayout re-seeds the floor
+    // Per-item monotonic floor, keyed by itemId+width+font, bounded LRU (see `floorMaxEntries`).
+    // `minHeight: null` marks reset-pending: the row was measured then structurally reset, so its next real onLayout re-seeds the floor
     // (taking the new, possibly smaller, height) rather than reserving the stale pre-collapse height.
-    const floorsByKey = new Map<string, FloorState>();
+    const floorsByKey = new LruMap<string, FloorState>({
+        maxEntries: options.floorMaxEntries ?? loadSyncTuning().transcriptItemHeightCacheMaxEntries,
+    });
 
     /**
      * Painted bubble heights carried across the pending→committed crossover, keyed by

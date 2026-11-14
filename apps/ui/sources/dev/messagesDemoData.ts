@@ -85,6 +85,21 @@ export const debugMessages: Message[] = [
         text: "Nested code block wrapping:\n\n7. List example\n\n   ```yaml\n   description: nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description NESTED_LIST_END\n   ```\n8. Following list item with [a link](https://example.com).\n\n   > Quoted example\n   >\n   > ```python\n   > def example():\n   >     return \"quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line NESTED_QUOTE_END\"\n   > ```\n\n- [x] Completed task\n\n  ```text\n  Task code\n  ```",
     },
 
+    // Prose + URL table: short columns stay on one line, prose wraps, URLs break inside their cell.
+    {
+        id: 'agent-prose-markdown-table',
+        localId: null,
+        createdAt: Date.now() - 187000,
+        kind: 'agent-text',
+        text: [
+            'Prose table repro (60 rows x 8 columns, open it full screen to check the pinned header):',
+            '',
+            '| # | Area | Status | Owner | Summary | Link | Risk | 漢字 |',
+            '| ---: | --- | :---: | --- | --- | --- | --- | --- |',
+            ...Array.from({ length: 60 }, (_, index) => `| ${index + 1} | ${index % 2 ? 'Sync' : 'Transcript'} | ${index % 3 ? 'ok' : 'blocked'} | lane-${index % 4} | Rows wrap inside their cell when the table is wider than the screen, keeping every column aligned with its header. | https://example.com/docs/transcript/tables/${index}/a-very-long-path-segment-without-spaces | ${index % 5 ? 'low' : 'medium, needs review'} | 表格${index} |`),
+        ].join('\n'),
+    },
+
     // Agent message with markdown table (simple repro for mobile rendering issue)
     {
         id: 'agent-table-demo',

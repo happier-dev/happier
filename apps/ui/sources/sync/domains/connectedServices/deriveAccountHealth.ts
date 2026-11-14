@@ -9,6 +9,8 @@ export type AccountHealth = 'healthy' | 'attention' | 'error';
 export type DeriveAccountHealthInput = Readonly<{
     status?: ConnectedServiceCredentialHealthStatusV1 | null;
     capacityPct: number | null;
+    /** Provider credits still serve the account once its included limits are spent. */
+    creditsAvailable?: boolean;
     isStale?: boolean;
 }>;
 
@@ -44,7 +46,9 @@ function toneToHealth(tone: MeterTone): AccountHealth {
  */
 export function deriveAccountHealth(input: DeriveAccountHealthInput): AccountHealth {
     let health = statusToHealth(input.status);
-    health = worst(health, toneToHealth(resolveQuotaTone(input.capacityPct)));
+    const capacityHealth = toneToHealth(resolveQuotaTone(input.capacityPct));
+    // Spent included limits with credit headroom still work (at a cost): attention, never error.
+    health = worst(health, input.creditsAvailable === true && capacityHealth === 'error' ? 'attention' : capacityHealth);
     if (input.isStale) health = worst(health, 'attention');
     return health;
 }

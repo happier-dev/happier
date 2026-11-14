@@ -11,7 +11,7 @@ const executable = process.env.HAPPIER_TEST_KIMI_PATH?.trim();
 const readMarker = 'KIMI_ISOLATED_FILESYSTEM_READ_FIXTURE';
 const writeMarker = 'KIMI_ISOLATED_FILESYSTEM_WRITE_FIXTURE';
 
-describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP filesystem boundary with the official CLI', () => {
+describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP host filesystem with the official CLI', () => {
     let env: ReturnType<typeof createEnvKeyScope>;
     beforeEach(() => {
         env = createEnvKeyScope(['HAPPIER_ACP_FS']);
@@ -19,7 +19,7 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP filesyste
     });
     afterEach(() => env.restore());
 
-    it.each(['inside', 'outside', 'symlink'] as const)('enforces the workspace boundary for an %s read', async (location) => {
+    it.each(['inside', 'outside', 'symlink'] as const)('serves an %s read through the host, matching the agent tools reach', async (location) => {
         await withTempDir('happier-kimi-fs-read-', async (directory) => {
             const outside = join(directory, 'outside.txt');
             const inside = join(directory, 'workspace', 'inside.txt');
@@ -39,12 +39,7 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP filesyste
                 await backend.sendPrompt(sessionId, 'Run the isolated filesystem read fixture.');
                 await backend.waitForResponseComplete?.();
                 expect(model.getRequestCount()).toBe(2);
-                const result = model.getToolResponses().join('\n');
-                if (location === 'inside') expect(result).toContain(readMarker);
-                else {
-                    expect(result).toContain('<system>ERROR: Tool execution failed.</system>');
-                    expect(result).not.toContain(readMarker);
-                }
+                expect(model.getToolResponses().join('\n')).toContain(readMarker);
             } finally {
                 await backend.dispose();
                 await model.close();

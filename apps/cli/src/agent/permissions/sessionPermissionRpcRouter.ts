@@ -60,7 +60,10 @@ export class SessionPermissionRpcRouter {
         structuredAnswersV1: parsed.data.structuredAnswersV1,
       });
       if (!result.ok) {
-        throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
+        // A live receiver can fail before or after sending: neither proves ownership was lost.
+        throw new PublicRpcHandlerError(result.errorCode === 'permission_response_failed'
+          ? PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED
+          : PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
       }
       return result;
     });

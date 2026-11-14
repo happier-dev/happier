@@ -162,7 +162,7 @@ describe('createConnectedServiceQuotaFetchers — kill-switch env', () => {
       signal: new AbortController().signal,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.com/api/oauth/usage', expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1', expect.anything());
   });
 
   it('Claude subscription usageUrl override takes precedence over the kill-switch env', async () => {
@@ -185,6 +185,6 @@ describe('createConnectedServiceQuotaFetchers — kill-switch env', () => {
       signal: new AbortController().signal,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(customUrl, expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(`${customUrl}?cedar_ember=1&at_wall=1`, expect.anything());
   });
 });

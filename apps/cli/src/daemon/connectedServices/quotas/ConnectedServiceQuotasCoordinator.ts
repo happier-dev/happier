@@ -1584,6 +1584,7 @@ export class ConnectedServiceQuotasCoordinator {
         groupGeneration: group.generation,
         nowMs: now,
         maxAgeMs: burnHorizonMs,
+        minObservationDurationMs: burnHorizonMs,
         currentQuotaSnapshot: activeQuotaSnapshot,
       }) ?? null
       : null;
@@ -3373,6 +3374,18 @@ export class ConnectedServiceQuotasCoordinator {
       const snapshot = this.openExistingQuotaSnapshot({ ...resolved, serviceId: input.serviceId, profileId: input.profileId });
       const identity = credential.record ? readCredentialAccountIdentity(credential.record) : null;
       const contextMatches = snapshot && isProviderAccountUsageOrganizationContextMatch(snapshot, identity);
+      // Hydrate the selector's canonical runtime projection only after the same credential/org
+      // authority proves the persisted observation belongs to this profile.
+      if (snapshot && contextMatches) {
+        this.runtimeQuotaSnapshots?.recordProfileSnapshot({
+          serviceId: input.serviceId,
+          profileId: input.profileId,
+          snapshot,
+          ...(credential.record?.kind === 'oauth'
+            ? { verifiedCredentialFingerprint: computeConnectedServiceAccessTokenFingerprint(credential.record.oauth.accessToken) }
+            : {}),
+        });
+      }
       // Released plaintext relays omit organization scope. Reuse qualified local
       // observations through the same freshness budget without altering cloud metadata.
       const local = this.accountUsageStore?.resolveBySource({

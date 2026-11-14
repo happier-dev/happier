@@ -1,4 +1,5 @@
 import {
+  formatClaudeOauthPlanLabel,
   readClaudeOauthCredentialMetadata,
   readClaudeOauthCredentialOrganizationId,
   type ConnectedServiceCredentialRecordV1,
@@ -8,6 +9,7 @@ import { createHash } from 'node:crypto';
 
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
 import { claudeResetRequestId, parseClaudeQuotaResets } from './quotaResets';
+import { createClaudeSubscriptionStatusFetcher } from './subscriptionFetcher';
 import { logger } from '@/ui/logger';
 
 import {
@@ -36,6 +38,17 @@ function parseDisableQuotaEndpointEnv(raw: string | undefined): boolean {
 }
 
 export const claudeSubscriptionQuotaFetcherDescriptor: ConnectedServiceQuotaFetcherDescriptor = {
+  loadSubscription: ({ env, staleAfterMs }) => createClaudeSubscriptionStatusFetcher({
+    usageUrl: parseNonEmptyStringEnv(
+      env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USAGE_URL
+        ?? env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL,
+    ),
+    staleAfterMs,
+    userAgent: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USER_AGENT),
+    disablePrivateEndpoint: parseDisableQuotaEndpointEnv(
+      env.HAPPIER_CONNECTED_SERVICES_DISABLE_CLAUDE_SUBSCRIPTION_QUOTA_ENDPOINT,
+    ),
+  }),
   loadQuota: ({ env, staleAfterMs }) => createClaudeSubscriptionQuotaFetcher({
     usageUrl: parseNonEmptyStringEnv(
       env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USAGE_URL
@@ -70,8 +83,7 @@ function resolveAccountLabel(record: ConnectedServiceCredentialRecordV1): string
 
 function resolveClaudeSubscriptionPlanLabel(record: ConnectedServiceCredentialRecordV1): string | null {
   if (record.kind !== 'oauth') return null;
-  const metadata = readClaudeOauthCredentialMetadata(record.oauth.raw);
-  return metadata?.subscriptionType ?? metadata?.rateLimitTier ?? null;
+  return formatClaudeOauthPlanLabel(readClaudeOauthCredentialMetadata(record.oauth.raw));
 }
 
 function buildCredentialBackoffKey(record: ConnectedServiceCredentialRecordV1): string | null {
@@ -614,6 +626,12 @@ function collectUsageWindowMeterEntries(
   return Array.from(windowsByMeterId, ([meterId, window]) => ({ meterId, window }));
 }
 
+function readClaudeCedarExhaustedLimitIds(payload: unknown): string[] {
+  const cedar = isRecord(payload) ? payload.cedar_ember : null;
+  const exhausted = isRecord(cedar) ? cedar.exhausted : null;
+  return Array.isArray(exhausted) ? exhausted.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+}
+
 export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   usageUrl?: string;
   betaHeaderValue?: string;
@@ -640,10 +658,11 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   const nowMs = params?.nowMs ?? (() => Date.now());
   const retryAfterBackoffByCredentialKey = new Map<string, number>();
   const providerBackoffCredentialKeys = new Set<string>();
-  const resetUsageUrl = new URL(usageUrl);
-  resetUsageUrl.searchParams.set('cedar_ember', '1');
-  resetUsageUrl.searchParams.set('at_wall', '1');
-  resetUsageUrl.searchParams.set('skip_spend', '1');
+  // One read returns usage windows, spend and both reset programs (CodexBar uses the same single
+  // `?cedar_ember=1` read); a second read per poll doubled pressure on a heavily 429-limited endpoint.
+  const evaluatedUsageUrl = new URL(usageUrl);
+  evaluatedUsageUrl.searchParams.set('cedar_ember', '1');
+  evaluatedUsageUrl.searchParams.set('at_wall', '1');
 
   function observeProviderBackoff(response: Response, record: ConnectedServiceCredentialRecordV1, now: number): number | null {
     const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: now });
@@ -678,7 +697,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
 
   async function discoverResets(record: ConnectedServiceCredentialRecordV1, now: number, signal: AbortSignal) {
     if (record.kind !== 'oauth') return undefined;
-    const response = await fetchUsage({ usageUrl: resetUsageUrl.toString(), accessToken: record.oauth.accessToken,
+    const response = await fetchUsage({ usageUrl: evaluatedUsageUrl.toString(), accessToken: record.oauth.accessToken,
       betaHeaderValue, userAgent, signal });
     observeProviderBackoff(response, record, now);
     if (!response.ok) await throwUsageError(response);
@@ -753,6 +772,9 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
           .map(({ meterId, window }) => buildUsageWindowMeter(meterId, window)) : [];
         const exhaustedIds = new Set(freshMeters.filter((meter) => meter.utilizationPct !== null && meter.utilizationPct >= 100)
           .map((meter) => meter.providerLimitId ?? meter.meterId));
+        // The provider's own exhausted list names limits (e.g. the Fable cap seven_day_overage_included)
+        // in the same vocabulary as grant clears, which derived meter ids do not always share.
+        for (const id of readClaudeCedarExhaustedLimitIds(resets?.payload)) exhaustedIds.add(id);
         if (!providerLimitIds.some((id) => clears.includes(id) && exhaustedIds.has(id))) return 'not_available';
       }
       signal.throwIfAborted();
@@ -849,7 +871,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       }
 
       let response = await fetchUsage({
-        usageUrl,
+        usageUrl: evaluatedUsageUrl.toString(),
         accessToken: record.oauth.accessToken,
         betaHeaderValue,
         userAgent,
@@ -859,7 +881,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       const retryAfterMs = observeProviderBackoff(response, record, now);
       if (!response.ok && response.status >= 500 && response.status < 600 && !(retryAfterMs !== null && retryAfterMs > 0)) {
         response = await fetchUsage({
-          usageUrl,
+          usageUrl: evaluatedUsageUrl.toString(),
           accessToken: record.oauth.accessToken,
           betaHeaderValue,
           userAgent,
@@ -892,8 +914,11 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         });
       }
       let resetInventory: ReturnType<typeof parseClaudeQuotaResets>;
-      try { resetInventory = (await discoverResets(record, now, signal))?.inventory; } catch {
-        logger.infoFile('[WARN] [Claude quota] Reset discovery failed; ordinary usage remains available.');
+      try { resetInventory = parseClaudeQuotaResets(json, now); } catch {
+        logger.infoFile('[WARN] [Claude quota] Reset data is malformed; ordinary usage remains available.');
+      }
+      if (isRecord(data.cedar_ember) && data.cedar_ember.ineligible_reason === 'cli_version') {
+        logger.warnFile(`[Claude quota] Claude rejected reset eligibility for User-Agent "${userAgent}" (cli_version); limit resets stay hidden until a current Claude Code version is detected.`);
       }
       if (backoffKey && !providerBackoffCredentialKeys.has(backoffKey)) {
         retryAfterBackoffByCredentialKey.delete(backoffKey);

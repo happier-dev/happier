@@ -47,7 +47,8 @@ vi.mock('./self/maybeRunVersionGatedRuntimeMigration', () => ({
   maybeRunVersionGatedRuntimeMigration: (params: unknown) => maybeRunVersionGatedRuntimeMigrationMock(params),
 }));
 
-vi.mock('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners', () => ({
+vi.mock('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners')>(),
   quiesceInstalledCliWindowsPayloadOwners: (params: unknown) => quiesceInstalledCliWindowsPayloadOwnersMock(params),
 }));
 

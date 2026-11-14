@@ -530,3 +530,28 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     ]);
   });
 });
+
+describe('OpenAI Codex usage credits', () => {
+  it('keeps the wham/usage credit balance as a credit meter beside spent windows', async () => {
+    const now = 1_000_000;
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        plan_type: 'pro',
+        rate_limit: { allowed: true, limit_reached: false, secondary_window: { used_percent: 100, reset_at: 1700000000 } },
+        credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: '16845' },
+        spend_control: { reached: false, individual_limit: null },
+      }),
+    })) as unknown as typeof fetch);
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: now + 60_000,
+      oauth: { accessToken: 'at', refreshToken: 'rt', idToken: null, scope: null, tokenType: null, providerAccountId: 'acct', providerEmail: null },
+    });
+    const snapshot = await createOpenAiCodexQuotaFetcher({ usageUrl: 'https://quota.happier.dev/usage', resetCreditsUrl: null })
+      .fetch({ record, now, signal: new AbortController().signal });
+    expect(ConnectedServiceQuotaSnapshotV1Schema.parse(snapshot).meters).toContainEqual(expect.objectContaining({
+      meterId: 'credits', unit: 'credits', remaining: 16_845, isExhausted: false,
+    }));
+    vi.unstubAllGlobals();
+  });
+});

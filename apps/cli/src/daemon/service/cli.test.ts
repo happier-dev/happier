@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -2203,6 +2204,80 @@ describe('runDaemonServiceCliCommand', () => {
       expect(observedQueryTimeouts.length).toBeGreaterThan(0);
       expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
       expect(new Set(observedTaskStatusTimeouts)).toEqual(new Set([expectedQueryTimeout]));
+    });
+  });
+
+  it.each([
+    { action: 'start', targetMode: 'default-following', channel: 'stable' },
+    { action: 'restart', targetMode: 'default-following', channel: 'stable' },
+    { action: 'restart', targetMode: 'pinned', channel: 'preview' },
+  ] as const)('converges a Windows bootstrap launcher to the managed shim on $action ($targetMode, $channel)', async ({ action, targetMode, channel }) => {
+    await withConfiguredDaemonTestHome({ prefix: 'service-launcher-convergence-', env: {
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
+      HAPPIER_DAEMON_SERVICE_TARGET_MODE: targetMode,
+      HAPPIER_DAEMON_SERVICE_CHANNEL: channel,
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: channel,
+      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '120',
+      HAPPIER_DAEMON_SERVICE_OWNERSHIP_ACTIVE_GRACE_TIMEOUT_MS: '0',
+      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '10',
+      HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '20',
+    } }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir);
+      // The OS boundary reports an installed, active task; definition discovery,
+      // launcher selection, drift detection and the rewrite all stay real.
+      doMockChildProcessSpawnSync((command, args = []) => ({
+        status: 0,
+        stdout: Buffer.from(isHappierTaskFolderListing(command, args) ? '[]' : 'Status: Running\n'),
+        stderr: Buffer.from(''),
+      }));
+      const toolDir = join(homeDir, 'test-bin');
+      mkdirSync(toolDir, { recursive: true });
+      for (const command of ['schtasks', 'powershell.exe']) {
+        writeFileSync(join(toolDir, command), '', { mode: 0o755 });
+      }
+      envScope.patch({ PATH: `${toolDir}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}` });
+      vi.resetModules();
+      const cli = await loadCliModule();
+      const runtime = cli.resolveDaemonServiceCliRuntimeFromEnv();
+      const install = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', channel, processEnv: process.env });
+      const bootstrapEntry = join(install.installRoot, 'versions', '0.2.17', 'package-dist', 'index.mjs');
+      const managedShim = install.shimPaths[0]!;
+      mkdirSync(dirname(managedShim), { recursive: true });
+      writeFileSync(managedShim, '', { mode: 0o755 });
+      const plan = planDaemonServiceInstall({
+        ...runtime, mode: 'user', uid: runtime.uid ?? undefined,
+        nodePath: runtime.nodePath, entryPath: bootstrapEntry,
+        autostart: 'on-demand', managedBy: 'desktop', bundleId: 'dev.happier.app',
+      });
+      const installedFile = plan.files[0]!;
+      mkdirSync(dirname(installedFile.path), { recursive: true });
+      writeFileSync(installedFile.path, installedFile.content);
+
+      const expectedFile = planDaemonServiceInstall({
+        ...runtime, mode: 'user', uid: runtime.uid ?? undefined,
+        nodePath: managedShim, entryPath: '',
+        autostart: 'on-demand', managedBy: 'desktop', bundleId: 'dev.happier.app',
+      }).files[0]!;
+      const output = captureStdoutJsonOutput<{ ok: boolean }>();
+      try {
+        await cli.runDaemonServiceCliCommand({ argv: [action, '--json'] });
+        expect(output.json().ok).toBe(true);
+        expect(readFileSync(installedFile.path, 'utf8')).toBe(expectedFile.content);
+      } finally {
+        output.restore();
+      }
+      if (targetMode === 'default-following') {
+        const entries = await cli.resolveDaemonServiceListEntries(runtime, { mode: 'user' });
+        expect(entries.find((entry) => entry.path === installedFile.path)?.installedDefinitionMatchesExpected).toBe(true);
+      }
+      const repeatedOutput = captureStdoutJsonOutput<{ ok: boolean }>();
+      try {
+        await cli.runDaemonServiceCliCommand({ argv: [action, '--json'] });
+        expect(repeatedOutput.json().ok).toBe(true);
+        expect(readFileSync(installedFile.path, 'utf8')).toBe(expectedFile.content);
+      } finally {
+        repeatedOutput.restore();
+      }
     });
   });
 

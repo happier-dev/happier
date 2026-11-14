@@ -8,7 +8,8 @@ export function shouldArmPendingActivationAuthorization(params: Readonly<{
     resumeWhenAvailable?: boolean;
 }>): boolean {
     return params.resumeWhenAvailable === true
-        || (params.resumeWhenAvailable !== false && params.requestedAction.kind === 'send_now');
+        || (params.resumeWhenAvailable !== false
+            && (params.requestedAction.kind === 'send_now' || params.requestedAction.kind === 'steer_now'));
 }
 
 const AUTHORIZATION_SELECT = {

@@ -5,6 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 export type CopyIconButtonProps = Readonly<{
@@ -12,9 +14,13 @@ export type CopyIconButtonProps = Readonly<{
     text: string | (() => string);
     style?: StyleProp<ViewStyle>;
     testID?: string;
+    /** Short visible label beside the icon, for when several copy formats sit side by side. */
+    label?: string;
+    /** Defaults to the generic copy label. */
+    accessibilityLabel?: string;
 }>;
 
-export const CopyIconButton = React.memo<CopyIconButtonProps>(({ text, style, testID }) => {
+export const CopyIconButton = React.memo<CopyIconButtonProps>(({ text, style, testID, label, accessibilityLabel }) => {
     const { theme } = useUnistyles();
     const isWeb = Platform.OS === 'web';
     const [isHovered, setIsHovered] = React.useState(false);
@@ -37,18 +43,19 @@ export const CopyIconButton = React.memo<CopyIconButtonProps>(({ text, style, te
             onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
             accessibilityRole="button"
-            accessibilityLabel={t('common.copy')}
+            accessibilityLabel={accessibilityLabel ?? t('common.copy')}
         >
             <Icon
                 name={copied ? 'check' : 'copy'}
                 size={14}
                 color={copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary}
             />
+            {label ? <Text style={styles.label}>{label}</Text> : null}
         </Pressable>
     );
 });
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
     button: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -58,5 +65,12 @@ const styles = StyleSheet.create(() => ({
     },
     buttonHovered: {
         opacity: 0.85,
+    },
+    label: {
+        ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 14,
+        marginLeft: 4,
+        color: theme.colors.text.secondary,
     },
 }));

@@ -61,3 +61,35 @@ export function normalizeClaudeOauthProfileEntitlement(value: unknown): ClaudeOa
     ...(organizationUuid ? { organizationUuid } : {}),
   } };
 }
+
+/** Display label for a Claude plan, e.g. `max` + `default_claude_max_20x` → `Max 20x`. */
+export function formatClaudeOauthPlanLabel(metadata: ClaudeOauthCredentialMetadata | null): string | null {
+  const subscriptionType = metadata?.subscriptionType ?? null;
+  if (!subscriptionType) return metadata?.rateLimitTier ?? null;
+  const name = subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
+  // Only Max plans are sold as usage multipliers (Max 5x / Max 20x); the tier carries the multiplier.
+  const multiplier = subscriptionType === 'max' ? /_(\d+x)$/i.exec(metadata?.rateLimitTier ?? '')?.[1] : undefined;
+  return multiplier ? `${name} ${multiplier.toLowerCase()}` : name;
+}
+
+const ACTIVE_CLAUDE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due']);
+const ENDED_CLAUDE_SUBSCRIPTION_STATUSES = new Set(['canceled', 'cancelled', 'expired', 'inactive']);
+const PAID_CLAUDE_ORGANIZATION_TYPES = new Set(['claude_max', 'claude_pro', 'claude_team', 'claude_enterprise']);
+
+/**
+ * Subscription status attested by the OAuth profile. The profile exposes no renewal or
+ * period end, so callers must not infer either. `null` means the payload carries no evidence.
+ */
+export function readClaudeOauthProfileSubscriptionStatus(value: unknown): 'subscribed' | 'none' | null {
+  const root = readObject(value);
+  if (!root) return null;
+  const account = readObject(root.account);
+  const organization = readObject(root.organization);
+  const status = (readString(organization?.subscription_status) ?? readString(root.subscription_status))?.toLowerCase();
+  if (status && ACTIVE_CLAUDE_SUBSCRIPTION_STATUSES.has(status)) return 'subscribed';
+  if (status && ENDED_CLAUDE_SUBSCRIPTION_STATUSES.has(status)) return 'none';
+  if (status) return null;
+  const organizationType = readString(organization?.organization_type);
+  return (organizationType && PAID_CLAUDE_ORGANIZATION_TYPES.has(organizationType))
+    || account?.has_claude_max === true || account?.has_claude_pro === true ? 'subscribed' : null;
+}

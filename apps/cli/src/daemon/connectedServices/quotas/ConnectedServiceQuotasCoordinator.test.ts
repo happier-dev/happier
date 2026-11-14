@@ -963,6 +963,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       expect(accountUsageStore.resolveBySource(groupSource)).toEqual(currentUsage);
       expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' })).toEqual(snapshot);
       expect(runtimeQuotaSnapshots.getRecentBurn({ serviceId: source.serviceId, profileId: 'work', groupId: 'team' })).not.toBeNull();
+    } else if (organizationId === 'org-work') {
+      // Current-credential persisted usage is hydrated into the selector's last-known projection
+      // while a deferred provider read waits for the existing backoff budget.
+      expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' }))
+        .toMatchObject({ providerOrganizationId: 'org-work' });
     } else {
       expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' })).toBeNull();
     }
@@ -1006,11 +1011,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
     expect(runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', profileId: 'work' })?.verifiedCredentialFingerprint)
       .toBe(computeConnectedServiceAccessTokenFingerprint('access-a'));
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(1);
     expect(accountUsageStore.resolveBySource({ serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' })).toBeNull();
     now += 120_000;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(1);
     const acceptedEntry = runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', profileId: 'work' });
     credentialUnavailable = true;
     now += 1;
@@ -1023,11 +1028,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     credentialUnavailable = false;
     now += 1;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(1);
     currentAccessToken = 'access-c';
     now += 1;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(2);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(2);
   });
 
   it('uses the qualified local observation budget when the released plaintext relay projection omits organization', async () => {
@@ -1074,26 +1079,26 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
     const source = { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' } as const;
     expect(accountUsageStore.resolveBySource(source)?.recordKey).toMatchObject({ quotaScope: 'organization', quotaScopeId: 'org-a' });
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(1);
 
     const requestsAfterFirstObservation = providerRequests.length;
     now += 120_000;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(1);
 
     expect(providerRequests).toHaveLength(requestsAfterFirstObservation);
 
     organizationId = 'org-b';
     now += 1;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(2);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(2);
     expect(providerRequests.some((url) => url.endsWith('/api/oauth/profile'))).toBe(false);
     expect(accountUsageStore.resolveBySource(source)?.recordKey).toMatchObject({ quotaScope: 'organization', quotaScopeId: 'org-b' });
 
     now += 1;
     releasedQuotaView.metadata.refreshRequestedAt = now;
     await coordinator.tickOnce();
-    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(3);
+    expect(providerRequests.filter((url) => new URL(url).pathname === '/api/oauth/usage')).toHaveLength(3);
   });
 
   it('skips quota bridge fetches for known reconnect-required profiles', async () => {
@@ -4172,14 +4177,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       now,
     });
-    // Fast burn on the ACTIVE member: 60% -> 40% remaining across 30s in the in-band runtime store.
+    // Sustained burn on the ACTIVE member: 60% -> 30% across the full 5-minute policy horizon.
     softSwitchEligibility.runtimeQuotaSnapshots.recordSnapshot({
       serviceId: 'openai-codex',
       groupId: 'team',
       profileId: 'active',
       groupGeneration: 1,
       snapshot: buildQuotaSnapshotFixture({
-        serviceId: 'openai-codex', profileId: 'active', now: now - 30_000, remainingPct: 60, resetsAt: now + 600_000,
+        serviceId: 'openai-codex', profileId: 'active', now: now - 300_000, remainingPct: 60, resetsAt: now + 600_000,
       }),
     });
     softSwitchEligibility.runtimeQuotaSnapshots.recordSnapshot({
@@ -4188,15 +4193,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       profileId: 'active',
       groupGeneration: 1,
       snapshot: buildQuotaSnapshotFixture({
-        serviceId: 'openai-codex', profileId: 'active', now, remainingPct: 40, resetsAt: now + 600_000,
+        serviceId: 'openai-codex', profileId: 'active', now, remainingPct: 30, resetsAt: now + 600_000,
       }),
     });
 
-    // Canonical source-backed account usage: active is at 40% (ABOVE the 15% threshold — a poll-only
+    // Canonical source-backed account usage: active is at 30% (ABOVE the 15% threshold — a poll-only
     // soft-switch would not fire), backup is healthy at 90%.
     const accountUsageStore = createProviderAccountUsageStore();
     const activeUsageSnapshot = buildProviderAccountUsageSnapshotFixture({
-      serviceId: 'openai-codex', groupId: 'team', profileId: 'active', groupGeneration: 1, now, remainingPct: 40,
+      serviceId: 'openai-codex', groupId: 'team', profileId: 'active', groupGeneration: 1, now, remainingPct: 30,
       resetsAt: now + 600_000,
     });
     recordGroupMemberAccountUsageFixture(accountUsageStore, {
@@ -4245,7 +4250,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       observedProfileId: 'active',
     }));
     // PS-1: a burn-projection switch must be distinguishable from a reactive one in diagnostics —
-    // the source was ABOVE threshold (40% vs 15%) and only the projected next-window remaining tripped it.
+    // the source was ABOVE threshold (30% vs 15%) and only the projected next-window remaining tripped it.
     expect(diagnostics).toContainEqual(expect.objectContaining({
       event: 'quota_work_requested',
       phase: 'soft_switch',

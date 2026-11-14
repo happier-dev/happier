@@ -72,6 +72,7 @@ export function mapCodexProjectedEventsToDirectMessages(params: Readonly<{
         raw: {
           role: 'user',
           content: { type: 'text', text: action.text },
+          ...(action.nativeContent ? { meta: { codexNativeContent: action.nativeContent } } : {}),
         },
       });
       continue;

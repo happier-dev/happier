@@ -172,6 +172,14 @@ still follows the pool's configured switching rules and limits. Create separate
 pools when different sessions should use different quota filters; provider-enforced
 usage and spending limits still apply.
 
+Provider credits count as usable capacity. When an account's included limits are
+used up but the provider can still bill credits (Codex credits, Claude extra usage),
+the account shows its credit balance and "Included limits used · credits available"
+instead of looking used up. Pools keep a session working on that account and prefer
+it only after every account that still has included quota. Happier never buys
+credits or changes whether your provider spends them; if the provider itself reports
+a usage limit, the pool switches as usual.
+
 ## Model-capacity retries
 
 In development builds, a terminal model-capacity failure such as Codex

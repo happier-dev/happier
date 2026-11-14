@@ -374,8 +374,9 @@ vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
   };
 });
 
-vi.mock('@/sync/ops', async () => ({
-  sessionDeleteWithServerScope: (await import('@/sync/ops/sessions')).sessionDeleteWithServerScope,
+vi.mock('@/sync/ops', () => ({
+  sessionDeleteWithServerScope: async (...args: Parameters<typeof import('@/sync/ops/sessions')['sessionDeleteWithServerScope']>) =>
+    (await import('@/sync/ops/sessions')).sessionDeleteWithServerScope(...args),
   sessionArchiveWithServerScope: (
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,

@@ -11,9 +11,9 @@ const script = join(repo, 'scripts/pipeline/release/materialize-approved-release
 const releaseId = '2026-11-01.1';
 const notes = `# Changelog\n\n## Release ${releaseId} - 2026-11-01\n\n<!-- happier-release-note-projections:v1\n{"expo":{"message":"Approved update"}}\n-->\n\nCLI and server changes approved together.\n`;
 
-function fixture(target = 'preview', confirm = 'release dev to preview') {
+function fixture(target = 'preview', confirm = 'release dev to preview', { paddingFiles = 0 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'approved-release-'));
-  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: Infinity }).trim();
   const put = (name, value) => { mkdirSync(dirname(join(root, name)), { recursive: true }); writeFileSync(join(root, name), value); };
   git('init', '-q');
   git('config', 'user.name', 'Fixture Machine');
@@ -23,6 +23,8 @@ function fixture(target = 'preview', confirm = 'release dev to preview') {
   put('apps/ui/src-tauri/tauri.conf.json', '{"version":"1.0.0","identifier":"fixture"}\n');
   put('apps/ui/CHANGELOG.md', '# Changelog\n');
   put('unrelated.txt', 'base\n');
+  // Real checkouts list far more tracked paths than Node's default child-output buffer holds.
+  for (let i = 0; i < paddingFiles; i += 1) put(`pad/${'d'.repeat(200)}/${'e'.repeat(200)}/${i}.txt`, '');
   git('add', '--', '.'); git('commit', '-qm', 'base');
   const baseSha = git('rev-parse', 'HEAD');
   const bin = join(root, 'boundary-bin'); mkdirSync(bin);
@@ -64,6 +66,16 @@ test('approved packet materializes exact notes and lockstep versions, preserving
     assert.equal(f.git('config', 'user.name'), 'Fixture Machine');
     const retry = f.invoke(); assert.equal(retry.status, 0, retry.stderr);
     assert.deepEqual(JSON.parse(retry.stdout), result);
+  } finally { f.close(); }
+});
+
+test('approved packet materializes in a repository whose tracked path listing exceeds 1 MiB', () => {
+  const f = fixture('preview', 'release dev to preview', { paddingFiles: 3000 });
+  try {
+    assert.ok(f.git('ls-tree', '-r', '--name-only', '-z', f.baseSha).length > 1024 * 1024);
+    const result = f.invoke(); assert.equal(result.status, 0, result.stderr);
+    assert.equal(f.git('rev-parse', 'HEAD^'), f.baseSha);
+    assert.equal(JSON.parse(f.git('show', 'HEAD:apps/cli/package.json')).version, '2.3.4');
   } finally { f.close(); }
 });
 

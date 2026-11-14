@@ -537,6 +537,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
               resetsAtMs: input.resetsAtMs,
               nowMs: params.nowMs(),
             }),
+            ...(input.resetsAtMs === undefined ? {} : { providerResetsAtMs: input.resetsAtMs }),
             planType: input.planType,
             observedAtMs: params.nowMs(),
           });

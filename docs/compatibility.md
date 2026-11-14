@@ -311,6 +311,21 @@ This changes the local Android handoff only. Encrypted workspace transfers and
 their daemon-owned limits retain their existing wire contracts. Web and iOS
 downloads keep their existing platform actions.
 
+### Android horizontal overflow native runtime (development)
+
+The development UI's shared horizontal overflow scroller requires the compiled
+`HappierHorizontalOverflowContainer` Expo view on Android. Released binaries on
+the `0.2.11-native` OTA runtime do not include it. Non-publicdev lanes use the new
+`0.2.12-native` runtime train for this native surface; publicdev continues to use
+the existing Expo fingerprint policy. Publish a new native build before updates
+for this train, and do not force this JavaScript bundle onto older native runtimes
+using the maintenance override.
+
+Code blocks, Markdown tables, and unwrapped diffs consume the same Android
+gesture owner. iOS and web retain their existing scrollers and text selection.
+This introduces no relay protocol or persisted-data change. Kotlin compilation
+and device gesture validation remain native release checks.
+
 ### Herdr terminal metadata (development)
 
 The released stable UI `ui-web-v0.2.12` and preview
@@ -486,9 +501,11 @@ omit a cause, replace an automatic cause with `manual`; removing or disabling
 the active member does the same when it selects a replacement.
 
 With priority strategy and `autoRestorePrimaryWhenReset` enabled, the canonical
-candidate selector can restore an eligible primary from fresh healthy quota
-observed after an automatic limit fallback, even without a provider reset time
-or surviving member failure marker. Explicit manual provenance prevents this
+candidate selector can restore the highest-priority eligible member ahead of
+the active member from fresh healthy quota observed after an automatic limit
+fallback, even while the first member remains exhausted and without a provider
+reset time or surviving member failure marker. Restoration requires headroom
+above the soft-switch threshold. Explicit manual provenance prevents this
 override. Older persisted groups without provenance retain the landed-reset
 proof; missing evidence is not treated as an automatic fallback.
 
@@ -590,6 +607,16 @@ stored selection.
 it for presentation and expiry-first ranking; absence preserves eligibility semantics and older
 readers safely ignore it. Pool-selected usage projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
+
+Provider credits (Codex `credits`, Claude `extra_usage` or an in-band Claude
+`overageStatus`) travel as an ordinary quota meter with `unit: 'credits'` and no
+`details.limitCategory`; Codex adds the balance as `remaining` and the provider
+verdict as `isExhausted`. No wire field or enum value is added, so released readers
+parse it unchanged and treat it as one more meter. Updated readers classify it with
+the protocol `isConnectedServiceQuotaCreditMeter` owner: it is never an included
+allowance, every pool `quotaLimitSelection` keeps it, and an account whose included
+usage allowances are spent stays usable (ranked after accounts with included quota)
+while it has credit headroom. A provider usage-limit error remains authoritative.
 
 Provider rejection codes (for example Claude's `rate_limit`) are not allowance
 IDs. When the provider does not identify the exhausted allowance, recovery keeps

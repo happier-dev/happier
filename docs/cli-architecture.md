@@ -573,6 +573,15 @@ holding its `daemon.state.json` and `daemon.state.json.lock` — and only that s
 - `daemon stop` stops the current scope only; `daemon stop --all` and `auth logout --all` deliberately
   stop every relay's daemon.
 
+### Session Stop without a live runtime (development)
+
+The existing Protocol Session Stop owner classifies a missing runtime separately
+from a missing saved Session. CLI and UI both report `already_stopped` with
+`no_runtime_session_inactive` only when an authoritative Session read confirms
+that the saved Session is inactive. An active Session or an unavailable read
+leaves termination unconfirmed; cached UI activity and transport errors do not
+prove that a process stopped.
+
 ### Confirmed daemon stop outcomes (development)
 
 Current 0.2 development source reports `not_running` separately from a confirmed `stopped`
@@ -610,6 +619,12 @@ home on incomplete stop. Restart remains best effort for its stop phase, logs in
 through the default file logger, and requires its existing distinct running identity proof.
 
 ### One CLI update transaction (plan R13 f)
+
+In development source, the post-update repair handoff also runs when the canonical doctor relay
+inventory finds an installed local relay, even if background services need no repair. The newly
+activated CLI owns the diagnosis: repair displays installed relay versions, checks the matching
+channel against the published server release, and asks before updating. Relay update commands
+preserve the installed channel and user/system scope; CLI activation itself does not update relays.
 
 `runManagedCliUpdate` (`packages/cli-common/src/firstPartyRuntime/runManagedCliUpdate.ts`) is the
 only way a managed first-party CLI is updated in place. `happier self update`, the desktop's
@@ -698,6 +713,14 @@ daemon is not. The
 desktop's `cli.update.v1` does not pass that step: it relies on the launcher move-aside and does
 not end sessions, but it is unverified on a real Windows host. Remote update is disabled on Windows
 (below).
+
+In current development source (not yet released), self-update and direct `self __install-payload` CLI promotion reject
+invocations below a Happier daemon or daemon-started session before downloads, locks, launcher
+capture or service shutdown. The update owner uses the daemon's Windows process inspection and
+shared session-command classification to walk the calling process's ancestors. Run the update
+from an independent terminal after saving work. Failure to inspect ancestry also refuses the
+update without modifying the installation. `self update --help` and `-h` print help before update
+dispatch. This prevents self-termination during quiescing; the recovery limits above still apply.
 
 **Rolling back across a migration.** The previous version must read whatever the new one wrote
 before it failed. CLI self-update callers are ≥ 0.2.13; current desktop hsetup can also replace
@@ -797,6 +820,13 @@ layout boundary (`isManagedCliDaemonServiceLauncher`: a managed shim or a payloa
 install root) either way — leaves the definition as it is and starts what is installed, so the
 desktop's quiet start of a stopped service (D6) runs the CLI the service already runs and any switch
 goes through the install dry-run's consent and the strict install.
+
+In development source, status and start/restart resolve their expected launcher through
+`resolveDaemonServiceInstallRuntimeTarget`, the installer's canonical launcher policy, without
+acquiring a JavaScript runtime. Once a managed shim is available, start/restart refresh an older
+version-pinned managed bootstrap launcher to that shim. With no stable launcher available they
+retain the already-resolved runtime target. The installed autostart mode and desktop attribution
+are preserved; the managed/user-installed CLI consent boundary above still applies.
 
 **One CLI per computer (plan R12).** That consent is asked at most once per decision: when the
 executor has asked "Let Happier manage it / Keep my own" (prompt `setup.cliChoice`, before any write;
@@ -1006,7 +1036,7 @@ platform opens its menu, built by one native builder (`src-tauri/src/tray/model.
   template (`Sessions: {count}`), including zero; absent/null makes no session-count claim;
 - Open Happier (⌘O), the Updates item when there is one, Settings… (⌘,), the **Start at login** check
   item (the same login-start setting, through `daemon.service.autostart.set.v1`), then **Quit Happier**
-  (⌘Q) and **Stop background services and quit**.
+  (⌘Q) and **Quit Happier (close background services)**.
   Tray Quit, service mutations and the login toggle are disabled while a native service action runs.
 
 The web UI pushes its localized labels (U14), its rows, the setting and the status task's params
@@ -1043,7 +1073,7 @@ from its `tauri.conf.json` entry (`"create": false`: the app creates it at start
 implicit exit request, which menu-bar mode holds; only an explicit Quit ends the tray process, and it
 follows the one login-start setting (D11-1): **on**, it leaves every service running — they and the
 tray come back at the next login; **off**, it stops every desktop-managed service first, through the
-same confirmed path as **Stop background services and quit**, and a stop that fails keeps the tray
+same confirmed path as **Quit Happier (close background services)**, and a stop that fails keeps the tray
 alive with the failure shown so it can be retried; **unknown**, it leaves every service as it is. Once
 the setting is known the item says which it will do (*Quit Happier (keep background services
 running)* / *Quit Happier and stop background services*); unknown, it is the plain *Quit Happier*.
@@ -2249,6 +2279,12 @@ soft threshold. The quota intake precheck uses that same selector; a daemon
 restart cannot make stale or exhausted targets eligible. Failure-driven
 `usage_limit` and `same_provider_account_exhausted` selection retains its existing
 unknown-quota allowance, and pre-turn probes can establish fresh evidence.
+Predictive burn evidence uses the same `probeIfSnapshotOlderThanMs` value as its
+projection horizon. The runtime snapshot store anchors its baseline to the oldest
+observation in the matching generation, effective meter, provider-limit and reset
+context that spans that horizon; readings captured only seconds apart therefore do
+not extrapolate a multi-minute switch. A reset or context change starts a new
+baseline, and non-decreasing, stale or inconsistent observations fail closed.
 Selection also checks learned model exclusions against the requested and applied
 models of the group's live sessions. Generic turn success has no model identity
 and therefore cannot erase a model-specific rejection. This is learned evidence,

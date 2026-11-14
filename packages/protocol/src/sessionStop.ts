@@ -1,3 +1,4 @@
+import type { SessionStopOutcome } from './sessionControl/contract.js';
 import { z } from 'zod';
 import { lazySchema } from './lazySchema.js';
 
@@ -46,3 +47,17 @@ export const StopSessionResultSchema = lazySchema(() => z.discriminatedUnion('st
 ]));
 
 export type StopSessionResult = z.infer<typeof StopSessionResultSchema>;
+
+/** Classifies an absent runtime using the canonical server Session observation. */
+export function resolveSessionStopAbsenceOutcome(params: Readonly<{
+  sessionInactive: boolean | null;
+  targetKind?: 'caller_local' | 'owning_machine';
+}>): Extract<SessionStopOutcome, { status: 'already_stopped' | 'physical_stop_unconfirmed' }> {
+  if (params.sessionInactive === true) {
+    return { status: 'already_stopped', reason: 'no_runtime_session_inactive' };
+  }
+  return {
+    status: 'physical_stop_unconfirmed',
+    reason: params.targetKind === 'owning_machine' ? 'target_session_not_found' : 'local_session_not_found',
+  };
+}

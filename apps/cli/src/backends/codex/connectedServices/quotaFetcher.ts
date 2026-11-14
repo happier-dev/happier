@@ -266,6 +266,8 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
         meters: [...mapCodexRateLimitPayloadToQuotaMeters({
           rate_limit: rateLimit,
           additional_rate_limits: data.additional_rate_limits,
+          credits: data.credits,
+          spend_control: data.spend_control,
         }, now, {
           legacyPrimary: { meterId: 'session', label: 'Session' },
           legacySecondary: { meterId: 'weekly', label: 'Weekly' },

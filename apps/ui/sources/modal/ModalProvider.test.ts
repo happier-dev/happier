@@ -533,6 +533,23 @@ describe('ModalProvider', () => {
         expect(screen.findAllByType(DummyModalA)).toHaveLength(1);
     });
 
+    it('notifies a custom modal\'s onRequestClose once when it is dismissed through its close path', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const screen = await renderProvider({ ModalProvider });
+        const onRequestClose = vi.fn();
+        act(() => {
+            Modal.show({ component: DummyModalA, onRequestClose });
+        });
+
+        act(() => {
+            screen.findByType(DummyModalA).props.onClose();
+        });
+
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(screen.findByType(DummyModalA).props.visible).toBe(false);
+    });
+
     it('resolves confirm as false when a web confirm modal closes without an explicit choice', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');

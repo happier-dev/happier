@@ -19,6 +19,12 @@ describe('session message role classifiers', () => {
         expect(resolveAcpSessionMessageRole({ type: 'permission-response', requestId: 'r1' } as any)).toBe('event');
     });
 
+    it('classifies ACP tool-call-result rows as events', () => {
+        expect(resolveAcpSessionMessageRole({
+            type: 'tool-call-result', callId: 'call-1', output: { text: 'tool output' },
+        })).toBe('event');
+    });
+
     it('returns the same Codex event role on repeated classification', () => {
         const body = { type: 'token_count', tokens: { total: 1 } };
 

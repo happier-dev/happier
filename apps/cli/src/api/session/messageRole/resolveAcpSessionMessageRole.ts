@@ -8,6 +8,7 @@ const ACP_EVENT_TYPES = new Set([
     'reasoning',
     'thinking',
     'tool-call',
+    'tool-call-result',
     'tool-result',
     'file-edit',
     'terminal-output',

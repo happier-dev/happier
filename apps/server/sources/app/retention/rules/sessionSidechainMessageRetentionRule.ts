@@ -72,16 +72,24 @@ async function findFirstSidechainAfter(cursor: SidechainRetentionCursor | null):
         }
     }
 
-    const nextSession = await db.sessionMessage.findFirst({
+    // Find the parent first so the message index is probed with an equality on
+    // sessionId; a global non-null scan walks every intervening main-chain row.
+    const nextSession = await db.session.findFirst({
         where: {
-            sidechainId: { not: null },
-            ...(cursor ? { sessionId: { gt: cursor.sessionId } } : {}),
+            messages: { some: { sidechainId: { not: null } } },
+            ...(cursor ? { id: { gt: cursor.sessionId } } : {}),
         },
-        orderBy: [{ sessionId: 'asc' }, { sidechainId: 'asc' }, { seq: 'asc' }],
+        orderBy: { id: 'asc' },
+        select: { id: true },
+    });
+    if (!nextSession) return null;
+    const firstSidechain = await db.sessionMessage.findFirst({
+        where: { sessionId: nextSession.id, sidechainId: { not: null } },
+        orderBy: [{ sidechainId: 'asc' }, { seq: 'asc' }],
         select: { sessionId: true, sidechainId: true },
     });
-    if (!nextSession?.sidechainId) return null;
-    return { sessionId: nextSession.sessionId, sidechainId: nextSession.sidechainId };
+    if (!firstSidechain?.sidechainId) return null;
+    return { sessionId: firstSidechain.sessionId, sidechainId: firstSidechain.sidechainId };
 }
 
 async function readLatestSidechainCreatedAt(cursor: SidechainRetentionCursor): Promise<Date | null> {

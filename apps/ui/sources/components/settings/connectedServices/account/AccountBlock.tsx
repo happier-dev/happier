@@ -20,6 +20,7 @@ import {
     type ConnectedServiceCredentialHealthStatusV1,
     type ConnectedServiceAuthGroupQuotaLimitSelectionV1,
     type ConnectedServiceId,
+    type ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol';
 import { t } from '@/text';
 
@@ -106,6 +107,8 @@ const GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
     subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
 };
 
+const EMPTY_METERS: ReadonlyArray<ConnectedServiceQuotaMeterV1> = [];
+
 const RESET_COUNTDOWN_DAYS_FORMATTER: ResetCountdownDaysFormatter = {
     now: () => t('connectedServices.account.resets.now'),
     inDays: ({ days }) => t('connectedServices.account.resets.inDays', { days }),
@@ -158,7 +161,10 @@ function buildQuotaView(
         usageRows,
         capacityPct: capacity.capacityPct,
         capacityRings: capacity.rings,
+        credits: capacity.credits,
+        creditsOnly: capacity.creditsOnly,
         resetRows,
+        resetLimitMeters: snapshot?.meters ?? EMPTY_METERS,
         resetAvailableCount: hook.canConsumeRecoveryCredit
             ? hook.recoveryCreditSummary?.availableCount ?? 0
             : 0,

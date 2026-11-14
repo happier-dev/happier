@@ -16,7 +16,7 @@ const EXPECTED_GROK_PERMISSIONS = {
       default: false,
       'safe-yolo': false,
       'read-only': false,
-      yolo: false,
+      yolo: true,
       plan: false,
     },
     outsideWorkspaceWriteMustCompleteByMode: {

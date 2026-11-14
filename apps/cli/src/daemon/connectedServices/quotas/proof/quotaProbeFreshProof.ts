@@ -1,7 +1,8 @@
 import type { ConnectedServiceCredentialRecordV1, ConnectedServiceId, ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
-import { isConnectedServiceQuotaObservationFresh, readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol';
 
-import { normalizeQuotaMeter, selectEffectiveQuotaMeter } from '../normalization';
+import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../../accountGroups/quotas/projection';
+import { resolveConnectedServiceAuthGroupQuotaUsability } from '../../accountGroups/quotas/quotaUsability';
 import type { ProviderOutcomeProofKind } from '../../recovery/providerOutcomeProof';
 import { readConnectedServiceCredentialOrganizationId } from '../../descriptors/connectedAccountDescriptors';
 import { computeConnectedServiceAccessTokenFingerprint } from '../../refresh/credentialFreshness/tokenFingerprint';
@@ -96,26 +97,6 @@ function isUnavailableMeter(meter: ConnectedServiceQuotaMeterV1): boolean {
     || meter.confidence === 'stale';
 }
 
-function normalizeMeter(meter: ConnectedServiceQuotaMeterV1) {
-  return normalizeQuotaMeter({
-    meterId: meter.meterId,
-    label: meter.label,
-    limitCategory: readConnectedServiceLimitCategoryV1(
-      typeof meter.details === 'object' && meter.details !== null && !Array.isArray(meter.details)
-        ? (meter.details as Readonly<Record<string, unknown>>).limitCategory
-        : undefined,
-    ) ?? 'usage_limit',
-    remainingPct: meter.remainingPct,
-    utilizationPct: meter.utilizationPct,
-    used: meter.used,
-    limit: meter.limit,
-    resetAtMs: meter.resetAtMs ?? meter.resetsAt,
-    providerLimitId: meter.providerLimitId,
-    reliable: !isUnavailableMeter(meter),
-    applicable: meter.status !== 'unavailable',
-  });
-}
-
 export function resolveQuotaProbeFreshProof(input: Readonly<{
   nowMs: number;
   maxAgeMs: number;
@@ -156,10 +137,15 @@ export function resolveQuotaProbeFreshProof(input: Readonly<{
   if (input.snapshot.meters.length > 0 && input.snapshot.meters.every(isUnavailableMeter)) {
     return { status: 'no_proof', reason: 'snapshot_unavailable' };
   }
-  const effective = selectEffectiveQuotaMeter(input.snapshot.meters.map(normalizeMeter));
-  if (!effective) return { status: 'no_proof', reason: 'no_reliable_quota_meter' };
-  if (effective.remainingPct !== null && effective.remainingPct <= 0) {
-    return { status: 'no_proof', reason: 'snapshot_exhausted' };
+  // The member projection owns meter reliability, credits, and exhaustion; proof reads its verdict.
+  const quotaSnapshot = buildConnectedServiceAuthGroupRuntimeStateFromMeters({
+    capturedAtMs: fetchedAt,
+    meters: input.snapshot.meters,
+  }).quotaSnapshot;
+  const usability = quotaSnapshot ? resolveConnectedServiceAuthGroupQuotaUsability(quotaSnapshot) : 'exhausted';
+  if (!quotaSnapshot?.effectiveMeterId && usability !== 'credits_only') {
+    return { status: 'no_proof', reason: 'no_reliable_quota_meter' };
   }
+  if (usability === 'exhausted') return { status: 'no_proof', reason: 'snapshot_exhausted' };
   return { status: 'proof', proofKind: 'quota_probe_fresh' };
 }

@@ -6,10 +6,14 @@ import {
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
+import { StopSessionResultSchema, resolveSessionStopAbsenceOutcome, type StopSessionResult } from '@happier-dev/protocol';
 import { isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 import { log } from '@/log';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { parseCompatSessionByIdResponse } from '@/sync/engine/sessions/sessionHttpCompat';
 
 type SessionKillRequest = Record<string, never>;
 
@@ -256,6 +260,31 @@ async function stopSessionViaRunnerRpc(params: Readonly<{
     }
 }
 
+async function readSessionInactiveWithServerScope(params: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+}>): Promise<boolean | null> {
+    try {
+        const context = await resolveServerScopedSessionContext({ serverId: params.serverId });
+        const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}`;
+        const response = context.scope === 'active'
+            ? await apiSocket.request(path, { method: 'GET' })
+            : await runtimeFetchWithServerReachability({
+                serverUrl: context.targetServerUrl,
+                token: context.token,
+                url: `${context.targetServerUrl}${path}`,
+                init: { method: 'GET', headers: { Authorization: `Bearer ${context.token}` } },
+                timeoutMs: context.timeoutMs,
+            });
+        if (!response.ok) return null;
+        const session = parseCompatSessionByIdResponse(await response.json())?.session;
+        return session?.id === params.sessionId ? session.active === false : null;
+    } catch {
+        // A failed read cannot confirm absence. Preserve the runner fallback.
+        return null;
+    }
+}
+
 export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
@@ -288,6 +317,15 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
                 message: daemonStop.message,
                 ...(daemonStop.errorCode ? { errorCode: daemonStop.errorCode } : {}),
             };
+        }
+        if (daemonStop.reason === 'not_found') {
+            const stopOutcome = resolveSessionStopAbsenceOutcome({
+                sessionInactive: await readSessionInactiveWithServerScope(params),
+                targetKind: 'owning_machine',
+            });
+            if (stopOutcome.status === 'already_stopped') {
+                return { success: true, effect: 'process_stopped', method: 'daemon_machine_rpc' };
+            }
         }
         daemonFallback = daemonStop;
     }

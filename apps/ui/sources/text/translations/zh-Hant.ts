@@ -1247,7 +1247,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             renewal: "續訂",
             renewalOn: "開啟",
             renewalOff: "關閉",
-            renewalUnknown: "未知",
+            active: "有效",
             renews: ({ date }: { date: string }) => `${date}續訂`,
             ends: ({ date }: { date: string }) => `${date}結束`,
             renewsInDays: ({ days }: { days: number }) => `${days}天後續訂`,
@@ -1396,6 +1396,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             refreshA11y: '重新整理用量與限額',
             usageCaption: '用量',
             resetsCaption: '配額重設',
+            credits: {
+                title: '點數',
+                balance: ({ balance }: { balance: string }) => `${balance} 點數`,
+                spent: '已用完',
+                includedUsed: '方案內額度已用完 · 可使用點數',
+            },
             usedDetail: ({ used, limit }: { used: string; limit: string }) => `已用 ${used}/${limit}`,
             capacity: ({ percent }: { percent: number }) => `容量 ${percent}%`,
             memberEnabledLabel: '已在池中啟用',
@@ -3309,7 +3315,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         trayOpenInHappier: '在 Happier 中開啟',
         traySettings: '設定…',
         trayStartAtLogin: '登入時啟動',
-        trayStopAndQuit: '停止背景服務並結束',
+        trayStopAndQuit: '結束 Happier（停止背景服務）',
         trayStart: '啟動',
         trayRestart: '重新啟動',
         trayStop: '停止',
@@ -6280,7 +6286,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             dismiss: '關閉問題',
             dismissed: '問題已關閉',
             submissionFailures: {
-                unconfirmed: '已向 Claude 傳送提交操作，但仍在等待確認。請重試以檢查確認狀態，或開啟 Claude 終端。',
+                unconfirmed: 'Happier 無法確認你的回答。請重試，或開啟 Claude 終端查看。',
             },
             claudeDialogNotice: {
                 header: 'Claude 對話框',
@@ -9100,6 +9106,13 @@ settingsSession: {
         codeCopied: '程式碼已複製',
         copyFailed: '複製失敗',
         mermaidRenderFailed: '渲染 mermaid 圖表失敗',
+        table: {
+            open: '開啟表格',
+            copyCsv: '複製為 CSV',
+            copyMarkdown: '複製為 Markdown',
+            csvLabel: 'CSV',
+            viewerTitle: '表格',
+        },
         diffLabel: '差異',
         codeLabel: '程式碼',
 

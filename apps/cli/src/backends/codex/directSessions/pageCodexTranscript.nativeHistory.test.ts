@@ -3,6 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
+import axios from 'axios';
+import { SessionStoredMessageContentSchema, V2SessionRecordSchema } from '@happier-dev/protocol';
+import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
+import { decryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+
 import { loadDirectSessionTranscriptItems } from '@/api/directSessions/import/loadDirectSessionTranscriptItems';
 import { DirectSessionsProviderUnavailableError } from '@/backends/directSessions/providerOps';
 import { createCodexAppServerProcessEnv, writeFakeCodexAppServerThreadListScript } from '../appServer/testkit/fakeCodexAppServer';
@@ -140,6 +145,21 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     expect(items[1]?.raw).toMatchObject({ content: { data: { output: { stdout: '/project', exitCode: 0 } } } });
   });
 
+  it('returns an oversized native record alone and continues without truncating its contents', async () => {
+    const text = 'large-result'.repeat(1000);
+    const f = await fixture([message('before', 'before', 'user'), message('large', text, 'agent'), message('after', 'after', 'agent')]);
+    const pages: number[] = [];
+    const items = await loadDirectSessionTranscriptItems({ readPage: async cursor => {
+      const page = await pageCodexTranscript({ ...f.params, maxBytes: 1024, direction: 'older', cursor });
+      pages.push(page.items.length);
+      return page;
+    } });
+    expect(items).toHaveLength(3);
+    expect(new Set(items.map(item => item.id)).size).toBe(3);
+    expect(items[1]?.raw.content).toMatchObject({ data: { message: text } });
+    expect(pages).toEqual([1, 1, 1]);
+  });
+
   it('imports native web searches, image views, and sleeps as tool rows', async () => {
     const results = [{ type: 'text_result', ref_id: 'turn0search0', title: 'Fusion benchmark', url: 'https://example.invalid/bench',
       domain: 'example.invalid', snippet: 'Fused kernels compared.' }];
@@ -164,12 +184,91 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     ]);
   });
 
-  it('rejects native mixed media instead of importing only its text as complete history', async () => {
+  it('preserves native mixed user content instead of dropping image and skill parts', async () => {
+    const content = [{ type: 'text', text: 'question with image' },
+      { type: 'image', url: 'data:image/png;base64,aGVsbG8=', detail: 'original' },
+      { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' }];
     const f = await fixture([{ ...message('mixed', 'question with image', 'user'), item: { id: 'mixed', type: 'userMessage',
-      content: [{ type: 'text', text: 'question with image' }, { type: 'image', url: 'https://example.invalid/image.png' }] } }]);
-    await expect(loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      clientId: 'mixed-client', content } }]);
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
       ...f.params, direction: 'older', cursor,
-    }) })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
+    }) });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.localId).toBe('mixed-client');
+    expect(items[0]?.raw).toMatchObject({ role: 'user', meta: { codexNativeContent: content } });
+    expect(items[0]?.raw.content).toMatchObject({ text: expect.stringContaining('question with image') });
+    expect(JSON.stringify(items[0]?.raw.content)).not.toContain('aGVsbG8=');
+  });
+
+  it('persists complete encrypted native imports and writes nothing when later content is unsupported', async () => {
+    const content = [{ type: 'text', text: 'Inspect this' }, { type: 'audio', fileId: 'native-audio' }];
+    const answer = 'large native answer'.repeat(32_000);
+    const nativeItems = [
+      { ...message('mixed', '', 'user'), item: { id: 'mixed', type: 'userMessage', clientId: 'native-client', content } },
+      { turnId: 'turn', startedAtMs: 1_000, completedAtMs: 2_000,
+        item: { id: 'activity', type: 'subAgentActivity', kind: 'started', agentThreadId: 'child' } },
+      message('answer', answer, 'agent'),
+    ];
+    const f = await fixture(nativeItems);
+    const credentials = { token: 'import-test-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
+    const rawSession = V2SessionRecordSchema.parse({ id: 'import-target', seq: 0, createdAt: 1, updatedAt: 1,
+      active: false, activeAt: 0, encryptionMode: 'e2ee', metadata: '', metadataVersion: 0,
+      agentState: null, agentStateVersion: 0, dataEncryptionKey: null });
+    const linked = { rawSession, metadata: {}, sessionPath: f.root, providerId: 'codex' as const,
+      machineId: 'fixture-machine', remoteSessionId: 'thread-native', source: f.params.source, codexBackendMode: 'appServer' as const };
+    // Boundaries: the existing fake native process and the server HTTP transport.
+    // Catalog selection, paging, media adoption, encryption and import remain real.
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200,
+      data: { didWrite: true, message: { id: 'stored', seq: 1, localId: 'stored-local', createdAt: 1 } } });
+    for (const [key, value] of Object.entries(f.params.env)) {
+      if (value !== process.env[key]) vi.stubEnv(key, value);
+    }
+    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS', '1');
+    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_PAGE_MAX_BYTES', '1024');
+    try {
+      await expect(importDirectSessionTranscript({ linked, credentials, sessionId: rawSession.id })).resolves.toEqual({ importedCount: 4 });
+      const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+      const stored = post.mock.calls.map(call => {
+        const body: unknown = call[1];
+        if (!body || typeof body !== 'object' || !('content' in body)) throw new Error('Missing stored content');
+        const envelope = SessionStoredMessageContentSchema.parse(body.content);
+        if (envelope.t !== 'encrypted') throw new Error('Expected encrypted import');
+        return decryptStoredSessionPayload({ mode: 'e2ee', ctx, value: envelope.c });
+      });
+      expect(stored).toMatchObject([
+        { role: 'user', meta: { codexNativeContent: content } },
+        { role: 'agent', content: { data: { type: 'tool-call', name: 'subAgentActivity' } } },
+        { role: 'agent', content: { data: { type: 'tool-call-result' } } },
+        { role: 'agent', content: { data: { type: 'message', message: answer } } },
+      ]);
+      expect(JSON.stringify(post.mock.calls)).not.toContain('native-audio');
+      post.mockClear();
+      await writeFile(f.nativeItemsPath, JSON.stringify([{ ...message('unsupported', '', 'user'), item: {
+        id: 'unsupported', type: 'userMessage', content: [{ type: 'futureInput', privateBody: 'not disclosed' }],
+      } }, ...nativeItems]));
+      await expect(importDirectSessionTranscript({ linked, credentials, sessionId: rawSession.id })).rejects.toThrow('user content');
+      expect(post).not.toHaveBeenCalled();
+    } finally { post.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it('imports collaboration and dynamic tool records across partial pages without losing results', async () => {
+    const native = [
+      { id: 'activity', type: 'subAgentActivity', kind: 'interacted', agentThreadId: 'child', agentPath: '/root/child', completedAtMs: 20 },
+      { id: 'collab', type: 'collabAgentToolCall', tool: 'spawnAgent', senderThreadId: 'parent', receiverThreadIds: ['child'], prompt: 'inspect', status: 'completed', agentsStates: { child: { status: 'running' } } },
+      { id: 'dynamic', type: 'dynamicToolCall', namespace: 'catalog', tool: 'lookup', arguments: { query: 'fixture' }, success: true, contentItems: [{ type: 'inputText', text: 'result' }] },
+    ];
+    const f = await fixture(native.map(item => ({ turnId: 'turn', startedAtMs: 10, completedAtMs: 20, item })));
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({ ...f.params, maxItems: 1, direction: 'older', cursor }) });
+    expect(items).toHaveLength(6);
+    expect(new Set(items.map(item => item.id)).size).toBe(6);
+    expect(items.map(item => item.raw.content)).toMatchObject([
+      { data: { type: 'tool-call', name: 'subAgentActivity', input: { agentThreadId: 'child', kind: 'interacted' } } },
+      { data: { type: 'tool-call-result', output: { completedAtMs: 20 } } },
+      { data: { type: 'tool-call', name: 'spawnAgent', input: { prompt: 'inspect' } } },
+      { data: { type: 'tool-call-result', output: { agentsStates: { child: { status: 'running' } } } } },
+      { data: { type: 'tool-call', name: 'lookup', input: { namespace: 'catalog', arguments: { query: 'fixture' } } } },
+      { data: { type: 'tool-call-result', output: { success: true, contentItems: [{ type: 'inputText', text: 'result' }] } } },
+    ]);
   });
 
   it('distinguishes confirmed empty native history from unavailable history', async () => {

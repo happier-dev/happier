@@ -26,6 +26,28 @@ describe('buildObservedFailureMemberRuntimeState', () => {
       observedAtMs: 1_000,
     })).toMatchObject({ lastFailureProviderLimitId: 'five_hour' });
   });
+  it('does not shrink a known hard-limit block when a same-failure report lacks reset timing', () => {
+    const state = buildObservedFailureMemberRuntimeState({
+      existing: {
+        quotaExhaustedUntilMs: 7_000_000,
+        providerResetsAtMs: 7_000_000,
+        lastFailureKind: 'usage_limit',
+        lastFailureProviderLimitId: 'seven_day',
+      },
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      reason: 'usage_limit',
+      providerLimitId: null,
+      retryAtMs: 30_000,
+      planType: null,
+      observedAtMs: 2_000,
+    });
+
+    expect(state).toMatchObject({
+      quotaExhaustedUntilMs: 7_000_000,
+      providerResetsAtMs: 7_000_000,
+      lastFailureKind: 'usage_limit',
+    });
+  });
   it('cools down an unsupported ChatGPT model for 24 hours without blocking other models', () => {
     expect(buildObservedFailureMemberRuntimeState({
       existing: null,

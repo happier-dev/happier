@@ -20,6 +20,7 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
 import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
+import { SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES } from "@happier-dev/protocol/socketRpc";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -38,7 +39,7 @@ import { registerUiFocusSocketEvent } from "./socket/registerUiFocusSocketEvent"
 import { readHappierSocketData } from "./socket/socketData";
 import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 
-export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
+export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES;
 
 export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string | undefined>): number {
     const raw = (env.HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE ?? env.HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE ?? '').trim();

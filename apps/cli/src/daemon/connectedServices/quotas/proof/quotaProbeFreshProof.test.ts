@@ -168,6 +168,21 @@ describe('resolveQuotaProbeFreshProof', () => {
         }],
       }),
     })).toEqual({ status: 'no_proof', reason: 'snapshot_exhausted' });
+    // A spent allowance with provider credit headroom still serves work.
+    expect(resolveQuotaProbeFreshProof({
+      ...base,
+      nowMs: 12_000,
+      maxAgeMs: 30_000,
+      snapshot: quotaSnapshot({
+        meters: [{
+          meterId: 'weekly', label: 'Weekly', used: 100, limit: 100, unit: 'requests' as const,
+          utilizationPct: 100, remainingPct: 0, resetsAt: 100_000, status: 'ok' as const, details: {},
+        }, {
+          meterId: 'credits', label: 'Credits', used: null, limit: null, remaining: 16_845, unit: 'credits' as const,
+          utilizationPct: null, resetsAt: null, isExhausted: false, status: 'ok' as const, details: {},
+        }],
+      }),
+    })).toEqual({ status: 'proof', proofKind: 'quota_probe_fresh' });
     expect(resolveQuotaProbeFreshProof({
       ...base,
       nowMs: 12_000,

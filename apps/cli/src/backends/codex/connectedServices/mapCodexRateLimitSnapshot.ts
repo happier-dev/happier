@@ -217,6 +217,49 @@ function buildMeter(
   };
 }
 
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Codex credits (`wham/usage` `credits`, app-server `rateLimits.credits`): the balance Codex spends
+ * once the included windows are used up. Headroom comes from the credit facts themselves — a
+ * positive balance or unlimited credits, with neither the overage limit nor a workspace spend
+ * control reached. `rate_limit.allowed` is deliberately not consulted: whether it stays true while
+ * credits pay is unverified. Accounts without any credits facility get no meter.
+ */
+function buildCodexCreditMeter(rawSnapshot: unknown): ConnectedServiceQuotaMeterV1 | null {
+  const root = isRecord(rawSnapshot) ? rawSnapshot : {};
+  const unwrapped = unwrapCodexRateLimitSnapshot(rawSnapshot);
+  const nested = isRecord(unwrapped) ? unwrapped : {};
+  const credits = isRecord(root.credits) ? root.credits : isRecord(nested.credits) ? nested.credits : null;
+  if (!credits) return null;
+  const hasCredits = readBoolean(credits.has_credits ?? credits.hasCredits) === true;
+  const unlimited = readBoolean(credits.unlimited) === true;
+  if (!hasCredits && !unlimited) return null;
+  const balance = readFiniteNumber(credits.balance);
+  const spendControl = isRecord(root.spend_control) ? root.spend_control
+    : isRecord(root.spendControl) ? root.spendControl : null;
+  const blocked = readBoolean(credits.overage_limit_reached ?? credits.overageLimitReached) === true
+    || readBoolean(spendControl?.reached) === true;
+  return {
+    meterId: 'credits',
+    label: 'Credits',
+    used: null,
+    limit: null,
+    remaining: unlimited ? null : balance,
+    unit: 'credits',
+    utilizationPct: null,
+    resetsAt: null,
+    isExhausted: blocked || (!unlimited && !(balance !== null && balance > 0)),
+    status: 'ok',
+    source: 'in_band_provider_snapshot',
+    limitScope: 'account',
+    confidence: 'exact',
+    details: {},
+  };
+}
+
 export function mapCodexRateLimitPayloadToQuotaMeters(
   rawSnapshot: unknown,
   nowMs: number,
@@ -227,13 +270,15 @@ export function mapCodexRateLimitPayloadToQuotaMeters(
 ): readonly ConnectedServiceQuotaMeterV1[] {
   const primary = options.legacyPrimary ?? { meterId: 'primary', label: 'Primary' };
   const secondary = options.legacySecondary ?? { meterId: 'secondary', label: 'Secondary' };
-  return collectAllowanceEntries(rawSnapshot).flatMap((allowance) => {
+  const allowanceMeters = collectAllowanceEntries(rawSnapshot).flatMap((allowance) => {
     const raw = allowance.snapshot;
     return [
       buildMeter('primary', raw.primary ?? raw.primary_window ?? raw.primaryWindow, nowMs, allowance, primary),
       buildMeter('secondary', raw.secondary ?? raw.secondary_window ?? raw.secondaryWindow, nowMs, allowance, secondary),
     ].filter((meter): meter is ConnectedServiceQuotaMeterV1 => meter !== null);
   });
+  const creditMeter = buildCodexCreditMeter(rawSnapshot);
+  return creditMeter ? [...allowanceMeters, creditMeter] : allowanceMeters;
 }
 
 export function mapCodexRateLimitSnapshotToQuotaSnapshot(params: Readonly<{

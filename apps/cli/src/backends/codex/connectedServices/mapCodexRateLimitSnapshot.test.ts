@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapCodexRateLimitSnapshotToQuotaSnapshot } from './mapCodexRateLimitSnapshot';
+import { mapCodexRateLimitPayloadToQuotaMeters, mapCodexRateLimitSnapshotToQuotaSnapshot } from './mapCodexRateLimitSnapshot';
 
 describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   it('maps Codex app-server rate-limit snapshots into connected-service quota meters', () => {
@@ -381,5 +381,44 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     });
     expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('profile_user_id');
     expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('profile_image_url');
+  });
+});
+
+describe('Codex provider credits', () => {
+  const spentWindow = { used_percent: 100, limit_window_seconds: 604_800, reset_at: 1_768_600_000 };
+  const creditMeter = (meters: ReturnType<typeof mapCodexRateLimitPayloadToQuotaMeters>) =>
+    meters.find((meter) => meter.unit === 'credits') ?? null;
+
+  it('maps the wham/usage credit balance into a credit meter beside the spent allowance', () => {
+    const meters = mapCodexRateLimitPayloadToQuotaMeters({
+      rate_limit: { allowed: true, limit_reached: false, primary_window: spentWindow },
+      credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: '16845' },
+    }, 1_768_000_000_000);
+    expect(creditMeter(meters)).toMatchObject({
+      meterId: 'credits', unit: 'credits', remaining: 16_845, isExhausted: false, status: 'ok', details: {},
+    });
+  });
+
+  it('maps app-server camelCase credits and unlimited credits', () => {
+    expect(creditMeter(mapCodexRateLimitPayloadToQuotaMeters({
+      rateLimits: { primary: { usedPercent: 100 }, credits: { hasCredits: true, unlimited: true, balance: null } },
+    }, 1_000))).toMatchObject({ remaining: null, isExhausted: false });
+  });
+
+  it('marks credits spent when the balance, overage limit, or spend control says so', () => {
+    for (const payload of [
+      { credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: '0' } },
+      { credits: { has_credits: true, unlimited: false, overage_limit_reached: true, balance: '120' } },
+      { credits: { has_credits: true, unlimited: false, balance: '120' }, spend_control: { reached: true } },
+    ]) {
+      expect(creditMeter(mapCodexRateLimitPayloadToQuotaMeters(payload, 1_000))).toMatchObject({ isExhausted: true });
+    }
+  });
+
+  it('adds no credit meter for accounts without credits', () => {
+    expect(creditMeter(mapCodexRateLimitPayloadToQuotaMeters({
+      rate_limit: { primary_window: spentWindow },
+      credits: { has_credits: false, unlimited: false, overage_limit_reached: false, balance: '0' },
+    }, 1_000))).toBeNull();
   });
 });

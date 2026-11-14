@@ -750,8 +750,12 @@ export {
 } from './connect/connectedServiceAuthGroupMemberRuntimeStatePolicy.js';
 
 export {
+  hasConnectedServiceQuotaCreditHeadroom,
+  isConnectedServiceQuotaCreditMeter,
   resolveConnectedServiceQuotaMeterLimitIdentity,
   selectConnectedServiceQuotaMetersForLimitSelection,
+  summarizeConnectedServiceQuotaCredits,
+  type ConnectedServiceQuotaCreditSummary,
 } from './connect/connectedServiceQuotaLimitSelection.js';
 
 export {
@@ -907,7 +911,9 @@ export {
   normalizeClaudeTaskToolUseToWorkStateItem,
   normalizeClaudeSdkInitSkills,
   normalizeClaudeOauthProfileEntitlement,
+  formatClaudeOauthPlanLabel,
   readClaudeOauthCredentialMetadata,
+  readClaudeOauthProfileSubscriptionStatus,
   readClaudeOauthCredentialOrganizationId,
   type ClaudeOauthCredentialMetadata,
   type ClaudeOauthEntitlementMetadata,

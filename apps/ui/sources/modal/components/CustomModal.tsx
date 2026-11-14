@@ -110,15 +110,6 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     const effectiveChrome = chromeOverride === undefined ? config.chrome : chromeOverride;
     const chrome = effectiveChrome?.kind === 'card' ? effectiveChrome : null;
 
-    const handleClose = React.useCallback(() => {
-        try {
-            config.onRequestClose?.();
-        } catch {
-            // ignore
-        }
-        onClose();
-    }, [config.onRequestClose, onClose]);
-
     const setChrome = React.useCallback((nextChrome: CustomModalChromeConfig | null) => {
         setChromeOverride((prevOverride) => {
             const prevEffective = prevOverride === undefined ? (config.chrome ?? null) : prevOverride;
@@ -136,13 +127,13 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     // dependencies are not referentially stable republishes on every applied chrome and the
     // publish cycle never closes.
     const content = React.useMemo(() => (
-        <Component {...config.props} onClose={handleClose} setChrome={setChrome} />
-    ), [Component, config.props, handleClose, setChrome]);
+        <Component {...config.props} onClose={onClose} setChrome={setChrome} />
+    ), [Component, config.props, onClose, setChrome]);
 
     return (
         <BaseModal
             visible={visible}
-            onClose={handleClose}
+            onClose={onClose}
             accessibilityLabel={typeof chrome?.title === 'string' ? chrome.title : undefined}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
@@ -163,7 +154,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     layout={chrome.layout ?? 'fit'}
                     bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}
-                    onClose={handleClose}
+                    onClose={onClose}
                 >
                     {content}
                 </ModalCardFrame>

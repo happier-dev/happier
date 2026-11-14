@@ -8,6 +8,7 @@ import {
   SessionStopCleanupIncompleteReasonSchema,
   SessionStopOutcomeSchema,
   StopSessionResultSchema,
+  resolveSessionStopAbsenceOutcome,
   type SessionStopOutcome,
   type StopSessionRequestSource,
   type SessionStopResult as SessionStopCommandResult,
@@ -86,25 +87,9 @@ async function stopOutcomeFromAttemptResult(params: Readonly<{
     return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
   }
   if (result.status === 'not_found') {
-    // Nothing was found to stop. That is either PROOF that no runtime exists or
-    // a failure to determine it, and the fact that separates them is the one
-    // this owner already accepts as a confirmed stop after signalling a runtime:
-    // the canonical Session row reporting inactive. A Session the addressed
-    // daemon does not track AND the server reports inactive is stopped — a cold
-    // Session cannot otherwise satisfy any consumer that requires a confirmed
-    // stop, because there is nothing left to signal.
-    const inactive = await readSessionInactive({ token: params.token, sessionId: params.sessionId });
-    if (inactive === true) {
-      return SessionStopOutcomeSchema.parse({
-        status: 'already_stopped',
-        reason: 'no_runtime_session_inactive',
-      });
-    }
-    return SessionStopOutcomeSchema.parse({
-      status: 'physical_stop_unconfirmed',
-      reason: params.targetKind === 'owning_machine'
-        ? 'target_session_not_found'
-        : 'local_session_not_found',
+    return resolveSessionStopAbsenceOutcome({
+      sessionInactive: await readSessionInactive({ token: params.token, sessionId: params.sessionId }),
+      targetKind: params.targetKind,
     });
   }
   return SessionStopOutcomeSchema.parse({

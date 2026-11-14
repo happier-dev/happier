@@ -24,6 +24,12 @@ describe('deriveAccountHealth', () => {
         expect(deriveAccountHealth({ status: 'connected', capacityPct: 26 })).toBe('healthy');
     });
 
+    it('never reads a spent account that provider credits still serve as an error', () => {
+        expect(deriveAccountHealth({ status: 'connected', capacityPct: 0, creditsAvailable: true })).toBe('attention');
+        expect(deriveAccountHealth({ status: 'connected', capacityPct: 0, creditsAvailable: false })).toBe('error');
+        expect(deriveAccountHealth({ status: 'needs_reauth', capacityPct: 0, creditsAvailable: true })).toBe('error');
+    });
+
     it('treats staleness as at least attention', () => {
         expect(deriveAccountHealth({ status: 'connected', capacityPct: 90, isStale: true })).toBe('attention');
     });

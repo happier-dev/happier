@@ -93,7 +93,7 @@ type BurnObservation = Readonly<{
   providerLimitId: string | null;
   resetAtMs: number | null;
 }>;
-type BurnHistory = Readonly<{ prev: BurnObservation | null; latest: BurnObservation }>;
+type BurnHistory = Readonly<{ observations: readonly BurnObservation[] }>;
 
 export type ConnectedServiceAuthGroupRuntimeQuotaBurn = Readonly<{
   /** Positive consumption velocity of the effective meter's remaining%, in percent per ms. */
@@ -173,72 +173,113 @@ export class ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore {
     const observation = readBurnObservation(snapshot, groupGeneration);
     if (!observation) return;
     const existing = this.burnHistoryByKey.get(key);
+    const existingLatest = existing?.observations.at(-1);
     // Only advance the history when this observation is strictly newer than the latest one; a
     // duplicate/stale fetchedAt would otherwise poison the delta with a zero time window.
-    if (existing && compareConnectedServiceQuotaObservationRecency({
-      existingObservedAtMs: existing.latest.atMs,
+    if (existingLatest && compareConnectedServiceQuotaObservationRecency({
+      existingObservedAtMs: existingLatest.atMs,
       incomingObservedAtMs: observation.atMs,
       nowMs,
     }) !== 'incoming_newer') return;
-    this.burnHistoryByKey.set(key, {
-      prev: existing && isSameBurnContext(existing.latest, observation) ? existing.latest : null,
-      latest: observation,
-    });
+    if (existingLatest && isSameBurnContext(existingLatest, observation)
+      && observation.remainingPct > existingLatest.remainingPct) {
+      this.burnHistoryByKey.set(key, { observations: [observation] });
+      return;
+    }
+    if (existingLatest && isSameBurnContext(existingLatest, observation)
+      && observation.remainingPct === existingLatest.remainingPct) {
+      const observations = existing?.observations ?? [];
+      this.burnHistoryByKey.set(key, {
+        observations: observations.length === 1
+          ? [...observations, observation]
+          : [...observations.slice(0, -1), observation],
+      });
+      return;
+    }
+    this.burnHistoryByKey.set(key, existingLatest && isSameBurnContext(existingLatest, observation)
+      ? { observations: [...existing?.observations ?? [], observation] }
+      : { observations: [observation] });
   }
 
   /**
    * Recent consumption velocity of the effective meter's remaining% for a member, derived from the
-   * two most recent distinct-time in-band snapshots this store retained. Only a DECREASING remaining%
-   * (real burn) yields a value; a flat or increasing remaining% (a reset/replenish) returns null so
-   * the predictive projection fails closed. This is the fast-burn signal the poll-driven soft-switch
-   * cannot see between 30-minute quota polls.
+   * in-band snapshots this store retained. When a minimum observation duration is supplied, the
+   * baseline is the oldest same-context observation at or before that horizon and is retained until
+   * a newer observation can replace it. Only a DECREASING remaining% (real burn) yields a value; a
+   * strict increase (a reset/replenish) clears the baseline, while equal readings refresh the
+   * latest timestamp so the predictive projection remains current. This is the fast-burn signal
+   * the poll-driven soft-switch cannot see between 30-minute quota polls.
    */
   getRecentBurn(input: SnapshotKeyInput & Readonly<{
     nowMs?: number;
     maxAgeMs?: number;
+    minObservationDurationMs?: number;
     currentQuotaSnapshot?: ConnectedServiceAuthGroupMemberRuntimeState['quotaSnapshot'];
   }>): ConnectedServiceAuthGroupRuntimeQuotaBurn | null {
     const history = this.burnHistoryByKey.get(snapshotKey(input));
-    if (!history || !history.prev) return null;
+    if (!history || history.observations.length < 2) return null;
+    const latest = history.observations.at(-1)!;
     if (
       typeof input.groupGeneration === 'number'
-      && history.latest.groupGeneration !== Math.max(0, Math.trunc(input.groupGeneration))
+      && latest.groupGeneration !== Math.max(0, Math.trunc(input.groupGeneration))
     ) return null;
     if (typeof input.nowMs === 'number' && typeof input.maxAgeMs === 'number') {
-      const ageMs = input.nowMs - history.latest.atMs;
+      const ageMs = input.nowMs - latest.atMs;
       if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > Math.max(0, input.maxAgeMs)) return null;
     }
     if (
       typeof input.nowMs === 'number'
       && Number.isFinite(input.nowMs)
-      && typeof history.latest.resetAtMs === 'number'
-      && Number.isFinite(history.latest.resetAtMs)
-      && input.nowMs >= history.latest.resetAtMs
+      && typeof latest.resetAtMs === 'number'
+      && Number.isFinite(latest.resetAtMs)
+      && input.nowMs >= latest.resetAtMs
     ) return null;
     const currentQuotaSnapshot = input.currentQuotaSnapshot;
     if (currentQuotaSnapshot) {
-      if (history.latest.atMs !== currentQuotaSnapshot.capturedAtMs) return null;
-      if (history.latest.remainingPct !== currentQuotaSnapshot.effectiveRemainingPercent) return null;
-      if (history.latest.effectiveMeterId !== currentQuotaSnapshot.effectiveMeterId) return null;
+      if (latest.atMs !== currentQuotaSnapshot.capturedAtMs) return null;
+      if (latest.remainingPct !== currentQuotaSnapshot.effectiveRemainingPercent) return null;
+      if (latest.effectiveMeterId !== currentQuotaSnapshot.effectiveMeterId) return null;
       const currentMeter = currentQuotaSnapshot.meters?.find(
         (meter) => meter.meterId === currentQuotaSnapshot.effectiveMeterId,
       ) ?? null;
       if (
-        history.latest.providerLimitId !== (currentMeter?.providerLimitId ?? null)
-        || history.latest.resetAtMs !== (currentMeter?.resetAtMs ?? null)
+        latest.providerLimitId !== (currentMeter?.providerLimitId ?? null)
+        || latest.resetAtMs !== (currentMeter?.resetAtMs ?? null)
       ) return null;
     }
-    const deltaRemaining = history.prev.remainingPct - history.latest.remainingPct;
-    const deltaMs = history.latest.atMs - history.prev.atMs;
+    const minimumDurationMs = input.minObservationDurationMs === undefined
+      ? 0
+      : input.minObservationDurationMs;
+    if (!Number.isFinite(minimumDurationMs) || minimumDurationMs < 0) return null;
+    let baselineIndex = history.observations.length - 2;
+    if (minimumDurationMs > 0) {
+      const cutoffAtMs = latest.atMs - minimumDurationMs;
+      baselineIndex = -1;
+      for (let index = 0; index < history.observations.length - 1; index += 1) {
+        if (history.observations[index]!.atMs <= cutoffAtMs) baselineIndex = index;
+        else break;
+      }
+      if (baselineIndex < 0) return null;
+      const observedDurationMs = latest.atMs - history.observations[baselineIndex]!.atMs;
+      if (!Number.isFinite(observedDurationMs) || observedDurationMs < minimumDurationMs) return null;
+      if (baselineIndex > 0) {
+        this.burnHistoryByKey.set(snapshotKey(input), {
+          observations: history.observations.slice(baselineIndex),
+        });
+      }
+    }
+    const baseline = history.observations[baselineIndex]!;
+    const deltaRemaining = baseline.remainingPct - latest.remainingPct;
+    const deltaMs = latest.atMs - baseline.atMs;
     if (deltaRemaining <= 0 || deltaMs <= 0) return null;
     return {
       remainingPercentPerMs: deltaRemaining / deltaMs,
-      observedAtMs: history.latest.atMs,
-      remainingPercent: history.latest.remainingPct,
-      groupGeneration: history.latest.groupGeneration,
-      effectiveMeterId: history.latest.effectiveMeterId,
-      providerLimitId: history.latest.providerLimitId,
-      resetAtMs: history.latest.resetAtMs,
+      observedAtMs: latest.atMs,
+      remainingPercent: latest.remainingPct,
+      groupGeneration: latest.groupGeneration,
+      effectiveMeterId: latest.effectiveMeterId,
+      providerLimitId: latest.providerLimitId,
+      resetAtMs: latest.resetAtMs,
     };
   }
 

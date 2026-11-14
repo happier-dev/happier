@@ -375,7 +375,7 @@ describe('ACP provider continuation ownership', () => {
 });
 
 
-it.each(['realpath', 'mkdir'] as const)('does not let a cancelled filesystem write cross the %s boundary', async boundary => {
+it('does not let a cancelled filesystem write cross the mkdir boundary', async () => {
     await fixture(async ({ backend, host, directory, setPermissionMode, permissionHandler }) => {
         setPermissionMode('yolo');
         const path = join(directory, 'protected.txt');
@@ -387,17 +387,11 @@ it.each(['realpath', 'mkdir'] as const)('does not let a cancelled filesystem wri
         const reached = createDeferred();
         const gate = createDeferred();
         let held = false;
-        const realpath = fs.realpath.bind(fs);
         const mkdir = fs.mkdir.bind(fs);
-        const spy = boundary === 'realpath'
-            ? vi.spyOn(fs, 'realpath').mockImplementation(async (...args: Parameters<typeof fs.realpath>) => {
-                if (!held && String(args[0]) === path) { held = true; reached.resolve(); await gate.promise; }
-                return realpath(...args);
-            })
-            : vi.spyOn(fs, 'mkdir').mockImplementation(async (...args: Parameters<typeof fs.mkdir>) => {
-                if (!held && String(args[0]) === directory) { held = true; reached.resolve(); await gate.promise; }
-                return mkdir(...args);
-            });
+        const spy = vi.spyOn(fs, 'mkdir').mockImplementation(async (...args: Parameters<typeof fs.mkdir>) => {
+            if (!held && String(args[0]) === directory) { held = true; reached.resolve(); await gate.promise; }
+            return mkdir(...args);
+        });
         try {
             const writing = backend.requestExtension('test/write', { path });
             await reached.promise;

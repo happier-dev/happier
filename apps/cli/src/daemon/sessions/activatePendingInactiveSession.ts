@@ -5,6 +5,7 @@ import { reportPendingSessionActivationFailure } from '@/api/session/pendingActi
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
 
 type PendingSessionRuntimeActivationResult =
   | Readonly<{
@@ -147,7 +148,13 @@ export async function activatePendingSessionRuntime(params: Readonly<{
   if (!options) {
     return await rejectTerminal('identity-unavailable');
   }
-  if (options.machineId !== params.machineId) return { status: 'not-needed', reason: 'target-mismatch' };
+  if (!await resolveMachineControlLocalityProof({
+    sessionMachineId: options.machineId,
+    currentMachineId: params.machineId,
+    credentials: params.credentials,
+  })) return { status: 'not-needed', reason: 'target-mismatch' };
+  // Replacement changes execution placement, never the Session's retained metadata.
+  options.machineId = params.machineId;
 
   const result = await params.spawnSession(options);
   if (
