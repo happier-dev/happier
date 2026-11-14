@@ -196,6 +196,7 @@ import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
     type ExternalActionRequesterAccountContextPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { machineUpdateHandler } from "@/app/api/socket/machineUpdateHandler";
 import { createAuthenticatedFakeSocket, createFakeSocket, getSocketHandler, createSocketRoomDiscoveryHarness } from "@/app/api/testkit/socketHarness";
@@ -2782,7 +2783,7 @@ describe("external Action execution authorization", () => {
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
             expect(minted.statusCode, minted.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
-            const sender = Object.assign(createFakeSocket({ id: 'reviewed-move-sender', data: { clientType: 'machine-scoped',
+            const sender = Object.assign(createFakeSocket({ id: 'reviewed-move-sender', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: requesterKind, authAuthority: requesterKind === 'account' ? 'present_user' : 'account_automation' } }),
                 { handshake: { auth: { token } } });
@@ -3210,7 +3211,7 @@ describe("external Action execution authorization", () => {
             // Account-placed Section roots retain the qualified PAT ingress used above;
             // an ordinary paired Account credential is custody, not a new root surface.
             const root = await mint(app, fixture, actionId, envelope);
-            const sender = Object.assign(createFakeSocket({ id: 'section-stop-sender', data: { clientType: 'machine-scoped',
+            const sender = Object.assign(createFakeSocket({ id: 'section-stop-sender', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token } } });
             qualifyCurrentAccountStoredContentSocket(sender);
@@ -6341,7 +6342,7 @@ describe("external Action execution authorization", () => {
             qualifyCurrentAccountStoredContentSocket(receiver);
             const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
                 || room === `rpc:${fixture.account.id}:${method}` ? [receiver] : []);
-            const socket = Object.assign(createFakeSocket({ id: 'workflow-role-sender', data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: 'workflow-role-sender', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: 'terminal', authAuthority: 'account_automation' } }), { handshake: { auth: { token } } });
             qualifyCurrentAccountStoredContentSocket(socket);
@@ -6610,7 +6611,8 @@ describe("external Action execution authorization", () => {
                 qualifyCurrentAccountStoredContentSocket(receiver);
                 const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
                     || room === `rpc:account:${packet.method}` ? [receiver] : []);
-                const sender = Object.assign(createFakeSocket({ id: 'installed-worker', data: { clientType: 'machine-scoped',
+                // socket.ts records the authenticated userId at connect; credential currentness reads it.
+                const sender = Object.assign(createFakeSocket({ id: 'installed-worker', data: { clientType: 'machine-scoped', userId: 'account',
                     machineId: h.workerRef.machineId, verifiedMachineInstallationId: h.installation.installationId,
                     authTokenKind: 'terminal', authAuthority: 'account_automation' } }), { handshake: { auth: { token: terminalToken } } });
                 qualifyCurrentAccountStoredContentSocket(sender);
@@ -6633,26 +6635,44 @@ describe("external Action execution authorization", () => {
                 result: { definition: { document: { status: 'valid', manifest: { scripts: {
                     'sync-exec-qa-stop': { execution: 'portable' },
                 } } } } } });
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(),
-                target: { kind: 'machine', machineId: h.workerRef.machineId }, input: { workspace,
-                    selection: { kind: 'named', name: 'sync-exec-qa-stop' },
-                    choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } } });
-            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.script.run'),
-                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: h.workerRef.machineId, envelope } });
-            expect(minted.statusCode, JSON.stringify({ phase: 'UI worker root mint', refusalFacts })).toBe(200);
-            const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
-            const issued = await app.inject({ method: 'POST', url: '/v1/actions/projects.script.run',
-                headers: { authorization: `Bearer ${token}` }, payload: { v: 1,
-                    machineId: h.workerRef.machineId, envelope, executionAuthorization } });
-            expect(issued.statusCode, JSON.stringify({ phase: 'UI worker root relay', refusalFacts })).toBe(200);
-            expect(ExternalActionResponseEnvelopeV1Schema.parse(issued.json()).execution)
-                .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-            expect(await h.decide('approve')).toMatchObject({ ok: true });
-            const receipt = await h.approval();
-            expect(receipt.execution?.errorCode, JSON.stringify({ error: receipt.execution?.error,
-                details: receipt.execution?.details })).toBeUndefined();
-            expect(receipt).toMatchObject({ status: 'executed', execution: { ok: true } });
-            const output = ProjectCommandActionOutputV1Schema.parse(receipt.execution?.result);
+            const input = { workspace, selection: { kind: 'named', name: 'sync-exec-qa-stop' },
+                choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } };
+            const target = { kind: 'machine', machineId: h.workerRef.machineId } as const;
+            // One own-UI press through both HTTP routes. A confirmed press carries the person's
+            // digest-bound confirmation the way externalActionAccountTransport seals it.
+            const press = async (phase: string, reviewDigest?: string) => {
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target, input });
+                const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.script.run'),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: h.workerRef.machineId, envelope } });
+                expect(minted.statusCode, JSON.stringify({ phase: `${phase} root mint`, refusalFacts })).toBe(200);
+                const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                const executionAuthorization = reviewDigest === undefined ? root : sealExternalActionRequesterAccountContextV1({
+                    authorization: root, purpose: { kind: 'external_action' },
+                    credentials: cliPersistence.encodeStoredCredentials({ token, encryption: null, credentialProvenance: 'stored_session' }),
+                    invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user', presentUserConfirmation: {
+                        actionId: 'projects.script.run', accountId: 'account', serverId: homeId, requestId: envelope.requestId!,
+                        inputDigest: computeActionInputApprovalDigestV1('projects.script.run', envelope.input), reviewDigest, target } },
+                    installationPublicKey: decodeBase64(h.installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+                const issued = await app.inject({ method: 'POST', url: '/v1/actions/projects.script.run',
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1,
+                        machineId: h.workerRef.machineId, envelope, executionAuthorization } });
+                expect(issued.statusCode, JSON.stringify({ phase: `${phase} relay`, refusalFacts })).toBe(200);
+                return ExternalActionResponseEnvelopeV1Schema.parse(issued.json()).execution;
+            };
+            // docs/actions.md: an own-UI press that needs review receives the receiving executor's
+            // prepared review and digest, never a self-approval Artifact.
+            const review = await press('UI worker review');
+            expect(review, JSON.stringify({ phase: 'UI worker review', review, deliveryOutcomes, rpcOutcomes: h.rpcOutcomes }))
+                .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+                    details: { review: { preview: { actionId: 'projects.script.run' } }, reviewDigest: expect.any(String) } });
+            expect(h.spawned).toHaveLength(0);
+            const { reviewDigest } = z.object({ reviewDigest: z.string() }).parse(review.ok ? null : review.details);
+            const execution = await press('UI worker confirmed', reviewDigest);
+            expect(execution, JSON.stringify({ phase: 'UI worker confirmed', execution, deliveryOutcomes,
+                rpcOutcomes: h.rpcOutcomes, networkPaths: h.networkPaths })).toMatchObject({ ok: true });
+            if (!execution.ok) throw new Error('Confirmed worker Script refused');
+            expect(h.hasApproval()).toBe(false);
+            const output = ProjectCommandActionOutputV1Schema.parse(execution.result);
             const started = await Promise.race([h.waitForSpawn(0).then(() => ({ kind: 'spawned' as const })),
                 h.waitForTerminal(output.operation.operationId).then(operation => ({ kind: 'terminal' as const, operation }))]);
             expect(started, JSON.stringify({ started, rpcOutcomes: h.rpcOutcomes, networkPaths: h.networkPaths, deliveryOutcomes, refusalFacts,
@@ -6834,7 +6854,7 @@ describe("external Action execution authorization", () => {
             const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
                 || room === `rpc:${controllerCustodian.id}:${method}` ? [receiver]
                 : room === rootReceiver.id || room === `rpc:${fixture.account.id}:${rootMethod}` ? [rootReceiver] : []);
-            const socket = Object.assign(createFakeSocket({ id: 'finite-worker-sender', data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: 'finite-worker-sender', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: senderKind, authAuthority: senderKind === 'terminal' ? 'account_automation' : 'present_user' } }),
                 { handshake: { auth: { token: senderToken } } });
@@ -7022,7 +7042,7 @@ describe("external Action execution authorization", () => {
                 // Home-issued root and current Account/installation checks stay real.
                 const principal = await auth.verifyTokenForRoute(token);
                 if (!principal) throw new Error('SOURCE credential must authenticate');
-                const socket = Object.assign(createFakeSocket({ id: 'normal-sync-preflight-source', data: { clientType: 'machine-scoped',
+                const socket = Object.assign(createFakeSocket({ id: 'normal-sync-preflight-source', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                     machineId: source.id, verifiedMachineInstallationId: source.installationId,
                     authTokenKind: principal.authTokenKind, authAuthority: principal.authority } }), { handshake: { auth: { token } } });
                 qualifyCurrentAccountStoredContentSocket(socket);
@@ -7081,7 +7101,7 @@ describe("external Action execution authorization", () => {
             const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${fixture.account.id}:${method}` || room === receiver.id ? [receiver] : []);
             const principal = await auth.verifyTokenForRoute(targetToken);
             if (!principal) throw new Error('TARGET credential must authenticate');
-            const socket = Object.assign(createFakeSocket({ id: 'normal-sync-seed-target', data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: 'normal-sync-seed-target', data: { clientType: 'machine-scoped', userId: targetCustodian.id,
                 machineId: target.id, verifiedMachineInstallationId: target.installationId,
                 authTokenKind: principal.authTokenKind, authAuthority: principal.authority } }),
                 { handshake: { auth: { token: targetToken } } });
@@ -9260,7 +9280,7 @@ describe("external Action execution authorization", () => {
             expect(sealedResponse.statusCode, sealedResponse.body).toBe(200);
             }
             const token = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
-            const socket = Object.assign(createFakeSocket({ id: 'signed-child-source', data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: 'signed-child-source', data: { clientType: 'machine-scoped', userId: custodian.id,
                 machineId: child.id, verifiedMachineInstallationId: child.installationId, authTokenKind: 'account', authAuthority: 'present_user' } }),
             { handshake: { auth: { token } } });
             qualifyCurrentAccountStoredContentSocket(socket);
@@ -10550,7 +10570,7 @@ describe("external Action execution authorization", () => {
             expect(await verifyExternalActionMachineRpcExecution(execution, { ...request, params: { ...params, machineId: fixture.machine.id } })).toBeNull();
             expect(await verifyExternalActionMachineRpcExecution({ ...execution, authorization: { ...authorization,
                 binding: { ...authorization.binding, sessionActionOrigin: { ...origin, sourceTurnId: 'forged-turn' } } } }, request)).toBeNull();
-            const socket = Object.assign(createFakeSocket({ id: 'requester-source', data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: 'requester-source', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), {
                     handshake: { auth: { token, ...currentAccountStoredContentCompatibilitySocketAuth } },
@@ -12151,7 +12171,7 @@ describe("external Action execution authorization", () => {
             expect(await verifyExternalActionMachineRpcExecution(execution, { method, params, requestId: authorization.binding.requestId })).not.toBeNull();
             const ambientAuthority = 'present_user';
             const ambientToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: ambientAuthority });
-            const socket = Object.assign(createFakeSocket({ id: `transition-caller-${credential}`, data: { clientType: 'machine-scoped',
+            const socket = Object.assign(createFakeSocket({ id: `transition-caller-${credential}`, data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: 'account', authAuthority: ambientAuthority } }), { handshake: { auth: { token: ambientToken,
                     ...currentAccountStoredContentCompatibilitySocketAuth } } });

@@ -1331,14 +1331,23 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         return await get(...args);
       });
       const workspace = { serverId: h.ref.serverId, workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath };
-      expect(await h.run({ workspace, selection: { kind: 'named', name: 'ok' },
-        choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } },
-      'ui', false, 'present_user')).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      expect(await h.decide('approve')).toMatchObject({ ok: true });
-      const receipt = await h.approval();
-      expect(receipt, JSON.stringify({ refusedSourceReads, code: receipt.execution?.errorCode,
-        paths: h.networkPaths.slice(-12) })).toMatchObject({ status: 'executed', execution: { ok: true } });
-      const output = ProjectCommandActionOutputV1Schema.parse(receipt.execution?.result);
+      const input = { workspace, selection: { kind: 'named', name: 'ok' },
+        choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } };
+      // docs/actions.md: an own-UI press that needs review receives the receiving
+      // executor's prepared review and digest, never a self-approval Artifact.
+      const review = await h.run(input, 'ui', false, 'present_user', 'projects.script.run', 'worker-review');
+      expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+        details: { reviewDigest: expect.any(String) } });
+      const reviewDigest = !review.ok && review.details && typeof review.details === 'object' && 'reviewDigest' in review.details
+        && typeof review.details.reviewDigest === 'string' ? review.details.reviewDigest : undefined;
+      expect(h.spawned).toHaveLength(0);
+      const execution = await h.run(input, 'ui', false, 'present_user', 'projects.script.run', 'worker-confirmed',
+        undefined, reviewDigest);
+      expect(execution, JSON.stringify({ refusedSourceReads, execution, paths: h.networkPaths.slice(-12) }))
+        .toMatchObject({ ok: true });
+      if (!execution.ok) throw new Error('Confirmed worker Script refused');
+      expect(h.hasApproval()).toBe(false);
+      const output = ProjectCommandActionOutputV1Schema.parse(execution.result);
       expect(output.operation.domainRef).toMatchObject({ machineId: h.workerRef.machineId, workspaceRefId: h.workerRef.id,
         sourceWorkspace: workspace });
       const observed = ActionOperationGetV1ResponseSchema.parse(await h.readOperation(output.operation.operationId));

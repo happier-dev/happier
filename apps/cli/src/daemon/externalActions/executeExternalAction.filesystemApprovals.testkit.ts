@@ -742,6 +742,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   let moveRequesterPreparation: NonNullable<ConstructorParameters<typeof RpcHandlerManager>[0]['prepareRequesterAccountContext']> | undefined;
   const sourceRpc: RpcHandlerManager | undefined = worker ? new RpcHandlerManager({ scopePrefix: ref.machineId, localMachineId: ref.machineId, encryptionMode: 'plain',
     authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: ref.machineId,
+      // Production apiMachine resolves its Home from the current execution origin;
+      // without it every requester-isolated SOURCE read is refused as unknown.
+      resolveHomeServerIdentityId: async () => homeId,
       resolveCustodianAccountId: async () => sourceAccountId, resolveInstallationId: () => sourceInstallation.installationId,
       verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: sourceInstallation.privateKey,
         daemonToken: token, serverHttpBaseUrl: 'https://home.example.test',
