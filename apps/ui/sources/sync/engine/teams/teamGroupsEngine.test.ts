@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    NO_TEAM_GROUP_CAPABILITIES_V1,
     teamGroupsQueryKeyV1,
     type TeamGroupV1,
 } from '@happier-dev/protocol/teams';
 
 import { createDeferred, standardCleanup } from '@/dev/testkit';
+import { teamGroupFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // Team Group reads run through the Team Action client (dc1d18ccd1); only the
@@ -31,19 +31,12 @@ const {
     refreshTeamGroups,
     resetTeamsDirectoryEngineForTests,
 } = await import('./teamsDirectoryEngine');
+// Load the real Action front door before timing network progress; its cold
+// module graph has not reached the Home HTTP boundary yet.
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 function group(id: string, name = `Group ${id}`): TeamGroupV1 {
-    return {
-        v: 1,
-        id,
-        teamId: 'team-1',
-        name,
-        description: null,
-        archivedAt: null,
-        memberCount: 0,
-        management: { kind: 'native' },
-        capabilities: NO_TEAM_GROUP_CAPABILITIES_V1,
-    };
+    return teamGroupFixture({ id, name, memberCount: 0 });
 }
 
 function page(items: TeamGroupV1[], nextCursor: string | null): Response {
@@ -102,14 +95,18 @@ describe('Team Group projections', () => {
         const releaseA = observeTeamGroups(scopeA, addressA, ACTIVE);
         const releaseB = observeTeamGroups(scopeB, addressB, ACTIVE);
         await waitForHomeGovernance(() => {
-            expect(getTeamGroupsSnapshot(scopeA, addressA, groupsQueryKey('team-1'))?.data).toBeTruthy();
-            expect(getTeamGroupsSnapshot(scopeB, addressB, groupsQueryKey('team-1'))?.data).toBeTruthy();
+            const snapshotA = getTeamGroupsSnapshot(scopeA, addressA, groupsQueryKey('team-1'));
+            const snapshotB = getTeamGroupsSnapshot(scopeB, addressB, groupsQueryKey('team-1'));
+            const diagnostic = JSON.stringify({ statusA: snapshotA?.status, errorA: snapshotA?.error,
+                statusB: snapshotB?.status, errorB: snapshotB?.error, paths: home.requests.map(request => request.path) });
+            expect(snapshotA?.data, diagnostic).toBeTruthy();
+            expect(snapshotB?.data, diagnostic).toBeTruthy();
         });
 
         expect(getTeamGroupsSnapshot(scopeA, addressA, groupsQueryKey('team-1'))?.data?.[0]?.name)
-            .toBe('A group');
+            .toEqual(group('g1', 'A group').name);
         expect(getTeamGroupsSnapshot(scopeB, addressB, groupsQueryKey('team-1'))?.data?.[0]?.name)
-            .toBe('B group');
+            .toEqual(group('g1', 'B group').name);
 
         // A second Account on the same Home reads its own rows, never the first's.
         const otherAccount = createServerAccountScope(homeA, 'other-account')!;
@@ -135,7 +132,7 @@ describe('Team Group projections', () => {
         await refreshTeamGroups(scope, address, ACTIVE);
 
         const after = getTeamGroupsSnapshot(scope, address, key)!.data!;
-        expect(after[0]?.name).toBe('Renamed');
+        expect(after[0]?.name).toEqual(group('g1', 'Renamed').name);
         // The untouched Group keeps its identity so an unrelated row cannot
         // re-render a long Groups list.
         expect(after[1]).toBe(before[1]);
@@ -209,7 +206,7 @@ describe('Team Group projections', () => {
         const moved = getTeamGroupsSnapshot(scope, address, key)!;
         expect(moved.nextCursor).toBe('fresh-2');
         expect(moved.data?.map((row) => row.id)).toEqual(['g1', 'g2', 'g3']);
-        expect(moved.data?.[0]?.name).toBe('Renamed');
+        expect(moved.data?.[0]?.name).toEqual(group('g1', 'Renamed').name);
         expect(moved.data?.[1]).toBe(lastGood[2]);
         expect(runtimeFetchMock.mock.calls.map(([input]) => JSON.parse(String(input.init?.body)).cursor ?? null))
             .toEqual([null, 'cursor-1', null, 'fresh-1']);
@@ -311,7 +308,7 @@ describe('Team Group projections', () => {
             { status: 200 },
         ));
         const release = observeTeamGroup(scope, address, 'g1');
-        await waitForHomeGovernance(() => expect(getTeamGroupSnapshot(scope, address, 'g1')?.data?.name).toBe('Detail'));
+        await waitForHomeGovernance(() => expect(getTeamGroupSnapshot(scope, address, 'g1')?.data?.name).toEqual(group('g1', 'Detail').name));
 
         const otherHome = await addHome('Home B', 'https://home-b.example');
         const otherAddress = createTeamAddress(otherHome, 'team-1')!;

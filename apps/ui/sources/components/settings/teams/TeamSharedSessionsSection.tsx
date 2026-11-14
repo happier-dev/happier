@@ -12,6 +12,7 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { buildSessionListReachabilityRenderableKey, useSessionListRowRenderablesForItems, useSetting } from '@/sync/domains/state/storage';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
@@ -53,7 +54,7 @@ export const TeamSharedSessionsSection = React.memo(function TeamSharedSessionsS
     const isSessionVisible = useSessionRecordingVisibility();
     const denied = state?.failureReason === 'access_denied';
     const items = React.useMemo(() => denied ? [] : (source.source ?? [])
-        .filter((item) => item.type === 'session' && isSessionVisible({ serverId: address.serverId, sessionId: item.sessionId }))
+        .filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => item.type === 'session' && isSessionVisible({ serverId: address.serverId, sessionId: item.sessionId }))
         .slice(0, SESSION_PREVIEW_COUNT), [address.serverId, denied, isSessionVisible, source.source]);
     const renderables = useSessionListRowRenderablesForItems(items);
     const loading = !state || state.phase === 'idle' || state.phase === 'loading' || state.phase === 'not_selected';

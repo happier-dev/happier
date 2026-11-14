@@ -24,11 +24,12 @@ export function projectHomeCatalogSnapshots(snapshots: readonly CatalogSnapshot[
     const resourceStatusByKey = new Map<string, TeamCredentialResourceStatus>();
     let current = true;
     for (const snapshot of snapshots) {
-        const status: TeamCredentialResourceStatus = snapshot?.error
-            ? snapshot.error.kind === 'unreachable' ? { kind: 'homeUnreachable' }
-                : { kind: 'failed', code: snapshot.error.code ?? snapshot.error.kind, reason: snapshot.error.kind }
-            : homeUnreachable ? { kind: 'homeUnreachable' }
-                : snapshot?.selectionCurrent ? { kind: 'current' } : { kind: 'pending' };
+        // The snapshot owner retains admitted choices through a transient read failure.
+        const status: TeamCredentialResourceStatus = homeUnreachable || snapshot?.error?.kind === 'unreachable'
+            ? { kind: 'homeUnreachable' }
+            : snapshot?.selectionCurrent ? { kind: 'current' }
+                : snapshot?.error ? { kind: 'failed', code: snapshot.error.code ?? snapshot.error.kind, reason: snapshot.error.kind }
+                    : { kind: 'pending' };
         if (snapshot?.status !== 'ready' || snapshot.stale) current = false;
         for (const resource of snapshot?.data ?? []) {
             const key = `${resource.teamId}:${resource.id}`;

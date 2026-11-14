@@ -41,6 +41,18 @@ const preview = (view: MachinePoolViewV1) => view.pool.members
     .join(', ');
 
 describe('machine pool row presentation', () => {
+    it('disambiguates the opened labels shown by a Team consumer', () => {
+        const rows = buildMachinePoolRowPresentations([
+            pool(POOL_A, 'Account label A', ['machine-a']),
+            pool(POOL_B, 'Account label B', ['machine-a']),
+        ], preview, () => 'Shared Team label');
+
+        expect(rows.map(row => row.displayName)).toEqual(['Shared Team label', 'Shared Team label']);
+        expect(rows[0]?.accessibilityName).toBe(`Shared Team label. ${POOL_A}`);
+        expect(rows[1]?.accessibilityName).toBe(`Shared Team label. ${POOL_B}`);
+        expect(rows.every(row => row.identityDetail !== null)).toBe(true);
+    });
+
     it('keeps duplicate names valid while making colliding rows distinct visually and accessibly', () => {
         const rows = buildMachinePoolRowPresentations([
             pool(POOL_A, 'Development', ['machine-a']),

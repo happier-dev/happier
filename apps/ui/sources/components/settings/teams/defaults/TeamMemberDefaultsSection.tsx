@@ -102,7 +102,7 @@ export const TeamMemberDefaultsSection = React.memo(
       [],
     );
 
-    const policy = home ? null : context.team.policy;
+    const policy = 'team' in context ? context.team.policy : null;
     const stored = policy?.managedDefaults ?? null;
     const repairRequired = policy?.managedDefaultsStatus === 'repair_required';
     // A Group's layer cannot be rewritten over an unreadable document; only the Team's whole save repairs it.
@@ -157,7 +157,7 @@ export const TeamMemberDefaultsSection = React.memo(
 
     const row: RowState = {
       serverId: context.scope.serverId,
-      teamId: home ? '' : context.address.teamId,
+      teamId: 'address' in context ? context.address.teamId : '',
       defaults,
       editable,
       disabled: busy || !props.writable,

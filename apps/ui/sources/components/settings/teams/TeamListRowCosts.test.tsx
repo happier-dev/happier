@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamInvitationRowFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -89,15 +90,25 @@ describe('Team mounted-row costs', () => {
         const viewer = teamCredentialViewerFixture({ manageCredentials: true });
         home.answer(address.serverId, '/v1/teams/credential-resources/list', { body: { resources, viewer, nextCursor: null } });
         const screen = await renderScreen(<TeamCredentialsScreen serverId={address.serverId} teamId={address.teamId} />, { wrapper: NativeRoute });
-        await vi.waitFor(() => expect(rowProps(screen, 'team-credentials-row:').size).toBe(400));
+        await vi.waitFor(() => {
+            const rows = rowProps(screen, 'team-credentials-row:');
+            expect(rows.size).toBe(400);
+            for (let i = 0; i < 400; i += 1) {
+                expect(rows.get(`team-credentials-row:resource-${i}`)?.title).toBe(`Resource ${String(i).padStart(3, '0')}`);
+            }
+        });
         const baseline = rowProps(screen, 'team-credentials-row:');
         await act(async () => applyTeamProjection({ scope, address, team: { ...team, name: 'Renamed Team' }, observedAt: Date.now() }));
         expect(changedRows(baseline, rowProps(screen, 'team-credentials-row:'))).toBe(0);
         const admitted = getTeamCredentialResourcesSnapshot(scope, address);
         if (!admitted?.data) throw new Error('Expected admitted credential rows');
         const admittedRows = admitted.data;
-        await act(async () => applyTeamCredentialResourcesPage({ scope, address, resources: admittedRows.map((row, i) => i === 0 ? { ...row, displayName: 'Edited resource' } : { ...row }), viewer, nextCursor: null, observedAt: Date.now() }));
-        expect(changedRows(baseline, rowProps(screen, 'team-credentials-row:'))).toBe(1);
+        await act(async () => applyTeamCredentialResourcesPage({ scope, address, resources: admittedRows.map((row, i) => i === 0 ? { ...row, displayName: teamCredentialDisplayNameFixture('Edited resource') } : { ...row }), viewer, nextCursor: null, observedAt: Date.now() }));
+        await vi.waitFor(() => expect(rowProps(screen, 'team-credentials-row:').get('team-credentials-row:resource-0')?.title).toBe('Edited resource'));
+        const updated = rowProps(screen, 'team-credentials-row:');
+        const changed = [...updated].filter(([id, props]) => props !== baseline.get(id))
+            .map(([id, props]) => ({ id, keys: Object.keys(props).filter(key => props[key] !== baseline.get(id)?.[key]) }));
+        expect(changedRows(baseline, updated), JSON.stringify(changed)).toBe(1);
         await screen.pressByTestIdAsync('team-credentials-row:resource-1');
         expect(router.spies.push).toHaveBeenCalledWith(expect.stringContaining('resource-1'));
     });

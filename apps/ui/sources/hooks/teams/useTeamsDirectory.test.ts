@@ -3,6 +3,7 @@ import * as React from 'react';
 import { NO_TEAM_CAPABILITIES_V1, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceDiscoveryPageV1Schema, TeamsListInputV1Schema, teamDirectoryQueryKeyV1, type TeamSummaryV1 } from '@happier-dev/protocol/teams';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { HomeGovernanceEligibilityV1Schema, HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
@@ -16,13 +17,18 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 // process.
 
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonProviderModelProjectionRpcRequestV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 
 import { act } from 'react-test-renderer';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createDeferred, createRenderCommitCounter, homeGovernanceProjectionFixture, renderHook, renderScreen, useRenderCommitCounter } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createProviderModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import {
     resetServerFeaturesClientForTests,
 } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -43,6 +49,9 @@ import { useHomeTeamCredentialModelCatalog } from './useHomeTeamCredentialModelC
 import { useTeamsDestinationShown } from './useTeamsDestinationShown';
 
 const directoryHome = createHomeGovernanceHarness();
+const modelRpc = createProviderSettingsHarness({ machines: [createMachineFixture({ id: 'catalog-machine', activeAt: Date.now() })] });
+installProviderSettingsRpcBoundary(modelRpc);
+const modelAccount = createProviderSettingsAccountHarness();
 
 function team(id: string, name = `Team ${id}`, archivedAt: number | null = null): TeamSummaryV1 {
     return {
@@ -291,10 +300,24 @@ describe('useTeamsDirectory', () => {
     });
 
     it.each(['bundled', 'installed'] as const)('loads and reloads the %s Agent application without sharing generic or other Agent catalog rows', async (source) => {
-        const home = createHomeGovernanceHarness();
-        const serverId = await home.addHome({ name: 'Catalog Home', serverUrl: 'https://team-models.example',
-            serverIdentityId: 'srv_team_models', accountId: 'account', currentAccount: true,
-            teamsEnabled: true, credentialResourcesEnabled: true });
+        const home = modelAccount.home;
+        const { serverId } = await modelAccount.restore({ accountId: 'account', currentAccount: true,
+            serverIdentityId: 'srv_team_models', features: createRootLayoutFeaturesResponse({ features: {
+                teams: { enabled: true, credentialResources: { enabled: true } },
+                providers: { enabled: true },
+            } }) });
+        // The Home offers models; the exact execution daemon selects their delivery route.
+        modelRpc.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, request => {
+            const input = DaemonProviderModelProjectionRpcRequestV1Schema.parse(request.payload);
+            return createProviderModelProjectionFixture({ agentTargetKey: input.agentTargetKey,
+                groups: [], teamCredentialResources: input.teamCredentialResources?.map(resource => ({
+                    ...resource,
+                    // These available brokered alternatives have the same delivery priority;
+                    // the daemon selects the first exact alternative for each model id.
+                    providerModels: resource.providerModels.filter((model, index, models) =>
+                        models.findIndex(candidate => candidate.selection.modelId === model.selection.modelId) === index),
+                })) });
+        });
         home.answer(serverId, '/v1/teams/list', { body: { items: [team('team-1')], nextCursor: null } });
         const path = TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1;
         let revision = 1;
@@ -304,16 +327,19 @@ describe('useTeamsDirectory', () => {
         const agentKey = (id: string) => source === 'installed' ? `agent:acme.agents/${id}` : `agent:happier.agent.${id}/${id}`;
         const multiProtocolAgent = agentKey('opencode');
         const definition = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.managedRuntime)!.definition;
-        const declarationProjection = source === 'installed' ? PluginProjectionV2Schema.parse({ v: 2, generation: 7,
+        const declarationProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 7,
             agentsById: Object.fromEntries(['codex', 'claude', 'opencode'].map(id => [id, { id,
-                identity: { pluginId: 'acme.agents', localId: id },
+                identity: { pluginId: source === 'installed' ? 'acme.agents' : `happier.agent.${id}`, localId: id },
                 providerRequirements: readAccountAgentProviderRequirements(`agent:happier.agent.${id}/${id}`, { kind: 'account' }),
             }])),
-            familiesById: { providers: { family: 'providers', entriesById: {
+            familiesById: { providers: { family: 'providers', entriesById: source === 'installed' ? {
                 'acme.gateway/managed': { id: 'acme.gateway/managed', pluginId: 'acme.gateway',
                     provenance: 'external', sourceKind: 'path', definition: { ...definition, id: 'managed' } },
-            } } },
-        }) : null;
+            } : Object.fromEntries(readAccountProviderDeclarations({ kind: 'account' }).map(row => [row.contributionKey, {
+                id: row.contributionKey, pluginId: row.contributionKey.split('/')[0],
+                provenance: row.provenance, sourceKind: 'bundled', definition: row.definition,
+            }])) } },
+        });
         home.answer(serverId, path, { select: (input) => {
             const { application } = TeamCredentialResourceDiscoverInputV1Schema.parse(input);
             if (application && applicationUnreachable) throw new TypeError('fetch failed');
@@ -322,7 +348,7 @@ describe('useTeamsDirectory', () => {
             const modelId = application?.agentTargetKey === multiProtocolAgent ? 'shared-model'
                 : application ? `${application.protocol}-${revision}` : '';
             const resource = {
-                id: 'shared', teamId: 'team-1', displayName: 'Shared gateway', resourceRevision: revision,
+                id: 'shared', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Shared gateway'), resourceRevision: revision,
                 readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
                 sessionUsePolicy: 'personal_allowed', providerModels: application ? [{
@@ -355,20 +381,31 @@ describe('useTeamsDirectory', () => {
         const onSelect = vi.fn();
         const catalogCounter = createRenderCommitCounter();
         let current!: { selected: ReturnType<typeof useHomeTeamCredentialModelCatalog>; generic: ReturnType<typeof useHomeTeamCredentialModelCatalog> };
-        function CatalogPicker({ agentTargetKey }: { agentTargetKey: string }) {
+        // Count semantic resource publications independently of local label opening.
+        // Both complete arrays are observed: no field selector can hide a changed row.
+        const CatalogResourceConsumer = React.memo(function CatalogResourceConsumer(_props: {
+            selected: typeof current.selected.resources;
+            generic: typeof current.generic.resources;
+        }) {
             useRenderCommitCounter(catalogCounter);
+            return null;
+        });
+        function CatalogPicker({ agentTargetKey }: { agentTargetKey: string }) {
             current = {
                 selected: useHomeTeamCredentialModelCatalog({ serverId, enabled: true, agentTargetKey, declarationProjection,
-                    machineId: source === 'installed' ? 'installed-machine' : null }),
+                    machineId: 'catalog-machine' }),
                 generic: useHomeTeamCredentialModelCatalog({ serverId, enabled: true }),
             };
-            return React.createElement(SessionModelPicker, {
+            return React.createElement(React.Fragment, null,
+                React.createElement(CatalogResourceConsumer, {
+                    selected: current.selected.resources, generic: current.generic.resources,
+                }), React.createElement(SessionModelPicker, {
                 agentTargetKey, declarationContext: source === 'installed' ? { kind: 'machine', projection: declarationProjection } : { kind: 'account' },
                 nativeModels: [], providerGroups: [], providerProjectionAuthoritative: true,
                 selected: null, onSelect, onSelectTeamCredentialModel: onSelect,
                 teamCredentialResources: current.selected.resources,
                 teamCredentialResourceStatusByKey: current.selected.resourceStatusByKey,
-            });
+            }));
         }
         const screen = await renderScreen(React.createElement(CatalogPicker, { agentTargetKey: codex }));
         const rendered = {
@@ -399,18 +436,24 @@ describe('useTeamsDirectory', () => {
             await act(async () => applyTeamCredentialResourceCatalog({
                 scope: catalogScope, address: catalogAddress,
                 resources: catalogSnapshot.data!.map((row) => row.id === 'generic-only'
-                    ? { ...row, displayName: 'Same-time renamed credential' } : row),
+                    ? { ...row, displayName: teamCredentialDisplayNameFixture('Same-time renamed credential') } : row),
                 observedAt: catalogSnapshot.lastObservedAt ?? 0,
             }));
             expect(catalogCounter.read()).toEqual({ renders: 1, commits: 1 });
             expect(rendered.getCurrent().generic.resources.find((row) => row.id === 'generic-only')?.displayName)
-                .toBe('Same-time renamed credential');
+                .toEqual(teamCredentialDisplayNameFixture('Same-time renamed credential'));
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().generic.displayNames['generic-only'])
+                .toBe('Same-time renamed credential'));
             await rendered.rerender({ agentTargetKey: claude });
             expect(models().some(id => id.startsWith('openai-responses'))).toBe(false);
             await waitForHomeGovernance(() => expect(rendered.getCurrent().selected.current).toBe(true));
             expect(models()).toEqual(['anthropic-1']);
             revision = 2;
-            await act(async () => { await rendered.getCurrent().selected.reload(); });
+            await act(async () => {
+                // A committed source change wakes retained catalogs, including other Agents.
+                publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1], { source: 'socket', changeKinds: ['account'] });
+                await rendered.getCurrent().selected.reload();
+            });
             await waitForHomeGovernance(() => expect(rendered.getCurrent().selected.current).toBe(true));
             expect(models()).toEqual(['anthropic-2']);
             expect(rendered.getCurrent().generic.resources.flatMap(row => row.providerModels)).toEqual([]);
@@ -450,7 +493,7 @@ describe('useTeamsDirectory', () => {
             await act(async () => {
                 const canonicalServerId = resolveServerProfileScopeIdForIdentifier(serverId);
                 expect(invalidateTeamCredentialResourceCatalog({ serverId: canonicalServerId, accountId: 'account' },
-                    { serverId: canonicalServerId, teamId: 'team-1' }, model!.application)).toBe(true);
+                    { serverId: canonicalServerId, teamId: 'team-1' }, model!.application, undefined, 'catalog-machine')).toBe(true);
             });
             expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(false);
             await act(async () => { await rendered.getCurrent().selected.reload(); });
@@ -504,7 +547,8 @@ describe('useTeamsDirectory', () => {
         } finally {
             await rendered.unmount();
             resetRuntimeFetch();
-            await home.reset();
+            await modelAccount.reset();
+            modelRpc.reset();
         }
     });
 

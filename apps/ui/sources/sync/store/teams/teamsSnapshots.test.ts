@@ -2,15 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { createRenderCommitCounter, renderHook, useRenderCommitCounter } from '@/dev/testkit';
-import { teamCredentialResourceFixture, teamCredentialViewerFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamGroupFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import {
     NO_TEAM_CAPABILITIES_V1,
-    NO_TEAM_GROUP_CAPABILITIES_V1,
     teamDirectoryQueryKeyV1,
     teamGroupsQueryKeyV1,
     TeamCredentialResourceSummaryV1Schema,
     type TeamCredentialResourceCatalogEntryV1,
-    type TeamGroupV1,
     type TeamSummaryV1,
 } from '@happier-dev/protocol/teams';
 
@@ -67,19 +65,14 @@ function groupsQueryKey(teamId: string, archived: 'active' | 'archived'): string
     return teamGroupsQueryKeyV1({ v: 1, teamId, archived });
 }
 
-function groupRow(id: string, overrides: Partial<TeamGroupV1> = {}): TeamGroupV1 {
-    return {
-        v: 1,
+function groupRow(id: string, overrides: Parameters<typeof teamGroupFixture>[0] = {}) {
+    return teamGroupFixture({
         id,
         teamId: 'team_1',
         name: `Group ${id}`,
-        description: null,
-        archivedAt: null,
         memberCount: 0,
-        management: { kind: 'native' },
-        capabilities: NO_TEAM_GROUP_CAPABILITIES_V1,
         ...overrides,
-    };
+    });
 }
 
 function team(id: string, overrides: Partial<TeamSummaryV1> = {}): TeamSummaryV1 {
@@ -116,7 +109,7 @@ describe('teamsSnapshots', () => {
     it('publishes no content for repeated equal recipient catalog admissions at scale', () => {
         // Constructed scale from the brief; no real Account census is available to this lane.
         const resources = Array.from({ length: 400 }, (_, index): TeamCredentialResourceCatalogEntryV1 => ({
-            id: `resource-${index}`, teamId: groupAddressA.teamId, displayName: `Resource ${index}`,
+            id: `resource-${index}`, teamId: groupAddressA.teamId, displayName: teamCredentialDisplayNameFixture(`Resource ${index}`),
             resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
             sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
@@ -134,20 +127,21 @@ describe('teamsSnapshots', () => {
             getTeamCredentialResourceCatalogsSelectionKey(scopeA, [{ address: groupAddressA }]);
         }, { scope: scopeA, credentialCatalogs: [{ address: groupAddressA }] });
         const release = subscribeTeamsSnapshots(() => {
-            consumed.push(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data?.[200]?.displayName ?? 'withdrawn');
+            const name = getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data?.[200]?.displayName;
+            consumed.push(name?.content.t === 'plain' ? name.content.v : 'withdrawn');
         });
         try {
             for (let i = 0; i < 22; i += 1) publish(structuredClone(resources), i + 2);
             expect(consumed).toHaveLength(0);
             expect(selectedReads).toBe(0);
             expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.lastObservedAt).toBe(23);
-            publish(resources.map((row, i) => i === 200 ? { ...row, displayName: 'Renamed' } : row), 24);
+            publish(resources.map((row, i) => i === 200 ? { ...row, displayName: teamCredentialDisplayNameFixture('Renamed') } : row), 24);
             expect(consumed).toEqual(['Renamed']);
             expect(selectedReads).toBe(1);
             expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data?.[199]).toBe(baseline[199]);
             selectedReads = 0;
             for (let i = 0; i < 5; i += 1) applyTeamCredentialResourceCatalog({ scope: scopeB,
-                address: groupAddressB, resources: [{ ...resources[0]!, displayName: `Foreign ${i}` }], observedAt: i });
+                address: groupAddressB, resources: [{ ...resources[0]!, displayName: teamCredentialDisplayNameFixture(`Foreign ${i}`) }], observedAt: i });
             expect(selectedReads).toBe(0);
             invalidateTeamsSnapshotsForServer(scopeA.serverId);
             expect(selectedReads).toBe(1);
@@ -271,7 +265,7 @@ describe('teamsSnapshots', () => {
         const catalogEntry: TeamCredentialResourceCatalogEntryV1 = {
             id: 'shared-1',
             teamId: 'team_1',
-            displayName: 'Shared model',
+            displayName: teamCredentialDisplayNameFixture('Shared model'),
             resourceRevision: 3,
             readiness: { kind: 'available' },
             recoveryAction: null,
@@ -289,7 +283,7 @@ describe('teamsSnapshots', () => {
         };
         const resource = TeamCredentialResourceSummaryV1Schema.parse({
             id: 'resource-1', teamId: 'team_1', custodianAccountId: 'owner',
-            displayName: 'Managed credential', enabled: true, revision: 1,
+            displayName: teamCredentialDisplayNameFixture('Managed credential'), enabled: true, revision: 1,
             deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
             source: {
                 v: 1, kind: 'provider_connection', connectionId: 'connection-1',
@@ -332,7 +326,7 @@ describe('teamsSnapshots', () => {
             endpointTemplateId: 'responses', protocol: 'openai-responses',
         } as const;
         applyTeamCredentialResourceCatalog({ scope: scopeA, address: groupAddressA, application,
-            resources: [{ ...catalogEntry, displayName: 'Application catalog' }], observedAt: 81 });
+            resources: [{ ...catalogEntry, displayName: teamCredentialDisplayNameFixture('Application catalog') }], observedAt: 81 });
         applyTeamCredentialResource({
             scope: scopeA,
             address: groupAddressA,
@@ -360,11 +354,11 @@ describe('teamsSnapshots', () => {
         expect(counter.read()).toEqual({ renders: 0, commits: 0 });
         expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.lastObservedAt).toBe(102);
         await act(async () => applyTeamCredentialResourceCatalog({ scope: scopeA, address: groupAddressA,
-            resources: [{ ...catalogEntry, displayName: 'Renamed without clock advance' }], observedAt: 102 }));
+            resources: [{ ...catalogEntry, displayName: teamCredentialDisplayNameFixture('Renamed without clock advance') }], observedAt: 102 }));
         expect(counter.read()).toEqual({ renders: 1, commits: 1 });
         await picker.unmount();
         expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA, application)?.data?.[0]?.displayName)
-            .toBe('Application catalog');
+            .toEqual(teamCredentialDisplayNameFixture('Application catalog'));
         expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA,
             { ...application, endpointTemplateId: 'other-endpoint' })).toBeNull();
 
@@ -382,7 +376,7 @@ describe('teamsSnapshots', () => {
         // A failed reconnect read cannot revive selection withdrawn by an actual Home loss.
         expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA, application)?.selectionCurrent).toBe(false);
         applyTeamCredentialResourceCatalog({ scope: scopeA, address: groupAddressA, application,
-            resources: [{ ...catalogEntry, displayName: 'Application catalog' }], observedAt: 82 });
+            resources: [{ ...catalogEntry, displayName: teamCredentialDisplayNameFixture('Application catalog') }], observedAt: 82 });
         expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA, application)?.selectionCurrent).toBe(true);
 
         invalidateTeamCredentialResources(scopeA, groupAddressA, resource.id);
@@ -609,7 +603,7 @@ describe('teamsSnapshots', () => {
 
         // A row that only needs a name must not force a detail read of its own,
         // which is the whole reason this reader exists.
-        expect(readTeamGroup(scopeA, groupAddressA, 'g2')?.name).toBe('Designers');
+        expect(readTeamGroup(scopeA, groupAddressA, 'g2')?.name).toEqual(groupRow('g2', { name: 'Designers' }).name);
         expect(readTeamGroups(scopeA, groupAddressA, 'active')?.map((row) => row.id))
             .toEqual(['g1', 'g2']);
         // The archived sequence is a different projection, not a filter of this one.
@@ -632,7 +626,7 @@ describe('teamsSnapshots', () => {
             observedAt: 72,
         });
 
-        expect(readTeamGroup(scopeA, groupAddressA, 'g1')?.name).toBe('Renamed');
+        expect(readTeamGroup(scopeA, groupAddressA, 'g1')?.name).toEqual(groupRow('g1', { name: 'Renamed' }).name);
     });
 
     it('finds a Group that only the archived sequence holds', () => {
@@ -647,7 +641,7 @@ describe('teamsSnapshots', () => {
 
         // An archived Group still names itself on a Session row that referenced
         // it, so a label reader that only looked at active rows would blank it.
-        expect(readTeamGroup(scopeA, groupAddressA, 'g9')?.name).toBe('Retired');
+        expect(readTeamGroup(scopeA, groupAddressA, 'g9')?.name).toEqual(groupRow('g9', { name: 'Retired' }).name);
     });
 
     it('keeps returning a stale Group label rather than blanking it during a refresh', () => {
@@ -663,7 +657,7 @@ describe('teamsSnapshots', () => {
 
         // A stale name is the last thing the Home actually said; dropping it
         // while a refresh runs would be less truthful than showing it.
-        expect(readTeamGroup(scopeA, groupAddressA, 'g1')?.name).toBe('Developers');
+        expect(readTeamGroup(scopeA, groupAddressA, 'g1')?.name).toEqual(groupRow('g1', { name: 'Developers' }).name);
         expect(readTeamGroups(scopeA, groupAddressA, 'active')).toHaveLength(1);
     });
 

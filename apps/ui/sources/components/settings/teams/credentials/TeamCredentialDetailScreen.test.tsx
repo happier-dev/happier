@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { MachinePoolPrivateLabelProjectionV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
@@ -13,6 +14,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
     teamCapabilitiesFixture,
+    teamCredentialDisplayNameFixture,
     teamCredentialResourceFixture,
     teamCredentialViewerFixture,
     teamSummaryFixture,
@@ -231,7 +233,9 @@ describe('TeamCredentialDetailScreen', () => {
                         eligibleTargets: [],
                         selectedPool: {
                             poolId: 'pool-development',
-                            displayName: 'Development',
+                            displayName: MachinePoolPrivateLabelProjectionV1Schema.parse({
+                                kind: 'available', label: { content: { t: 'plain', v: 'Development' }, recipientEnvelope: null },
+                            }),
                             availability: 'available',
                             availableMachineCount: 2,
                         },
@@ -271,7 +275,7 @@ describe('TeamCredentialDetailScreen', () => {
                 nextCursor: null,
                 failures: [],
                 resources: [{
-                    id: 'resource-1', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+                    id: 'resource-1', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Acme Provider'), resourceRevision: 7,
                     ...(brokerUnavailable ? { sourceOwnerDisplayName: 'Rina Okafor' } : {}),
                     readiness: brokerUnavailable ? { kind: 'broker_unavailable' } : { kind: 'available' },
                     recoveryAction: brokerUnavailable ? 'source_owner_action' : null,
@@ -438,7 +442,7 @@ describe('TeamCredentialDetailScreen', () => {
             body: TeamCredentialResourceDiscoveryPageV1Schema.parse({
                 nextCursor: null, failures: [],
                 resources: [{
-                    id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 3,
+                    id: 'resource-1', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Shared Claude'), resourceRevision: 3,
                     readiness: { kind: 'broker_unavailable' }, recoveryAction: 'select_broker',
                     mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
                     sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],

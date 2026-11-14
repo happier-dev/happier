@@ -481,22 +481,24 @@ describe('Team credential Provider broker admission', () => {
         const { PLUGIN_MANIFEST } = plugin === 'machine-agent37'
             ? await import('../../../../../../packages/plugins/machine-agent37/src/manifest')
             : await import('../../../../../../packages/plugins/machine-boat/src/manifest');
+        const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+        const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
         const { createReleaseLessDeclarationV1 } = await import('@/app/plugins/availability/currentDeclaration');
         const { admitTeamCredentialActionDeclarationInTx } = await import('./actionDeclarationAdmission');
-        await db.accountPluginIntent.create({ data: { accountId: fixture.requester.id, pluginId: PLUGIN_MANIFEST.id,
-            enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(PLUGIN_MANIFEST) } });
-        const descriptor = PLUGIN_MANIFEST.contributes.machineProvisioners![0]!;
-        const service = { pluginId: PLUGIN_MANIFEST.id, localId: PLUGIN_MANIFEST.contributes.connectedAccountDescriptors![0]!.id };
+        await db.accountPluginIntent.create({ data: { accountId: fixture.requester.id, pluginId: manifest.id,
+            enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
+        const descriptor = manifest.contributes.machineProvisioners[0]!;
+        const service = { pluginId: manifest.id, localId: manifest.contributes.connectedAccountDescriptors[0]!.id };
         const source = { v: 1 as const, kind: 'connected_account' as const, credentialIncarnation: 'owner-credential',
             target: { kind: 'account' as const, account: { service, accountId: 'owner-cloud' } } };
         for (const role of ['options', 'acquire'] as const) {
             const localId = descriptor.actions[role]!;
             const consumer = { kind: 'action_operation' as const, operationId: `native-${role}`,
-                actionId: `${PLUGIN_MANIFEST.id}/actions/${localId}`, pluginVersion: PLUGIN_MANIFEST.version,
-                purpose: { consumer: { pluginId: PLUGIN_MANIFEST.id, localId }, purpose: 'cloud-api' } };
+                actionId: `${manifest.id}/actions/${localId}`, pluginVersion: manifest.version,
+                purpose: { consumer: { pluginId: manifest.id, localId }, purpose: 'cloud-api' } };
             const input = { accountId: fixture.requester.id, machineId: fixture.worker.id,
                 rootActionId: role === 'options' ? 'machines.provisioners.options' : 'machines.managed.acquire',
-                pluginVersion: PLUGIN_MANIFEST.version, consumer, source };
+                pluginVersion: manifest.version, consumer, source };
             expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input)))
                 .toMatchObject({ ok: true, action: { id: localId } });
             expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,

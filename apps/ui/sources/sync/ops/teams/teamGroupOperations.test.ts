@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     NO_TEAM_GROUP_CAPABILITIES_V1,
     teamGroupsQueryKeyV1,
@@ -7,7 +7,12 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { standardCleanup } from '@/dev/testkit';
+import { standardCleanup, teamGroupFixture } from '@/dev/testkit';
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ confirmResult: true }).module;
+});
 
 /**
  * The Group wrappers, through the path they actually take.
@@ -42,18 +47,11 @@ async function operations() {
 }
 
 function group(overrides?: Partial<TeamGroupV1>): TeamGroupV1 {
-    return {
-        v: 1,
-        id: 'group-1',
-        teamId: 'team-1',
-        name: 'Developers',
-        description: null,
-        archivedAt: null,
+    return teamGroupFixture({
         memberCount: 2,
-        management: { kind: 'native' },
         capabilities: { ...NO_TEAM_GROUP_CAPABILITIES_V1, manageNativeMembers: true },
         ...overrides,
-    };
+    });
 }
 
 function member(overrides?: Partial<TeamGroupMemberV1>): TeamGroupMemberV1 {

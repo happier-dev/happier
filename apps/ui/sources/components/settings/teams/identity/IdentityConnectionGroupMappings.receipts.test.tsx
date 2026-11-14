@@ -2,9 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TeamDirectoryGroupV1, TeamDirectorySourceSummaryV1, TeamExternalGroupBindingV1 } from '@happier-dev/protocol/teams';
+import { TeamGroupNameProjectionV1Schema } from '@happier-dev/protocol/teams';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 
 import { createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -31,7 +33,9 @@ const binding: TeamExternalGroupBindingV1 = {
     v: 1, id: 'binding-1', teamId: 'team-1',
     owner: { kind: 'identity_connection', teamIdentityConnectionId: 'connection-1' },
     externalGroupId: 'engineering', mode: 'directory_created',
-    target: { teamGroupId: 'group-1', name: 'Engineering', archivedAt: null },
+    target: { teamGroupId: 'group-1', name: TeamGroupNameProjectionV1Schema.parse({
+        kind: 'available', label: teamCredentialDisplayNameFixture('Engineering'),
+    }), archivedAt: null },
 };
 
 beforeEach(async () => { await harness.reset(); });

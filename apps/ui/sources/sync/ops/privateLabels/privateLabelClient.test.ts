@@ -9,10 +9,23 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 
 const {
     createPrivateLabelActionOpener,
+    createPrivateLabelClient,
     createPrivateLabelClientForAccountContext,
     isPrivateLabelLifecycleFailureV1,
 } = await import('./privateLabelClient');
 const { useOpenedPrivateLabels } = await import('./useOpenedPrivateLabels');
+// The lifecycle case needs the real Account capture graph before case deadlines.
+await import('@/sync/ops/actions/actionAccountContext');
+type LabelRequests = Parameters<typeof useOpenedPrivateLabels>[0];
+
+function labelRequest(key: string, value: string): LabelRequests['requests'][number] {
+    return {
+        key,
+        binding: { entity: 'team_credential_resource', field: 'displayName', id: key },
+        label: { content: { t: 'plain', v: value }, recipientEnvelope: null },
+        readPolicy: { kind: 'team-resource' },
+    };
+}
 
 function recipient(accountId: string, contentPublicKey: Uint8Array) {
     return {
@@ -31,6 +44,73 @@ afterEach(async () => {
 });
 
 describe('private label client', () => {
+    it('retains unchanged labels while withdrawing only a changed request and removed rows', async () => {
+        const observations: Readonly<Record<string, string | null>>[] = [];
+        const scope = { serverId: 'viewer-home', accountId: 'viewer' };
+        const first = labelRequest('first', 'First');
+        const other = labelRequest('other', 'Other');
+        const hook = await renderHook((params: LabelRequests) => {
+            const value = useOpenedPrivateLabels(params);
+            observations.push(value);
+            return value;
+        }, { initialProps: { scope, requests: [first, other] } });
+        await vi.waitFor(() => expect(hook.getCurrent()).toEqual({ first: 'First', other: 'Other' }));
+
+        observations.length = 0;
+        await hook.rerender({ scope, requests: [labelRequest('first', 'Renamed'), other] });
+        expect(observations[0]).not.toHaveProperty('first');
+        expect(observations.every(value => value.other === 'Other')).toBe(true);
+        await vi.waitFor(() => expect(hook.getCurrent()).toEqual({ first: 'Renamed', other: 'Other' }));
+
+        observations.length = 0;
+        await hook.rerender({ scope, requests: [other] });
+        expect(observations.every(value => !Object.hasOwn(value, 'first') && value.other === 'Other')).toBe(true);
+    });
+
+    it.each(['binding', 'readPolicy', 'label', 'scope'] as const)('withdraws opened values when the request %s changes', async change => {
+        const observations: Readonly<Record<string, string | null>>[] = [];
+        const scope = { serverId: 'viewer-home', accountId: 'viewer' };
+        const request = labelRequest('resource', 'Private name');
+        const other = labelRequest('other', 'Other');
+        const hook = await renderHook((params: LabelRequests) => {
+            const value = useOpenedPrivateLabels(params);
+            observations.push(value);
+            return value;
+        }, { initialProps: { scope, requests: [request, other] } });
+        await vi.waitFor(() => expect(hook.getCurrent().resource).toBe('Private name'));
+        const changed: LabelRequests['requests'][number] = change === 'binding'
+            ? { ...request, binding: { ...request.binding, id: 'another-resource' } }
+            : change === 'readPolicy'
+                ? { ...request, readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' } }
+                : change === 'label' ? { ...request, label: null } : request;
+        observations.length = 0;
+        await hook.rerender({ scope: change === 'scope' ? { ...scope, accountId: 'other-viewer' } : scope, requests: [changed, other] });
+        expect(observations[0]).not.toHaveProperty('resource');
+        if (change === 'scope') expect(observations[0]).not.toHaveProperty('other');
+        if (change === 'label' || change === 'readPolicy') {
+            await vi.waitFor(() => expect(hook.getCurrent()).toEqual({ resource: null, other: 'Other' }));
+        }
+    });
+
+    it('withdraws retained siblings when a changed label loses its Home lifecycle', async () => {
+        const scope = { serverId: 'missing-label-home', accountId: 'viewer' };
+        const first = labelRequest('first', 'First');
+        const other = labelRequest('other', 'Other');
+        const encrypted: NonNullable<LabelRequests['requests'][number]['label']> = {
+            content: { t: 'encrypted', c: 'unopened' },
+            recipientEnvelope: { encryptedDataKey: 'wrapped', recipientContentPublicKeyFingerprint: 'fingerprint' },
+        };
+        await expect(createPrivateLabelClient(scope).open({
+            binding: first.binding, label: encrypted, readPolicy: first.readPolicy,
+        })).rejects.toThrow('action_home_not_found');
+        const hook = await renderHook((params: LabelRequests) => useOpenedPrivateLabels(params), {
+            initialProps: { scope, requests: [first, other] },
+        });
+        await vi.waitFor(() => expect(hook.getCurrent()).toEqual({ first: 'First', other: 'Other' }));
+        await hook.rerender({ scope, requests: [{ ...first, label: encrypted }, other] });
+        await vi.waitFor(() => expect(hook.getCurrent()).toEqual({}));
+    });
+
     it('forwards Team-resource policy through the collection opener without consulting viewer mode', async () => {
         const opened = await renderHook(() => useOpenedPrivateLabels({
             scope: { serverId: 'viewer-home', accountId: 'e2ee-viewer' },

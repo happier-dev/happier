@@ -5,9 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     machinePoolActionEndpointPathV1} from '@happier-dev/protocol/machines/pools/actionsV1';
 import {
+    MachinePoolListOutputV1Schema,
+    MachinePoolPrivateLabelProjectionV1Schema,
     type MachinePoolViewV1,
 } from '@happier-dev/protocol/machines/pools/v1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema, TeamCredentialResourceUpdateInputV1Schema } from '@happier-dev/protocol/teams';
+import { PrivateLabelStoredV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { PrivateLabelRecipientCensusResponseV1Schema } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 
 import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -55,6 +59,9 @@ const CREDENTIAL_GET_PATH = '/v1/teams/credential-resources/get';
 const CREDENTIAL_UPDATE_PATH = '/v1/teams/credential-resources/update';
 const LIMITS_LIST_PATH = '/v1/teams/credential-resources/limits/list';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
+const developmentPoolName = MachinePoolPrivateLabelProjectionV1Schema.parse({
+    kind: 'available', label: { content: { t: 'plain', v: 'Development' }, recipientEnvelope: null },
+});
 
 function poolView(id: string, name: string, connectedCount: number): MachinePoolViewV1 {
     return {
@@ -173,6 +180,9 @@ async function renderEditor(params?: Readonly<{
         machinePoolsEnabled: params?.poolsEnabled !== false,
     });
     await harness.selectHomes([serverId]);
+    harness.answer(serverId, '/v1/account/private-labels/recipient-census', {
+        body: PrivateLabelRecipientCensusResponseV1Schema.parse({ contentEncryptionMode: 'plain', recipients: [] }),
+    });
     administrationTarget.controller.setMachines([
         { machineId: 'machine-exact', displayName: 'Ada’s Mac mini', serverId, serverIdentityId: 'identity-home-a', serverLabel: 'Home A' },
         { machineId: 'machine-offline', displayName: 'Travel laptop', availability: 'offline', serverId, serverIdentityId: 'identity-home-a', serverLabel: 'Home A' },
@@ -206,18 +216,18 @@ async function renderEditor(params?: Readonly<{
             ],
             selectedPool: params?.placement === 'pool' ? {
                 poolId: firstPoolId,
-                displayName: 'Development',
+                displayName: developmentPoolName,
                 availability: 'unavailable',
                 availableMachineCount: 0,
             } : null,
             eligiblePools: [{
                 poolId: firstPoolId,
-                displayName: 'Development',
+                displayName: developmentPoolName,
                 availability: 'unavailable',
                 availableMachineCount: 0,
             }, {
                 poolId: secondPoolId,
-                displayName: 'Development',
+                displayName: developmentPoolName,
                 availability: 'not_verified',
                 availableMachineCount: null,
             }],
@@ -351,7 +361,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
         } else {
             await act(async () => exactRead.resolve({ body: resource }));
         }
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-name')?.props.value).toBe(resource.displayName));
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-name')?.props.value).toBe('Claude Enterprise'));
         expect(screen.findByTestId('team-credential-edit-unavailable')).toBeNull();
         expect(screen.root.findAllByType('MachineAdministrationTargetSelector')).toHaveLength(0);
     });
@@ -420,7 +430,9 @@ describe('TeamCredentialEditScreen broker placement', () => {
         await screen.pressByTestIdAsync('team-credential-edit-save');
         await vi.waitFor(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
         const input = harness.requestsFor(CREDENTIAL_UPDATE_PATH)[0]?.input as { replacement: Record<string, unknown> };
-        expect(input.replacement.displayName).toBe('Renamed key');
+        expect(input.replacement.displayName).toEqual(PrivateLabelStoredV1Schema.parse({
+            content: { t: 'plain', v: 'Renamed key' }, recipients: [],
+        }));
         expect(input.replacement).not.toHaveProperty('custodian');
         expect(input.replacement).not.toHaveProperty('allMembersAllowedRoutes');
         expect(input.replacement).not.toHaveProperty('groupGrants');
@@ -495,7 +507,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
             expectedRevision: 3,
             replacement: {
                 enabled: true,
-                displayName: 'Claude Enterprise',
+                displayName: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Claude Enterprise' }, recipients: [] }),
                 sessionUsePolicy: 'personal_allowed',
                 requestPolicy: null,
                 custodian: {
@@ -513,7 +525,10 @@ describe('TeamCredentialEditScreen broker placement', () => {
 
     it('keeps duplicate Pool names exact and accessible, including an unverified source decision', async () => {
         const { screen, firstPoolId, secondPoolId } = await renderEditor();
-        await vi.waitFor(() => expect(findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`), screen.getTextContent()).not.toBeNull());
+        await vi.waitFor(() => {
+            expect(findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`)?.props.accessibilityLabel).toContain(firstPoolId);
+            expect(findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${secondPoolId}`)?.props.accessibilityLabel).toContain(secondPoolId);
+        });
         const first = findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`);
         const second = findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${secondPoolId}`);
         expect(first?.props.title).toBe('Development');
@@ -597,7 +612,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         const actionArgs = lastCredentialUpdateInput();
         expect(actionArgs.replacement).toMatchObject({
-            displayName: 'Manager-visible name',
+            displayName: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Manager-visible name' }, recipients: [] }),
             requestPolicy: null,
             usageLimitDelta: { upserts: [], deleteIds: [] },
         });
@@ -708,7 +723,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
             expectedRevision: 3,
             replacement: {
                 enabled: true,
-                displayName: 'Repaired credential',
+                displayName: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Repaired credential' }, recipients: [] }),
                 sessionUsePolicy: 'personal_allowed',
                 requestPolicy: null,
                 custodian: {
@@ -769,7 +784,9 @@ describe('TeamCredentialEditScreen broker placement', () => {
         modalConfirm.mockResolvedValueOnce(true);
         await screen.pressByTestIdAsync('team-credential-edit-save');
         await waitForHomeGovernance(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
-        expect(lastCredentialUpdateInput().replacement).toMatchObject({ displayName: 'Renamed native credential' });
+        expect(lastCredentialUpdateInput().replacement).toMatchObject({ displayName: PrivateLabelStoredV1Schema.parse({
+            content: { t: 'plain', v: 'Renamed native credential' }, recipients: [],
+        }) });
         expect(lastCredentialUpdateInput().replacement).not.toHaveProperty('custodian');
         expect(modalConfirm).toHaveBeenCalledTimes(2);
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
@@ -833,7 +850,11 @@ describe('TeamCredentialEditScreen broker placement', () => {
         const retainedPools = storage.getState().machinePoolListByServerId[serverId];
         const retainedChoices = brokerChoiceTestIds(screen);
         harness.answer(serverId, listPath, {
-            body: { pools: retainedPools },
+            body: MachinePoolListOutputV1Schema.parse({ pools: retainedPools.map(row => ({
+                ...row, pool: { ...row.pool, name: {
+                    kind: 'available', label: { content: { t: 'plain', v: row.pool.name }, recipientEnvelope: null },
+                } },
+            })) }),
             respondAfter: response.promise,
         });
         act(() => screen.changeTextByTestId('team-credential-edit-name', 'Draft name'));

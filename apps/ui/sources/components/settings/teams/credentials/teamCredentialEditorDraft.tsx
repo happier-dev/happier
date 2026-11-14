@@ -495,6 +495,7 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
     const poolRows = buildMachinePoolRowPresentations(
         projectedPools.filter((candidate) => eligiblePoolById.has(candidate.pool.id)),
         (candidate) => resolveMachinePoolEnabledMemberLabels(candidate, machines).join(', '),
+        (candidate) => poolDisplayNames[candidate.pool.id]?.trim() || t('teams.credentials.detail.brokerChosen'),
     );
     const draftPoolPlacement = placement?.kind === 'machine_pool' ? placement : null;
     const savedPoolPlacement = savedPlacement?.kind === 'machine_pool' ? savedPlacement : null;
@@ -624,8 +625,6 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                 })}
                 {poolRows.map((row) => {
                     const sourcePresentation = eligiblePoolById.get(row.view.pool.id)!;
-                    const title = poolDisplayNames[row.view.pool.id]?.trim()
-                        || t('teams.credentials.detail.brokerChosen');
                     const availability = teamCredentialBrokerPoolAvailabilityLabel(
                         sourcePresentation.availability,
                         sourcePresentation.availableMachineCount,
@@ -635,10 +634,10 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                         <Item
                             key={row.view.pool.id}
                             testID={`${testIDPrefix}:machine_pool:${row.view.pool.id}`}
-                            title={title}
+                            title={row.displayName}
                             subtitle={identity || undefined}
                             detail={availability}
-                            accessibilityLabel={`${title}. ${availability}`}
+                            accessibilityLabel={`${row.accessibilityName}. ${availability}`}
                             accessibilityRole="radio"
                             webRole="radio"
                             selected={draftPoolPlacement?.poolId === row.view.pool.id}

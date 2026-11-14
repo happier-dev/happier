@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { teamCredentialDisplayNameBinding } from './teamCredentialLabels';
 
 const { runTeamAction, invalidateTeamCredentialResources } = vi.hoisted(() => ({
     runTeamAction: vi.fn(),
@@ -62,7 +64,7 @@ describe('teamCredentialOperations outcome recovery', () => {
         const { updateTeamCredentialResource } = await import('./teamCredentialOperations');
         const replacement = {
             enabled: true,
-            displayName: 'Shared provider',
+            displayName: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNameBinding('resource-a'), value: 'Shared provider' }),
             sessionUsePolicy: 'team_context_required' as const,
             requestPolicy: null,
             allMembersAllowedRoutes: ['brokered' as const],

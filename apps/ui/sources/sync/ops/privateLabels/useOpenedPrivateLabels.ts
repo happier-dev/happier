@@ -23,13 +23,13 @@ export type PrivateLabelOpenRequestV1 = Readonly<{
 
 const EMPTY_OPENED_LABELS: Readonly<Record<string, string | null>> = Object.freeze({});
 
-function requestKey(requests: readonly PrivateLabelOpenRequestV1[]): string {
-    return JSON.stringify(requests.map((request) => ({
+function requestKey(request: PrivateLabelOpenRequestV1): string {
+    return JSON.stringify({
         key: request.key,
         binding: request.binding,
         label: request.label ?? null,
         readPolicy: request.readPolicy,
-    })));
+    });
 }
 
 /**
@@ -43,14 +43,23 @@ export function useOpenedPrivateLabels(params: Readonly<{
     enabled?: boolean;
 }>): Readonly<Record<string, string | null>> {
     const scopeKey = params.scope ? `${params.scope.serverId}:${params.scope.accountId}` : '';
-    const key = requestKey(params.requests);
-    const requestsRef = React.useRef(params.requests);
-    requestsRef.current = params.requests;
+    const requests = params.requests.map(request => ({ request, key: requestKey(request) }));
+    const key = JSON.stringify(requests.map(request => request.key));
+    const requestsRef = React.useRef(requests);
+    requestsRef.current = requests;
     const [opened, setOpened] = React.useState<Readonly<{
         scopeKey: string;
         key: string;
+        requestKeys: ReadonlyMap<string, string>;
         values: Readonly<Record<string, string | null>>;
     }> | null>(null);
+    // A replacement withdraws its own old label immediately. Unchanged requests
+    // retain their already-opened values under the same scope and privacy arm.
+    const retained = opened?.scopeKey === scopeKey
+        ? opened.key === key ? opened.values : Object.fromEntries(requests
+            .filter(({ request, key }) => opened.requestKeys.get(request.key) === key)
+            .map(({ request }) => [request.key, opened.values[request.key] ?? null]))
+        : EMPTY_OPENED_LABELS;
 
     React.useEffect(() => {
         const scope = params.scope;
@@ -58,33 +67,32 @@ export function useOpenedPrivateLabels(params: Readonly<{
         const abort = new AbortController();
         const client = createPrivateLabelClient(scope);
         const requests = requestsRef.current;
-        void Promise.allSettled(requests.map(async (request) => [
-            request.key,
-            await client.open({
-                binding: request.binding,
-                label: request.label,
-                readPolicy: request.readPolicy,
-                signal: abort.signal,
-            }),
-        ] as const)).then((results) => {
-            if (abort.signal.aborted) return;
-            const entries: Array<readonly [string, string | null]> = [];
-            for (const [index, result] of results.entries()) {
-                if (result.status === 'fulfilled') {
-                    entries.push(result.value);
-                    continue;
-                }
-                // Lost Account custody ends this effect; only a label-local
-                // failure becomes unavailable so its siblings keep rendering.
-                if (isPrivateLabelLifecycleFailureV1(result.reason, abort.signal)) return;
-                entries.push([requests[index]!.key, null]);
+        const pending = requests.filter(({ request, key }) => opened?.scopeKey !== scopeKey
+            || opened.requestKeys.get(request.key) !== key
+            || opened.values[request.key] === null);
+        void Promise.all(pending.map(async ({ request }): Promise<readonly [string, string | null]> => {
+            try {
+                return [request.key, await client.open({
+                    binding: request.binding,
+                    label: request.label,
+                    readPolicy: request.readPolicy,
+                    signal: abort.signal,
+                })];
+            } catch (error) {
+                // Account custody withdraws the whole captured batch immediately;
+                // an ordinary label failure leaves its unchanged siblings intact.
+                if (isPrivateLabelLifecycleFailureV1(error, abort.signal)) throw error;
+                return [request.key, null];
             }
-            setOpened({ scopeKey, key, values: Object.fromEntries(entries) });
+        })).then((entries) => {
+            if (abort.signal.aborted) return;
+            setOpened({ scopeKey, key, requestKeys: new Map(requests.map(({ request, key }) => [request.key, key])),
+                values: { ...retained, ...Object.fromEntries(entries) } });
+        }, () => {
+            if (!abort.signal.aborted) setOpened(null);
         });
         return () => abort.abort();
     }, [key, params.enabled, params.scope?.accountId, params.scope?.serverId, scopeKey]);
 
-    return opened?.scopeKey === scopeKey && opened.key === key
-        ? opened.values
-        : EMPTY_OPENED_LABELS;
+    return retained;
 }

@@ -8,6 +8,7 @@ import { getAgentSessionModeDescriptor, normalizePermissionModeForSessionDescrip
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { PermissionIntent } from '@happier-dev/agents/permissions';
 
 export type PermissionModeOption = Readonly<{
     value: PermissionMode;
@@ -71,7 +72,7 @@ export function getPermissionModesForAgentType(agentType: AgentType): readonly P
     return getAgentPermissionModeCore(agentType) ? PERMISSION_MODE_OPTIONS : [];
 }
 
-export function getPermissionModeOptionsForAgentType(agentType: AgentType, _presentation: 'menu' | 'settings' = 'menu'): readonly PermissionModeOption[] {
+export function getPermissionModeOptionsForAgentType(agentType: AgentType, _presentation: 'menu' | 'settings' = 'menu'): readonly (PermissionModeOption & { value: PermissionIntent })[] {
     if (!getAgentPermissionModeCore(agentType)) return [];
     const label = (mode: PermissionMode) => getPermissionModeLabelForAgentType(agentType, mode);
 

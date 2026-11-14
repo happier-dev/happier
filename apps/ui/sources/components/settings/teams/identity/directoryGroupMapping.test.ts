@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { TeamGroupNameProjectionV1Schema } from '@happier-dev/protocol/teams';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 
 import { runDirectoryGroupMappingChange } from './directoryGroupMapping';
 
@@ -29,7 +31,9 @@ describe('runDirectoryGroupMappingChange', () => {
                 bindingId: 'binding-1',
                 mode: 'native_target' as const,
                 teamGroupId: 'team-group-old',
-                teamGroupName: 'Existing Group',
+                teamGroupName: TeamGroupNameProjectionV1Schema.parse({
+                    kind: 'available', label: teamCredentialDisplayNameFixture('Existing Group'),
+                }),
             },
         };
 

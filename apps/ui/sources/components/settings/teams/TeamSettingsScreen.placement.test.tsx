@@ -8,6 +8,7 @@ import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { TeamPolicySetInputV1Schema, TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -53,7 +54,7 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     const serverId = await harness.addHome({ name: 'Team Home', serverUrl: 'https://defaults.example',
         serverIdentityId: homeId, accountId: 'admin', currentAccount: true, teamsEnabled: true });
     await harness.selectHomes([serverId]);
-    const preset = ManagedMachinePresetV1Schema.parse({ id: 'pool-preset', homeId, revision: 2, name: 'Team container',
+    const preset = createPlainManagedMachinePresetFixture({ id: 'pool-preset', homeId, revision: 2, name: 'Team container',
         owner: { kind: 'team', teamId: 'team-1' }, controllerPoolId: '00000000-0000-4000-8000-000000000001',
         launch: { provider: { pluginId: 'happier.machine.docker', localId: 'docker' }, schemaVersion: 1,
             name: 'Member container', choices: { image: 'node:22-bookworm' } } });
@@ -67,7 +68,7 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
         ManagedMachinePresetV1Schema.parse({ ...preset, id: 'personal-preset', owner: { kind: 'account', accountId: 'admin' } }),
         ManagedMachinePresetV1Schema.parse({ ...preset, id: 'other-team-preset', owner: { kind: 'team', teamId: 'other-team' } }),
         { ...preset, id: 'archived-preset', archivedAt: 1 },
-        { id: 'setup-only', homeId, revision: 1, name: 'Tools', owner: preset.owner, setup: { scripts: [{ body: 'echo ready' }] } },
+        createPlainManagedMachinePresetFixture({ id: 'setup-only', homeId, revision: 1, name: 'Tools', owner: preset.owner, setup: { scripts: [{ body: 'echo ready' }] } }),
     ] } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
     harness.answer(serverId, policyPath, { select: input => {
@@ -104,11 +105,11 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     } });
     expect(team.policy.managedDefaults).toMatchObject({ team: { placement: { kind: 'preset', homeId, presetId: preset.id } }, groups });
     await waitForHomeGovernance(() => expect(menu()!.props.selectedId).toBe(offerId));
-    expect(menu()!.props.itemTrigger.subtitle).toContain(preset.name);
+    expect(menu()!.props.itemTrigger.subtitle).toContain(preset.opened.name);
     await act(async () => menu()!.props.onSelect(offerId));
     expect(harness.requestsFor(policyPath)).toHaveLength(1);
     await act(async () => menu()!.props.onOpenChange(false));
-    await waitForHomeGovernance(() => expect(menu()!.props.itemTrigger.subtitle).toContain(preset.name));
+    await waitForHomeGovernance(() => expect(menu()!.props.itemTrigger.subtitle).toContain(preset.opened.name));
     expect(harness.requestsFor(listPath)).toHaveLength(1);
     expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
     await act(async () => menu()!.props.onOpenChange(true));

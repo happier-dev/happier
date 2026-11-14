@@ -91,6 +91,7 @@ export function resolveMachinePoolEnabledMemberLabels(
 
 export type MachinePoolRowPresentation = Readonly<{
     view: MachinePoolViewV1;
+    displayName: string;
     memberPreview: string;
     identityDetail: string | null;
     accessibilityName: string;
@@ -104,23 +105,26 @@ export type MachinePoolRowPresentation = Readonly<{
 export function buildMachinePoolRowPresentations(
     pools: readonly MachinePoolViewV1[],
     memberPreview: (view: MachinePoolViewV1) => string,
+    displayName: (view: MachinePoolViewV1) => string = (view) => view.pool.name,
 ): readonly MachinePoolRowPresentation[] {
     const previews = pools.map(memberPreview);
+    const names = pools.map(displayName);
     return pools.map((view, index) => {
         const preview = previews[index] ?? '';
         const otherCollidingPoolIds = pools.flatMap((candidate, candidateIndex) => candidateIndex !== index
-            && candidate.pool.name === view.pool.name
+            && names[candidateIndex] === names[index]
             && previews[candidateIndex] === preview
             ? [candidate.pool.id]
             : []);
         const needsIdentity = otherCollidingPoolIds.length > 0;
         return {
             view,
+            displayName: names[index]!,
             memberPreview: preview,
             identityDetail: needsIdentity
                 ? resolveMachinePoolIdentityHint(view.pool.id, otherCollidingPoolIds)
                 : null,
-            accessibilityName: needsIdentity ? `${view.pool.name}. ${view.pool.id}` : view.pool.name,
+            accessibilityName: needsIdentity ? `${names[index]}. ${view.pool.id}` : names[index]!,
         };
     });
 }
