@@ -714,6 +714,14 @@ desktop's `cli.update.v1` does not pass that step: it relies on the launcher mov
 not end sessions, but it is unverified on a real Windows host. Remote update is disabled on Windows
 (below).
 
+In current development source (not yet released), self-update and direct `self __install-payload` CLI promotion reject
+invocations below a Happier daemon or daemon-started session before downloads, locks, launcher
+capture or service shutdown. The update owner uses the daemon's Windows process inspection and
+shared session-command classification to walk the calling process's ancestors. Run the update
+from an independent terminal after saving work. Failure to inspect ancestry also refuses the
+update without modifying the installation. `self update --help` and `-h` print help before update
+dispatch. This prevents self-termination during quiescing; the recovery limits above still apply.
+
 **Rolling back across a migration.** The previous version must read whatever the new one wrote
 before it failed. CLI self-update callers are ≥ 0.2.13; current desktop hsetup can also replace
 an installed 0.2.12 CLI to satisfy its 0.2.13 setup floor. The persisted

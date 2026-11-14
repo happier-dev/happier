@@ -72,7 +72,8 @@ function mockTerminalAttachmentState(state: TerminalAttachmentReadState): void {
   );
 }
 
-vi.mock('../doctor', () => ({
+vi.mock('../doctor', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../doctor')>(),
   findAllHappyProcesses: vi.fn(async () => []),
   findHappyProcessByPid: vi.fn(async () => null),
 }));
