@@ -4,6 +4,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createMachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
 import { logger } from '@/ui/logger';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 
@@ -63,4 +64,38 @@ it('keeps declared reads across retained activation replacement and identifies a
         await successor?.dispose();
         await fixture.dispose();
     }
+});
+
+
+it('resolves the named capture producer for another mounted plugin and retains caller and Machine admission', async () => {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+        manifest: createPluginManifestV2Fixture({ id: 'acme.viewer' }),
+        files: { 'daemon.mjs': 'export function activate() {}' },
+    }, {
+        manifest: createPluginManifestV2Fixture({ id: 'acme.producer', contributes: { captureSources: [{
+            id: 'screen', displayName: 'Capture', streamFamily: 'screen', supportedCodecs: ['image.mjpeg'],
+        }] } }),
+        files: { 'daemon.mjs': "export function activate(api) { api.captureSources.register('screen', { async start() { return { stop() {} }; } }); }" },
+    }] });
+    const capture = createMachineLiveStreamCaptureRegistry();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'capture-machine', encryptionMode: 'plain', logger: () => {} });
+    registerDaemonContributionRegistryProjectionHandler(rpc, {
+        resolveRuntimeRegistry: async () => fixture.registry, resolveInstalledPackages: async () => [],
+        resolveCaptureRegistry: () => capture,
+        resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_capture', machineId: 'capture-machine' }),
+    });
+    const occurrence = fixture.registry.readPluginOccurrenceId?.('acme.viewer');
+    if (!occurrence) throw new Error('Missing mounted viewer occurrence');
+    const request = { machineId: 'capture-machine', callerPluginId: 'acme.viewer', expectedCallerOccurrenceId: occurrence,
+        reference: { kind: 'plugin', source: { pluginId: 'acme.producer', localId: 'screen' } } };
+    try {
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, request)).toMatchObject({ ok: true,
+            source: { sourceId: 'plugin:acme.producer/screen', requiresApproval: false } });
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
+            expectedCallerOccurrenceId: 'retired' })).toMatchObject({ ok: false, code: 'plugin_occurrence_stale' });
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
+            machineId: 'other-machine' })).toMatchObject({ ok: false, code: 'capture_source_denied' });
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
+            reference: { kind: 'plugin', source: { pluginId: 'acme.producer', localId: 'missing' } } })).toMatchObject({ ok: false, code: 'capture_source_unavailable' });
+    } finally { await fixture.dispose(); }
 });

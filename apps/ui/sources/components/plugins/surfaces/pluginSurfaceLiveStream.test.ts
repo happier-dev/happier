@@ -1,3 +1,5 @@
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -43,6 +45,17 @@ function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Prom
     const lifetime = new AbortController();
     const viewing = createPluginSurfaceLiveStreamOwner({ pluginId: surface.pluginId, occurrenceId: 'viewer-1',
         machineId: 'machine-1', serverId: 'home-1', lifetimeSignal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted,
+        scope: { serverId: 'home-1', accountId: 'account-1' },
+        fetchArtifact: async (artifactId: string): Promise<DecryptedArtifact | null> => {
+            if (!approval) return null;
+            const answer = pendingDecision ? await pendingDecision : decision;
+            const settled: ApprovalRequest = answer === 'approve' ? { ...approval, status: 'executed',
+                decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 2, ok: true, result: { admitted: true, sourceId: source.sourceId, sourceOccurrenceId: source.sourceOccurrenceId } } }
+                : { ...approval, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } };
+            return { id: artifactId, title: null, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true };
+        },
         executeAction: async (request, options) => {
             const admission = await actionHost.handleRequest(request, options);
             admissions.push(admission);
@@ -52,20 +65,23 @@ function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Prom
 }
 beforeEach(() => { rpc.mockReset().mockResolvedValue({ ok: true, source }); });
 describe('mounted live stream viewing', () => {
-    it('does not admit a viewing when its mount retires while Action approval is pending', async () => {
+    it.each(['mount', 'resource'] as const)('does not admit a viewing when its %s retires while Action approval is pending', async mode => {
         let answer: ((decision: 'approve' | 'reject') => void) | undefined;
         const { viewing, lifetime, requests } = owner('approve', new Promise(resolve => { answer = resolve; }));
         const pending = viewing.watchLiveStream(request({ kind: 'host', sourceId: source.sourceId }));
         await vi.waitFor(() => expect(requests).toHaveLength(1));
-        lifetime.abort();
+        if (mode === 'mount') lifetime.abort();
+        else viewing.disposeHostResource({ ...request({ kind: 'host', sourceId: source.sourceId }), method: 'disposeHostResource', payload: { subscriptionId: 'view-1' } });
         answer?.('approve');
         expect(await pending).toMatchObject({ code: 'unavailable' });
         expect(viewing.readViewing('view-1')).toBeNull();
     });
-    it('refuses foreign plugin sources and refused host viewing before a private descriptor becomes usable', async () => {
+    it('resolves another plugin producer without host approval and refuses rejected host viewing', async () => {
         const { viewing, requests } = owner();
-        expect(await viewing.watchLiveStream(request({ kind: 'plugin', source: { pluginId: 'acme.foreign', localId: 'screen' } }))).toMatchObject({ code: 'unavailable' });
-        expect(rpc).not.toHaveBeenCalled();
+        rpc.mockResolvedValueOnce({ ok: true, source: { ...source, requiresApproval: false } });
+        expect(await viewing.watchLiveStream(request({ kind: 'plugin', source: { pluginId: 'acme.foreign', localId: 'screen' } }, 'foreign'))).toEqual({ kind: 'ready', subscriptionId: 'foreign' });
+        expect(viewing.readViewing('foreign')).toMatchObject({ sourceId: source.sourceId });
+        expect(requests).toHaveLength(0);
         expect(await viewing.watchLiveStream(request({ kind: 'host', sourceId: source.sourceId }))).toMatchObject({ code: 'unavailable' });
         expect(viewing.readViewing('view-1')).toBeNull();
         expect(requests).toHaveLength(1);

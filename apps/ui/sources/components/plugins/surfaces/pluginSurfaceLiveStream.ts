@@ -9,6 +9,10 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { createActionApprovalContinuationObserver, resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
+import { observeActionApprovalContinuation } from '@/components/approvals/observeActionApprovalContinuation';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
 
 /** Per-viewing custody is private to one mount; no reusable consent/grant is retained. */
@@ -16,6 +20,8 @@ export function createPluginSurfaceLiveStreamOwner(input: Readonly<{
     pluginId: string; occurrenceId: string; machineId: string; serverId: string;
     lifetimeSignal: AbortSignal; isCurrent(): boolean;
     executeAction: PluginSurfaceHostApiMethodHandler;
+    scope: ServerAccountScope;
+    fetchArtifact(artifactId: string, signal: AbortSignal): Promise<DecryptedArtifact | null>;
 }>) {
     const viewings = new Map<string, Readonly<{ source: DaemonPluginUiCaptureSourceDescriptorV1; dispose(): void }>>();
     const pending = new Map<string, Readonly<{ controller: AbortController; dispose(): void }>>();
@@ -30,9 +36,6 @@ export function createPluginSurfaceLiveStreamOwner(input: Readonly<{
         const parsed = PluginUiWatchLiveStreamRequestV1Schema.safeParse(request.payload);
         if (!parsed.success) return createPluginSurfaceHostApiError('invalid_payload', ['capture_reference_invalid']);
         const { reference, subscriptionId } = parsed.data;
-        if (reference.kind === 'plugin' && reference.source.pluginId !== input.pluginId) {
-            return createPluginSurfaceHostApiError('unavailable', ['capture_source_denied']);
-        }
         if (!input.isCurrent() || input.lifetimeSignal.aborted || options?.signal?.aborted) {
             return createPluginSurfaceHostApiError('unavailable', ['capture_viewing_cancelled']);
         }
@@ -42,7 +45,9 @@ export function createPluginSurfaceLiveStreamOwner(input: Readonly<{
         const controller = new AbortController();
         const abort = () => controller.abort();
         options?.signal?.addEventListener('abort', abort, { once: true });
+        let stopApprovalObservation: (() => void) | undefined;
         const finish = () => {
+            stopApprovalObservation?.();
             controller.abort();
             if (pending.get(subscriptionId)?.controller === controller) pending.delete(subscriptionId);
             if (viewings.get(subscriptionId)?.dispose === finish) viewings.delete(subscriptionId);
@@ -65,9 +70,26 @@ export function createPluginSurfaceLiveStreamOwner(input: Readonly<{
                 return createPluginSurfaceHostApiError('unavailable', ['capture_viewing_cancelled']);
             }
             if (source.requiresApproval) {
-                const approved = await input.executeAction({ ...request, requestId: `${request.requestId}:capture-view`, method: 'executeAction',
-                    payload: { action: 'capture.view', input: { sourceId: source.sourceId, sourceOccurrenceId: source.sourceOccurrenceId } },
+                const actionInput = { sourceId: source.sourceId, sourceOccurrenceId: source.sourceOccurrenceId };
+                const initial = await input.executeAction({ ...request, requestId: `${request.requestId}:capture-view`, method: 'executeAction',
+                    payload: { action: 'capture.view', input: actionInput },
                 }, { signal: controller.signal });
+                // The exact admitted receipt retains the plugin's automation identity;
+                // observing it must not require or manufacture a host-user origin.
+                const settled = await resumeActionExecutionResult({ result: { ok: true, result: initial },
+                    actionId: 'capture.view', requestId: `${request.requestId}:capture-view`, scope: input.scope, signal: controller.signal,
+                    onApprovalPending: registration => {
+                        const observer = createActionApprovalContinuationObserver({ onExecuted: () => {} });
+                        const deliver = observer.subscribe(() => observer.deliverSettlement());
+                        const observe = observeActionApprovalContinuation({ observer, scope: input.scope,
+                            isCurrent: () => !controller.signal.aborted && input.isCurrent(),
+                            fetchArtifact: artifactId => input.fetchArtifact(artifactId, controller.signal) });
+                        stopApprovalObservation = () => { observe(); deliver(); observer.dispose(); };
+                        observer.requestApproval(registration);
+                    },
+                });
+                stopApprovalObservation?.();
+                const approved = settled.ok ? settled.result : null;
                 if (!approved || typeof approved !== 'object' || Array.isArray(approved)
                     || !('admitted' in approved) || approved.admitted !== true
                     || !('sourceId' in approved) || approved.sourceId !== source.sourceId

@@ -57,11 +57,8 @@ export function createMachineLiveStreamCaptureRegistry(): MachineLiveStreamCaptu
     const retirements = new Map<string, AbortController>();
     const describeViewing: MachineLiveStreamCaptureRegistry['describeViewing'] = (input) => {
         const reference = input.reference;
-        if (reference.kind === 'plugin' && reference.source.pluginId !== input.pluginId) {
-            return { ok: false, reasonCode: 'capture_source_denied' };
-        }
         const source = reference.kind === 'host' ? sourcesById.get(reference.sourceId)
-            : [...sourcesById.values()].find(candidate => candidate.plugin?.pluginId === input.pluginId
+            : [...sourcesById.values()].find(candidate => candidate.plugin?.pluginId === reference.source.pluginId
                 && candidate.plugin.localId === reference.source.localId);
         if (!source || source.retirementSignal?.aborted) return { ok: false, reasonCode: 'capture_source_unavailable' };
         if (reference.kind === 'host' && source.plugin) return { ok: false, reasonCode: 'capture_source_denied' };

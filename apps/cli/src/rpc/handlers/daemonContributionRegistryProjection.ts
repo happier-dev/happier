@@ -2655,7 +2655,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
             const registry = opts.resolveCaptureRegistry?.();
             if (!registry) return { ok: false, code: 'capture_source_unavailable' };
             if (request.reference.kind === 'plugin') {
-                if (request.reference.source.pluginId !== request.callerPluginId) return { ok: false, code: 'capture_source_denied' };
                 await registerPluginCaptureSource({ runtimeRegistry: lease.registry, captureRegistry: registry, reference: request.reference.source });
             }
             context?.signal?.throwIfAborted();

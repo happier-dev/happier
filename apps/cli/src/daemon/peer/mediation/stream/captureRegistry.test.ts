@@ -19,7 +19,7 @@ describe('createMachineLiveStreamCaptureRegistry', () => {
         const replaced = registry.resolve({ sourceId: 'screen' });
         expect(replaced.ok && replaced.source.sourceOccurrenceId).not.toBe(oldOccurrence);
     });
-    it('refuses foreign plugin sources and a host alias to a private plugin source', () => {
+    it('resolves the explicitly named plugin producer and rejects a host alias', () => {
         const registry = createMachineLiveStreamCaptureRegistry();
         const source = {
             sourceId: 'private-source', streamFamily: 'screen',
@@ -34,7 +34,7 @@ describe('createMachineLiveStreamCaptureRegistry', () => {
         registry.register(source);
         expect(registry.describeViewing({ pluginId: 'acme.foreign',
             reference: { kind: 'plugin', source: { pluginId: 'acme.owner', localId: 'screen' } },
-        })).toEqual({ ok: false, reasonCode: 'capture_source_denied' });
+        })).toMatchObject({ ok: true, source: { sourceId: 'private-source', plugin: { pluginId: 'acme.owner' } } });
         expect(registry.describeViewing({ pluginId: 'acme.foreign',
             reference: { kind: 'host', sourceId: 'private-source' },
         })).toEqual({ ok: false, reasonCode: 'capture_source_denied' });

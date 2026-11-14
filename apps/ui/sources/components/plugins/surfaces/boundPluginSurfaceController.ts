@@ -1201,6 +1201,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             serverId: target.serverId ?? accountLifetime.scope.serverId, lifetimeSignal: mountLifetime.signal,
             isCurrent: () => isCurrent() && authorityKey === readMachineAuthorityKey(readActionInputFacts()),
             executeAction: (request, options) => hostApi.handleRequest(request, options),
+            scope: accountLifetime.scope,
+            fetchArtifact: async (artifactId, signal) => (await captureLazyActionAccountContext(accountLifetime.scope.serverId, signal)).fetchArtifact(artifactId, { signal }),
         }) : null;
     };
     let liveStreams = createLiveStreams();
