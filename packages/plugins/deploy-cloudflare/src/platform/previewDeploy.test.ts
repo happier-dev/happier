@@ -132,8 +132,8 @@ it('does not normalize a different build identity or send after local cancellati
 it('keeps an absent or evicted Preview unavailable and never creates a replacement or writes production', async () => {
   const h = fixture([]);
   h.request.mockImplementationOnce(async () => ({ status: 404, headers: {}, body: new Uint8Array() }));
-  expect(await entry.deployPreview({ sourceIntent }, preview, h.context))
-    .toEqual({ v: 1, code: 'deployment_unavailable', phase: 'send', retryable: false });
+  await expect(entry.deployPreview({ sourceIntent }, preview, h.context))
+    .rejects.toMatchObject({ code: 'deployment_unavailable', details: { phase: 'send' }, retryable: false });
   expect(h.request.mock.calls.map(([request]) => [request.method, request.url])).toEqual([
     ['POST', `${root}/builds/workers/${workerTag}/previews/${previewId}/builds`],
   ]);

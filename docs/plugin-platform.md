@@ -2120,7 +2120,10 @@ the ordinary Action success/failure envelope and existing permission checks.
 In unreleased 0.3 source, the Protocol Action invoker also owns cancellation
 settlement. Once a non-read handler starts, cancellation still reaches its IO
 signal, while the invoker awaits the handler's exact success, native failure or
-typed unknown outcome. The same input-sensitive `readOnly` declaration decides
+typed unknown outcome. A native `AbortError` or rejection with the exact
+invocation signal reason acknowledges cancellation and settles as
+`plugin_action_aborted`; an aborted signal alone never rewrites a received
+success or provider failure. The same input-sensitive `readOnly` declaration decides
 this policy; hosts and the SDK testkit pass that declaration to the invoker
 without a provider or role opt-in. Cancellation before handler entry still
 prevents dispatch. Read-only Actions and Resource observations retain their

@@ -969,6 +969,32 @@ describe('createPluginActionInvocation', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it.each(['dom', 'node', 'reason'] as const)('projects a native %s abort from a started mutation as typed cancellation', async kind => {
+    const caller = new AbortController();
+    const pending = createInvocation().invoke(null, {
+      signal: caller.signal,
+      handler: async ({ signal }) => {
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        if (kind !== 'node') signal.throwIfAborted();
+        throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError', code: 'ABORT_ERR' });
+      },
+    });
+    caller.abort(kind === 'reason' ? new Error('caller stopped') : undefined);
+    await expect(pending).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' });
+  });
+
+  it('preserves a native provider failure received after caller cancellation', async () => {
+    const caller = new AbortController();
+    let rejectHandler!: (error: Error) => void;
+    const pending = createInvocation().invoke(null, { signal: caller.signal,
+      handler: () => new Promise<never>((_resolve, reject) => { rejectHandler = reject; }),
+    });
+    caller.abort();
+    rejectHandler(new TypeError('Provider rejected the request'));
+    await expect(pending).resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed',
+      data: { failureCause: { errorClass: 'TypeError' } } });
+  });
+
   it('retains the validated outcome of a started mutation after cancellation', async () => {
     const caller = new AbortController();
     let resolveHandler!: (value: { nativeId: string }) => void;

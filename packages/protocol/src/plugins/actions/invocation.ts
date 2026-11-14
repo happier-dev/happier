@@ -1107,6 +1107,12 @@ export function createPluginActionInvocation(params: Readonly<{
         }
         if (settlement.kind === 'rejected') {
           const error = settlement.error;
+          // A native abort is the handler's cancellation acknowledgement. An
+          // aborted signal alone cannot relabel a received failure or effect.
+          if (!isPluginError(error) && (error instanceof Error && error.name === 'AbortError'
+            || linked.signal.aborted && error === linked.signal.reason)) {
+            return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+          }
           // A rejected handler settlement also already won the cancellation race.
           // Retirement afterwards cannot erase a known canonical failure.
           const pluginError = readPluginActionError(error);

@@ -60,7 +60,7 @@ it('keeps a named Preview independent from the provider-configured Git branch', 
 it('returns missing or evicted Preview as unavailable with zero fallback reads or production writes', async () => {
   const h = fixture([]);
   h.request.mockResolvedValueOnce({ status: 404, headers: {}, body: new Uint8Array() });
-  expect(await preparePreview(selection, h.context)).toEqual({ v: 1, code: 'deployment_unavailable', phase: 'link', retryable: false });
+  await expect(preparePreview(selection, h.context)).rejects.toMatchObject({ code: 'deployment_unavailable', details: { phase: 'link' }, retryable: false });
   expect(h.request).toHaveBeenCalledTimes(1);
 });
 

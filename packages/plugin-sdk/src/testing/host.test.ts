@@ -363,6 +363,7 @@ function actionManifest(
   pluginId: string,
   actionId: string,
   surfaces: readonly ('cli' | 'plugin')[],
+  readOnly?: boolean,
 ): PluginManifest {
   return {
     schemaVersion: 2,
@@ -378,6 +379,7 @@ function actionManifest(
       execution: { target: 'daemon' },
       scopes: ['global'],
         surfaces: [...surfaces],
+        ...(readOnly === undefined ? {} : { readOnly }),
         ...(surfaces.includes('cli') ? { placementBindings: ['commandPalette'] as const } : {}),
         dangerLevel: 'safe',
       }],
@@ -2045,7 +2047,7 @@ describe('createPluginTestkit', () => {
     const caller = new AbortController();
     const handler = vi.fn(() => new Promise<never>(() => {}));
     const testkit = await createPluginTestkit({
-      manifest: actionManifest('acme.abort', 'wait', ['cli']),
+      manifest: actionManifest('acme.abort', 'wait', ['cli'], true),
       module: {
         activate(api) {
           api.actions.register('wait', handler);
@@ -2588,10 +2590,10 @@ describe('createPluginTestkit', () => {
     await testkit.dispose();
   });
 
-  it('aborts testkit-owned invocation signals when the testkit is disposed', async () => {
+  it('aborts testkit-owned read invocation signals when the testkit is disposed', async () => {
     let invocationSignal: AbortSignal | undefined;
     const testkit = await createPluginTestkit({
-      manifest,
+      manifest: actionManifest('acme.testkit', 'echo', ['cli'], true),
       module: {
         activate(api) {
           api.actions.register('echo', async (_input, context) => {
