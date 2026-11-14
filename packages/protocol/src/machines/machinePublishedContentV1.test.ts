@@ -137,7 +137,7 @@ describe('whole Machine publication', () => {
     }], attachedPresets: [
       { kind: 'accountPreset', presetId: 'base', presetRevision: 3 },
       { kind: 'bundledPreset', ref: { pluginId: 'example.machine', localId: 'base', revision: 'v2' } },
-    ], updates: { status: 'satisfied', pendingSecurity: 2, pendingAll: 4, rebootNeeded: true } };
+    ], updates: { status: 'satisfied', pendingSecurity: 2, pendingAll: 4, rebootNeeded: true, checkedAt: 1_794_686_700_000 } };
     expect(parseMachinePublishedDaemonStateV1({ status: 'running', setup })).toMatchObject({ setup });
     expect(StoredMachinePublishedDaemonStateV1Schema.parse({ status: 'running', setup })).toMatchObject({ setup });
     for (const unsafe of [{ ...setup, script: 'echo private' }, { ...setup, secretRefs: {} },

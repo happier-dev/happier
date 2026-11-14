@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { observeNativeUpdates, createNativeUpdatesSteps } from './nativeUpdates.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { dnf5Fixtures } from './nativeUpdates.dnf5.fixtures.js';
@@ -44,9 +44,27 @@ function dnf5Run(mode: 'updates' | 'empty' | 'security-failure' | 'reboot-failur
 }
 
 describe('native OS updates', () => {
+    it.each(['apt', 'dnf'] as const)('timestamps the completed %s check rather than a later read', async manager => {
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+        const native = manager === 'apt' ? aptRun([]) : dnf5Run('empty');
+        const run: NativeRun = async (executable, args, env) => {
+            const result = await native(executable, args, env);
+            if (executable === 'test' || args.includes('needs-restarting')) clock.mockReturnValue(2_000);
+            return result;
+        };
+        try {
+            const result = await observeNativeUpdates({ platform: 'linux', run });
+            expect(result.observation).toMatchObject({ checkedAt: 2_000 });
+            clock.mockReturnValue(3_000);
+            expect(result.observation).toMatchObject({ checkedAt: 2_000 });
+            expect((await observeNativeUpdates({ platform: 'linux', run: native })).observation)
+                .toMatchObject({ checkedAt: 3_000 });
+        } finally { clock.mockRestore(); }
+    });
+
     it('decodes Fedora 41 DNF5 output into the existing observation and exact package steps', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run() });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: false });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: false, checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([
             { id: 'os-updates', kind: 'package', manager: 'dnf', packages: [
                 { name: 'bash', version: '0:5.2.32-1.fc41' }, { name: 'fedora-release-common', version: '0:41-33' },
@@ -59,7 +77,7 @@ describe('native OS updates', () => {
 
     it('recognizes empty DNF5 selections including the no-advisory diagnostic', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run('empty') });
-        expect(result.observation).toEqual({ status: 'satisfied', backend: 'dnf', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false });
+        expect(result.observation).toEqual({ status: 'satisfied', backend: 'dnf', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([]);
     });
 
@@ -83,7 +101,7 @@ describe('native OS updates', () => {
 
     it('plans only exact security candidates and publishes the native reboot marker', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: aptRun([ordinary, security], 0) });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'apt', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'apt', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })).toEqual([
             { id: 'os-updates', kind: 'package', manager: 'apt', packages: [{ name: security.name, version: security.version }] },
         ]);
@@ -94,7 +112,7 @@ describe('native OS updates', () => {
 
     it('distinguishes an empty native result from absent or malformed security inspection', async () => {
         const empty = await observeNativeUpdates({ platform: 'linux', run: aptRun([]) });
-        expect(empty.observation).toEqual({ status: 'satisfied', backend: 'apt', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false });
+        expect(empty.observation).toEqual({ status: 'satisfied', backend: 'apt', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: empty.candidates! })).toEqual([]);
         for (const response of [missing, ok('{"packages":[]}'), ok(JSON.stringify({ architecture: 'amd64', packages: [{ ...security, security: undefined }] }))]) {
             const result = await observeNativeUpdates({ platform: 'linux', run: async (executable, args, env) =>
@@ -123,7 +141,7 @@ describe('native OS updates', () => {
             if (args.includes('needs-restarting')) return { ...ok('Reboot is required'), code: 1 };
             return ok(args.includes('--security') ? 'openssl\t1:3.0.2-1\tx86_64\n' : 'curl\t0:8.5.0-2\tx86_64\nopenssl\t1:3.0.2-1\tx86_64\n');
         } });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })[0]).toMatchObject({ manager: 'dnf', packages: [{ name: 'openssl', version: '1:3.0.2-1' }] });
         expect(commands.filter(command => command.includes('repoquery')).every(command => command.includes('--upgrades'))).toBe(true);
     });

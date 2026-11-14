@@ -52,6 +52,7 @@ describe('Machine updates public read', () => {
         try {
         const metadataBefore = fixture.machine.metadata?.setup;
         for (const mode of ['effects', 'check'] as const) {
+          const checkStartedAt = Date.now();
           const result = await fixture.publicExecutor.execute('machines.setup.plan', {
             homeId: 'srv_home', machineId: fixture.machine.id, updates: { scope: 'security' }, mode,
           }, { actionRequestId: mode === 'effects'
@@ -62,7 +63,10 @@ describe('Machine updates public read', () => {
           const plan = MachineSetupPlanResultV1Schema.parse(result.result);
           expect(plan.updates?.observation).toMatchObject({
             backend: 'apt', status: 'drifted', pendingAll: 1, pendingSecurity: 1, rebootNeeded: false,
+            checkedAt: expect.any(Number),
           });
+          expect(plan.updates?.observation.checkedAt).toBeGreaterThanOrEqual(checkStartedAt);
+          expect(plan.updates?.observation.checkedAt).toBeLessThanOrEqual(Date.now());
           expect(fixture.machine.daemonState?.setup?.updates).toEqual(plan.updates?.observation);
           expect(fixture.machine.metadata?.setup).toEqual(metadataBefore);
         }

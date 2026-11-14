@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Machine OS-update check time (unreleased 0.3)
+
+The closed `MachineSetupUpdatesObservationV1` admits optional `checkedAt`, Unix
+epoch milliseconds when the native inspector completed its last successful check.
+The daemon publishes it with the existing update observation; unavailable checks
+retain the previous successful time alongside last-known counts. Reads never
+refresh it. Older stored observations without a time remain valid and mean not
+reported. Protocol, native producer, daemon and UI's shared stored reader reload
+together under the unpublished 0.3 direct cut; older strict development readers
+reject the added field. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has neither the setup observation schema
+nor native update inspector. No epoch, adapter, polling or extra state owner is added.
+
 ## Saved finite health results (unreleased 0.3)
 
 The canonical result schema admits optional typed `cause` facts. Current finite

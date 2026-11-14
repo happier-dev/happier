@@ -328,11 +328,11 @@ it('retains last-known update facts when a native check becomes unavailable with
         for (let index = 0; index < 16; index++) await f.client.publishMachineSetupUpdates({ ...unavailable });
         expect(f.attempts).toHaveLength(1);
         expect(f.machine.daemonState?.setup?.updates).toEqual(unavailable);
-        const known = { status: 'drifted' as const, backend: 'apt', pendingAll: 4, pendingSecurity: 0, rebootNeeded: false };
+        const known = { status: 'drifted' as const, backend: 'apt', pendingAll: 4, pendingSecurity: 0, rebootNeeded: false, checkedAt: 1_794_686_700_000 };
         await f.client.publishMachineSetupUpdates(known);
         await f.client.publishMachineSetupUpdates(unavailable);
         expect(f.machine.daemonState?.setup?.updates).toEqual({ ...unavailable,
-            pendingAll: 4, pendingSecurity: 0, rebootNeeded: false });
+            pendingAll: 4, pendingSecurity: 0, rebootNeeded: false, checkedAt: known.checkedAt });
         for (let index = 0; index < 16; index++) await f.client.publishMachineSetupUpdates({ ...unavailable });
         expect(f.attempts).toHaveLength(3);
         await f.client.publishMachineSetupUpdates(known);

@@ -117,7 +117,7 @@ describe('reviewed Machine OS update Action', () => {
     expect(fixture.machine.metadata?.setup).toEqual(desired);
     expect(fixture.metadataWrites).toEqual([]);
     expect(fixture.machine.daemonState?.setup?.updates).toEqual({ status: 'satisfied', backend: 'apt',
-      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false });
+      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
     // Review, admission and post-settlement refresh each inspect the OS once;
     // the root interpreter never enumerates a broader update set.
     expect(JSON.parse(await readFile(fixture.statePath, 'utf8'))).toMatchObject({ updatesChecks: 3 });

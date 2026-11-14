@@ -3214,13 +3214,16 @@ refuses a stale plan rather than choosing unreviewed updates. If the controller 
 interrupted/uncertain status and Workflow inspection/recovery apply; acceptance
 of a reboot is not proof of successful Run completion.
 
-The native owner publishes counts and the reboot-needed fact at
-`daemonState.setup.updates`, through the normal Machine publication owner. Equal
-observations produce no publication. Reads occur on explicit Security demand
+The native owner publishes counts, the reboot-needed fact and optional `checkedAt`
+at `daemonState.setup.updates`, through the normal Machine publication owner.
+`checkedAt` is Unix epoch milliseconds when a successful native update inspection
+completed, never when its observation was read. Each completed check therefore
+updates its reported time even when package counts are unchanged. Republishing
+the same observation produces no publication. Reads occur on explicit Security demand
 (open, reconnect or refresh), before an updates Apply, and after native
 setup/Software/updates settlement, without a polling timer. A missing count or
 reboot fact stays unknown. Native unavailable/unverifiable observations retain
-last-known counts and reboot state at the publication owner; the Security hook
+last-known counts, reboot state and successful check time at the publication owner; the Security hook
 labels those facts stale, as it does during refresh or while offline. The data port also exposes explicit refresh for the separately composed P30
 reboot consumer to call after reboot settlement.
 Linux APT uses python-apt's native security classification and the

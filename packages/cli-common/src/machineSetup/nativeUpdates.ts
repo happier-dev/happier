@@ -48,7 +48,7 @@ function candidates(manager: 'apt' | 'dnf', values: unknown): NativeUpdatesCandi
 }
 function observed(value: NativeUpdatesCandidates, rebootNeeded: boolean): NativeUpdatesObservation {
     return { observation: { status: value.all.length || rebootNeeded ? 'drifted' : 'satisfied', backend: value.manager,
-        pendingAll: value.all.length, pendingSecurity: value.security.length, rebootNeeded }, candidates: value };
+        pendingAll: value.all.length, pendingSecurity: value.security.length, rebootNeeded, checkedAt: Date.now() }, candidates: value };
 }
 async function apt(run: NativeRun): Promise<NativeUpdatesObservation> {
     const result = await run('python3', ['-c', aptInspector], locale);
