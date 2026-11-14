@@ -13,8 +13,6 @@ type SourceMessageSnapshot = Readonly<{
     permissionStatus?: NonNullable<ToolCall['permission']>['status'];
     runningFields?: ReturnType<typeof readTranscriptExecutionRunToolFields>;
     resultStatus?: ReturnType<typeof readExecutionRunResultStatus>;
-    startsRun?: boolean;
-    runIds?: readonly string[];
     children?: readonly SourceMessageSnapshot[];
 }>;
 
@@ -30,7 +28,7 @@ function captureSourceMessage(
 ): SourceMessageSnapshot {
     const cached = snapshotsByMessage.get(message);
     // Published messages are immutable except for shared permission decisions. Walk tools
-    // to observe those decisions, but reuse unchanged text/run parsing and child snapshots.
+    // to observe those decisions, but reuse unchanged run parsing and child snapshots.
     if (cached && message.kind !== 'tool-call') return cached;
     const snapshot = captureUncachedSourceMessage(message, snapshotsByMessage, cached);
     snapshotsByMessage.set(message, snapshot);
@@ -42,13 +40,6 @@ function captureUncachedSourceMessage(
     snapshotsByMessage: WeakMap<Message, SourceMessageSnapshot>,
     cached?: SourceMessageSnapshot,
 ): SourceMessageSnapshot {
-    if (message.kind === 'agent-text') {
-        return {
-            message,
-            startsRun: looksLikeExecutionRunStartText(message.text),
-            runIds: extractExecutionRunIdsFromAgentText(message.text),
-        };
-    }
     if (message.kind !== 'tool-call') return { message };
     const permissionStatus = message.tool.permission?.status;
     const children = captureSourceMessages(message.children, snapshotsByMessage, cached?.children);
@@ -84,14 +75,19 @@ function captureSourceMessages(
     return next ?? previous!;
 }
 
-function areSourceMessagesEqual(left: SourceMessageSnapshot, right: SourceMessageSnapshot): boolean {
+function areSourceMessagesEqual(left: SourceMessageSnapshot, right: SourceMessageSnapshot, nested: boolean): boolean {
     if (left === right) return true;
     const a = left.message;
     const b = right.message;
     if (a.id !== b.id || a.kind !== b.kind || a.seq !== b.seq || a.createdAt !== b.createdAt
         || a.realID !== b.realID || a.localId !== b.localId) return false;
     if (a.kind === 'agent-text' && b.kind === 'agent-text') {
-        return left.startsRun === right.startsRun && shallow(left.runIds, right.runIds);
+        if (a.text === b.text) return true;
+        // Nested text also carries provider lifecycle events, such as teammate shutdowns.
+        if (nested) return false;
+        // Root text is admitted by the execution-run source classifier only.
+        return looksLikeExecutionRunStartText(a.text) === looksLikeExecutionRunStartText(b.text)
+            && shallow(extractExecutionRunIdsFromAgentText(a.text), extractExecutionRunIdsFromAgentText(b.text));
     }
     if (a.kind !== 'tool-call' || b.kind !== 'tool-call') return a === b;
     const toolA = a.tool;
@@ -109,11 +105,11 @@ function areSourceMessagesEqual(left: SourceMessageSnapshot, right: SourceMessag
         // Reducer publication replaces input/result on change and preserves unchanged references.
         if (toolA.input !== toolB.input || toolA.result !== toolB.result) return false;
     }
-    return areSourceSnapshotsEqual(left.children!, right.children!);
+    return areSourceSnapshotsEqual(left.children!, right.children!, true);
 }
 
-function areSourceSnapshotsEqual(left: readonly SourceMessageSnapshot[], right: readonly SourceMessageSnapshot[]): boolean {
-    return left.length === right.length && left.every((snapshot, index) => areSourceMessagesEqual(snapshot, right[index]));
+function areSourceSnapshotsEqual(left: readonly SourceMessageSnapshot[], right: readonly SourceMessageSnapshot[], nested = false): boolean {
+    return left.length === right.length && left.every((snapshot, index) => areSourceMessagesEqual(snapshot, right[index], nested));
 }
 
 export function reconcileSubagentSourceMessageProjection(

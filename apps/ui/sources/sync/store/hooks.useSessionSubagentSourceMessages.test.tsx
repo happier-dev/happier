@@ -7,6 +7,8 @@ import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTy
 import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 import { useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
+import { deriveSessionSubagents } from '@/sync/domains/session/subagents/deriveSessionSubagents';
+import type { NormalizedMessage } from '@/sync/typesRaw';
 
 const SESSION_ID = 's-subagent-source';
 const initialStorageState = storage.getState();
@@ -56,6 +58,39 @@ function seed(message: Message, subagentSourceVersion: number): void {
 }
 
 describe('useSessionSubagentSourceMessages', () => {
+    it('publishes a teammate shutdown when streamed child text completes without changing its identity', async () => {
+        const call: NormalizedMessage = {
+            id: 'agent-call', localId: null, createdAt: 1000, role: 'agent', isSidechain: false,
+            content: [{ type: 'tool-call', id: 'agent', name: 'Agent', input: { name: 'Beta', team_name: 'probe' }, description: null, uuid: 'agent-call', parentUUID: null }],
+        };
+        function textSnapshot(text: string, segmentState: 'streaming' | 'complete'): NormalizedMessage {
+            return {
+                id: 'shutdown', localId: 'shutdown', createdAt: 2000, role: 'agent', isSidechain: true, sidechainId: 'agent',
+                meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'shutdown', segmentState, updatedAtMs: segmentState === 'complete' ? 3000 : 2000 } },
+                content: [{ type: 'text', text, uuid: 'shutdown', parentUUID: null }],
+            };
+        }
+        storage.getState().applyMessages(SESSION_ID, [call, textSnapshot('{"type":"shutdown_approved","from":', 'streaming')]);
+        const hook = await renderHook(() => {
+            const messages = useSessionSubagentSourceMessages(SESSION_ID);
+            return { messages, subagents: deriveSessionSubagents({ session: { metadata: { flavor: 'claude' } }, messages }) };
+        });
+        expect(hook.getCurrent().subagents).toMatchObject([{ id: 'agent_team_member:probe:Beta@probe', status: 'running' }]);
+        const firstRoot = hook.getCurrent().messages[0];
+        if (firstRoot.kind !== 'tool-call') throw new Error('Expected Agent call');
+        const firstChild = firstRoot.children[0];
+
+        await act(async () => {
+            storage.getState().applyMessages(SESSION_ID, [textSnapshot('{"type":"shutdown_approved","from":"Beta"}', 'complete')]);
+        });
+
+        expect(hook.getCurrent().subagents).toMatchObject([{ id: 'agent_team_member:probe:Beta@probe', status: 'terminated' }]);
+        const nextRoot = hook.getCurrent().messages[0];
+        if (nextRoot.kind !== 'tool-call') throw new Error('Expected Agent call');
+        expect(nextRoot.children[0]).toMatchObject({ id: firstChild.id, createdAt: firstChild.createdAt, text: '{"type":"shutdown_approved","from":"Beta"}' });
+        await hook.unmount();
+    });
+
     it('reuses unchanged nested text and run payload projections across source arrivals', async () => {
         let textReads = 0;
         let runFieldReads = 0;
@@ -71,7 +106,6 @@ describe('useSessionSubagentSourceMessages', () => {
         const root = createToolCallMessageFixture({ id: 'root', children: [announcement, run] });
         seed(root, 1);
         const hook = await renderHook(() => useSessionSubagentSourceMessages(SESSION_ID));
-        expect(textReads).toBeGreaterThan(0);
         expect(runFieldReads).toBeGreaterThan(0);
         textReads = 0;
         runFieldReads = 0;
