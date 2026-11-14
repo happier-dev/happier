@@ -614,10 +614,10 @@ export function createCliWorkflowFamily(
           });
           return combined ? { execute: (request, ingress) => request.actionId === 'workflow.run.start'
             ? owner.startCombined({ ...combined, start: request.input, context: request.context }, ingress)
-            : request.actionId === 'workflow.run.wait'
-              ? owner.waitCombined({ ...combined, start: { ...combined.start, runId: request.input.runId },
-                context: request.context }, ingress)
-            : owner.execute(request, ingress) } satisfies Parameters<typeof createWorkflowActionExecutor>[0]['runs'] : owner;
+            : owner.execute(request, ingress),
+            waitCombinedAction: (request, ingress) => owner.waitCombined({ ...combined,
+              start: { ...combined.start, runId: request.input.runId }, context: request.context }, ingress),
+          } satisfies Parameters<typeof createWorkflowActionExecutor>[0]['runs'] : owner;
         })(),
       });
       return execute;
@@ -633,9 +633,10 @@ export function createCliWorkflowFamily(
     return ownedWorkflowAction({ actionId: 'workflow.run.start', input: request.start, context: accountCallerContext(request.context) }, request);
   };
   const waitForCombinedWorkflow: CliWorkflowFamily['waitForCombinedWorkflow'] = async (request, runId) => {
-    if (!ownedWorkflowAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-    return ownedWorkflowAction({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] },
-      context: accountCallerContext(request.context) }, request);
+    if (!createOwnedWorkflowExecutor) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    const args: WorkflowActionExecuteArgs<'workflow.run.wait'> = { actionId: 'workflow.run.wait',
+      input: { runId, conditions: ['terminal'] }, context: accountCallerContext(request.context) };
+    return (await createOwnedWorkflowExecutor(args, request)).waitCombined(args);
   };
   const readCombinedWorkflowInvocations: CliWorkflowFamily['readCombinedWorkflowInvocations'] = async (request, input) => {
     if (!ownedWorkflowAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };

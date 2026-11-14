@@ -1,4 +1,4 @@
-import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1 } from '../../workflows/actionsV1.js';
+import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema } from '../../workflows/actionsV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { ActionExecutorDeps, HostReviewedChildrenPreparationV1, WorkflowActionExecute, WorkflowActionExecuteArgs } from './types.js';
 import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflows/index.js';
@@ -150,6 +150,7 @@ export type WorkflowStartApprovalPreparationV1 = (args: WorkflowActionExecuteArg
 
 export type WorkflowRunActionOwner = Readonly<{
   prepareStartApproval?: WorkflowStartApprovalPreparationV1;
+  waitCombinedAction?: (args: WorkflowActionExecuteArgs<'workflow.run.wait'>, context?: WorkflowIngressContextV1) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
   execute: (args: RunActionArgs, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
 }>;
 
@@ -173,7 +174,9 @@ export function createWorkflowActionExecutor(deps: Readonly<{
   runs: WorkflowRunActionOwner;
   resolveIngressContext?: (args: WorkflowActionExecuteArgs) => Promise<WorkflowIngressContextV1 | undefined>;
   resolveTargetValidation?: (args: WorkflowActionExecuteArgs<'workflow.validate'>) => Promise<WorkflowTargetValidation>;
-}>): WorkflowActionExecute & Readonly<{ prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
+}>): WorkflowActionExecute & Readonly<{
+  waitCombined: (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse> | WorkflowActionFailureV1>;
+  prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
   presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => Promise<HostReviewedChildrenPreparationV1 | WorkflowActionFailureV1> }> {
   const resolvePreparation = async (rawArgs: WorkflowActionExecuteArgs) => {
       const resolved = resolveWorkflowActionContext(rawArgs.context);
@@ -321,7 +324,19 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       } : undefined, preparing || getActionSpec(rawArgs.actionId).sideEffectClass === 'read', rawArgs.actionId);
     }
   };
-  return Object.assign(execute, { prepareStartApproval: async (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
+  return Object.assign(execute, { waitCombined: async (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => {
+    const startedAtMs = Date.now();
+    try {
+      const prepared = await resolvePreparation(args);
+      if (!deps.runs.waitCombinedAction) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+      return await deps.runs.waitCombinedAction({ ...args, context: prepared.args.context,
+        input: parseWorkflowActionInput(WorkflowActionInputSchemasV1['workflow.run.wait'], args.input) }, prepared.context);
+    } catch (error) {
+      return normalizeWorkflowActionThrownError(error, deps.onFailureDiagnostic ? {
+        operation: args.actionId, durationMs: Date.now() - startedAtMs, emit: deps.onFailureDiagnostic,
+      } : undefined, true, args.actionId);
+    }
+  }, prepareStartApproval: async (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
     presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => {
     const startedAtMs = Date.now();
     try {

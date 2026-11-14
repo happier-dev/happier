@@ -592,8 +592,18 @@ describe('shared Account workflow run owner', () => {
     const cancellationObserved = new Promise<void>(resolve => { observedCancellation = resolve; });
     const controller = new AbortController();
     let settled: unknown;
-    const pending = owner.waitCombined({ ...waiting, context: { ...waiting.context, signal: controller.signal } })
-      .then(value => { settled = value; });
+    const unexpected = (): never => { throw new Error('combined_wait_must_not_access_definitions'); };
+    const definitions = createWorkflowDefinitionActions({ encodeListCursor: unexpected, assertDefinitionWriteAllowed: unexpected,
+      artifactStore: { read: unexpected, list: unexpected, create: unexpected, update: unexpected, delete: unexpected } });
+    let enabled = false;
+    const gateway = createWorkflowActionExecutor({ definitions, isWorkflowFeatureEnabled: () => enabled,
+      runs: { ...owner, waitCombinedAction: (args, ingress) => owner.waitCombined({ ...waiting,
+        start: { ...waiting.start, runId: args.input.runId }, context: args.context }, ingress) } });
+    const waitArgs = { actionId: 'workflow.run.wait' as const, input: { runId },
+      context: { ...waiting.context, signal: controller.signal } };
+    await expect(gateway.waitCombined(waitArgs)).resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    enabled = true;
+    const pending = gateway.waitCombined(waitArgs).then(value => { settled = value; });
     try {
       await pendingObserved;
       terminal = true;

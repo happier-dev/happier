@@ -788,7 +788,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>,
     ingressContext?: WorkflowIngressContextV1) => Promise<HostReviewedChildrenPreparationV1>;
   startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
-  waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
+  waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
 }> {
   const isSameHome = (context: RunArgs['context'], serverId: string) =>
     areServerProfileIdentifiersEquivalent(context.serverId, serverId, identifier =>
@@ -2611,8 +2611,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return WorkflowActionOutputSchemasV1[args.actionId].parse({ run: body.run, invocation: index, disposition: body.disposition });
   };
 
-  const execute = async (args: Parameters<WorkflowRunActionOwner['execute']>[0],
-    ingressContext?: WorkflowIngressContextV1, combined?: WorkflowCombinedRunStartV1): ReturnType<WorkflowRunActionOwner['execute']> => {
+  function execute(args: Parameters<WorkflowRunActionOwner['execute']>[0],
+    ingressContext?: WorkflowIngressContextV1): ReturnType<WorkflowRunActionOwner['execute']>;
+  function execute(args: WorkflowActionExecuteArgs<'workflow.run.wait'>,
+    ingressContext: WorkflowIngressContextV1 | undefined, combined: WorkflowCombinedRunStartV1): Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
+  async function execute(args: Parameters<WorkflowRunActionOwner['execute']>[0],
+    ingressContext?: WorkflowIngressContextV1, combined?: WorkflowCombinedRunStartV1): Promise<Awaited<ReturnType<WorkflowRunActionOwner['execute']>> | ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>> {
     if (args.actionId === 'workflow.run.invocations.complete_review' || args.actionId === 'workflow.run.invocations.publish_draft') return await review(args, ingressContext);
     if (args.actionId === 'workflow.run.start') return await start(args, ingressContext);
     // The caller's resource restriction is not the transport relay. Check it
@@ -3162,7 +3166,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       );
     }
     throw workflowError('continuation_unavailable');
-  };
+  }
   return { startCombined: async (request, ingressContext) => {
     deps.assertCurrent?.();
     try {
