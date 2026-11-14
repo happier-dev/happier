@@ -42,6 +42,31 @@ const refuse = (): never => { throw new PluginError({ code: 'service_admission_u
 // Docker --mount is CSV, not shell syntax. Quote the whole field, never a path fragment.
 const csv = (value: string) => /[",\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 
+// The pinned Linux image keeps root access to application volumes. Settle only
+// its selected repository back to the daemon, including partial failed writes.
+// Positional operands preserve binary stdin/stdout and never become shell code.
+const repairRepositoryOwnership = String.raw`owner=$1
+repository=$2
+shift 2
+exec 3<&0
+/entrypoint.sh "$@" <&3 3<&- &
+restic_pid=$!
+exec 3<&-
+trap 'kill -TERM "$restic_pid" 2>/dev/null || :' TERM INT
+wait "$restic_pid"
+status=$?
+if kill -0 "$restic_pid" 2>/dev/null; then
+    wait "$restic_pid"
+    status=$?
+fi
+if [ -z "$owner" ]; then
+    printf '%s\n' '{"severity":"warning","code":"backup_repository_ownership_unavailable","reason":"host_identity_unknown"}' >&2
+elif [ -d "$repository" ] && ! chown -Rh "$owner" "$repository"; then
+    printf '%s\n' '{"severity":"warning","code":"backup_repository_ownership_failed"}' >&2
+    [ "$status" -ne 0 ] || status=1
+fi
+exit "$status"`;
+
 /** Third operation arm of the existing native owner; no public Docker argv or runner. */
 export async function admitNativeResticCommand(input: NativeResticCommandInput, owner: Readonly<{
     source: Pick<DeploymentSourceMaterializationV1, 'rootPath' | 'environmentInstanceId'>; exec: ExecService; io: ProjectNativeToolchainIo;
@@ -93,7 +118,8 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             }
             const directory = await findPhysicalAncestor(repositoryMount.hostPath);
             if (!directory || !(await stat(directory.physicalAncestor)).isDirectory()) return refuse();
-            await access(directory.physicalAncestor, constants.R_OK | constants.W_OK);
+            // The admitted root helper owns repository IO and can repair an
+            // existing root-owned directory that this daemon cannot open yet.
             repositoryPath = `${directory.physicalAncestor}${directory.absentSuffix}`;
             mounts.push('--mount', ['type=bind', `source=${directory.physicalAncestor}`,
                 `target=${repositoryMount.containerPath}`].map(csv).join(','));
@@ -197,11 +223,19 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         await owner.identity.prove(reference, runtimeImage);
         const name = `happier-op-${createHash('sha256').update(JSON.stringify([
             owner.source.environmentInstanceId, input.context.operation.operationId, argv])).digest('hex')}`;
+        const repairOwnership = request?.writesRepository === true && repositoryMount !== undefined;
+        const uid = process.getuid?.();
+        const gid = process.getgid?.();
+        // This process is the executing Machine's daemon, including SSH hosts.
+        // Windows/unknown identities warn and skip; never substitute a default.
+        const repositoryOwner = uid !== undefined && gid !== undefined ? `${uid}:${gid}` : '';
         const createArgs = ['create', '--interactive', '--pull', 'never', '--name', name,
             '--label', `happier.operation=${name}`, ...(hostNetwork ? ['--network', 'host'] : []),
+            ...(repairOwnership ? ['--entrypoint', '/bin/sh'] : []),
             ...(!request ? ['--read-only', '--network', 'none', ...(!sqlite ? ['--entrypoint', input.archive ? '/bin/tar' : file?.mode === 'read' ? '/bin/cat' : file?.mode === 'write' ? '/bin/dd' : file?.mode === 'exists' ? '/bin/busybox' : undefined].filter((value): value is string => value !== undefined) : [])] : []), ...mounts,
             ...(request ? ['--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
-                ...request.environmentVariableNames.flatMap(value => ['--env', value])] : []), reference, ...argv];
+                ...request.environmentVariableNames.flatMap(value => ['--env', value])] : []), reference,
+            ...(repairOwnership ? ['-c', repairRepositoryOwnership, 'happier-restic-repository', repositoryOwner, argv[1]!] : []), ...argv];
         const tool = await owner.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
             cwd: owner.source.rootPath, ...(signal ? { signal } : {}) });
         let createLaunch: HostAuthorizedPluginExecLaunch | undefined;

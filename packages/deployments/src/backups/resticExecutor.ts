@@ -38,6 +38,8 @@ export type ResticRequestV1 = Readonly<{
     /** Finite nonsecret destination probe; database streams use their existing producer. */
     stdin?: Uint8Array;
     argv: readonly string[];
+    /** The native owner settles local repository ownership after these effects. */
+    writesRepository?: true;
     passwordFilePath: string;
     environmentVariableNames: ResticAccessV1['environmentVariableNames'];
     credentialFiles: ResticAccessV1['credentialFiles'];
@@ -61,6 +63,7 @@ export function buildResticRequestV1(input: Readonly<{
     access: ResticAccessV1; environmentId: string; command: ResticCommandV1;
 }>): ResticRequestV1 {
     const { access, command } = input;
+    let writesRepository = false;
     const environmentId = ownershipId(input.environmentId);
     const host = `happier-env-${environmentId}`;
     const environmentTag = `env:${environmentId}`;
@@ -75,17 +78,20 @@ export function buildResticRequestV1(input: Readonly<{
     if (access.s3?.addressing !== undefined) argv.push('-o', `s3.bucket-lookup=${access.s3.addressing}`);
     if (access.sftp) argv.push('-o', `sftp.command=ssh -F ${access.sftp.configFilePath} -s backup sftp`);
     switch (command.kind) {
-        case 'init': argv.push('init', '--repository-version', String(RESTIC_RUNTIME_V1.repositoryVersion)); break;
+        case 'init': writesRepository = true; argv.push('init', '--repository-version', String(RESTIC_RUNTIME_V1.repositoryVersion)); break;
         case 'config': argv.push('cat', 'config'); break;
-        case 'prune': case 'check': argv.push(command.kind); break;
+        case 'prune': case 'check': writesRepository = true; argv.push(command.kind); break;
         case 'probe':
+            writesRepository = true;
             argv.push('backup', '--host', `happier-probe-${ownershipId(command.operationId)}`,
                 '--tag', 'happier-probe', '--stdin', '--stdin-filename', 'destination-probe');
             break;
         case 'keyAdd':
+            writesRepository = true;
             argv.push('key', 'add', '--new-password-file', command.newPasswordFilePath);
             break;
         case 'backupStdin': case 'backupPaths': {
+            writesRepository = true;
             const sourceTag = buildResticSourceTagV1(command.sourceId);
             argv.push('backup', '--host', host, '--tag', 'happier', '--tag', environmentTag,
                 '--tag', command.kind === 'backupStdin' ? 'kind:dump' : 'kind:volume', '--tag', sourceTag);
@@ -110,17 +116,20 @@ export function buildResticRequestV1(input: Readonly<{
         case 'restoreVolume': argv.push('restore', `${nativeId(command.snapshotId)}:${RESTIC_VOLUME_SOURCE_PATH_V1}`,
             '--target', RESTIC_VOLUME_STAGE_PATH_V1, '--verify'); break;
         case 'forget': {
+            writesRepository = true;
             const retention = buildResticRetentionArgsV1(command.retention);
             if (!retention.length) throw new RangeError('Keep everything has no forget request');
             argv.push('forget', ...selector, '--group-by', 'host,tags', ...retention, '--dry-run');
             break;
         }
         case 'forgetExact':
+            writesRepository = true;
             if (!command.snapshotIds.length) throw new RangeError('Exact forget requires selected snapshots');
             argv.push('forget', ...command.snapshotIds.map(nativeId));
             break;
     }
-    return { runtime: RESTIC_RUNTIME_V1, argv, ...(command.kind === 'probe' ? { stdin: command.payload } : {}), passwordFilePath: access.passwordFilePath,
+    return { runtime: RESTIC_RUNTIME_V1, argv, ...(writesRepository ? { writesRepository: true as const } : {}),
+        ...(command.kind === 'probe' ? { stdin: command.payload } : {}), passwordFilePath: access.passwordFilePath,
         environmentVariableNames: [...access.environmentVariableNames], credentialFiles: access.credentialFiles.map(file => ({ ...file })),
         ...(repositoryMount ? { repositoryMount } : {}) };
 }

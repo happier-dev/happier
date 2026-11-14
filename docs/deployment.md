@@ -3094,7 +3094,13 @@ not initialize a repository or persist configuration or bindings. Save requires
 an existing repository; only `initializeAndSave` initializes one. For a missing
 local destination, Test reports repository absence without creating directories.
 Explicit initialization prepares the full repository directory as the daemon
-before starting the pinned helper, preserving access for later operations. SavedSecret
+before starting the pinned helper. Restic keeps its root identity for application
+volume access and restore. After a local repository-writing command, the same
+helper recursively returns only the selected repository to the daemon's host
+UID and GID without following symlinks. This also repairs existing root-owned
+repositories on their next backup. An unknown host identity skips ownership
+repair with the structured native warning `backup_repository_ownership_unavailable`;
+an ownership repair failure fails an otherwise successful command. SavedSecret
 references remain on the canonical `deployments.bindings.set` writer with purpose
 `backupDestination`, composed as a reviewed child after a successful probe. Home
 receives prepared Artifact references and public metadata for the Environment

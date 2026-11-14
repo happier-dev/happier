@@ -165,6 +165,16 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
                 if (!fs.existsSync(parent)) { firstCreated = parent; break; }
             }
             fs.mkdirSync(path.join(source, ...segments), {recursive:true, mode:0o700});
+            if (state.mode === 'repositoryOwnership') {
+                const repositoryPath = path.join(source, ...segments);
+                const indexPath = path.join(repositoryPath, 'index');
+                fs.mkdirSync(indexPath, {mode:0o700});
+                fs.writeFileSync(path.join(indexPath, 'fixture-index'), 'index', {mode:0o400});
+                // Docker is the OS boundary. A root helper's private directory
+                // is inaccessible to this non-root daemon; model that with 000
+                // without creating root-owned files in the shared test host.
+                fs.chmodSync(indexPath, 0o000);
+            }
             // The real container runs as root and creates private 0700 folders.
             // This same-UID boundary substitutes 000 on a newly created parent
             // to reproduce the daemon's EACCES without privileged test setup.
@@ -210,6 +220,21 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     else throw new Error('unexpected_restic_request');
     event({kind:'restic',argv});
     const finish = () => {
+        // Docker/OS boundary: a root helper can chown its admitted repository.
+        // The separate real-image probe exercises the actual shell/chown.
+        const repair = request.indexOf('happier-restic-repository');
+        if (state.mode === 'repositoryOwnership' && repair >= 0) {
+            const daemonUser = process.getuid()+':'+process.getgid();
+            if (request[repair + 1] !== daemonUser || request[repair + 2] !== repository
+                || request.includes('--user')) throw new Error('unexpected_repository_ownership');
+            const mount = request.find(value => value.startsWith('type=bind,source=')
+                && value.endsWith(',target=/run/happier/backup/repository'));
+            const source = mount.slice('type=bind,source='.length, -',target=/run/happier/backup/repository'.length);
+            const repositoryPath = path.join(source, path.posix.relative('/run/happier/backup/repository', repository));
+            if (fs.existsSync(repositoryPath)) fs.chmodSync(repositoryPath, 0o700);
+            const indexPath = path.join(repositoryPath, 'index');
+            if (fs.existsSync(indexPath)) fs.chmodSync(indexPath, 0o700);
+        }
         const dockerPath = path.join(__dirname, 'docker-state.json');
         const docker = JSON.parse(fs.readFileSync(dockerPath,'utf8'));
         docker.operationStdoutBase64 = Buffer.from(output).toString('base64');
