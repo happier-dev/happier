@@ -65,8 +65,9 @@ export const PLUGIN = definePlugin({
       fields: [{ id: 'token', title: label('token'), description: label('tokenDescription'), schema: { type: 'string', minLength: 1 }, secret: true }],
       // A team contains its projects, so the team comes first.
       configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+        // Left empty, the pasted token lists its teams to choose from.
         { id: 'teamId', title: label('teamId'), description: label('teamIdDescription'), presentation: { placeholder: 'team_…', order: 1 },
-          schema: { type: 'string', minLength: 1 }, required: true, secret: false },
+          schema: { type: 'string', minLength: 1 }, required: false, secret: false },
         { id: 'projectId', title: label('projectId'), description: label('projectIdDescription'), presentation: { placeholder: 'prj_…', order: 2 },
           schema: { type: 'string', minLength: 1 }, required: false, secret: false },
       ] },

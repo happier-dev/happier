@@ -15,7 +15,7 @@ const en = {
   "projectId": "Project ID",
   "tokenDescription": "Use a personal access token for the selected team or project. Sandboxes also require team plan access.",
   "snapshotStorage": "Snapshot storage (Pro / Enterprise)",
-  "teamIdDescription": "Find it in Vercel, under Team settings.",
+  "teamIdDescription": "Leave empty to choose from your teams after you paste the token.",
   "projectIdDescription": "Required for sandboxes and project-scoped tokens. Find it in Vercel, under Project settings.",
   "account": "Vercel account",
   "checkStatus": "Account connected",

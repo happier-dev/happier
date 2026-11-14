@@ -9970,6 +9970,15 @@ normalizes this staged replacement, which settles with the credential. Providers
 keep the optional fields in the static Account schema so established records
 remain editable without persisting provider-discovered field declarations.
 
+Manual modes with Account configuration use the same continuation. After
+`complete` validates the pasted credential, the provider stages it in
+`attemptCredentials` and either returns `configurationRequired` with discovered
+choices (continuing through its `reconcile`) or calls
+`stageAccountConfiguration` and returns `connected`. The pasted credential lives
+only in the attempt's in-memory custody until settlement; a host restart before
+the choice ends the attempt, and the person pastes the credential again. Vercel
+uses this to offer the token's teams.
+
 The optional feature leaf drops malformed metadata without withdrawing sibling
 Connected Account capabilities. Its presence is configuration, never operation
 authority or proof of granted provider permission. This is unreleased 0.3

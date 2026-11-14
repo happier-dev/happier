@@ -999,6 +999,138 @@ describe('provider-discovered OAuth configuration', () => {
     });
 });
 
+describe('provider-discovered manual configuration', () => {
+    function deferredManual(single = false) {
+        const declared = manualMode();
+        const admittedMode = { ...declared, descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            ...declared.descriptor,
+            configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+                { id: 'teamId', title: 'Team', schema: { type: 'string' }, required: false },
+                { id: 'projectId', title: 'Project', schema: { type: 'string' }, required: false },
+            ] },
+        }) };
+        // An earlier form step committed the optional scope fields empty.
+        let record: ConnectedAccountConfigurationRecord | null = { revision: 'configuration-1', values: {}, secretRefs: {} };
+        const configuration = createConnectedAccountConfigurationOwner({
+            // Persistent configuration is the only substituted boundary; the
+            // admission, staging and attempt transaction owners stay real.
+            read: async () => record,
+            replace: async input => {
+                if ((record?.revision ?? null) !== input.expectedRevision) return { status: 'conflict' };
+                record = { ...input.replacement, revision: 'configuration-2' };
+                return { status: 'committed', record };
+            },
+            destroyAttempt: async () => { record = null; },
+            secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+            isRuntimeCurrent: () => true,
+        });
+        const teams = PluginConnectedAccountConfigurationV2Schema.parse({
+            scope: 'account', changeBehavior: 'reconnect', fields: [{
+                id: 'teamId', title: 'Team', required: true,
+                schema: { type: 'string', enum: single ? ['team_one'] : ['team_one', 'team_two'] },
+                presentation: { options: single ? [{ value: 'team_one', title: 'Design team' }]
+                    : [{ value: 'team_one', title: 'Design team' }, { value: 'team_two', title: 'Platform team' }] },
+            }],
+        }).fields;
+        let staged: ConnectedAccountAttemptProviderInvocation['context']['attemptCredentials'] | undefined;
+        const h = harness({
+            admittedMode, admitConfiguration: configuration.admit,
+            stageAccountConfiguration: configuration.stageAccountConfiguration,
+            destroyAttemptConfiguration: configuration.destroyAttempt,
+            invoke: async ({ operation, context }) => {
+                if (operation.kind === 'submitManual') {
+                    staged = context.attemptCredentials;
+                    await staged.set('token', operation.fields.token!);
+                    if (single) {
+                        await context.stageAccountConfiguration!({ fields: teams,
+                            values: { ...context.configuration.values, teamId: 'team_one' } });
+                        return { status: 'connected', displayName: 'Design team', scopes: [],
+                            providerIdentity: { organizationId: 'team_one' } };
+                    }
+                    return { status: 'configurationRequired', fields: teams };
+                }
+                if (operation.kind === 'reconcile') {
+                    expect(await context.attemptCredentials.get('token')).toBe('pasted-token');
+                    return { status: 'connected', displayName: 'Platform team', scopes: [],
+                        providerIdentity: { organizationId: context.configuration.values.teamId as string } };
+                }
+                return { status: 'rejected', diagnostic: { code: 'unexpected_operation' } };
+            },
+        });
+        const submit = async () => {
+            await expect(h.owner.beginConnect({ service, modeId: 'manual' }))
+                .resolves.toMatchObject({ status: 'awaitingManual' });
+            return h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'pasted-token' } });
+        };
+        const select = async (teamId: string) => {
+            const control = await h.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
+            expect(control).not.toBeNull();
+            return configuration.replaceForControl({ ...control!, expectedRevision: record?.revision ?? null,
+                values: { teamId }, secretValues: {} });
+        };
+        return { h, teams, submit, select, staged: () => staged };
+    }
+
+    it('offers the discovered teams and continues the pasted token through the same configuration continuation', async () => {
+        const flow = deferredManual();
+        const { h } = flow;
+        try {
+            const responses: unknown[] = [];
+            const offered = await flow.submit();
+            responses.push(offered);
+            expect(offered).toMatchObject({ status: 'configurationRequired', missingFieldIds: ['teamId'] });
+            const control = await h.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
+            expect(control?.mode.configuration?.fields).toEqual(expect.arrayContaining(flow.teams));
+            expect(h.settle).not.toHaveBeenCalled();
+            await expect(flow.select('team_two')).resolves.toMatchObject({ status: 'committed' });
+            const connected = await h.owner.continueConnect({ attemptId: 'attempt-1' });
+            responses.push(connected);
+            expect(connected).toMatchObject({ status: 'connected' });
+            expect(h.invoke.mock.calls.map(([input]) => input.operation.kind)).toEqual(['submitManual', 'reconcile']);
+            expect(h.settle).toHaveBeenCalledOnce();
+            expect(h.settle.mock.calls[0]?.[0]).toMatchObject({ stagedCredentials: { token: 'pasted-token' },
+                stagedAccountConfigurationContent: { values: { teamId: 'team_two' } },
+                providerIdentity: { organizationId: 'team_two' } });
+            // The pasted token never leaves temporary attempt custody except through settlement.
+            expect(JSON.stringify(responses)).not.toContain('pasted-token');
+            expect(JSON.stringify([...h.transactionApi.records.values()])).not.toContain('pasted-token');
+        } finally { h.owner.dispose(); }
+    });
+
+    it('rejects a team outside the discovered choices before reconciliation', async () => {
+        const flow = deferredManual();
+        const { h } = flow;
+        try {
+            await expect(flow.submit()).resolves.toMatchObject({ status: 'configurationRequired' });
+            await expect(flow.select('team_elsewhere')).rejects.toMatchObject({ code: 'connected_account_configuration_invalid' });
+            expect((await h.owner.read({ attemptId: 'attempt-1' })).status).toBe('configurationRequired');
+            expect(h.invoke.mock.calls.some(([input]) => input.operation.kind === 'reconcile')).toBe(false);
+            expect(h.settle).not.toHaveBeenCalled();
+        } finally { h.owner.dispose(); }
+    });
+
+    it('discards the staged token when the team choice is cancelled', async () => {
+        const flow = deferredManual();
+        const { h } = flow;
+        try {
+            await expect(flow.submit()).resolves.toMatchObject({ status: 'configurationRequired' });
+            await expect(h.owner.cancel({ attemptId: 'attempt-1' })).resolves.toMatchObject({ status: 'cancelled' });
+            await expect(flow.staged()!.get('token')).resolves.toBeNull();
+            expect(h.settle).not.toHaveBeenCalled();
+        } finally { h.owner.dispose(); }
+    });
+
+    it('stages the only discovered team during submission with the same configuration owner', async () => {
+        const flow = deferredManual(true);
+        const { h } = flow;
+        try {
+            await expect(flow.submit()).resolves.toMatchObject({ status: 'connected' });
+            expect(h.settle.mock.calls[0]?.[0]).toMatchObject({ stagedCredentials: { token: 'pasted-token' },
+                stagedAccountConfigurationContent: { values: { teamId: 'team_one' } } });
+        } finally { h.owner.dispose(); }
+    });
+});
+
 describe('OAuth issuer admission', () => {
     it('publishes the sealed transaction expiry when an authorization server supplies no expiry', async () => {
         // The transaction HTTP/database boundary is replaced; the actual PKCE,

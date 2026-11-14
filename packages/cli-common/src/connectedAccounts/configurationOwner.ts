@@ -350,8 +350,9 @@ export function applyConnectedAccountConfigurationFields(
     fields: readonly PluginConnectedAccountConfigurationFieldV2[],
 ): PluginConnectedAccountAuthenticationModeV2 {
     const configuration = modeConfiguration(mode);
-    if (mode.kind !== 'oauthAuthorizationCode' || configuration?.scope !== 'account') {
-        throw invalid('Provider-discovered configuration requires Account-scoped OAuth');
+    // OAuth and manual attempts continue a retained credential through reconcile.
+    if (mode.kind === 'oauthDeviceCode' || configuration?.scope !== 'account') {
+        throw invalid('Provider-discovered configuration requires Account-scoped OAuth or manual authentication');
     }
     const replacements = new Map(fields.map(field => [field.id, field]));
     if (fields.some(field => !configuration.fields.some(existing => existing.id === field.id))) {

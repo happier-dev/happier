@@ -1332,11 +1332,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }),
             configuration: attempt.configuration.snapshot,
             attemptCredentials: attempt.credentials,
-            ...(attempt.admission.descriptor.kind === 'oauthAuthorizationCode'
+            ...(attempt.admission.descriptor.kind !== 'oauthDeviceCode'
                 && attempt.admission.descriptor.configuration?.scope === 'account' ? {
                 async stageAccountConfiguration(replacement: Parameters<ConnectedAccountStageAccountConfiguration>[0]) {
                     if (!params.configuration.stageAccountConfiguration || !attempt.configuration
-                        || (operation?.kind !== 'beginOAuth' && operation?.kind !== 'completeOAuth' && operation?.kind !== 'reconcile')) {
+                        || (operation?.kind !== 'beginOAuth' && operation?.kind !== 'completeOAuth'
+                            && operation?.kind !== 'submitManual' && operation?.kind !== 'reconcile')) {
                         throw new Error('connected_account_host_staging_unavailable');
                     }
                     const before = await checkAttemptActive(attempt);
@@ -3719,7 +3720,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 return response;
             }
             attempt.configuration = configuration;
-            if (attempt.configurationFields && attempt.oauthTransaction) {
+            // Provider-discovered fields exist only after authentication staged its credential.
+            if (attempt.configurationFields) {
                 return await invoke(attempt, { kind: 'reconcile' });
             }
             const operationAdmissionFailure =

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialStore, ConnectedAccountMutationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpRequest, HttpResponse } from '@happier-dev/plugin-sdk/http';
+import { PluginConnectedAccountConfigurationV2Schema } from '@happier-dev/protocol';
 import * as entry from './index.js';
+
+// The host admits discovered fields with the same declaration schema.
+function admitsDiscoveredFields(result: unknown) {
+  const fields = (result as { fields?: unknown }).fields;
+  expect(PluginConnectedAccountConfigurationV2Schema.safeParse({ scope: 'account', changeBehavior: 'reconnect', fields }).success).toBe(true);
+}
 
 const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' };
 const secret = 'constructed-private-personal-token';
@@ -17,6 +24,8 @@ const team = { id: teamId, name: 'Example team', slug: 'example-team' };
 async function host(options: {
   values?: Record<string, string>; response?: unknown; status?: number; finalUrl?: string;
   failure?: Error; storageFailure?: Error; afterRequest?: (controller: AbortController) => void;
+  route?: (request: HttpRequest) => { status: number; body: unknown };
+  stageAccountConfiguration?: ConnectedAccountAuthenticationContext['stageAccountConfiguration'];
 } = {}) {
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry });
   const runtime = kit.registration('connectedAccountDescriptors', service.localId);
@@ -41,6 +50,9 @@ async function host(options: {
       requests.push(request); requestSignals.push(cancellation?.signal);
       if (options.failure) throw options.failure;
       options.afterRequest?.(controller);
+      const routed = options.route?.(request);
+      if (routed) return { status: routed.status, finalUrl: request.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify(routed.body)) };
       return { status, finalUrl: options.finalUrl ?? request.url, headers: {},
         body: new TextEncoder().encode(JSON.stringify(response)) };
     },
@@ -59,7 +71,9 @@ async function host(options: {
   const read = { ...common, configuration, account, credentials: store(retained) } satisfies ConnectedAccountReadContext;
   const authentication = { ...common, service, attempt: { kind: 'connect' as const, attemptId: 'attempt-1' },
     configuration: { ...configuration, target: { kind: 'attempt' as const, attemptId: 'attempt-1', service, modeId: 'token' } },
-    attemptCredentials: store(staged) } satisfies ConnectedAccountAuthenticationContext;
+    attemptCredentials: store(staged),
+    ...(options.stageAccountConfiguration ? { stageAccountConfiguration: options.stageAccountConfiguration } : {}),
+  } satisfies ConnectedAccountAuthenticationContext;
   const mutation = { ...read, operation: { operationId: 'operation-1', configurationRevision: configuration.revision },
     stagedCredentials: store(staged) } satisfies ConnectedAccountMutationContext;
   const mode = runtime.authentication.modes.token;
@@ -96,6 +110,8 @@ describe('activated Vercel vendor Connected Account', () => {
     const descriptor = entry.manifest.contributes?.connectedAccountDescriptors?.find(d => d.id === service.localId);
     const mode = descriptor?.authentication?.modes.find(mode => mode.id === 'token');
     expect(mode?.configuration?.fields.find(field => field.id === 'projectId')).toMatchObject({ required: false });
+    // A token alone can be submitted; its teams are offered afterwards.
+    expect(mode?.configuration?.fields.find(field => field.id === 'teamId')).toMatchObject({ required: false });
   });
 
   it('materializes team-only configuration without inventing a sandbox project', async () => {
@@ -184,8 +200,8 @@ describe('activated Vercel vendor Connected Account', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('does not send malformed tokens or incomplete configuration', async () => {
-    const h = await host({ values: {} });
+  it('does not send malformed tokens or a malformed team', async () => {
+    const h = await host({ values: { teamId: 'team with spaces' } });
     try {
       expect(await h.mode.complete({ fields: { token: secret } }, h.authentication)).toMatchObject({ status: 'rejected' });
       expect(await h.mode.complete({ fields: { token: 'bad\r\nheader' } }, h.authentication)).toMatchObject({ status: 'rejected' });
@@ -247,6 +263,95 @@ describe('activated Vercel vendor Connected Account', () => {
       await expect(h.runtime.refresh(h.mutation)).rejects.toMatchObject({ name: 'AbortError' });
       await expect(h.runtime.revoke(h.read)).rejects.toMatchObject({ name: 'AbortError' });
       expect(h.requests).toHaveLength(0); expect(h.staged.size).toBe(0);
+    } finally { await h.kit.dispose(); }
+  });
+});
+
+describe('Vercel team picker from a pasted token', () => {
+  const teamsUrl = 'https://api.vercel.com/v2/teams';
+  function pages(request: HttpRequest) {
+    const url = new URL(request.url);
+    if (url.pathname === '/v2/teams') return { status: 200, body: {
+      teams: url.searchParams.has('until') ? [{ id: 'team_second', name: 'Second team' }] : [{ id: 'team_first', name: 'First team' }],
+      pagination: { count: 1, next: url.searchParams.has('until') ? null : 1234, prev: null },
+    } };
+    return { status: 200, body: { id: 'team_second', name: 'Second team' } };
+  }
+
+  it('offers every team from paginated discovery and connects the chosen one with the staged token', async () => {
+    const h = await host({ values: {}, route: pages });
+    try {
+      const offered = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(offered).toMatchObject({ status: 'configurationRequired', fields: [expect.objectContaining({
+        id: 'teamId', required: true, schema: { type: 'string', enum: ['team_first', 'team_second'] },
+        presentation: expect.objectContaining({ options: [
+          { value: 'team_first', title: 'First team' }, { value: 'team_second', title: 'Second team' },
+        ] }),
+      })] });
+      expect(h.requests.map(request => request.url)).toEqual([teamsUrl, teamsUrl + '?until=1234']);
+      expect(h.staged).toEqual(new Map([['token', secret]]));
+      expect(JSON.stringify(offered)).not.toContain(secret);
+      admitsDiscoveredFields(offered);
+      const chosen = { ...h.authentication, configuration: { ...h.authentication.configuration, values: { teamId: 'team_second' } } };
+      expect(await h.mode.reconcile?.(chosen))
+        .toMatchObject({ status: 'connected', displayName: 'Second team', providerIdentity: { organizationId: 'team_second' } });
+      expect(h.requests.at(-1)?.url).toBe('https://api.vercel.com/v2/teams/team_second');
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('chooses the only team in place, for a team token or a personal account', async () => {
+    const stagedConfiguration: unknown[] = [];
+    const h = await host({ values: {}, stageAccountConfiguration: async replacement => { stagedConfiguration.push(replacement); },
+      route: request => new URL(request.url).pathname === '/v2/teams'
+        ? { status: 200, body: { teams: [{ id: teamId, name: 'Example team' }], pagination: { count: 1, next: null, prev: null } } }
+        : { status: 200, body: team } });
+    try {
+      expect(await h.mode.complete({ fields: { token: secret } }, h.authentication))
+        .toMatchObject({ status: 'connected', displayName: 'Example team', providerIdentity: { organizationId: teamId } });
+      expect(stagedConfiguration).toEqual([expect.objectContaining({ values: { teamId } })]);
+      expect(h.requests.map(request => request.url)).toEqual([teamsUrl, 'https://api.vercel.com/v2/teams/team_example']);
+      expect(h.staged.get('token')).toBe(secret);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('keeps project tokens usable when team listing is forbidden', async () => {
+    const h = await host({ values: {}, route: request => new URL(request.url).pathname === '/v2/teams'
+      ? { status: 403, body: { error: { code: 'forbidden' } } }
+      : { status: 200, body: { id: 'prj_one', accountId: 'team_one', name: 'Existing project' } } });
+    try {
+      const offered = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(offered).toMatchObject({ status: 'configurationRequired', fields: [
+        expect.objectContaining({ id: 'teamId', required: true }), expect.objectContaining({ id: 'projectId' }),
+      ] });
+      admitsDiscoveredFields(offered);
+      const chosen = { ...h.authentication, configuration: { ...h.authentication.configuration, values: { teamId: 'team_one', projectId: 'prj_one' } } };
+      expect(await h.mode.reconcile?.(chosen)).toMatchObject({ status: 'connected', providerIdentity: { organizationId: 'team_one' } });
+      expect(h.requests.map(request => request.url)).toEqual([teamsUrl, 'https://api.vercel.com/v9/projects/prj_one?teamId=team_one']);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each([
+    { status: 401, body: {}, code: 'vercel_invalid_token' },
+    { status: 403, body: { error: { code: 'forbidden', invalidToken: true } }, code: 'vercel_invalid_token' },
+    { status: 429, body: {}, code: 'vercel_unavailable' },
+    { status: 200, body: { teams: [{ id: 'team_one' }], pagination: { next: null } }, code: 'vercel_invalid_response' },
+    { status: 200, body: { teams: [], pagination: { next: 5 } }, code: 'vercel_invalid_response', repeat: true },
+  ])('stages nothing when team discovery fails ($status, $code)', async vector => {
+    const h = await host({ values: {}, route: request => vector.repeat && new URL(request.url).searchParams.get('until') === '5'
+      ? { status: 200, body: { teams: [], pagination: { next: 5 } } } : vector });
+    try {
+      const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(result).toMatchObject({ diagnostic: { code: vector.code } });
+      expect(h.staged.size).toBe(0);
+      expect(JSON.stringify(result)).not.toContain(secret);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('asks for the token again when the staged token is missing at reconcile', async () => {
+    const h = await host({ values: { teamId } });
+    try {
+      expect(await h.mode.reconcile?.(h.authentication)).toMatchObject({ status: 'rejected', diagnostic: { code: 'vercel_invalid_token' } });
+      expect(h.requests).toEqual([]);
     } finally { await h.kit.dispose(); }
   });
 });
