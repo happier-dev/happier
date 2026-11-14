@@ -117,6 +117,24 @@ describe('BaseModal (native)', () => {
         act(() => scroll.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 440, height: 480 } } }));
         expect(screen.getTextContent()).toContain(`440x480; bottom=${bottomInset}`);
     });
+    it.each(['android', 'ios'] as const)('closes from a scrim tap that native hit-testing can reach on %s', async (platform) => {
+        nativePlatform.os = platform;
+        const onClose = vi.fn();
+        const screen = await renderScreen(<BaseModal visible placement="bottom" closeOnBackdrop onClose={onClose}><View /></BaseModal>);
+        // The scroll host fills the screen above the visual scrim, so the tap target outside the card must live inside it.
+        const scroll = screen.findAll(node => node.props.keyboardShouldPersistTaps === 'handled' && 'contentContainerStyle' in node.props)[0];
+        const scrimTargets = scroll.findAll(node => node.props.testID === 'modal-scrim-target', { deep: false });
+        expect(scrimTargets).toHaveLength(1);
+        act(() => scrimTargets[0].props.onPress());
+        expect(onClose).toHaveBeenCalledOnce();
+    });
+    it('leaves a vertical drag on a fitting sheet to its grabber instead of an iOS rubber-band bounce', async () => {
+        nativePlatform.os = 'ios';
+        const screen = await renderScreen(<BaseModal visible placement="bottom" closeOnBackdrop onClose={() => {}}><View /></BaseModal>);
+        const scroll = screen.findAll(node => node.props.keyboardShouldPersistTaps === 'handled' && 'contentContainerStyle' in node.props)[0];
+        // UIScrollView claims every vertical pan while it may bounce, cancelling the sheet's drag-to-dismiss.
+        expect(scroll.props.alwaysBounceVertical).toBe(false);
+    });
     it('keeps native Back and dialog custody without a motion frame for a stage', async () => {
         const { OverlayMotionFrame } = await import('@/components/ui/overlays/motion/overlayMotion');
         const onClose = vi.fn();

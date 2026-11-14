@@ -55,6 +55,7 @@ export function OnboardingShowcaseAutoShowMount(): null {
 
             modalId = Modal.show({
                 component: OnboardingShowcaseStorySurface,
+                phonePresentation: 'sheet',
                 onRequestClose: markSeenAndClose,
                 props: {
                     manifest: showcase.manifest,

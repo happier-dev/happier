@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect } from 'react';
-import { View, TouchableWithoutFeedback, Animated, BackHandler, Platform, ScrollView, type LayoutChangeEvent, type ViewStyle } from 'react-native';
+import { View, Pressable, Animated, BackHandler, Platform, ScrollView, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareModalFrame } from '@/components/ui/keyboardAvoidance';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -474,12 +474,11 @@ export function BaseModal({
                     {...webEventHandlers}
                 >
                     {showBackdrop ? (
-                        <TouchableWithoutFeedback onPress={handleBackdropPress}>
-                            {/* The one popover/sheet scrim (0.2): a light frost under a very light dim; only its wrapper fades. */}
-                            <Animated.View style={[styles.backdrop, { opacity: scrimOpacity }]}>
-                                <FloatingScrim testID="modal-scrim" style={StyleSheet.absoluteFillObject} />
-                            </Animated.View>
-                        </TouchableWithoutFeedback>
+                        // The one popover/sheet scrim (0.2): a light frost under a very light dim; only its wrapper fades.
+                        // It only draws: the scroll host below covers the screen, so its tap target lives inside that host.
+                        <Animated.View pointerEvents="none" style={[styles.backdrop, { opacity: scrimOpacity }]}>
+                            <FloatingScrim testID="modal-scrim" style={StyleSheet.absoluteFillObject} />
+                        </Animated.View>
                     ) : null}
 
                     <ModalContentFrame
@@ -505,9 +504,21 @@ export function BaseModal({
                                 contentContainerStyle={[styles.scrollContent, placement === 'bottom' ? styles.scrollContentBottom : null]}
                                 scrollEnabled={scrollHost === 'overlay'}
                                 showsVerticalScrollIndicator={false}
+                                // iOS bounces fitting content by default, and that bounce claims the vertical drag a sheet's grabber dismisses with.
+                                alwaysBounceVertical={false}
                                 keyboardShouldPersistTaps="handled"
                                 centerContent={placement === 'center'}
                             >
+                                {/* A tap outside the card lands on this full-screen scroll host, never on the scrim behind it. */}
+                                {showBackdrop ? (
+                                    <Pressable
+                                        testID="modal-scrim-target"
+                                        accessible={false}
+                                        importantForAccessibility="no"
+                                        style={StyleSheet.absoluteFillObject}
+                                        onPress={handleBackdropPress}
+                                    />
+                                ) : null}
                                 {/* A disabled host retains input custody without advertising a scroll ancestor to
                                     native lists. A scrolling body below supplies its own context; an overlay keeps this one. */}
                                 {NativeScrollContext ? (

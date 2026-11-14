@@ -42,6 +42,7 @@ export function useReleaseNotesLauncher(): UseReleaseNotesLauncherResult {
 
         modalId = Modal.show({
             component: ReleaseNotesStorySurface,
+            phonePresentation: 'sheet',
             onRequestClose: markSeenAndClose,
             props: {
                 release,

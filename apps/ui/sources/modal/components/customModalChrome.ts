@@ -115,7 +115,12 @@ export function mergeChromeConfig(
 }
 
 /** Modal-owned chrome decisions, independent of the content's render lifecycle. */
-export function resolveCustomModalPresentation(chrome: CustomModalChromeConfig | null | undefined, deviceType: 'phone' | 'tablet'): Readonly<{
+export function resolveCustomModalPresentation(
+    chrome: CustomModalChromeConfig | null | undefined,
+    deviceType: 'phone' | 'tablet',
+    /** Content that draws its own phone sheet (no card chrome) still needs the bottom edge on a phone. */
+    contentPhonePresentation?: 'sheet',
+): Readonly<{
     card: CustomModalChromeCardConfig | null;
     /** The trigger the card hangs from as an anchored popover; null when it is a centred dialog or a phone sheet. */
     anchor: PopoverAnchor | null;
@@ -139,7 +144,9 @@ export function resolveCustomModalPresentation(chrome: CustomModalChromeConfig |
     return {
         card, phoneSheet, phoneFullscreen,
         anchor: anchor && !missingTrigger && deviceType !== 'phone' ? anchor : null,
-        placement: stage || phoneFullscreen ? 'fullscreen' as const : phoneSheet ? 'bottom' as const : 'center' as const,
+        placement: stage || phoneFullscreen ? 'fullscreen' as const
+            : phoneSheet || (chrome == null && contentPhonePresentation === 'sheet' && deviceType === 'phone') ? 'bottom' as const
+                : 'center' as const,
         scrollHost: stage || card?.scrollHost === 'bounded' ? 'body' as const : card?.scrollHost ?? 'overlay',
         showBackdrop: !stage,
         motion: stage ? 'none' as const : undefined,

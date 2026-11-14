@@ -173,6 +173,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     };
     modalId = Modal.show({
       component: RecapStorySurface,
+      phonePresentation: 'sheet',
       commandBridge: Bridge,
       onRequestClose: close,
       props: {

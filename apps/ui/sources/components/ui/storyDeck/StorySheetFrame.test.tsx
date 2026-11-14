@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 const runtime = vi.hoisted(() => ({
+    bottomInset: 0,
     height: 740,
     platform: 'web' as 'web' | 'ios' | 'android',
     width: 390,
@@ -33,7 +34,7 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }),
+    useSafeAreaInsets: () => ({ bottom: runtime.bottomInset, left: 0, right: 0, top: 0 }),
 }));
 
 vi.mock('expo-blur', () => ({
@@ -94,6 +95,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 describe('StorySheetFrame', () => {
     beforeEach(() => {
         gestureState.enabledCalls = [];
+        runtime.bottomInset = 0;
     });
 
     it('uses drawer chrome on phone-width web screens', async () => {
@@ -200,5 +202,23 @@ describe('StorySheetFrame', () => {
         const sheet = screen.findByType('AnimatedView' as never);
         expect(flattenStyle(sheet.props.style).backgroundColor).not.toBe('transparent');
         expect(screen.tree.root.findAllByType('BlurView' as never)).toHaveLength(0);
+    });
+
+    it('reaches the bottom edge on a native phone and pads the home-indicator inset inside the sheet', async () => {
+        runtime.platform = 'ios';
+        runtime.width = 390;
+        runtime.height = 740;
+        runtime.bottomInset = 34;
+        const { StorySheetFrame } = await import('./StorySheetFrame');
+
+        const screen = await renderScreen(
+            <StorySheetFrame testID="story-sheet" onDismiss={() => {}}>
+                <></>
+            </StorySheetFrame>,
+        );
+
+        // The sheet surface fills the inset; only its content sits above the home indicator.
+        expect(flattenStyle(screen.findByTestId('story-sheet')?.props.style).paddingBottom ?? 0).toBe(0);
+        expect(flattenStyle(screen.findByType('AnimatedView' as never).props.style).paddingBottom).toBe(34);
     });
 });

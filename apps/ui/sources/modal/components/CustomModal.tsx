@@ -44,7 +44,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     const [chromeOverride, setChromeOverride] = React.useState<CustomModalChromeConfig | null | undefined>(undefined);
     const effectiveChrome = chromeOverride === undefined ? config.chrome : chromeOverride;
     const deviceType = useDeviceType();
-    const presentation = resolveCustomModalPresentation(effectiveChrome, deviceType);
+    const presentation = resolveCustomModalPresentation(effectiveChrome, deviceType, config.phonePresentation);
     const chrome = presentation.card;
     const insets = useChromeSafeAreaInsets();
     const accessibilityLabel = config.accessibilityLabel

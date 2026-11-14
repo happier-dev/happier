@@ -48,6 +48,7 @@ function showPreviewModal(params: Readonly<{
 
     modalId = Modal.show({
         component: params.component,
+        phonePresentation: 'sheet',
         onRequestClose: close,
         props: params.buildProps(close),
     });

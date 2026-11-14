@@ -121,8 +121,11 @@ export type CustomModalChromeCardConfig = Readonly<{
     leadingPlacement?: 'above' | null;
     title?: ReactNode;
     subtitle?: ReactNode;
-    /** `1`: the subtitle stays on one line and ends in an ellipsis (a subtitle made of facts that can be long). */
-    subtitleLines?: 1;
+    /**
+     * The subtitle ends in an ellipsis after this many lines: `1` for a line of facts that can be long, `2` for a
+     * sentence that quotes a name the user wrote (a Session title) so a long name can't take over the card.
+     */
+    subtitleLines?: 1 | 2;
     actions?: ReactNode;
     footer?: ReactNode;
     /**
@@ -203,6 +206,11 @@ export interface CustomModalConfig<P extends CustomModalInjectedProps = any> ext
      */
     onHostUnmount?: () => void;
     chrome?: CustomModalChromeConfig;
+    /**
+     * `sheet`: the content draws its own bottom sheet on a phone (a story deck), so the modal anchors it to the
+     * bottom edge and leaves the home-indicator inset to it. Card chrome says this with `chrome.phonePresentation`.
+     */
+    phonePresentation?: 'sheet';
     /**
      * Whether tapping the backdrop should close the modal.
      * Defaults to true.

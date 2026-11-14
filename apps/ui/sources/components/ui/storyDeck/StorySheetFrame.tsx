@@ -167,6 +167,8 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
             style={[
                 isPhoneSheet ? styles.sheetPhone : styles.sheetCentered,
                 { width: sheetWidth, height: sheetMaxHeight, maxHeight: sheetMaxHeight },
+                // A phone sheet reaches the bottom edge and pads the home-indicator inset inside its own surface.
+                isPhoneSheet ? { paddingBottom: modalViewport?.bottomInset ?? insets.bottom } : null,
                 isPhoneSheet ? animatedSheetStyle : null,
                 props.style,
             ]}
@@ -194,7 +196,6 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
             style={[
                 containerStyle,
                 isPhoneSheet ? { width, height } : null,
-                { paddingBottom: isPhoneSheet ? modalViewport?.bottomInset ?? insets.bottom : 0 },
             ]}
             testID={props.testID}
             pointerEvents="box-none"

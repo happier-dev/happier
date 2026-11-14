@@ -25,6 +25,11 @@ describe('custom modal chrome ownership', () => {
         expect(merged).toMatchObject({ anchor, subtitle: 'Workflow' });
         expect(areChromeConfigsEqual(merged, { ...card, subtitle: 'Workflow', anchor: { kind: 'view', ref: { current: null } } })).toBe(false);
     });
+    it('anchors content that draws its own phone sheet to the bottom edge on a phone only', () => {
+        expect(resolveCustomModalPresentation(null, 'phone', 'sheet')).toMatchObject({ card: null, placement: 'bottom', showBackdrop: true });
+        expect(resolveCustomModalPresentation(null, 'tablet', 'sheet')).toMatchObject({ placement: 'center' });
+        expect(resolveCustomModalPresentation(null, 'phone')).toMatchObject({ placement: 'center' });
+    });
     it('centers a wide card when its trigger ref is no longer available', () => {
         const anchor = { kind: 'view' as const, ref: { current: null } };
         expect(resolveCustomModalPresentation({ kind: 'card', title: 'Share', anchor }, 'tablet'))
