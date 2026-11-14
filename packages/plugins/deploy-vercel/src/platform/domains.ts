@@ -2,7 +2,7 @@ import { withActionFailureDiagnostic, isPluginError, projectActionFailureCauseV1
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
   type JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { vercelEndpoint, vercelRequest } from './operations.js';
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -114,7 +114,8 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [], hostAccess: ['vercel-api', 'deploy.manage'],
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }], resultSchema: output.jsonSchema } as const;
-export const domainActions = {
+type DomainAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
+export const domainActions: Readonly<Record<`domains-${'add' | 'read' | 'verify' | 'remove'}`, DomainAction>> = {
   'domains-add': { ...common, title: 'Add the reviewed Vercel Domain', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Add this Domain to Vercel?' }, inputSchema: inputs['domains.add'].jsonSchema,
     run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'add') },
