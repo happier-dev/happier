@@ -3,7 +3,7 @@ import axios from '@/api/client/credentialAxios';
 
 import { randomUUID } from 'node:crypto';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { evaluateSessionFollowRuleOccurrenceV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import { evaluateSessionFollowRuleOccurrenceV1, sessionFollowRuleOccurrenceReadsCurrentFactsV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { resolveFollowDeliveryV1, resolveSessionFollowSelectedDeliveryV1, isFollowPolicyEqualV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type SessionFollowSessionPendingObservationV1, type SessionFollowRunRouteReleaseReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
@@ -30,7 +30,7 @@ import type { SessionActivityChangedResult } from '@/daemon/sessions/sessionActi
 import { createAccountSessionFollowRuleCache, type SessionFollowReceiverSourceRanges } from './accountSessionFollowRuleCache';
 import { logger } from '@/ui/logger';
 import { SESSION_FOLLOW_INFORMATION_NOTICE } from './sessionFollowNotice';
-import { normalizeSessionFollowTerminalSourceOccurrence, readSessionFollowOriginalRoutes, readCommittedSessionFollowSourceOccurrence, type SessionFollowAccountOccurrence } from './sessionFollowRuleSourceEvidence';
+import { normalizeAdmittedSessionFollowTerminalSourceOccurrence, readSessionFollowOriginalRoutes, readCommittedSessionFollowSourceOccurrence, type SessionFollowAccountOccurrence } from './sessionFollowRuleSourceEvidence';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
@@ -361,11 +361,14 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
     sourceTransport?: AdmittedSourceTransport,
     readSourceFacts?: ReturnType<typeof createSessionFollowSourceFactsRead>, originalRevision?: number): Promise<SessionActivityChangedResult | void> => {
       if ('sourceMessage' in occurrence && (occurrence.evidence.event.kind === 'finished' || occurrence.evidence.event.kind === 'failed_or_stopped')) {
-        const normalized = await normalizeSessionFollowTerminalSourceOccurrence({ ...input, occurrence, isCurrent: current });
-        if (!normalized) return;
+        const admitted = await normalizeAdmittedSessionFollowTerminalSourceOccurrence({ ...input, occurrence, isCurrent: current });
+        if (!admitted) return;
+        const normalized = admitted.occurrence;
+        // The transport that just admitted this Turn's committed row is this
+        // pass's source admission; preparation does not acquire it again.
         return dispatch(normalized, receiverSessionId, fromSourceRange,
           normalized.evidence.event.kind === occurrence.evidence.event.kind ? occurrence : undefined, occurrence.sourceMessage,
-          sourceTransport, readSourceFacts, originalRevision);
+          sourceTransport ?? admitted.transport, readSourceFacts, originalRevision);
       }
       let finishWork: ((outcome: 'held' | 'settled' | 'admitted', waitingFor?: 'source' | 'receiver') => void) | null = null;
       let workOutcome: 'held' | 'settled' | 'admitted' = 'held';
@@ -444,6 +447,9 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         const opened = await rules.read();
         if (opened.status !== 'available') { checkpoint(diagnostic, 'rules', 'held', { reason: opened.reason }); return null; }
         if (!await current()) { checkpoint(diagnostic, 'rules', 'held', { reason: 'account_not_current' }); return null; }
+        return { opened };
+      };
+      const prepareRuleFacts = async (opened: Extract<Awaited<ReturnType<typeof rules.read>>, { status: 'available' }>) => {
         preparedSource ??= await prepareSource();
         if (!preparedSource) return null;
         const { source, accountEncryption } = preparedSource;
@@ -453,11 +459,12 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           accountId: input.accountId, serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal, isCurrent: current,
           filters: opened.rules.filter(rule => rule.definition.enabled).map(rule => rule.definition.filter) });
         if (!facts) { checkpoint(diagnostic, 'facts', 'held', { reason: 'source_facts_unavailable' }); return null; }
-        return { ...preparedSource, opened, facts };
+        return { facts };
       };
       // The admitted original owns preparation demand. Share the same fresh
       // facts within this request map, never across operations or refusals.
       let ruleSource: Awaited<ReturnType<typeof prepareRuleSource>> | undefined;
+      let ruleFacts: Awaited<ReturnType<typeof prepareRuleFacts>> | undefined;
       if ('sourceRequests' in occurrence) {
         // IPC carries a hint, not a frozen request map. Read its exact source
         // once before asking the server to attest the current version. Ordinary
@@ -521,16 +528,27 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         } // Unsupported/denied is pending, not an empty route set.
         ruleSource ??= await prepareRuleSource();
         if (!ruleSource) return;
-        const { opened, facts } = ruleSource;
-        const evaluated = evaluateSessionFollowRuleOccurrenceV1({ accountId: input.accountId, evaluator: 'sourcePublisher' in original ? 'source' : 'receiver',
-          production: 'sourcePublisher' in original ? 'source' : 'recovery', sourceSessionId: original.sourceSessionId, evidence, currentFacts: facts,
+        const { opened } = ruleSource;
+        const evaluation = { accountId: input.accountId, evaluator: 'sourcePublisher' in original ? 'source' as const : 'receiver' as const,
+          production: 'sourcePublisher' in original ? 'source' as const : 'recovery' as const, sourceSessionId: original.sourceSessionId, evidence,
           rules: opened.rules.filter(rule => !rule.inception || ordinary.originalCreatedAt !== undefined
             && ordinary.originalCreatedAt >= rule.inception.createdAt),
           ...(opened.defaultPreferences && ordinary.currentAccountFacts ? { defaults: { preferences: opened.defaultPreferences,
             relationships: ordinary.currentAccountFacts.defaultRelationships,
             hasPersistentFollow: ordinary.currentAccountFacts.hasPersistentFollow } } : {}),
           ...(ordinary.currentAccountFacts ? { personalFollowSuppressed: ordinary.currentAccountFacts.personalFollowSuppressed } : {}),
-        });
+        };
+        // The source row and its list facts serve only an ordinary edge, an
+        // assigned handler, or a rule/default that matches against them. With
+        // none, no receiver can be selected, so reading them is work for nobody.
+        const readsSource = ordinary.routes.length > 0 || handler?.kind === 'session'
+          || sessionFollowRuleOccurrenceReadsCurrentFactsV1({ ...evaluation, serverId: input.serverId });
+        if (readsSource) {
+          ruleFacts ??= await prepareRuleFacts(opened);
+          if (!ruleFacts) return;
+        }
+        const evaluated = evaluateSessionFollowRuleOccurrenceV1({ ...evaluation,
+          currentFacts: readsSource && ruleFacts ? ruleFacts.facts : { serverId: input.serverId, kind: 'session' } });
         if (evaluated.status !== 'evaluated') {
           checkpoint(diagnostic, 'selection', 'held', { reason: evaluated.status });
           if (receiverSessionId) return;

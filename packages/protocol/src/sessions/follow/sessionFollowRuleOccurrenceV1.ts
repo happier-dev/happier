@@ -68,8 +68,7 @@ export function resolveSessionFollowRuleOccurrenceEvaluatorV1(input: Readonly<{
   return input.production === 'source' && input.ownerAccountId === input.accountId ? 'source' : 'receiver';
 }
 
-/** One source occurrence × the already-opened Account rules; no lookup, enrollment or delivery side effects. */
-export function evaluateSessionFollowRuleOccurrenceV1(input: Readonly<{
+type SessionFollowRuleOccurrenceEvaluationInputV1 = Readonly<{
   accountId: string; evaluator: 'source' | 'receiver'; sourceSessionId: string; production: 'source' | 'recovery';
   evidence: Pick<SessionFollowRuleSourceEvidenceV1, 'ownerAccountId' | 'event'>;
   /** Read now under the evaluator Account's current authority; never retained on the original. */
@@ -78,16 +77,44 @@ export function evaluateSessionFollowRuleOccurrenceV1(input: Readonly<{
   defaults?: Readonly<{ preferences: SessionAutoFollowPreferencesV1; relationships: Partial<Readonly<SessionFollowDefaultRelationshipsV1>>;
     hasPersistentFollow?: boolean }>;
   personalFollowSuppressed?: boolean;
-}>): SessionFollowRuleOccurrenceEvaluationV1 {
+}>;
+
+/** The rules this evaluation matches against current facts; every other rule is skipped without them. */
+function readEvaluableSessionFollowRulesV1(input: Pick<SessionFollowRuleOccurrenceEvaluationInputV1, 'rules' | 'personalFollowSuppressed'
+  | 'sourceSessionId'>): readonly OpenedSessionFollowRuleV1[] {
+  return input.rules.filter(rule => rule.definition.enabled
+    && !(rule.receiver.kind === 'account' && input.personalFollowSuppressed)
+    && !(rule.receiver.kind === 'session' && rule.receiver.sessionId === input.sourceSessionId));
+}
+
+function readSessionFollowDefaultRulesForEvaluationV1(input: Pick<SessionFollowRuleOccurrenceEvaluationInputV1, 'defaults'
+  | 'personalFollowSuppressed'> & Readonly<{ serverId: string }>) {
+  return input.defaults && !input.personalFollowSuppressed
+    ? normalizeSessionFollowDefaultRulesV1({ ...input.defaults, serverId: input.serverId }) : null;
+}
+
+/**
+ * Whether evaluating this occurrence reads `currentFacts` beyond its Home id.
+ * When false, the evaluator's outcome is fixed without the source's current
+ * row or list facts, so callers need not read them.
+ */
+export function sessionFollowRuleOccurrenceReadsCurrentFactsV1(
+  input: Omit<SessionFollowRuleOccurrenceEvaluationInputV1, 'currentFacts' | 'mutedReceivers'> & Readonly<{ serverId: string }>,
+): boolean {
+  if (resolveSessionFollowRuleOccurrenceEvaluatorV1({ accountId: input.accountId,
+    ownerAccountId: input.evidence.ownerAccountId, production: input.production }) !== input.evaluator) return false;
+  return readEvaluableSessionFollowRulesV1(input).length > 0
+    || (readSessionFollowDefaultRulesForEvaluationV1(input)?.rules.length ?? 0) > 0;
+}
+
+/** One source occurrence × the already-opened Account rules; no lookup, enrollment or delivery side effects. */
+export function evaluateSessionFollowRuleOccurrenceV1(input: SessionFollowRuleOccurrenceEvaluationInputV1): SessionFollowRuleOccurrenceEvaluationV1 {
   if (resolveSessionFollowRuleOccurrenceEvaluatorV1({ accountId: input.accountId,
     ownerAccountId: input.evidence.ownerAccountId, production: input.production }) !== input.evaluator) return { status: 'other_evaluator' };
   const pendingRuleIds: string[] = [];
   const candidates = new Map<string, { receiver: FollowReceiverRefV1; rules: { ruleId: string; version: number }[]; policies: FollowPolicyV1[];
     defaultKeys?: SessionAutoFollowTriggerV1[]; defaultPolicies?: FollowPolicyV1[] }>();
-  for (const rule of input.rules) {
-    if (!rule.definition.enabled) continue;
-    if (rule.receiver.kind === 'account' && input.personalFollowSuppressed) continue;
-    if (rule.receiver.kind === 'session' && rule.receiver.sessionId === input.sourceSessionId) continue;
+  for (const rule of readEvaluableSessionFollowRulesV1(input)) {
     // The immutable source origin's `you` is relative to its owning Account.
     const facts = input.evidence.ownerAccountId === input.accountId
       ? { ...input.currentFacts, scopeMatches: { ...input.currentFacts.scopeMatches, my_work: true } }
@@ -104,8 +131,7 @@ export function evaluateSessionFollowRuleOccurrenceV1(input: Readonly<{
     candidate.rules.push({ ruleId: rule.ruleId, version: rule.version });
     candidate.policies.push(rule.definition.policy);
   }
-  const defaults = input.defaults && !input.personalFollowSuppressed
-    ? normalizeSessionFollowDefaultRulesV1({ ...input.defaults, serverId: input.currentFacts.serverId }) : null;
+  const defaults = readSessionFollowDefaultRulesForEvaluationV1({ ...input, serverId: input.currentFacts.serverId });
   const pendingDefaultKeys = [...(defaults?.pendingKeys ?? [])];
   for (const rule of defaults?.rules ?? []) {
     const match = matchSessionListFilterV1(rule.definition.filter, input.currentFacts, 'daemonRule');

@@ -36,6 +36,11 @@ let channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>
 beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
 afterEach(async () => { await channel.close(); vi.restoreAllMocks(); });
 
+/** An enabled Runs-only rule for an unrelated receiver: matching it needs current source facts. */
+const unrelatedFactsRule = { ruleId: 'unrelated-home-rule', version: 1, receiver: { kind: 'session' as const, sessionId: 'c999999999999999999999999' },
+  content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
+    filter: normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible', show: 'runs' }), policy: { preset: 'everything' as const } } } };
+
 it('admits one source Turn once when source publication overlaps receiver recovery and duplicate delivery', async () => {
   const sourceSessionId = 'c111111111111111111111111';
   const destinationSessionId = 'c222222222222222222222222';
@@ -281,7 +286,8 @@ it('prepares only the affected source among 1000 equal or unrelated Follow arriv
     if (path.endsWith('/follows/sessions')) return { status: 200, data: { sources: [] } };
     if (path === '/v1/account/encryption/currentness') return { status: 200,
       data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
-    if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [] } };
+    // Source facts are prepared only for a rule that matches against them.
+    if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [unrelatedFactsRule] } };
     if (path === '/v2/account/session-follow-preferences') return { status: 200,
       data: { assigned: false, direct: false, team: false, group: false } };
     if (path.endsWith('/messages')) return { status: 200, data: { messages: [{ id: 'original', seq: 1,
@@ -351,7 +357,8 @@ it('prepares no private rule or source facts for refused occurrences and reads f
     reads.push(path);
     if (path === '/v1/account/encryption/currentness') return { status: 200,
       data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
-    if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [] } };
+    // Source facts are prepared only for a rule that matches against them.
+    if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [unrelatedFactsRule] } };
     if (path === '/v2/account/session-follow-preferences') return { status: 200,
       data: { assigned: false, direct: false, team: false, group: false } };
     if (path === `/v2/sessions/${sourceSessionId}`) return { status: 200, data: { session: source } };

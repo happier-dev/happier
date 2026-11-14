@@ -23,7 +23,12 @@ type SourceReadContext = Readonly<{ credentials: StoredCredentials; serverHttpBa
   isCurrent: () => Promise<boolean> }>;
 
 /** A native terminal hint selects an existing host Turn, never a provider identity. */
-export async function normalizeSessionFollowTerminalSourceOccurrence(input: SourceReadContext & Readonly<{
+export async function normalizeSessionFollowTerminalSourceOccurrence(input: Parameters<typeof normalizeAdmittedSessionFollowTerminalSourceOccurrence>[0]) {
+  return (await normalizeAdmittedSessionFollowTerminalSourceOccurrence(input))?.occurrence ?? null;
+}
+
+/** The normalized Turn plus the Session transport admitted to read it, for the same dispatch pass. */
+export async function normalizeAdmittedSessionFollowTerminalSourceOccurrence(input: SourceReadContext & Readonly<{
   occurrence: Extract<SessionFollowRuleSourceOccurrenceV1 | SessionFollowAccountOccurrence, { sourceMessage: unknown }>;
 }>) {
   const occurrence = input.occurrence;
@@ -43,9 +48,9 @@ export async function normalizeSessionFollowTerminalSourceOccurrence(input: Sour
   if (read.status === 'unavailable') return null;
   if (read.status !== 'occurrence' || !('sourceTurn' in read.occurrence)
     || read.occurrence.evidence.event.kind !== occurrence.evidence.event.kind) return null;
-  return { sourceSessionId: occurrence.sourceSessionId, sourceTurn: read.occurrence.sourceTurn,
+  return { transport, occurrence: { sourceSessionId: occurrence.sourceSessionId, sourceTurn: read.occurrence.sourceTurn,
     evidence: { ...occurrence.evidence, event: resolveSessionFollowTurnEventV1(read.occurrence.sourceTurn) },
-    ...('sourcePublisher' in occurrence ? { sourcePublisher: occurrence.sourcePublisher } : {}) };
+    ...('sourcePublisher' in occurrence ? { sourcePublisher: occurrence.sourcePublisher } : {}) } };
 }
 
 /** Exact persisted-original verification shared by source dispatch and ordinary live fallback. */
