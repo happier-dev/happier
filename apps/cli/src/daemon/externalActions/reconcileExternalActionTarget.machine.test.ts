@@ -12,6 +12,7 @@ it.each([
   ['machines.managed.delete', { when: 'after-idle', intent: 'delete', reviewedDependencies: true }, true],
   ['machines.managed.inspect', {}, true],
   ['machines.managed.bootstrap.retry', { expectedIntentRevision: 1 }, true],
+  ['machines.managed.rebuild', { kind: 'rebuild', expectedRevision: 1, reviewedEffectDigest: 'reviewed' }, true],
   ['machines.managed.controller.update', { expectedRevision: 1, controller: null }, false],
 ] as const)('selects the CLI executor for %s %j from the retained control classification', async (actionId, args, retained) => {
   const row = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
@@ -21,7 +22,8 @@ it.each([
     desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
   const read = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: row });
   try {
-    expect(await resolveManagedControlControllerTarget({ actionId, rawInput: { homeId: 'home', managedId: 'managed', ...args },
+    expect(await resolveManagedControlControllerTarget({ actionId, rawInput: { homeId: 'home',
+      ...(actionId === 'machines.managed.rebuild' ? { managedMachineId: 'managed' } : { managedId: 'managed' }), ...args },
       credentials: { token: 'owner', encryption: null }, serverHttpBaseUrl: 'https://home.test' }))
       .toEqual(retained ? { kind: 'machine', machineId: 'controller' } : null);
     expect(read.mock.calls.length).toBe(retained ? 1 : 0);

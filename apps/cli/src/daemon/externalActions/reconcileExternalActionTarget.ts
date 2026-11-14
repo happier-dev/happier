@@ -36,7 +36,8 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   const parsed = ManagedMachineActionInputSchemasV1[input.actionId].safeParse(input.rawInput);
   if (!parsed.success) return null;
   const machine = await readManagedMachine({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
-    homeId: parsed.data.homeId, managedId: parsed.data.managedId, ...(input.signal ? { signal: input.signal } : {}) });
+    homeId: parsed.data.homeId,
+    managedId: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId, ...(input.signal ? { signal: input.signal } : {}) });
   return machine.controller ? { kind: 'machine', machineId: machine.controller.machineId } : null;
 }
 
