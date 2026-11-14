@@ -136,16 +136,24 @@ const configuredEntryResultMembers = {
     unavailableKeys: defineProtocolArray(text).optional(),
 };
 /** Internal controller projection; never accepted as the public Action envelope. */
-export const TriageLegacyRunConfiguredActionResultV1Schema = defineProtocolObject({
+const legacyConfiguredActionResultMembers = {
     v: defineProtocolLiteral(1), status: TriageConfiguredEntryExecutionStatusV1Schema,
     ...configuredEntryResultMembers, recovery: TriageLegacyConfiguredStartRecoveryV1Schema.optional(),
-}, { policy: 'closed' });
-export type TriageLegacyRunConfiguredActionResultV1 = ReturnType<typeof TriageLegacyRunConfiguredActionResultV1Schema.parse>;
-export const TriageHandoffRunConfiguredActionResultV1Schema = defineProtocolObject({
+};
+type LegacyConfiguredActionResultSchema = ReturnType<typeof defineProtocolObject<typeof legacyConfiguredActionResultMembers, { readonly policy: 'closed' }>>;
+interface TriageLegacyRunConfiguredActionResultV1Authored extends ProtocolSchemaInput<LegacyConfiguredActionResultSchema> {}
+export interface TriageLegacyRunConfiguredActionResultV1 extends ProtocolSchemaOutput<LegacyConfiguredActionResultSchema> {}
+export const TriageLegacyRunConfiguredActionResultV1Schema: ProtocolComposableSchema<Readonly<TriageLegacyRunConfiguredActionResultV1Authored>, Readonly<TriageLegacyRunConfiguredActionResultV1>> =
+    defineProtocolObject(legacyConfiguredActionResultMembers, { policy: 'closed' });
+const handoffConfiguredActionResultMembers = {
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffResultV1Schema,
     status: TriageConfiguredEntryExecutionStatusV1Schema.optional(), ...configuredEntryResultMembers,
     recovery: TriageConfiguredStartRecoveryV1Schema.optional(),
-}, { policy: 'closed' });
-export type TriageHandoffRunConfiguredActionResultV1 = ReturnType<typeof TriageHandoffRunConfiguredActionResultV1Schema.parse>;
-export const TriageRunConfiguredActionResultV1Schema = TriageHandoffRunConfiguredActionResultV1Schema;
+};
+type HandoffConfiguredActionResultSchema = ReturnType<typeof defineProtocolObject<typeof handoffConfiguredActionResultMembers, { readonly policy: 'closed' }>>;
+interface TriageHandoffRunConfiguredActionResultV1Authored extends ProtocolSchemaInput<HandoffConfiguredActionResultSchema> {}
+export interface TriageHandoffRunConfiguredActionResultV1 extends ProtocolSchemaOutput<HandoffConfiguredActionResultSchema> {}
+export const TriageHandoffRunConfiguredActionResultV1Schema: ProtocolComposableSchema<Readonly<TriageHandoffRunConfiguredActionResultV1Authored>, Readonly<TriageHandoffRunConfiguredActionResultV1>> =
+    defineProtocolObject(handoffConfiguredActionResultMembers, { policy: 'closed' });
+export const TriageRunConfiguredActionResultV1Schema: typeof TriageHandoffRunConfiguredActionResultV1Schema = TriageHandoffRunConfiguredActionResultV1Schema;
 export type TriageRunConfiguredActionResultV1 = ReturnType<typeof TriageRunConfiguredActionResultV1Schema.parse>;
