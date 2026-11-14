@@ -30,7 +30,7 @@ import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocu
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
@@ -344,15 +344,13 @@ function currentControllerAuthorization(args: RunArgs, retainCombinedAccountRoot
   const accepted = args.context.actionCaller?.kind === 'workflowRun' ? args.context.actionCaller.authorization : undefined;
   const original = accepted?.externalActionExecutionAuthorization ?? (args.context.externalActionCredential || retainCombinedAccountRoot
     ? args.context.externalActionExecutionAuthorization : undefined);
-  const reviewed = accepted?.reviewedChild ?? readHostAdmittedReviewedChildV1(args.context);
+  const reviewed = accepted?.reviewedChild ?? readHostAdmittedReviewedChildHttpProofV1(args.context);
   return {
     effectivePermissionMode: effective.effectiveMode,
     principal: principal(args),
     ...(original && (!('authentication' in original.binding) || retainCombinedAccountRoot) ? {
       externalActionExecutionAuthorization: { v: original.v, token: original.token, binding: original.binding },
-      ...(reviewed ? { reviewedChild: { actionId: reviewed.actionId, role: reviewed.role,
-        inputDigest: reviewed.inputDigest,
-        ...(reviewed.deploymentNativeAdmission ? { deploymentNativeAdmission: reviewed.deploymentNativeAdmission } : {}) } } : {}),
+      ...(reviewed ? { reviewedChild: reviewed } : {}),
     } : {}),
     ...(args.context.actionCaller?.kind === 'workflowRun' && args.context.actionCaller.authorization.sourceAuthority
       ? { sourceAuthority: args.context.actionCaller.authorization.sourceAuthority } : {}),

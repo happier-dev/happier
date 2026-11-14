@@ -1,4 +1,4 @@
-import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1, MachineSecretGrantSubjectV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1, MachineSecretGrantSubjectV1, MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
 
 type GrantContent = Readonly<{ kind: 'secret'; value: string }>
     | Readonly<{ kind: 'environmentValues'; binding: Pick<EnvironmentVariableBindingV1,
@@ -10,7 +10,7 @@ export function sealMachineSecretGrantEnvelopeV1(input: Readonly<{
     subject: MachineSecretGrantSubjectV1;
     content: GrantContent;
     seal(plaintext: Uint8Array): string;
-}>): MachineSecretGrantV1 {
+}>): ReturnType<typeof MachineSecretGrantV1Schema.parse> {
     const plaintext = new TextEncoder().encode(JSON.stringify({ subject: input.subject, content: input.content }));
     try { return { ...input.subject, sealedContent: input.seal(plaintext) }; }
     finally { plaintext.fill(0); }

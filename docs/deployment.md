@@ -33,6 +33,15 @@ references on that Home; the Project-row route keeps Account isolation. This
 read spends the existing active deployment receipt, without provider-specific
 permission rules or a new admission.
 
+Cross-Environment saved service references retain the selected Environment in
+the existing host-reviewed read child. Its signed `environmentId` must match the
+child's Action input digest. The shared preparation scope opens only that
+Environment's metadata, owned content and Machine codec reads while the root
+deployment runs. Source and Artifact access remain with their resource owners;
+the reference does not inherit the root receipt's content custody. Matching
+Protocol, daemon and Home builds are required for this unpublished 0.3 proof
+projection; older strict development peers reject the added optional field.
+
 The Prepare read composes reported Session work state, structured SCM Action
 results and the Session's linked pull requests. Forge owns PR status and checks,
 including closed and merged PRs; an open-PR-only checkout summary is insufficient.

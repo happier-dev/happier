@@ -31,7 +31,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentDomainPreparationHttpPurpose,
     readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentBackupConfigureHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
-    readDeploymentPreparationHttpReadPurpose,
+    readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
     isDeploymentCandidatePublicationHttpPurposeInTx,
     isDeploymentCandidatePublicationEffect,
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
@@ -50,7 +50,7 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
@@ -1298,8 +1298,13 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
     const movePreparationEffect = isDeploymentMoveToRepositoryHttpEffect(binding, effectActionId, proof.reviewedChild);
     const targetRetentionPurpose = await readDeploymentTargetRetentionHttpPurpose(db, binding, effectActionId, proof);
-    const preparationRead = await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
-        actionId => isAccountActionHttpOperation(actionId, proof));
+    const deploymentReferenceRead = await readDeploymentReferenceHttpPurpose(db, binding, effectActionId, proof, {
+        isEnvironmentRead: () => isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof),
+        isCurrentnessRead: () => isAccountEncryptionCurrentnessHttpRead(proof),
+        readArtifactId: () => readArtifactGetHttpPurpose(proof),
+    });
+    const preparationRead = deploymentReferenceRead === null ? await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
+        actionId => isAccountActionHttpOperation(actionId, proof)) : null;
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1354,7 +1359,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, sibling,
+        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -1488,6 +1493,7 @@ async function verifyCommon(
     const { createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild,
         linkReviewedSetupRead, nativeTransition, domainPurpose } = signedChildPurpose;
     if (!signedChildPurpose.effectFamilyAdmitted) return refuse('effect_family');
+    if (signedChildPurpose.deploymentReferenceRead === false) return refuse('verification_purpose');
     if (binding.serverIdentityId !== await initializeServerIdentityCache()) return refuse('server_identity');
     const currentnessBody = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.safeParse(proof.body);
     const machineNpmProfilePurpose = currentnessBody.success ? currentnessBody.data.nativePurpose : undefined;
@@ -1632,7 +1638,7 @@ async function verifyCommon(
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
-                : acceptedPreparationRead || signedChildPurpose.deploymentWorkspaceRead
+                : acceptedPreparationRead || signedChildPurpose.deploymentWorkspaceRead || signedChildPurpose.deploymentReferenceRead
                     || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
                     ? { state: { in: deploymentInProgressStates() } } : {}),
             ...(acceptedPreparationRead?.environmentId ? { environmentId: acceptedPreparationRead.environmentId }
@@ -3415,7 +3421,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
         || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read || verified.acceptedDeploymentReceipt?.platformMaterial
-        || verified.acceptedDeploymentReceipt && verified.signedChildPurpose.deploymentWorkspaceRead
+        || verified.acceptedDeploymentReceipt && (verified.signedChildPurpose.deploymentWorkspaceRead || verified.signedChildPurpose.deploymentReferenceRead)
         || verified.actionMaterialAdmission || verified.actionBrokerAdmission) {
         // verifyCommon already consumed the one purpose + admitted-job result.
     } else if (domainPreparation === true) {

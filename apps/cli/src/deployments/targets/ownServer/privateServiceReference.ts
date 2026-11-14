@@ -2,6 +2,8 @@ import { MachineServicesListResultV1Schema, RPC_METHODS, type MachineServiceRowV
 import { readSharedPrivateNetworkAddresses } from '@/machines/reachability/sharedPrivateNetworkAddresses';
 import { TcpTunnelServiceExportBindingV1Schema, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { ApiClient } from '@/api/api';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -69,6 +71,24 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
         return selectIrohExport(input.exports.find(exported => exported.key === input.exportKey), input.row,
             { environmentId: input.row.environmentId ?? '', machineId: input.machineId, installationId: input.installationId }) ?? unavailable();
     }
+    const binding = input.context.externalActionExecutionAuthorization?.binding;
+    if (!binding || input.source.environmentId === input.environment.environment.id) return readPrivateServiceExportAdmissionForHost(input);
+    // The decrypted saved binding selects the operand. The existing private
+    // child issuer carries it through metadata, content and Machine codec reads.
+    const action = DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1;
+    const role = DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1;
+    const result = await invokeHostReviewedChildV1({
+        parent: { actionId: binding.actionId, input: { serverId: input.homeServerIdentityId, environmentId: input.environment.environment.id } },
+        context: input.context,
+        child: { action, role, input: { serverId: input.homeServerIdentityId, environmentId: input.source.environmentId } },
+        admittedReview: { action, role, surface: input.context.surface ?? 'cli' }, environmentId: input.source.environmentId,
+        execute: async (_childInput, context) => readPrivateServiceExportAdmissionForHost({ ...input, context }),
+    });
+    if ('ok' in result) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+    return result;
+}
+
+async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceReferenceHostInput): Promise<PrivateServiceExportAdmissionForHost> {
     const { source, host, signal } = input;
     const sameEnvironment = source.environmentId === input.environment.environment.id;
     const environment = sameEnvironment ? input.environment : input.readEnvironment

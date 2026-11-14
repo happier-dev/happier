@@ -3,7 +3,8 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1,
-  DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   isDeploymentBackupConfigureNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
@@ -235,6 +236,14 @@ export function readHostAdmittedReviewedChildV1(context: ActionExecutorContext |
   return { ...proof.reviewedChild, input: proof.input };
 }
 
+/** Keep the complete signed projection at its owner; transports never copy its keys. */
+export function readHostAdmittedReviewedChildHttpProofV1(context: ActionExecutorContext | undefined): ReviewedActionChildHttpProofV1 | undefined {
+  const admitted = readHostAdmittedReviewedChildV1(context);
+  if (!admitted) return undefined;
+  const { input: _input, ...proof } = admitted;
+  return proof;
+}
+
 /** Only this issuer's exact child can retain the original ingress authority.
  * Descriptor clones do not inherit authority from either authorization object. */
 export function readHostReviewedChildOriginalAuthorizationV1(context: ActionExecutorContext | undefined):
@@ -247,7 +256,7 @@ export function readHostReviewedChildOriginalAuthorizationV1(context: ActionExec
 }
 
 function createReviewedChildProof(actionId: string, role: string, input: JsonValue, rootActionId: string | undefined,
-  parentAdmission?: DeploymentNativeAdmissionV1): ReviewedActionChildHttpProofV1 {
+  parentAdmission?: DeploymentNativeAdmissionV1, environmentId?: string): ReviewedActionChildHttpProofV1 {
   const native = isDeploymentDomainAddActionIdV1(actionId) && 'content' in readRecord(input)
     || rootActionId === 'deployments.environments.create' && actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && role === 'preview.backup'
     ? projectDeploymentNativeAdmissionV1(actionId, input)
@@ -255,6 +264,8 @@ function createReviewedChildProof(actionId: string, role: string, input: JsonVal
       && isDeploymentBackupConfigureNativeAdmissionV1(parentAdmission) ? parentAdmission : undefined;
   return Object.freeze({ actionId, role,
     inputDigest: computeActionInputApprovalDigestV1(actionId as ActionId, input),
+    ...(actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
+      && environmentId ? { environmentId } : {}),
     ...(isDeploymentDomainNativeAdmissionV1(native) || isDeploymentBackupConfigureNativeAdmissionV1(native)
       ? { deploymentNativeAdmission: native } : {}) });
 }
@@ -283,6 +294,9 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
         // Host reads retain the admitted parent purpose; child effects carry
         // the exact operand accepted by ordinary Action admission and review.
         const { reviewedChild: _reviewedChild, ...parentRequest } = request;
+        // Codec and content reads consume the same selected read operand as metadata.
+        if (reviewedChild.environmentId !== undefined)
+          return http.createRequestHeaders({ ...parentRequest, effectActionId: reviewedChild.actionId, reviewedChild });
         // A writer's Artifact/currentness GET prepares its effect under the
         // admitted root; the exact child mutation retains its review proof.
         if (coreWriter && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET')
@@ -328,7 +342,7 @@ export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContex
         : [{ actionId: proof.qualifiedActionId, input: admittedProofInput as Record<string, JsonValue> }] },
     ...(binding?.actionId === proof.rootActionId ? {
       reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, admittedProofInput, proof.rootActionId,
-        proof.parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission),
+        proof.parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission, proof.environmentId),
     } : {}),
   };
   const admittedContext: ChildContext = { ...context, [deploymentRoleChild]: admittedProof };
@@ -418,7 +432,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const rootActionId = parentProof?.rootActionId ?? parent.actionId;
   const reviewedChild = params.admittedReview && binding?.actionId === rootActionId
     ? createReviewedChildProof(qualifiedActionId, child.role, proofInput, rootActionId,
-      parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission) : undefined;
+      parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission, params.environmentId) : undefined;
   const proof: ChildProof = {
     rootActionId, role: child.role, qualifiedActionId, input: proofInput,
     ...(parentProof ? { parentProof } : {}),

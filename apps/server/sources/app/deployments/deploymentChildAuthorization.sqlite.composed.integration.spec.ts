@@ -4,6 +4,7 @@ import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedS
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
+import { resolvePrivateServiceExportAdmissionForHost } from '../../../../cli/src/deployments/targets/ownServer/privateServiceReference';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
 import { createDaemonDeploymentNativeSnapshot } from '../../../../cli/src/deployments/daemonDeploymentNativeSnapshot';
 import { createManagedPresetHydrator } from '../../../../cli/src/machines/managed/presetHydration';
@@ -1162,6 +1163,130 @@ describe('deployment children retain their controller Action authority', () => {
                     method: 'GET', path, privateKey: f.controller.keys.secretKey }),
             } });
             expect(settled.statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it('retains the exact referenced Environment through an admitted deployment read child', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const reference = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            ...await f.content('deployment-environment.v1'),
+        } });
+        const target = f.authorization.binding.target;
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+            installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected admitted root HTTP projection');
+        const action = 'deployments.environments.get';
+        const input = { serverId, environmentId: reference.id };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+            const statuses: number[] = [];
+            await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: reference.id,
+                execute: async (_input, context) => {
+                    for (const path of [`/v1/deployments/environments/${reference.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${reference.contentArtifactId}`,
+                        `/v1/machines/${f.controller.id}`,
+                        '/v1/account/encryption/currentness',
+                        `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${f.environment.contentArtifactId}`,
+                        `/v1/deployments/environments/${reference.id}?serverId=another-home`]) {
+                        const headers = await context.externalActionExecutionAuthorization?.requesterHttpProjection?.createRequestHeaders({
+                            effectActionId: action, method: 'GET', path });
+                        if (!headers) throw new Error('Expected signed child read');
+                        const response = await app.inject({ method: 'GET', url: path,
+                            headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+                        statuses.push(response.statusCode);
+                    }
+                } });
+            expect(statuses).toEqual([200, 200, 200, 200, 401, 401, 401]);
+            // A separately signed child cannot name one scope and digest another.
+            const mismatched = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input: { ...input, environmentId: f.environment.id } },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: reference.id,
+                execute: async (_input, context) => {
+                    const path = `/v1/deployments/environments/${reference.id}?serverId=${serverId}`;
+                    const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                        effectActionId: action, method: 'GET', path });
+                    return (await app.inject({ method: 'GET', url: path,
+                        headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
+                } });
+            expect(mismatched).toBe(401);
+            const foreign = await fixture('account', 'account', { readableEnvironment: true });
+            const foreignStatuses = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input: { serverId, environmentId: foreign.environment.id } },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: foreign.environment.id,
+                execute: async (_input, context) => {
+                    const responses = [];
+                    for (const path of [`/v1/deployments/environments/${foreign.environment.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${foreign.environment.contentArtifactId}`]) {
+                        const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                            effectActionId: action, method: 'GET', path });
+                        responses.push(await app.inject({ method: 'GET', url: path,
+                            headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } }));
+                    }
+                    return responses;
+                } });
+            if (!Array.isArray(foreignStatuses)) throw new Error('Expected reference read results');
+            for (const response of foreignStatuses) {
+                expect([403, 404], response.body).toContain(response.statusCode);
+                expect(response.json()).not.toHaveProperty('environment');
+                expect(response.json()).not.toHaveProperty('artifact');
+            }
+            // Exercise the real saved-reference producer as well as its private
+            // issuer. HTTP is the substituted boundary; Home still decides scope.
+            const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
+            try {
+                const environment = createDeploymentEnvironmentDetailV1();
+                environment.environment.id = f.environment.id;
+                const selected = createDeploymentEnvironmentDetailV1();
+                selected.environment.id = reference.id;
+                const source = { kind: 'reference' as const, environmentId: reference.id, export: 'missing-export', via: 'privateNetwork' as const };
+                await expect(resolvePrivateServiceExportAdmissionForHost({ source, environment,
+                    context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                        externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                    actionId: 'deployments.deploy', signal: new AbortController().signal,
+                    host: { credentials: { token: 'unused-host-bearer', encryption: null }, serverId,
+                        serverHttpBaseUrl: 'http://home.test', machineId: f.controller.id },
+                    homeServerIdentityId: serverId, installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                    owner: runtime.registry.projectManagedServices,
+                    readEnvironment: async request => {
+                        for (const path of [`/v1/deployments/environments/${request.environmentId}?serverId=${serverId}`,
+                            `/v1/artifacts/${reference.contentArtifactId}`]) {
+                            const headers = await request.context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                                effectActionId: action, method: 'GET', path });
+                            const response = await app.inject({ method: 'GET', url: path,
+                                headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+                            if (response.statusCode !== 200) throw Object.assign(new Error('Home read refused'), { code: 'home_read_refused' });
+                        }
+                        return selected;
+                    },
+                })).rejects.toMatchObject({ code: 'reference_unavailable' });
+                // No export is configured: the existing reference owner refuses
+                // after its admitted reads, before any native effect.
+            } finally { await runtime.dispose(); }
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'failed' } });
+            const settled = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: reference.id,
+                execute: async (_input, context) => {
+                    const path = `/v1/deployments/environments/${reference.id}?serverId=${serverId}`;
+                    const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                        effectActionId: action, method: 'GET', path });
+                    return (await app.inject({ method: 'GET', url: path,
+                        headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
+                } });
+            expect(settled).toBe(401);
         }, { authentication: 'real' });
     });
 

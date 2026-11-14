@@ -1517,6 +1517,8 @@ export const ReviewedActionChildHttpProofV1Schema = lazyZodSchema(() => z.strict
   actionId: ExternalActionActionIdV1Schema,
   role: z.string().check(z.minLength(1)),
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  /** Selected by the host's existing private child issuer, never ambient Account scope. */
+  environmentId: z.optional(z.string().check(z.minLength(1))),
   deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema])),
 }));
 export type ReviewedActionChildHttpProofV1 = Readonly<z.infer<typeof ReviewedActionChildHttpProofV1Schema>>;

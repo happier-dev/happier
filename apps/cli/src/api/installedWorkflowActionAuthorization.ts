@@ -1,4 +1,4 @@
-import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedChildHttpProofV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomBytes } from 'node:crypto';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -89,12 +89,10 @@ export async function dispatchInstalledWorkflowNativeSetupAction(input: Paramete
   const parent = caller?.kind === 'workflowRun' ? caller.authorization.externalActionExecutionAuthorization : undefined;
   // A reviewed child's Run is named by its own reviewed child, which Home derives the Run from.
   // A root's own Run has none, so it carries the live Run reader's private exact leaf proof.
-  const admittedChild = readHostAdmittedReviewedChildV1(context);
+  const admittedChild = readHostAdmittedReviewedChildHttpProofV1(context);
   const runReviewedChild = caller?.kind === 'workflowRun' ? caller.authorization.reviewedChild : undefined;
   const reviewedChild = runReviewedChild ?? (admittedChild?.actionId === input.actionId
-    ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest,
-      ...(admittedChild.deploymentNativeAdmission ? { deploymentNativeAdmission: admittedChild.deploymentNativeAdmission } : {}) }
-    : undefined);
+    ? admittedChild : undefined);
   const binding = parent?.binding;
   if (!installed || !context || caller?.kind !== 'workflowRun' || !parent || !binding
     || !isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin: {

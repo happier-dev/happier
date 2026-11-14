@@ -5,7 +5,7 @@ import { sealMachineSecretGrantEnvelopeV1 } from '@happier-dev/deployments';
 import {
     DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema,
     MachineSecretGrantSubjectV1Schema, MachineSecretGrantStoredReadV1Schema, MachineSecretGrantSubjectStoredReadV1Schema, machineSecretGrantSubjectKey,
-    type MachineSecretGrantSubjectV1, type MachineSecretGrantV1,
+    type MachineConnectorSecretGrantSubjectV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1,
 } from '@happier-dev/deployment-protocol';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveBoxPublicKeyFromEd25519PublicKey, deriveBoxSecretKeyFromSeed,
@@ -34,19 +34,30 @@ export type MachineSecretGrantReadContentV1 = MachineSecretGrantContentV1
 
 /** Uses the installed signing identity's established box conversion, never another keypair. */
 export function sealMachineSecretGrant(input: Readonly<{
+    subject: MachineConnectorSecretGrantSubjectV1;
+    installationPublicKey: Uint8Array;
+    content: Extract<MachineSecretGrantContentV1, { kind: 'connectorToken' }>;
+}>): Extract<ReturnType<typeof sealMachineSecretGrantEnvelopeV1>, { kind: 'connectorToken' }>;
+export function sealMachineSecretGrant(input: Readonly<{
     subject: MachineSecretGrantSubjectV1;
     installationPublicKey: Uint8Array;
     content: MachineSecretGrantContentV1;
-}>): MachineSecretGrantV1 {
+}>): ReturnType<typeof sealMachineSecretGrantEnvelopeV1>;
+export function sealMachineSecretGrant(input: Readonly<{
+    subject: MachineSecretGrantSubjectV1;
+    installationPublicKey: Uint8Array;
+    content: MachineSecretGrantContentV1;
+}>): ReturnType<typeof sealMachineSecretGrantEnvelopeV1> {
     const admitted = envelopeSchema.safeParse({ subject: input.subject, content: input.content });
     if (!admitted.success || admitted.data.subject.kind !== admitted.data.content.kind) {
         throw new PluginError({ code: 'secret_missing', message: 'Installation grant subject is unavailable' });
     }
-    return sealMachineSecretGrantEnvelopeV1({ ...admitted.data, seal: plaintext => {
+    const sealed = sealMachineSecretGrantEnvelopeV1({ ...admitted.data, seal: plaintext => {
         const recipientPublicKey = deriveBoxPublicKeyFromEd25519PublicKey(input.installationPublicKey);
         return encodeBase64(sealBoxBundle({ plaintext, recipientPublicKey,
             randomBytes: length => new Uint8Array(randomBytes(length)) }));
     } });
+    return { ...admitted.data.subject, sealedContent: sealed.sealedContent };
 }
 
 /** The exact subject is authenticated inside the sealed plaintext. */

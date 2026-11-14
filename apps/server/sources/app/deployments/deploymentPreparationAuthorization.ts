@@ -106,24 +106,27 @@ function collectDeploymentOperands(value: unknown, visit: (kind: ReturnType<type
 
 /**
  * The one admitted deployment scope: every Environment, Source, Artifact and
- * Machine operand the signed root (or its accepted receipt) names, expanded only
- * through rows those Environments own. Declared read transports consume it.
+ * Machine operand the signed root, accepted receipt or validated reviewed
+ * reference names, expanded only through rows those Environments own.
+ * A selected reference replaces the root scope for that child's reads.
  */
 export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
     acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown, preparationEffectRead = false,
+    selectedReferenceEnvironmentId?: string,
 ): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
     artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>;
     deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
         deployment: new Set<string>(), targetLink: new Set<string>(), domain: new Set<string>(), machine: new Set<string>() };
-    const preparation = binding.deploymentPreparationAdmission;
+    const preparation = selectedReferenceEnvironmentId === undefined ? binding.deploymentPreparationAdmission : undefined;
     const selectedPreparation = preparation?.operation === 'setup' && setupReceiverMachineId !== undefined
         ? { ...preparation, catalogSources: preparation.catalogSources?.filter(selected => selected.machineId === setupReceiverMachineId),
             deployments: preparation.deployments.filter(selected => selected.machineId === setupReceiverMachineId) } : preparation;
-    const admissions = [selectedPreparation, binding.deploymentNativeAdmission,
+    const admissions = selectedReferenceEnvironmentId !== undefined ? [] : [selectedPreparation, binding.deploymentNativeAdmission,
         binding.deploymentReadAdmission, binding.deploymentLinkAdmission, binding.registryAppUpdateAdmission].filter(admission => admission !== undefined);
-    if (admissions.length === 0 && binding.environmentId === undefined && acceptedEnvironmentId === undefined) return null;
+    if (admissions.length === 0 && binding.environmentId === undefined && acceptedEnvironmentId === undefined
+        && selectedReferenceEnvironmentId === undefined) return null;
     for (const admission of admissions) collectDeploymentOperands(admission, (kind, id) => {
         if (kind !== 'transport' && kind !== 'unknown') seeds[kind].add(id);
     });
@@ -132,16 +135,16 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission) && nativeAdmission.defaultsFor !== undefined;
     // A template's children (bindings, link, update) read the Environment mint admitted or this root
     // created, with or without a deploy intent; deploy-only reads gate on the intent at their own arm.
-    const resolvedEnvironmentId = preparationEffectRead ? preparation?.operation === 'template'
+    const resolvedEnvironmentId = selectedReferenceEnvironmentId ?? (preparationEffectRead ? preparation?.operation === 'template'
         ? await readTemplateEnvironmentId(tx, binding, preparation)
         : preparation?.operation === 'create' ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation) : null
         : binding.environmentId ?? (preparation?.operation === 'create'
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation)
-        : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null);
+        : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null));
     if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
     if (defaults && readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
         && !await readConfigurationDefaultsEnvironmentInTx(tx, binding)) seeds.environment.clear();
-    if (acceptedEnvironmentId !== undefined) seeds.environment.add(acceptedEnvironmentId);
+    if (selectedReferenceEnvironmentId === undefined && acceptedEnvironmentId !== undefined) seeds.environment.add(acceptedEnvironmentId);
     if (selectedPreparation?.operation === 'setup' && readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
         const environmentId = operands && typeof operands === 'object' && 'environmentId' in operands ? operands.environmentId : undefined;
         const selected = selectedPreparation.deployments.find(selected => selected.environment.id === environmentId);
@@ -169,7 +172,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         // A deploy-family root over an admitted preview reads the template it was derived from
         // (the daemon's preview admission), as every other read below does.
         const deployFamily = deploymentOperationForRootActionV1(binding.actionId);
-        if (!preparation && (deployFamily === 'deploy' || deployFamily === 'rollback' || deployFamily === 'promote')
+        if (selectedReferenceEnvironmentId === undefined && !preparation && (deployFamily === 'deploy' || deployFamily === 'rollback' || deployFamily === 'promote')
             && seeds.environment.size > 0) {
             const previews = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] }, purpose: 'preview',
                 deletedAt: null }, select: { previewTemplateEnvironmentId: true } });
@@ -242,7 +245,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     }
     for (const environment of environments) {
         // A preview reads the template Environment it was derived from.
-        if (environment.previewTemplateEnvironmentId && !receiptRead && !binding.deploymentReadAdmission && !binding.registryAppUpdateAdmission
+        if (selectedReferenceEnvironmentId === undefined && environment.previewTemplateEnvironmentId && !receiptRead && !binding.deploymentReadAdmission && !binding.registryAppUpdateAdmission
             && (readActionId === undefined || readActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
                 && (!membershipDomainRead || readActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 && environment.purpose === 'preview'
                     && !environment.deletedAt && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== 'teardown')))
@@ -1569,6 +1572,34 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
         if (!loaded.ok || loaded.row.deletedAt || !admission.source || loaded.row.projectSourceId !== admission.source.id) return false;
     }
     return true;
+}
+
+/** Saved references are private Environment content. The host's reviewed child
+ * retains the selected operand; Home consumes it without rediscovering bindings
+ * or granting the root's accepted-content custody to the referenced Source. */
+export async function readDeploymentReferenceHttpPurpose(tx: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
+    transports: Readonly<{ isEnvironmentRead(): boolean; isCurrentnessRead(): boolean; readArtifactId(): string | null }>,
+): Promise<boolean | null> {
+    const child = proof.reviewedChild;
+    if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
+    const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
+    if (operation !== 'deploy' && operation !== 'rollback' && operation !== 'promote'
+        || effectActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child?.actionId !== effectActionId
+        || child.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 || !child.environmentId
+        || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const input = { serverId: binding.serverIdentityId, environmentId: child.environmentId };
+    if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return false;
+    if (transports.isEnvironmentRead()) return sameStrictJsonValue(proof.routeInput, input);
+    if (transports.isCurrentnessRead()) return proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, {});
+    const artifactId = transports.readArtifactId();
+    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, undefined, undefined, undefined, undefined, false, child.environmentId);
+    if (!scope) return false;
+    if (artifactId) return scope.artifactIds.has(artifactId);
+    return [...scope.machineIds, binding.machineId].some(machineId =>
+        proof.path === `/v1/machines/${encodeURIComponent(machineId)}`
+        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: machineId })));
 }
 
 /** Resolve the read transport and keep membership discovery inside its admitted Home and Environment. */

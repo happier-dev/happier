@@ -51,7 +51,7 @@ import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/acti
 import type { ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionMachineRpcExecutionV1, ExternalActionRequestEnvelope, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import { readHostReviewedParentV1, readHostAdmittedReviewedChildV1,
   readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { readHostAdmittedReviewedRootV1, readHostAdmittedReviewedChildHttpProofV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 
 import { deriveDeploymentPrepareSessionSpawnInputV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
@@ -653,6 +653,8 @@ type OriginalAccountActionInput = Readonly<{
   input: unknown;
   requestId: string;
   target: ExternalActionTargetV1;
+  /** Account placement runs on its requester after Home admission, using the captured Account credential. */
+  executeOnRequester?: () => Promise<ActionExecuteResult>;
   /** Private result retained by the fresh preset origin, never read from Action input. */
   managedPresetOrigin?: Extract<ManagedPresetAcquireOriginV1, { kind: 'bound' }>;
   credentials: StoredCredentials;
@@ -894,7 +896,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       : phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
       headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     }) })),
-    target.kind === 'machine' && !machines && !workflow && !scopedController
+    target.kind === 'machine' && !input.executeOnRequester && !machines && !workflow && !scopedController
       ? phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
         credentials: input.credentials, machineIds: [target.machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
         ...(input.signal ? { signal: input.signal } : {}) })) : machines,
@@ -909,7 +911,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   machines = inventoryRead.value;
   let machine: CurrentAccountMachineInventoryItem | undefined;
   let foreign = scopedController ? scopedController.custodian.accountId !== accountId : false;
-  if (input.target.kind === 'machine' && !workflow && !scopedController) {
+  if (input.target.kind === 'machine' && !input.executeOnRequester && !workflow && !scopedController) {
     const selected = await resolveOriginalAccountMachineTarget({ actionId: input.actionId,
       machineId: input.target.machineId, machines, accountId, accountMode: mode.mode,
       authenticationKind: kind, authority: input.authority, credentialProvenance: input.credentials.credentialProvenance,
@@ -943,15 +945,32 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
     actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
-  const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: input.input, randomBytes,
+  // Requester execution retains private authored input locally. Home receives
+  // the Action owner's existing observation projection for admission.
+  const spec = getActionSpec(ActionIdSchema.parse(actionId));
+  const envelopeInput = input.executeOnRequester ? spec.projectObservationInput?.(input.input) ?? input.input : input.input;
+  const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
     ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.input !== null && typeof input.input === 'object'
       && 'machineSetupPlanInput' in input.input && input.input.machineSetupPlanInput !== undefined ? {
       sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
         SessionSpawnNewActionInputV2Schema.parse(input.input))),
     } : {}),
   })
-    : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: input.input,
+    : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: envelopeInput,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
+  if (input.executeOnRequester) {
+    const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
+      actionId, envelope, machineId: input.target.kind === 'machine' ? input.target.machineId : '',
+      pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
+      ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    }));
+    if (!minted.ok) return { ...fail(minted.code),
+      ...(minted.details === undefined ? {} : { details: minted.details }),
+      ...(minted.requestId === undefined ? {} : { requestId: minted.requestId }),
+      ...(minted.failureCause ? { failureCause: minted.failureCause } : {}) };
+    return input.executeOnRequester();
+  }
   let body: unknown = envelope;
   const access = machine?.access;
   const nativeCredentialSpawnChild = spawnChild ? (() => {
@@ -1187,10 +1206,9 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   const target = input.context?.externalActionTarget;
   if (!authorization || !target || !input.requestId) return null;
   const effectActionId = ExternalActionActionIdV1Schema.parse(input.effectActionId);
-  const admittedChild = readHostAdmittedReviewedChildV1(input.context);
+  const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const reviewedChild = admittedChild?.actionId === effectActionId
-    ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest,
-      ...(admittedChild.deploymentNativeAdmission ? { deploymentNativeAdmission: admittedChild.deploymentNativeAdmission } : {}) } : undefined;
+    ? admittedChild : undefined;
   return {
     v: 1,
     authorization,
@@ -1832,14 +1850,11 @@ export async function resolveExternalActionRequesterServerRequestHeaders(input: 
   if (!authorization || !projection || projection.accountId !== authorization.binding.accountId
     || normalizeServerHttpBaseUrl(projection.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)
     || input.context.signal?.aborted || !await projection.isCurrent()) return null;
-  const child = readHostAdmittedReviewedChildV1(input.context);
+  const child = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const headers = await projection.createRequestHeaders({ effectActionId: input.effectActionId, method: input.method, path: input.path,
     ...(input.body === undefined ? {} : { body: input.body }),
     ...(input.context.signal ? { signal: input.context.signal } : {}),
-    ...(child?.actionId === input.effectActionId ? { reviewedChild: {
-      actionId: child.actionId, role: child.role, inputDigest: child.inputDigest,
-      ...(child.deploymentNativeAdmission ? { deploymentNativeAdmission: child.deploymentNativeAdmission } : {}),
-    } } : {}),
+    ...(child?.actionId === input.effectActionId ? { reviewedChild: child } : {}),
   });
   return headers ? { ...headers, ...(projection.accountEncryptionMode === undefined ? {}
     : { [requesterAccountEncryptionMode]: projection.accountEncryptionMode }) } : null;
@@ -1937,7 +1952,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
       ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
-  const admittedChild = readHostAdmittedReviewedChildV1(input.context);
+  const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   // Setup already spends its own child grant and Home purpose. Retain that
   // exact private issuer proof before the incumbent parent-purpose fallback.
   const independentChild = admittedChild?.actionId === input.effectActionId
@@ -1956,7 +1971,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     : input.effectActionId;
   const effectActionId = templateParentActionId ?? managedReadEffect;
   const reviewedChild = admittedChild?.actionId === input.effectActionId
-    && !templateChild ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest } : undefined;
+    && !templateChild ? admittedChild : undefined;
   return {
     ok: true,
     headers: createExternalActionAuthorizedRequestHeaders({
