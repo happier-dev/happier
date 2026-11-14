@@ -1600,9 +1600,12 @@ async function verifyCommon(
     const setupReceiver = signatureCurrent || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
         ? undefined : await readSetupReceiverSigner(binding, verifySignature);
     if (setupReceiver) signatureCurrent = true;
+    // Retirement closes new effects. The exact purchase this installation
+    // already submitted still reports its native identity, so its row can
+    // be cleaned up; the retained installation key must still sign it.
     if (
         !machine
-        || classifyMachineAvailabilityState(machine) !== "available"
+        || (purpose?.kind !== 'issued-managed-acquire-native-fact' && classifyMachineAvailabilityState(machine) !== "available")
         || !machine.installationId
         || !machine.installationPublicKey
     ) {

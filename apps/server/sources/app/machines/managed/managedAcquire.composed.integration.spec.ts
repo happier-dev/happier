@@ -2396,8 +2396,10 @@ describe("managed acquisition durable authority", () => {
         await expect(submitManagedAcquire({ ...currentness, requestId: "other-request" })).rejects.toMatchObject({ code: "request_conflict" });
         await expect(createManagedBootstrapCredential({ ...currentness, credential: { resourceId: "bootstrap-mode-refusal", displayName: "Bootstrap", kind: "other", encryptionMode: "plain", storedContent: { t: "plain", v: { v: 1, name: "Bootstrap", kind: "other", value: "private-key" } } } })).rejects.toMatchObject({ code: "credential_unavailable" });
         expect(await db.savedSecretResource.count({ where: { id: "bootstrap-mode-refusal" } })).toBe(0);
+        // A replaced installation is refused by the signed-request verifier;
+        // the admitted row's currentness owner does not re-admit lifecycle.
         await db.machine.update({ where: { id: controller.id }, data: { installationId: "replacement-installation" } });
-        await expect(submitManagedAcquire(currentness)).rejects.toMatchObject({ code: "controller_retired" });
+        expect(await submitManagedAcquire(currentness)).toMatchObject({ submitted: false });
     });
 
     it("atomically creates a bootstrap secret for an unset reference and reuses the winning reference", async () => {

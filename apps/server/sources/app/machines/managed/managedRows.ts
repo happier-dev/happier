@@ -582,10 +582,9 @@ export async function requireCurrentManagedMachineInTx(tx: Tx, input: Readonly<{
 }>, options: Readonly<{ requestAuthority?: "creation" | "intent"; allowCanceledResourceReport?: boolean; allowInactiveCurrentIntent?: boolean }> = {}): Promise<StoredManagedMachine> {
     const row = await readManagedMachineInTx(tx, input);
     // Native work was admitted with the controller's then-current authority.
-    // Later reports prove the retained controller identity below rather than
-    // re-admitting controller availability at every lifecycle boundary.
-    if (isStoredOpaquePresetMachine(row)) await requireManagedHomeInTx(tx, input.homeId);
-    else await requireManagedControllerInTx(tx, { ...input, custodianAccountId: row.custodianAccountId });
+    // Follow-ups prove the retained controller identity below; fresh admission
+    // and the signed-request verifier own controller lifecycle, not this check.
+    await requireManagedHomeInTx(tx, input.homeId);
     const creation = options.requestAuthority === "creation" || options.allowCanceledResourceReport === true;
     const currentAdmission = !creation && !row.controllerMachineId && input.controller
         ? readManagedAdmissionState(row.admittedInput).currentAdmission : undefined;

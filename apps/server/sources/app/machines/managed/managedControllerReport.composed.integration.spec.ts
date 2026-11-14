@@ -14,6 +14,8 @@ import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plu
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, type AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { db, initDbPostgres } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
+import { revokeMachineInTx } from '@/app/machines/machineMutations';
 import { auth } from '@/app/auth/auth';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
@@ -57,22 +59,28 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         finally { restoreEnv(initialEnv); }
     });
 
-    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
-        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const createController = async (accountId: string) => {
         const controller = { machineId: randomUUID(), installationId: randomUUID() };
         const keys = tweetnacl.sign.keyPair();
-        await db.machine.create({ data: { id: controller.machineId, accountId: account.id,
+        await db.machine.create({ data: { id: controller.machineId, accountId,
             metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey),
             active: true, pluginMaterializationRevision: 1n, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
+        return { controller, keys };
+    };
+
+    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const { controller, keys } = await createController(account.id);
         // Controller Manage reaches its native resources; Use does not.
         await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId, accountId: viewer.id,
             createdByAccountId: account.id, accessLevel: 'admin' } });
-        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
+        // Only the Lima provisioner is exercised; unrelated bundled manifests stay out of this fixture.
+        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
         const definition = manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'lima');
         if (!definition) throw new Error('Bundled Lima provisioner missing');
         const requestId = randomUUID();
@@ -85,7 +93,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
-        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
+        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || withdrawal === 'controller-retired' ? undefined : await auth.createApiToken({
             accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Acquire completion'),
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -120,22 +128,6 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                     identity: { pluginId: manifest.id, localId: definition.id }, definition }] }) } },
                 { requestId, context: { surface: 'cli', externalActionExecutionAuthorization: authorization,
                     externalActionTarget: authorization.binding.target } }, 'machines.managed.acquire');
-            const admissionBody = { input, continuationPresent: false, requestId };
-            const admitted = await client.post('/v1/machines/managed/controller/admit', admissionBody, ManagedAdmissionOutputV1Schema);
-            expect(admitted).toMatchObject({ replayed: false, machine: { allocation: 'unsubmitted' } });
-            expect(await client.post('/v1/machines/managed/controller/admit', admissionBody, ManagedAdmissionOutputV1Schema))
-                .toMatchObject({ replayed: true, machine: { id: admitted.machine.id } });
-            expect(await client.submit(admitted.machine)).toMatchObject({ submitted: true, machine: { allocation: 'may-exist' } });
-
-            if (!apiToken) await auth.signOutEverywhere(account.id);
-            else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
-            else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
-                grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
-            const freshAcquire = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
-                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
-                    envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
-            expect(freshAcquire.statusCode, freshAcquire.body).toBe(withdrawal === 'api-token-grant' ? 403 : 401);
-
             // Only native process execution is substituted; the actual Lima leaf
             // produces the resource consumed by the CLI and declared server schema.
             const { createLimaProvider } = await vi.importActual<{
@@ -167,12 +159,36 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 provisioner: definition, optionStatus: 'current', optionProjection: projectMachineProvisionerSelectionV1({ options, launchSchema: definition.launchSchema,
                     selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) }),
                 prerequisites: [], billing: definition.billing, retentionCapabilities: definition.retention,
-                machineOverride: { retention: admitted.machine.retention, wakeOnAcceptedMessage: admitted.machine.wakeOnAcceptedMessage },
+                machineOverride: { retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage },
             });
             expect(configurationFacts).toMatchObject({ launch, optionStatus: 'current', nativeFacts: {
                 size: { cpuCores: launch.choices.cpus, memoryBytes: launch.choices.memoryGiB * 2 ** 30,
                     diskBytes: launch.choices.diskGiB * 2 ** 30 }, image: { id: launch.choices.image },
             } });
+            // The configurator admits one-off acquisitions with reviewed facts, so the
+            // row retains its native declaration after the controller retires.
+            const admissionBody = { input: withdrawal === 'controller-retired' ? { ...input, reviewedFacts: configurationFacts } : input,
+                continuationPresent: false, requestId };
+            const admitted = await client.post('/v1/machines/managed/controller/admit', admissionBody, ManagedAdmissionOutputV1Schema);
+            expect(admitted).toMatchObject({ replayed: false, machine: { allocation: 'unsubmitted' } });
+            expect(await client.post('/v1/machines/managed/controller/admit', admissionBody, ManagedAdmissionOutputV1Schema))
+                .toMatchObject({ replayed: true, machine: { id: admitted.machine.id } });
+            expect(await client.submit(admitted.machine)).toMatchObject({ submitted: true, machine: { allocation: 'may-exist' } });
+
+            // Retiring the controller closes new effects; the purchase it already
+            // submitted must still be able to return its native identity.
+            if (withdrawal === 'controller-retired') expect(await inTx(tx => revokeMachineInTx(tx, { accountId: account.id,
+                machineId: controller.machineId }))).toMatchObject({ ok: true });
+            else if (!apiToken) await auth.signOutEverywhere(account.id);
+            else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
+            else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
+                grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
+            const freshAcquire = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                    envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
+            expect(freshAcquire.statusCode, freshAcquire.body).toBe(withdrawal === 'api-token-grant' ? 403
+                : withdrawal === 'controller-retired' ? 409 : 401);
+
             const fact = AcquireResultV1Schema.parse(await provider.acquire({ managedId: admitted.machine.id, launch: launch.choices }));
             if (fact.kind !== 'bound') throw new Error(`Lima did not bind: ${fact.kind}`);
             const reportBody = { homeId, managedId: admitted.machine.id, controller,
@@ -197,14 +213,51 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             const wrongJob = { ...reportBody, requestId: randomUUID() };
             const mismatched = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: wrongJob,
                 headers: reportHeaders(wrongJob) });
-            expect(mismatched.statusCode, mismatched.body).toBe(409);
-            expect(mismatched.json()).toMatchObject({ code: 'request_conflict' });
+            if (withdrawal === 'controller-retired') {
+                // Only the exact submitted fact skips controller lifecycle; any
+                // other signed call from the retired controller is refused there.
+                expect(mismatched.statusCode, mismatched.body).toBe(401);
+                expect(mismatched.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'machine_identity' });
+                const wrongRow = { ...reportBody, managedId: randomUUID() };
+                const unknownRow = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: wrongRow,
+                    headers: reportHeaders(wrongRow) });
+                expect(unknownRow.statusCode, unknownRow.body).toBe(401);
+                expect(unknownRow.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'machine_identity' });
+                // Another Account's current controller signs its own Action under
+                // the same client-chosen request id; it cannot write this row.
+                const intruder = await db.account.create({ data: { encryptionMode: 'plain' } });
+                const foreign = await createController(intruder.id);
+                await seedBundledManagedAvailability(intruder.id, homeId, foreign.controller, ['machine-lima.json']);
+                const intruderToken = await auth.createToken(intruder.id, undefined, { kind: 'account', authority: 'present_user' });
+                const foreignIssued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                    headers: { authorization: `Bearer ${intruderToken}` }, payload: { v: 1, machineId: foreign.controller.machineId,
+                        envelope: { v: 1, requestId, target: { kind: 'machine', machineId: foreign.controller.machineId },
+                            input: { ...input, selection: { ...input.selection, controller: foreign.controller } } } } });
+                expect(foreignIssued.statusCode, foreignIssued.body).toBe(200);
+                const foreignAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(foreignIssued.json());
+                for (const body of [{ ...reportBody, controller: foreign.controller }, reportBody]) {
+                    const signed = resolveExternalActionServerRequestHeaders({ context: { surface: 'cli',
+                        externalActionExecutionAuthorization: foreignAuthorization, externalActionTarget: foreignAuthorization.binding.target },
+                        effectActionId: 'machines.managed.acquire', method: 'POST', path: '/v1/machines/managed/controller/report', body,
+                        daemonToken: intruderToken, serverIdentityId: homeId, installationId: foreign.controller.installationId,
+                        privateKey: foreign.keys.secretKey });
+                    if (!signed.ok) throw new Error('Foreign report signing unavailable');
+                    const foreignReport = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: body,
+                        headers: signed.headers });
+                    expect(foreignReport.statusCode, foreignReport.body).toBeGreaterThanOrEqual(400);
+                    expect(foreignReport.statusCode, foreignReport.body).toBeLessThan(500);
+                }
+            } else {
+                expect(mismatched.statusCode, mismatched.body).toBe(409);
+                expect(mismatched.json()).toMatchObject({ code: 'request_conflict' });
+            }
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
                 .toMatchObject({ allocation: 'may-exist', resource: null });
             const before = await db.account.findMany({ where: { id: { in: [account.id, viewer.id] } }, select: { id: true, seq: true } });
             const reported = await client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts);
             expect(reported.reviewedFacts).toEqual(configurationFacts);
-            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: reported.id } })).admittedInput)
+            // Report-time presentation facts never join the admitted request identity.
+            if (withdrawal !== 'controller-retired') expect((await db.managedMachine.findUniqueOrThrow({ where: { id: reported.id } })).admittedInput)
                 .not.toHaveProperty('computeInput.reviewedFacts');
             expect(reported).toMatchObject({ id: admitted.machine.id, allocation: 'bound', resource: fact.resource });
             expect(reported.enrolledMachineId).toBeUndefined();
@@ -217,6 +270,8 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 .toEqual([account.id, viewer.id].sort().map(accountId => ({ accountId })));
             expect(await client.reportIssuedAcquireFact(admitted.machine, fact, { ...configurationFacts, optionStatus: 'unavailable' }))
                 .toMatchObject({ id: reported.id, resource: fact.resource, reviewedFacts: configurationFacts });
+            // A retired controller admits no further effects to exercise below.
+            if (withdrawal === 'controller-retired') return;
             const installedReport = { homeId, managedId: reported.id, controller, expectedIntentRevision: reported.intentRevision,
                 requestId, result: fact, bootstrapInstalled: true };
             const installed = await client.post('/v1/machines/managed/controller/report', installedReport, ManagedControllerMachineOutputV1Schema);

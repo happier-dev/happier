@@ -151,12 +151,18 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             || binding.method !== 'POST' || binding.path !== path || binding.bodyDigest !== managedPolicyDigestV1('body', request.body)
             || !nativeTarget || binding.resourceDigest !== managedPolicyDigestV1('resource', nativeTarget)
             || !controller?.installationPublicKey || !verifyMachineInstallationProof({ payload: carrier.payload, proof: carrier.proof, publicKey: controller.installationPublicKey })) throw new ManagedMachineError('permission_denied');
-        await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
-            controller: { machineId: carrier.payload.machineId, installationId: carrier.payload.installationId } });
+        const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+        const admittedPolicyRequest = binding.requestId === readManagedCurrentRequestId(row) && currentAdmission?.kind === 'policy'
+            && currentAdmission.request.purpose.kind === carrier.purpose.kind;
+        // Admission and reads qualify the controller's lifecycle. A follow-up of
+        // the admitted request (its steps and native facts, or an accepted
+        // activation failure) finishes on the proof above.
+        if (!(phase !== 'admit' && phase !== 'read' && (admittedPolicyRequest || submittedSigner || activationFailureSigner))) {
+            await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
+                controller: { machineId: carrier.payload.machineId, installationId: carrier.payload.installationId } });
+        }
         if (phase === 'current' || phase === 'submit') {
-            const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
-            if (binding.requestId !== readManagedCurrentRequestId(row) || currentAdmission?.kind !== 'policy'
-                || currentAdmission.request.purpose.kind !== carrier.purpose.kind) throw new ManagedMachineError('request_conflict');
+            if (!admittedPolicyRequest) throw new ManagedMachineError('request_conflict');
             // Signed installation/Account/target custody above authenticates
             // this call. Admission owns policy; follow-ups consume its request,
             // including after the source guest retires during finite work.

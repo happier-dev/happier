@@ -328,6 +328,9 @@ describe('Account-owned managed control without a controller', () => {
             const activePolicy = { ...policy, expectedIntentRevision: ownPolicy.json().machine.intentRevision };
             const { purpose: _purpose, ...correlation } = activePolicy;
             expect((await policyPost('submit-intent', correlation)).statusCode).toBe(200);
+            // Retiring the signing installation after submission closes new
+            // policy admission, not the admitted request's native facts.
+            await db.machine.update({ where: { id: guest.id }, data: { revokedAt: new Date() } });
             const observation = { observedAt: Date.now(), availability: 'present' as const, power: 'stopped' as const };
             const observed = await policyPost('report-intent', { ...correlation, result: { kind: 'unknown' }, observation });
             expect(observed.statusCode, observed.body).toBe(200);
@@ -336,6 +339,10 @@ describe('Account-owned managed control without a controller', () => {
             expect(settled.statusCode, settled.body).toBe(200);
             expect(settled.json().machine).toMatchObject({ desired: 'stop', observation });
             expect((await policyPost('report-intent', { ...correlation, requestId: randomUUID(), result: { kind: 'confirmed' }, observation })).statusCode).toBe(409);
+            const freshPolicy = await policyPost('admit-policy', { ...policy, requestId: randomUUID(),
+                expectedIntentRevision: settled.json().machine.intentRevision });
+            expect(freshPolicy.statusCode, freshPolicy.body).toBe(409);
+            expect(freshPolicy.json()).toEqual({ code: 'controller_retired' });
         } finally { await app.close(); }
     });
 
