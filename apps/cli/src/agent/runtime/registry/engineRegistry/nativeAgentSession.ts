@@ -81,6 +81,7 @@ import type {
     AgentSessionHookServerStartRequest,
     AgentSessionMcpLaunchConfig,
     AgentSessionMcpServer,
+    AgentSessionMcpService,
     AgentSessionHostServices,
     AgentSessionProviderTranscriptPublishRequest,
     AgentSessionRuntimeContext,
@@ -1090,17 +1091,26 @@ export function toAgentSessionMcpLaunchConfigs(
     return Object.freeze(cloned);
 }
 
-/** Uses the existing MCP probe and permission matcher before native launch. */
+/**
+ * Uses the existing MCP probe and permission matcher before native launch. A server whose catalog the
+ * host owns (the Session's Happier relay, via `resolveHostToolNaming`) answers from that owner: its
+ * relay admits only this Session's Agent tree, so the host never probes itself through it.
+ */
 export async function resolveAgentSessionMcpLaunchConfigs(
     mcpServers: Readonly<Record<string, AgentSessionMcpLaunchConfig>>,
     toolPolicy: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>,
     signal?: AbortSignal,
+    resolveHostToolNaming?: AgentSessionMcpService['resolveToolNaming'],
 ): Promise<Readonly<Record<string, AgentSessionMcpLaunchConfig>> | undefined> {
     if (toolPolicy.unlistedTools !== 'deny') return toAgentSessionMcpLaunchConfigs(mcpServers);
     // No tool can pass the matcher, so no MCP process belongs in this launch.
     // Probing unavailable, unlisted servers would make a no-tools recipe fail.
     if (!toolPolicy.allowedTools?.length) return undefined;
     const catalogs = await Promise.all(Object.entries(mcpServers).map(async ([name, server]) => {
+        // Original names are the host inventory's, independent of any transport budget; the
+        // largest budget asks for no projection.
+        const hostCatalog = await resolveHostToolNaming?.({ serverName: name, toolNameMaxLength: Number.MAX_SAFE_INTEGER }, { signal });
+        if (hostCatalog) return [name, hostCatalog.tools.map((tool) => tool.originalName)] as const;
         const tools = await probeMcpStdioServerTools({
             signal,
             config: {
@@ -5676,7 +5686,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     .catch(() => [])
                 : [];
             recordOpenPhase('resume_projection');
-            const mcpServers = await resolveAgentSessionMcpLaunchConfigs(hostRuntimeParams.mcpServers, openInputs.configuration, signal);
+            const mcpServers = await resolveAgentSessionMcpLaunchConfigs(hostRuntimeParams.mcpServers, openInputs.configuration, signal,
+                hostRuntimeParams.resolveMcpToolNaming);
             recordOpenPhase('mcp_launch');
             const agentSkills = resolveSessionAgentSkills(hostRuntimeParams.skills);
             const buildOpenRequest = (): AgentSessionOpenRequest =>

@@ -817,7 +817,8 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             : null;
                                         readRunMcpToolContext = runToolBinding?.getMcpToolContext;
                                         const runMcpServers = runToolBinding?.mcpServers
-                                            ? await resolveAgentSessionMcpLaunchConfigs(runToolBinding.mcpServers, options.start ?? {}, signal)
+                                            ? await resolveAgentSessionMcpLaunchConfigs(runToolBinding.mcpServers, options.start ?? {}, signal,
+                                                runToolBinding.resolveMcpToolNaming)
                                             : undefined;
                                         if (runToolBinding) {
                                             runScope?.publishSupportedSessionReadActions(
