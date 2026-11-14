@@ -1,5 +1,5 @@
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
-import { isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '../actionIds.js';
+import { isLocalServiceStopActionIdV1, type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
@@ -15,15 +15,11 @@ import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/ac
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '../../plugins/settingsAdministration.js';
 import { NpmRegistryProfileActionIdV1Schema, NpmRegistryProfileActionInputSchemasV1 } from '../npmRegistryProfileActionFamily.js';
 import { readLocalServiceControlActionRequest } from '../specs/localServices.js';
-import { isProjectWorkspaceSyncPreparationActionV1 } from '../projectActionIdsV1.js';
 import { isInternalActionId } from '../pluginActionSurface.js';
-import { isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
-import { RPC_METHODS } from '../../rpc/methods.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../externalActionExecutionAuthorization.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { MachineServiceLogsReadInputV1Schema } from '../../local/services/nativeLogsV1.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
-import { isSessionActionChildCreationRootV1 } from '../../sessions/creation/sessionCreationActionIdsV1.js';
 
 /** A signed reviewer may use the same Account reads as the local deciding person. */
 export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
@@ -331,16 +327,9 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
         }
       : {}),
     ...(externalAuthorization ? { externalActionExecutionAuthorization: externalAuthorization } : {}),
-    ...((params.actionId === 'projects.open' || params.actionId === 'action.operations.cancel'
-      || isWorkspaceSyncRelationshipWriteActionId(params.actionId)
-      || externalAuthorization && 'credentialId' in externalAuthorization.binding
-      || isProjectWorkspaceSyncPreparationActionV1(params.actionId)
-      || isSessionActionChildCreationRootV1(params.actionId)
-      || externalAuthorization?.binding.deploymentChildRoot === true
-      || params.actionId === 'deployments.teardown'
-      || isMachineSetupPlanRpcChildV1({ rootActionId: params.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
-      || params.actionId === 'machines.services.logs.read' && params.context.machineServiceLogsResource)
-      && externalAuthorization?.binding.actionId === params.actionId && params.context.originalActionEnvelope
+    // Ingress alone decides which admitted roots carry their signed envelope.
+    // Replay resumes that same root, so retain exactly what its context holds.
+    ...(externalAuthorization?.binding.actionId === params.actionId && params.context.originalActionEnvelope
       ? { originalActionEnvelope: params.context.originalActionEnvelope } : {}),
     ...(externalActionInputSignature ? { externalActionInputSignature } : {}),
     ...(targetSessionId ? { sessionId: targetSessionId } : {}),

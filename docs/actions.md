@@ -9877,6 +9877,10 @@ and its input signature where required; the Home authorization is bound to the
 original request and requires the selected Machine's signature and current Home
 admission. It is not an Account login bearer. Installation-sealed requester
 context, when present, remains private custody on that carrier.
+The origin also retains the signed original envelope exactly when daemon ingress
+admitted that same root with it; the origin producer keeps no second list of
+roots. Replay therefore reopens the root for its reviewed children, such as a
+Session spawn's setup and Agent readiness children, as the live invocation did.
 
 The shared Artifact kind owner directs all three approval families to the existing
 Inbox presenter. Direct Artifact and edit links use that same destination, with

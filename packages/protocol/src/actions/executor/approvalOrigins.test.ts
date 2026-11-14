@@ -86,14 +86,11 @@ describe('reviewed native root approval origin', () => {
     environment: { kind: 'create', requestKey: 'create', protection: 'nonProduction', purpose: 'standard',
       deployerMode: 'managers', controllerMachineId: 'machine' }, target: { kind: 'new', installationId: 'installation' } };
   it.each([
-    { actionId: 'deployments.deploy', input: { environmentId: 'staging' }, retained: false },
     { actionId: 'deployments.templates.instantiate', input: { ...template, mode: 'apply', deploy: { requestKey: 'deploy' } }, retained: true },
-    { actionId: 'deployments.templates.instantiate', input: { ...template, mode: 'preview' }, retained: false },
-    { actionId: 'deployments.templates.instantiate', input: { ...template, mode: 'apply' }, retained: false },
     { actionId: 'deployments.environments.create', input: { serverId: 'home', projectSourceId: 'source', requestKey: 'create',
       protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', definition: { from: 'catalogApp',
         templateRef: { sourceId: 'apps', itemId: 'web', version: '1', ref: { kind: 'content', digest: `sha256:${'c'.repeat(64)}` } } } }, retained: true },
-  ] as const)('retains admitted deployment root custody for $actionId, retained=$retained', ({ actionId, input, retained }) => {
+  ] as const)('retains the ingress deployment root envelope for $actionId', ({ actionId, input, retained }) => {
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const envelope = { v: 1 as const, requestId: 'deployment-request', target, input };
@@ -161,4 +158,31 @@ describe('reviewed native root approval origin', () => {
       expect(buildApprovalExecutionOriginV1({ actionId, input: envelope.input, targetSessionId: null, context }))
         .toMatchObject({ actionId, requestId: envelope.requestId, originalActionEnvelope: envelope });
     });
+
+  // Ingress decides which admitted roots carry their signed envelope; a replayed
+  // approval resumes that same root, so its reviewed children reopen it identically.
+  it('retains the ingress envelope of a reviewed Session spawn so replayed setup/readiness children reopen it', () => {
+    const actionId = 'session.spawn_new' as const;
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const input = { creationKey: 'reviewed-spawn', executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      permissionMode: 'read-only',
+      machineSetupPlanInput: { homeId: 'home', machineId: 'machine', sources: [{ kind: 'direct', setup: {} }] } };
+    const envelope = { v: 1 as const, requestId: 'spawn-request', target, input };
+    const binding = { serverIdentityId: 'home', accountId: 'account', authentication: { kind: 'account' as const, tokenEpoch: 0 },
+      accountEncryptionMode: 'plain' as const, machineId: 'machine', actionId, requestId: envelope.requestId,
+      custodianAccountId: 'account', installationId: 'installation', target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) };
+    const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'account', actionRequestId: envelope.requestId, originalActionEnvelope: envelope,
+      externalActionExecutionAuthorization: { v: 1, token: 'verified-at-ingress', binding }, externalActionTarget: target,
+      signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+        actionId: args.actionId, target: args.target, input: args.input, privateKey: keys.secretKey }) };
+    expect(buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null, context }))
+      .toMatchObject({ actionId, requestId: envelope.requestId, originalActionEnvelope: envelope });
+    // A context whose signed root is another Action never lends that root's envelope.
+    expect(buildApprovalExecutionOriginV1({ actionId: 'machines.setup.plan', input: { homeId: 'home', machineId: 'machine' },
+      targetSessionId: null, context })?.originalActionEnvelope).toBeUndefined();
+  });
 });
