@@ -29,7 +29,7 @@ import {
   type RuntimeOverrideTarget,
 } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { onHostedSessionHandover, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { CapabilitySelectionSynchronizerInput } from '@/agent/runtime/capabilitySelectionSynchronizer';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
@@ -760,6 +760,12 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     resolvedStartingMode.kind === 'switching' ? resolvedStartingMode.startingMode : 'remote';
   let terminalHandoffFailureRequiresManualAction = false;
   let runtimeTranscriptProjectionSerial = Promise.resolve();
+  // A planned host hand-over: the Agent output this Session already took is acknowledged to its
+  // holder and never replayed, so its streamed transcript is saved before the holder is released.
+  const disposeHandoverSave = onHostedSessionHandover(async () => {
+    await runtimeTranscriptProjectionSerial;
+    await runtimeMessageDeltaBridge.flushAll({ reason: 'tool-call-boundary' });
+  });
   // Identity lookup mutates the recorded account, so preserve native arrival
   // order without making daemon/metadata I/O part of transcript durability.
   let connectedAccountObservationSerial = Promise.resolve();
@@ -1802,6 +1808,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     closeFailedSession = true;
     throw error;
   } finally {
+    disposeHandoverSave();
     terminationHandlers.dispose();
     shouldExit = true;
     abortController.abort();

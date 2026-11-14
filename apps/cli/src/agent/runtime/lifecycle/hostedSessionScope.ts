@@ -28,6 +28,8 @@ export type HostedSessionScope = {
    * when it adds the Session). Absent in a one-Session runner: its command ends the process.
    */
   readonly end?: (exitCode: number) => void;
+  /** Work a planned host hand-over saves before it releases this Session's held Agents. */
+  handoverSaves?: Set<() => Promise<void>>;
 };
 
 const hostedSessionScope = new AsyncLocalStorage<HostedSessionScope>();
@@ -94,4 +96,21 @@ export function bindHostedSessionWorkspaceSource(source: WorkspaceSource): void 
 /** The current Session's working directory; the process cwd outside a Session. */
 export function sessionWorkingDirectory(): string {
   return hostedSessionScope.getStore()?.workingDirectory ?? process.cwd();
+}
+
+/**
+ * Registers what this Session must save before a planned host hand-over releases its held Agents
+ * (its pending transcript checkpoint). Outside a hosted Session there is no hand-over: a no-op.
+ */
+export function onHostedSessionHandover(save: () => Promise<void>): () => void {
+  const scope = hostedSessionScope.getStore();
+  if (!scope) return () => {};
+  const saves = scope.handoverSaves ??= new Set();
+  saves.add(save);
+  return () => { saves.delete(save); };
+}
+
+/** Runs every hand-over save the Session registered. */
+export async function saveHostedSessionForHandover(scope: HostedSessionScope): Promise<void> {
+  await Promise.all([...scope.handoverSaves ?? []].map(save => save()));
 }

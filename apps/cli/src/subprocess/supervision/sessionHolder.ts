@@ -436,6 +436,14 @@ const attachedHolderClients = new Set<SessionHolderChild>();
  * Host handover: every attached holder client acknowledges what it delivered and closes its channel,
  * leaving each Agent running in its holder for the next host to adopt.
  */
+/**
+ * Host handover, first step: attached holder clients stop taking Agent output. What they did not
+ * take stays unacknowledged in each holder and is replayed to the next host.
+ */
+export function pauseSessionHolderDelivery(): void {
+    for (const client of attachedHolderClients) client.pauseDelivery();
+}
+
 export async function handOverSessionHolderClients(): Promise<void> {
     await Promise.all([...attachedHolderClients].map(client => client.handOver()));
 }
@@ -601,6 +609,11 @@ export class SessionHolderChild extends ChildProcess {
             socket.once('close', () => resolve());
             socket.end(() => socket.destroy());
         });
+    }
+
+    /** Stops delivering Agent output; undelivered frames stay unacknowledged in the holder. */
+    pauseDelivery(): void {
+        this.deliveryPaused = true;
     }
 
     /** Leaves the Agent running and the holder holding it, for a later attach. */
