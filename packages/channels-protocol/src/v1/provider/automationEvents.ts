@@ -1,6 +1,7 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
+    defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
@@ -17,6 +18,16 @@ import {
 import {
     ConversationIngressAutomationEventCandidateV1ProtocolSchema,
 } from '../core/ingress.js';
+import { ConversationProviderConnectionKeyV1ProtocolSchema } from './connection.js';
+
+/** Current armed message sources, expressed only in the provider's native connection identity. */
+export const ConversationProviderMessageObservationSourcesInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
+export const ConversationProviderMessageObservationSourcesResultV1Schema = defineProtocolObject({
+    providerConnectionKeys: defineProtocolArray(ConversationProviderConnectionKeyV1ProtocolSchema),
+}, { policy: 'closed' });
+export type ConversationProviderMessageObservationSourcesResultV1 = ReturnType<
+    typeof ConversationProviderMessageObservationSourcesResultV1Schema.parse
+>;
 
 const conversationOccurrenceIdV1 = defineProtocolUtf8String({
     maxUtf8Bytes: MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES,

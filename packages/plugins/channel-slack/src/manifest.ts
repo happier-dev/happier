@@ -83,7 +83,9 @@ function createSlackPlugin() {
     notificationChannels: { alerts: { declaration: { title: 'Slack', kind: 'plugin', metadata: { destinationSetup: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_CHANNEL_ACTION_IDS.notificationSetup } } }, sender: sendSlackNotification } },
     actions: {
       [SLACK_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
-        title: 'Watch a Slack conversation for Workflows', surfaces: ['ui', 'plugin'],
+        title: 'Watch a Slack conversation for Workflows', surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
+        dangerLevel: 'safe',
+        readOnly: true,
         inputSchema: SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
         resultSchema: SLACK_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA, inputHints: SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
         hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: setupSlackAutomationMessageSource,
@@ -100,6 +102,10 @@ function createSlackPlugin() {
         dangerLevel: roles.notificationDestinationSetup.declaration.dangerLevel,
         inputSchema: roles.notificationDestinationSetup.declaration.input.schema.jsonSchema,
         resultSchema: roles.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+        // The form a person sees through the Channels picker: the picker supplies the connection, they search for the place.
+        inputHints: { description: 'Find the Slack channel or person Happier sends notifications to.', submitLabel: 'Search',
+          fields: [{ path: 'connectionId', title: 'Connection', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } },
+            { path: 'query', title: 'Channel or person', description: 'A channel the app is in, or a person.', placeholder: '#releases', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } }] },
         hostAccess: webAccess,
         run: setupSlackNotificationDestination,
       },

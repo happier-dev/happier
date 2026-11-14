@@ -98,7 +98,7 @@ describe('Channels pairing across Discord history notices', () => {
     async function executeHostAction(action: string): Promise<JsonValue> {
       if (action === 'session.transcript.get') return { sessionId: 'paired-session', items: [], hasMore: false, scannedThroughSeq: 0 };
       if (action === 'automation.event.sources.list') return {
-        kind: 'page', revision: 'journey-catalog-1', definitions: [], nextCursor: null,
+        kind: 'page', revision: '1', definitions: [], nextCursor: null,
       } satisfies PluginActionResultById['automation.event.sources.list'];
       if (action === 'automation.event.source.status.report') return {};
       throw new Error(`Unexpected host Action: ${action}`);

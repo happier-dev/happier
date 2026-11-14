@@ -8,6 +8,17 @@ fields. UI client errors and the SDK test host carry the same authored cause,
 details and remediation. Existing causes without a native code remain valid.
 
 
+## Channel message observation demand (unreleased 0.3)
+
+Channels combines enabled binding policies, pairing and armed message Event
+sources in its existing connection-demand projection. Providers can expose the
+optional `messageObservationSources` operation to map their current armed sources
+to native connection keys using the SDK's `readCurrentSourceDefinitions` reader.
+Channels decides the resulting full-content demand;
+Discord consumes that result when selecting Gateway intents. Event-source
+invalidation wakes the existing connection reconciliation path, including after
+arming or disarming a standalone source.
+
 ## Channel Session status (unreleased 0.3)
 
 The Channels outward projection consumes accepted input provenance and the
@@ -9274,6 +9285,16 @@ captured before requesting the utterance; its `waitForDrain(signal)` reports
 even before the drain wait began. A legacy host without this capture, or a void
 drain result, supplies no confirmation proof. These
 are unreleased 0.3 source contracts and need native playback validation.
+
+The xAI leaf routes provider-immediate speech-start to its existing PCM clear
+operation, including host read-back audio. Server generation completion leaves
+the audible phase active until the PCM playback capture reports a natural
+drain; interruption clears that phase immediately. Tool and transcript delivery
+do not wait for the audio tail. The leaf groups pending calls until response
+completion without count-based eviction; shared transcript and effect owners
+retain their existing identity rules. It keeps no separate completed-response
+or event replay registry. Saved provider conversation identity does not imply
+pending-tool replay support.
 
 Voice schema exports at `@happier-dev/plugin-sdk/voice` and its client entry
 are native `zod/mini` schemas with the exact runtime identity of their Protocol

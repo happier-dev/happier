@@ -25,6 +25,8 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
+import type { PersistedConversationProviderContributionSelection } from './collections.js';
+import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import type { ConversationPairingManager } from './pairing.js';
 import { asChannelStateRow, readConversationConnectionUpdateRow, type ChannelStateRow } from './accountLocalBindingPolicy.js';
@@ -47,7 +49,7 @@ type ChannelStateConnectionRecordV1 = Readonly<{
   'record-kind': typeof CHANNEL_STATE_RECORD_KIND.connection;
   'connection-id': string;
   v: 1;
-  payload: WithoutConnectionIdentity<ConversationReconciliationConnectionStateV1>;
+  payload: WithoutConnectionIdentity<PersistedReconciliationConnectionState>;
 }>;
 
 type ChannelStateBindingRecordV1 = Readonly<{
@@ -78,6 +80,10 @@ export type ConversationReconciliationConnectionStateV1 =
     historyGap: JsonValue | null;
     pendingOldTransportStop: ConversationPendingOldTransportStopV1 | null;
   }>;
+
+type PersistedReconciliationConnectionState = ConversationReconciliationConnectionStateV1 & Readonly<{
+  providerContributionSelection: PersistedConversationProviderContributionSelection;
+}>;
 
 /**
  * Minimal current binding policy needed by the core to derive reconciliation
@@ -300,7 +306,7 @@ function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonVa
  */
 function connectionStateFromCollectionValue(
   value: JsonValue,
-): ConversationReconciliationConnectionStateV1 | undefined {
+): PersistedReconciliationConnectionState | undefined {
   if (
     !isJsonRecord(value)
     || value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection
@@ -358,7 +364,7 @@ async function readCurrentReconciliationState(
   context: PluginInvocationContext,
   connectionId?: string,
 ): Promise<Readonly<{
-  connections: readonly ConversationReconciliationConnectionStateV1[];
+  connections: readonly PersistedReconciliationConnectionState[];
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
 }>> {
   // Demand is a recoverable projection, not an Account-wide snapshot. Current
@@ -437,12 +443,13 @@ export async function listConversationProviderConnectionsForInvocation(
   pairing?: ConversationPairingManager,
 ): Promise<ConversationProviderConnectionsSnapshotV1> {
   const { connections, bindingPolicies } = await readCurrentReconciliationState(context);
-  return listConversationProviderConnectionsForCaller({
+  const snapshots = listConversationProviderConnectionsForCaller({
     caller: context.caller,
     connections,
     bindingPolicies,
     pairing,
   });
+  return await withMessageSourceDemand(context, connections, snapshots);
 }
 
 export async function readConversationProviderConnectionForInvocation(
@@ -451,11 +458,40 @@ export async function readConversationProviderConnectionForInvocation(
   pairing?: ConversationPairingManager,
 ): Promise<ConversationProviderConnectionReadResultV1> {
   const { connections, bindingPolicies } = await readCurrentReconciliationState(context, input.connectionId);
-  return readConversationProviderConnectionForCaller({
+  const snapshots = readConversationProviderConnectionForCaller({
     caller: context.caller,
     connections,
     bindingPolicies,
     connectionId: input.connectionId,
     pairing,
   });
+  return await withMessageSourceDemand(context, connections, snapshots);
+}
+
+/** Caller admission above is the sole placement gate; source facts add only demand. */
+async function withMessageSourceDemand(
+  context: PluginInvocationContext,
+  connections: readonly PersistedReconciliationConnectionState[],
+  snapshots: ConversationProviderConnectionsSnapshotV1,
+): Promise<ConversationProviderConnectionsSnapshotV1> {
+  const needsSourceDemand = Object.values(snapshots).filter(snapshot => snapshot.enabled && !snapshot.requiresFullSharedMessageContent);
+  if (needsSourceDemand.length === 0) return snapshots;
+  const connection = connections.find(candidate => candidate.connectionId === needsSourceDemand[0]!.connectionId)!;
+  // A caller census has one provider and execution route. The contribution
+  // point admits one contribution per provider, so list its sources once.
+  const provider = await readCurrentProviderContributionForPersistedSelection({
+    context: { targetedContributions: context.services.targetedContributions, signal: context.signal },
+    providerPluginId: connection.providerPluginId,
+    providerContributionSelection: connection.providerContributionSelection,
+  });
+  const operation = provider.operations.messageObservationSources;
+  if (operation === undefined) return snapshots;
+  const { result } = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(operation, {}, {
+    signal: context.signal,
+    expectedExecutionRouting: getConversationConnectionExecutionRouting(connection.transportOrigin, connection.providerPluginId),
+  });
+  const keys = new Set(result.providerConnectionKeys);
+  return reconciliationSnapshotMap(Object.values(snapshots).map(snapshot => keys.has(snapshot.providerConnectionKey)
+    ? { ...snapshot, requiresFullSharedMessageContent: true }
+    : snapshot));
 }

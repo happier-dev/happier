@@ -5,6 +5,12 @@
  */
 export const DISCORD_PLUGIN_ID = 'happier.channel.discord';
 
+export const DISCORD_CONNECTION_KEY_PREFIX = 'discord:application:';
+
+export function createDiscordConnectionKey(applicationId: string): string {
+  return `${DISCORD_CONNECTION_KEY_PREFIX}${applicationId}`;
+}
+
 export const DISCORD_BOT_CONNECTED_ACCOUNT_ID = 'discord-bot';
 export const DISCORD_BOT_CREDENTIAL_PURPOSE = 'discord-bot-credential';
 export const DISCORD_BOT_TOKEN_ENVIRONMENT_KEY = 'DISCORD_BOT_TOKEN';

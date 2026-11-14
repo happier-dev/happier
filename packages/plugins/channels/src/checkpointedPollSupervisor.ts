@@ -248,6 +248,11 @@ export function createIngressSupervisor(
             .catch(error => logIngressSupervisorFailure(context, 'connection-discovery', error));
         };
         if (options.pairing !== undefined) observations.push(options.pairing.subscribe(invalidateProviderConnections));
+        observations.push(context.services.events.host.subscribe({
+          eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' },
+        }, event => {
+          if (event.payload.definitionsChanged !== false) invalidateProviderConnections();
+        }));
         observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
           prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, () => {
           discoverConnections = true;

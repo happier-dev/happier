@@ -28,7 +28,7 @@ import {
   DISCORD_CHANNEL_ACTION_IDS,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
-import { DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID } from './discordAutomationEvent.js';
+import { DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID, DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID } from './discordAutomationEvent.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
@@ -172,6 +172,8 @@ describe('Discord Channels manifest', () => {
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.connectionTest, providers.connectionTest);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.endpointResolve, providers.endpointResolve);
     expectProtocolDefinedRole(DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID, providers.automationEventAdmit);
+    expectProtocolDefinedRole(DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID, providers.messageObservationSources);
+    expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.notificationSetup, providers.notificationDestinationSetup);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.messageDeliver, providers.messageDeliver);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.attachmentFetch, providers.attachmentFetch);
     expect(actions.has('discord/halt-gateway')).toBe(false);
@@ -182,7 +184,7 @@ describe('Discord Channels manifest', () => {
     expect(actions.get(DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID)).toMatchObject({
       execution: { target: 'daemon' },
     });
-    expect(actions.size).toBe(8);
+    expect(actions.size).toBe(10);
   });
 
   it('keeps the Gateway worker Account binding on an object-root wrapper without widening the core reconciliation union', () => {

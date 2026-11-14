@@ -1,10 +1,23 @@
-import type { WorkflowDefinitionV1, WorkflowActionLeafV1 } from '../workflowV1.js';
+import type { WorkflowDefinitionV1, WorkflowActionLeafV1, WorkflowBlock } from '../workflowV1.js';
 import type { WorkflowValueReference } from '../workflowReferenceV1.js';
 import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1,
   REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1 } from '../../reviews/reviewFindingsApplyInputV1.js';
 import { agent, input, literal, result } from './definitionParts.js';
 
 const item = (name: string): WorkflowValueReference => ({ kind: 'item', field: 'value', path: [name] });
+
+function panelComments(id: string, name: string): Extract<WorkflowBlock, { kind: 'loop' }> {
+  const commentIds: WorkflowValueReference = { kind: 'item', field: 'value', path: ['results', 'review', 'commentIds'] };
+  return { kind: 'loop', id, name,
+    repetition: { kind: 'items', items: result('panel'), execution: 'sequential', failurePolicy: 'collect_outcomes' },
+    body: [{ kind: 'loop', id: `${id}-findings`, name: 'Read the reviewer’s findings',
+      onlyWhen: { kind: 'exists', value: commentIds },
+      repetition: { kind: 'items', items: commentIds, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+      body: [{ kind: 'action', id: `${id}-get`, name: 'Read the finding', actionId: 'reviews.comments.get',
+        input: { commentId: { kind: 'item', field: 'value' } } }],
+    }],
+  };
+}
 
 // The Judge copies these fields from the canonical comment read. The Action
 // owner validates scope and CAS; a transient verdict never resolves a comment.
@@ -53,9 +66,10 @@ export const REVIEW_AND_CONVERGE_WORKFLOW_V1: WorkflowDefinitionV1 = {
             instructions: input('focus'), reviewCommentAuthorIntent: literal('open'),
           } }],
         },
-        { kind: 'action', id: 'disputes', name: 'Read the disputed findings', actionId: 'reviews.comments.list', input: { sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] }, allPages: literal(true) } },
+        { ...panelComments('disputes', 'Read the disputed findings'),
+          onlyWhen: { kind: 'compare', operator: 'eq', left: input('useJudge'), right: literal(true) } },
         { ...agent('judge', 'Resolve the disputes', 'judge',
-          'Rule only on disputed ReviewComments whose commentIds appear in this panel. Return uphold or dismiss with reason and optional canonical ReviewComment evidence array. Copy each comment\'s serverRevision as expectedServerRevision, state as expectedState, and its projectId or workspace unchanged. Set clientMutationId uniquely for this comment revision and verdict. Never invent a comment, scope, or revision. Missing comments or incomplete pages supply no verdict.',
+          'Rule only on disputed ReviewComments whose commentIds appear in this panel. Return uphold or dismiss with reason and optional canonical ReviewComment evidence array. Copy each comment\'s serverRevision as expectedServerRevision, state as expectedState, and its projectId or workspace unchanged. Set clientMutationId uniquely for this comment revision and verdict. Never invent a comment, scope, or revision. Missing comments or failed reads supply no verdict.',
           [result('panel'), result('disputes')], true),
           onlyWhen: { kind: 'compare', operator: 'eq', left: input('useJudge'), right: literal(true) },
           execution: { engine: { role: 'judge' }, executionTarget: { kind: 'detached_run' }, conversation: { kind: 'fresh' }, permissionMode: 'read-only' },
@@ -89,7 +103,7 @@ export const REVIEW_AND_CONVERGE_WORKFLOW_V1: WorkflowDefinitionV1 = {
               then: [verdictAction('uphold-project', false, true)], otherwise: [verdictAction('uphold-workspace', false, false)] }],
           }],
         },
-        { kind: 'action', id: 'comments', name: 'Read the current findings', actionId: 'reviews.comments.list', input: { sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] }, allPages: literal(true) } },
+        panelComments('comments', 'Read the current findings'),
         { ...agent('check', 'Check convergence', 'judge',
           'Check convergence using only this panel\'s commentIds and the persisted ReviewComments supplied here. Return converged only if every panel engine completed and materialized its findings, every referenced comment is present, and none remains unresolved at or above the review threshold. Disputed comments need a canonical transition. Transient Judge verdicts are not resolutions. Failed, missing, or incomplete coverage means continue, never converged.',
           [result('panel'), result('comments')], true),

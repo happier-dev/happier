@@ -15,6 +15,8 @@ import {
 import {
     ConversationProviderAutomationEventAdmitInputV1Schema,
     ConversationProviderAutomationEventAdmitResultV1Schema,
+    ConversationProviderMessageObservationSourcesInputV1Schema,
+    ConversationProviderMessageObservationSourcesResultV1Schema,
 } from './automationEvents.js';
 import {
     ConversationDeliveryInputV1Schema,
@@ -120,6 +122,12 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             input: { kind: 'protocolDefined', schema: ConversationProviderAutomationEventAdmitInputV1Schema },
             resultSchema: ConversationProviderAutomationEventAdmitResultV1Schema,
             action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
+        },
+        messageObservationSources: {
+            required: false,
+            input: { kind: 'protocolDefined', schema: ConversationProviderMessageObservationSourcesInputV1Schema },
+            resultSchema: ConversationProviderMessageObservationSourcesResultV1Schema,
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
         messageDeliver: {
             required: true,

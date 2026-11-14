@@ -1,4 +1,10 @@
 export {
+    ConversationProviderMessageObservationSourcesInputV1Schema,
+    ConversationProviderMessageObservationSourcesResultV1Schema,
+} from './automationEvents.js';
+export type { ConversationProviderMessageObservationSourcesResultV1 } from './automationEvents.js';
+
+export {
     assertConversationChannelsCoreCallerV1,
     classifyConversationProviderMaterializationFailureV1,
     rethrowConversationProviderLifecycleFailureV1,

@@ -106,8 +106,6 @@ describe('Telegram Channel plugin activation', () => {
   });
 
   it('declares the Event after Channels durably owns its shared-offset obligation', () => {
-    expect(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID)?.surfaces)
-      .toContain('ui');
     expect(PLUGIN_MANIFEST.contributes.events).toEqual([expect.objectContaining({
       id: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID,
       kind: 'event',
@@ -123,9 +121,11 @@ describe('Telegram Channel plugin activation', () => {
         }),
       }),
     })]);
-    expect(PLUGIN_MANIFEST.contributes.actions?.find(
+    const setup = PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
-    )).toMatchObject({ surfaces: ['ui', 'plugin'] });
+    );
+    expect(setup).toMatchObject({ surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'], dangerLevel: 'safe', readOnly: true });
+    expect(setup?.confirmation).toBeUndefined();
     expect(PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
     )).toMatchObject({ surfaces: ['plugin'], dangerLevel: 'writesRemote' });

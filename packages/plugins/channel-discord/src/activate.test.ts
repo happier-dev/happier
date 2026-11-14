@@ -13,10 +13,12 @@ import {
 import {
   DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
   DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID,
 } from './discordAutomationEvent.js';
 import { DISCORD_BOT_CONNECTED_ACCOUNT_ID, PLUGIN_MANIFEST } from './manifest.js';
 
 const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
+  notificationSetup: 'notifications/setup',
   setup: 'discord/prepare-bot',
   connectionTest: 'discord/inspect-connection',
   endpointResolve: 'discord/choose-channel',
@@ -25,10 +27,12 @@ const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
 });
 
 const DISCORD_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
+  notificationDestinationSetup: DISCORD_CHANNEL_ACTION_IDS.notificationSetup,
   setup: DISCORD_CHANNEL_ACTION_IDS.setup,
   connectionTest: DISCORD_CHANNEL_ACTION_IDS.connectionTest,
   endpointResolve: DISCORD_CHANNEL_ACTION_IDS.endpointResolve,
   automationEventAdmit: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  messageObservationSources: DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID,
   messageDeliver: DISCORD_CHANNEL_ACTION_IDS.messageDeliver,
   attachmentFetch: DISCORD_CHANNEL_ACTION_IDS.attachmentFetch,
 });
@@ -133,9 +137,11 @@ describe('Discord Channel plugin activation', () => {
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
         .not.toHaveProperty('deliveryReconcile');
       expect(testkit.registrations()).toEqual([
+        { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.notificationSetup },
         { family: 'actions', localId: DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID },
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
+        { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.setup },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionTest },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.endpointResolve },
@@ -143,6 +149,7 @@ describe('Discord Channel plugin activation', () => {
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.attachmentFetch },
         { family: 'backgroundServices', localId: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID },
         { family: 'events', localId: 'connections-invalidated-v1' },
+        { family: 'notificationChannels', localId: 'alerts' },
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
       ]);
 

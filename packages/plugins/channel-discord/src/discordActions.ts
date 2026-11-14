@@ -55,10 +55,9 @@ import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BOT_TOKEN_ENVIRONMENT_KEY,
   DISCORD_PLUGIN_ID,
+  DISCORD_CONNECTION_KEY_PREFIX,
   readDiscordChannelEndpointId,
 } from './discordPluginConstants.js';
-
-const DISCORD_CONNECTION_KEY_PREFIX = 'discord:application:';
 
 type DiscordSetupInput = Readonly<{ credentialRef: ConnectedAccountRef }>;
 type ReadyDiscordConnection = Readonly<{

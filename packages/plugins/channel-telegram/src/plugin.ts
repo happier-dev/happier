@@ -165,6 +165,10 @@ function createTelegramPluginDefinition() {
       dangerLevel: providers.operations.notificationDestinationSetup.declaration.dangerLevel,
       inputSchema: providers.operations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      // The form a person sees through the Channels picker: the picker supplies the connection, they search for the place.
+      inputHints: { description: 'Find the Telegram chat Happier sends notifications to.', submitLabel: 'Search',
+        fields: [{ path: 'connectionId', title: 'Connection', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } },
+          { path: 'query', title: 'Chat', description: 'A chat or group your bot is in.', placeholder: 'Release team', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } }] },
       hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],
       run: setupTelegramNotificationDestination,
     },
@@ -315,7 +319,9 @@ function createTelegramPluginDefinition() {
     [TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Choose a Telegram chat to watch',
       description: 'Resolves a Telegram chat to immutable source facts for a Workflow Event.',
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
+      dangerLevel: 'safe',
+      readOnly: true,
       inputSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       resultSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
       hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],

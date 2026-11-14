@@ -70,11 +70,45 @@ function backgroundContext(
     services: {
       storage: { account: { collection: () => collection } },
       logger: { info: vi.fn(), ...(logger ?? { warn: vi.fn() }) },
+      events: { host: { subscribe: () => ({ dispose() {} }) },
+        plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices,
   } as BackgroundServiceContext;
 }
 
 describe('Checkpointed poll supervisor', () => {
+  it('wakes provider reconciliation on Event source arm/disarm without polling the source catalog', async () => {
+    const controller = new AbortController();
+    type SourceInvalidation = Readonly<{ payload: Readonly<{ definitionsChanged?: boolean }> }>;
+    let notify: ((event: SourceInvalidation) => void) | undefined;
+    const disposed = vi.fn();
+    const emit = vi.fn(async () => ({ status: 'admitted' as const, sequence: 1, subscriberCount: 1 }));
+    const base = backgroundContext(controller.signal, async () => ({ rows: [], changeCursor: 1 }));
+    const context = { ...base, services: { ...base.services,
+      events: { host: { subscribe(target: { eventId: string }, listener: (event: SourceInvalidation) => void) {
+        if (target.eventId === '@happier/automation/event-sources-invalidated') notify = listener;
+        return { dispose: disposed };
+      } }, plugin: { emit } },
+    } } as unknown as BackgroundServiceContext;
+    const supervisor = createIngressSupervisor({ runDueWork: async () => 0 });
+    const run = supervisor.run(context);
+    try {
+      await vi.waitFor(() => expect(notify).toBeTypeOf('function'));
+      expect(emit).not.toHaveBeenCalled();
+      notify?.({ payload: { definitionsChanged: false } });
+      expect(emit).not.toHaveBeenCalled();
+      notify?.({ payload: {} });
+      notify?.({ payload: { definitionsChanged: true } });
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2));
+      expect(emit).toHaveBeenCalledWith('connections-invalidated-v1', {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    } finally {
+      controller.abort();
+      await run;
+      await supervisor.dispose();
+    }
+    expect(disposed).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { kind: 'connection', reset: false }, { kind: 'binding', reset: false }, { kind: 'checkpoint', reset: false },
     { kind: 'binding', reset: true }, { kind: 'checkpoint', reset: true },
@@ -136,7 +170,7 @@ describe('Checkpointed poll supervisor', () => {
         },
       }) } },
       actions: { getCurrentExecutionRouting: async () => ({ serverIdentityId: 'srv_account_one', machineId: 'machine-1', pluginId: 'happier.channels' }) },
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
+      events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices });
     const publish = (connectionId: string, recordKind: string) => {
       for (const watch of [...watchers]) {
@@ -276,7 +310,7 @@ describe('Checkpointed poll supervisor', () => {
         watch: (request: Readonly<{ prefix?: readonly string[] }>, notify: () => void) => {
           watchers.push({ kind: request.prefix?.[0], notify }); return { dispose() {} };
         },
-      }) } }, events: { plugin: { emit: async () => ({ subscriberCount: 0 }) } },
+      }) } }, events: { ...context.services.events, plugin: { emit: async () => ({ subscriberCount: 0 }) } },
     } as unknown as PluginServices });
     const publish = (kind: string) => {
       for (const watch of watchers) if (watch.kind === undefined || watch.kind === kind) watch.notify();
@@ -311,7 +345,7 @@ describe('Checkpointed poll supervisor', () => {
     const context = backgroundContext(generation.signal, async () => ({ rows: [], changeCursor: 1 }));
     const supervisor = createIngressSupervisor({ pairing });
     const running = supervisor.run({ ...context, services: { ...context.services,
-      events: { plugin: { emit } },
+      events: { ...context.services.events, plugin: { emit } },
     } as unknown as PluginServices });
     try {
       await vi.advanceTimersByTimeAsync(0);
@@ -358,7 +392,7 @@ describe('Checkpointed poll supervisor', () => {
       const services = { ...context.services, storage: { account: { collection: () => ({
         get, query, put: write, delete: write, batch: write, forget: write,
         watch: (_request: unknown, notify: () => void) => { listeners.push(notify); return { dispose() {} }; },
-      }) } }, events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } } as unknown as PluginServices;
+      }) } }, events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } } as unknown as PluginServices;
       const supervisor = createIngressSupervisor();
       const running = supervisor.run({ ...context, services });
       try {
@@ -425,7 +459,7 @@ describe('Checkpointed poll supervisor', () => {
           return { dispose() {} };
         },
       }) } },
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
+      events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices });
     try {
       await vi.advanceTimersByTimeAsync(7_000);
@@ -474,7 +508,7 @@ describe('Checkpointed poll supervisor', () => {
     const supervisor = createIngressSupervisor();
     const run = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => collection } },
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
+      events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices });
     try {
       await vi.advanceTimersByTimeAsync(0);
@@ -544,7 +578,7 @@ describe('Checkpointed poll supervisor', () => {
       services: {
         ...context.services,
         storage: { account: { collection: () => collection } },
-        events: { plugin: { emit } },
+        events: { ...context.services.events, plugin: { emit } },
       } as unknown as PluginServices,
     });
     try {
@@ -624,7 +658,7 @@ describe('Checkpointed poll supervisor', () => {
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...context, services: {
       ...context.services, storage: { account: { collection: () => collection } },
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
+      events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices });
     try {
       await vi.advanceTimersByTimeAsync(0);

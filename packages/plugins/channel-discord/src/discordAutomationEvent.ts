@@ -1,6 +1,7 @@
 import type {
   ConversationIngressAutomationEventCandidateV1,
   ConversationNormalizedIngressV1,
+  ConversationProviderMessageObservationSourcesResultV1,
 } from '@happier-dev/channels-protocol/v1';
 import {
   CONVERSATION_CORE_PLUGIN_ID_V1,
@@ -13,17 +14,19 @@ import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   createPluginEventAutomationSetupResultV1JsonSchema,
+  readCurrentSourceDefinitions,
   type PluginEventAutomationSetupResultV1,
 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { createDiscordBotApi } from './discordApi.js';
-import { materializeExactDiscordBotToken } from './discordActions.js';
+import { assertDiscordChannelsCoreCaller, materializeExactDiscordBotToken } from './discordActions.js';
 import {
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_PLUGIN_ID,
   readDiscordChannelEndpointId,
+  createDiscordConnectionKey,
 } from './discordPluginConstants.js';
 
 export { DISCORD_PLUGIN_ID } from './discordPluginConstants.js';
@@ -36,7 +39,32 @@ export { DISCORD_PLUGIN_ID } from './discordPluginConstants.js';
 export const DISCORD_AUTOMATION_MESSAGE_EVENT_ID = 'automation/channel-message-observed-v1';
 export const DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID = 'automation/setup-channel-message-source-v1';
 export const DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID = 'discord/admit-automation-event';
+export const DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID = 'discord/message-observation-sources';
 export const DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION = 1;
+
+/** Native source identity codec; Channels owns the resulting connection demand. */
+export async function readDiscordMessageObservationSources(
+  _input: unknown,
+  context: PluginInvocationContext,
+): Promise<ConversationProviderMessageObservationSourcesResultV1> {
+  assertDiscordChannelsCoreCaller(context);
+  const catalog = await readCurrentSourceDefinitions(context, { kind: 'socket' });
+  if (catalog === null) throw new PluginError({
+    code: 'automation_event_adopted_definitions_unavailable',
+    message: 'Current Automation Event sources are unavailable.',
+    retryable: true,
+  });
+  const keys = new Set<string>();
+  for (const definition of catalog.definitions) {
+    if (definition.eventRef.pluginId !== DISCORD_PLUGIN_ID
+      || definition.eventRef.localId !== DISCORD_AUTOMATION_MESSAGE_EVENT_ID
+      || definition.sourceContractVersion !== DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION) continue;
+    const config = parseDiscordAutomationMessageSourceConfig(definition.sourceConfig);
+    if (config === null) continue;
+    keys.add(createDiscordConnectionKey(config.applicationId));
+  }
+  return { providerConnectionKeys: [...keys] };
+}
 
 /**
  * Discord's own message-content ceiling (2,000 code points, 4,000 with Nitro).
@@ -215,7 +243,7 @@ export function parseDiscordAutomationMessageSourceConfig(
 export function createDiscordAutomationMessageSourceInstanceId(
   config: DiscordAutomationMessageSourceConfigV1,
 ): string {
-  return `discord:application:${config.applicationId}:channel:${config.channelId}`;
+  return `${createDiscordConnectionKey(config.applicationId)}:channel:${config.channelId}`;
 }
 
 /**
@@ -376,7 +404,7 @@ export async function setupDiscordAutomationMessageSource(
   if (!hasCurrentConversationProviderConnectionV1({
     connections: connections.data,
     credentialRef: input.credentialRef,
-    providerConnectionKey: `discord:application:${identity.applicationId}`,
+    providerConnectionKey: createDiscordConnectionKey(identity.applicationId),
   })) {
     throw new PluginError({
       code: 'discord_automation_channels_connection_required',

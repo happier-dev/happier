@@ -38,6 +38,13 @@ function boundary(enabled = true) {
 }
 
 describe('Slack Workflow Events', () => {
+  it('exposes read-only source resolution on every interactive surface without confirmation', () => {
+    const setup = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === setupId);
+    expect(setup).toMatchObject({
+      surfaces: expect.arrayContaining(['ui', 'plugin', 'agent', 'mcp', 'cli']), dangerLevel: 'safe', readOnly: true,
+    });
+    expect(setup?.confirmation).toBeUndefined();
+  });
   it('resolves a registered UI setup Action to immutable source facts for the exact enabled Channels connection', async () => {
     const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
@@ -72,7 +79,7 @@ describe('Slack Workflow Events', () => {
         throw new Error(`Unexpected host Action ${actionId}`);
       });
       const base = boundary().context;
-      const context = { ...base, surface: 'plugin', caller: { kind: 'plugin', pluginId: 'happier.channels', occurrenceId: 'core-1',
+      const context = { ...base, surface: 'plugin', caller: { kind: 'plugin', pluginId: 'happier.other', occurrenceId: 'core-1',
         sourceCustody: { kind: 'managed', immutableGenerationId: 'core-1', installSource: 'npm' },
         contribution: { id: 'fixture', qualifiedId: 'happier.channels/actions/fixture' },
         materialization: { pluginId: 'happier.channels', machineId: 'machine-1', materializationId: 'core-1' } },

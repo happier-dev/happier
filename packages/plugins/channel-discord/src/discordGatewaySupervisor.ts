@@ -1,6 +1,5 @@
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
-  ConversationProviderConnectionReadResultV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
   ConversationTransportFactReportResultV1Schema,
   type ConversationProviderConnectionReconciliationSnapshotV1,
@@ -29,6 +28,7 @@ import {
   DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
   DISCORD_PLUGIN_ID,
+  createDiscordConnectionKey,
 } from './discordPluginConstants.js';
 import {
   DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
@@ -243,7 +243,7 @@ async function projectDiscordAutomationSourceConnectionStatus(
   await projectPluginEventSourceConnectionStatusV1({
     eventRef: { pluginId: DISCORD_PLUGIN_ID, localId: DISCORD_AUTOMATION_MESSAGE_EVENT_ID },
     sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
-    sourceInstanceIdPrefix: `discord:application:${configuration.applicationId}:channel:`,
+    sourceInstanceIdPrefix: `${createDiscordConnectionKey(configuration.applicationId)}:channel:`,
     scope: { kind: 'socket' },
     status,
   }, context);
@@ -647,54 +647,6 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     return true;
   };
 
-  /**
-   * A list is discovery only: before a Gateway worker or a transport fact can
-   * act on a connection, re-read that exact caller-filtered id from Channels'
-   * Account authority. The empty or malformed result is intentionally treated
-   * as no current connection, never as permission to use the list snapshot.
-   * A failed read cannot start a worker or prove an existing one was revoked.
-   * Core still revalidates authority for every observation and transport fact.
-   */
-  const readCurrentConnection = async (
-    listed: ConversationProviderConnectionReconciliationSnapshotV1,
-    context: BackgroundServiceContext,
-  ): Promise<
-    | Readonly<{ kind: 'snapshot'; snapshot: ConversationProviderConnectionReconciliationSnapshotV1 }>
-    | Readonly<{ kind: 'readFailed' }>
-  > => {
-    let result: unknown;
-    try {
-      result = await context.services.actions.execute(
-        {
-          pluginId: CHANNELS_CORE_PLUGIN_ID,
-          localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead,
-        },
-        { connectionId: listed.connectionId },
-        { signal: context.signal },
-      );
-    } catch (error) {
-      stopOnCollectionUpdateRequired(error, context);
-      skipWorker(listed, context, 'authorityReadFailed', { errorCode: isPluginError(error) ? error.code : 'unknown' });
-      return { kind: 'readFailed' };
-    }
-    const parsed = ConversationProviderConnectionReadResultV1Schema.safeParse(result);
-    if (!parsed.success) {
-      skipWorker(listed, context, 'authorityReadInvalidResult');
-      return { kind: 'readFailed' };
-    }
-    const entries = Object.entries(parsed.data);
-    if (entries.length !== 1) {
-      skipWorker(listed, context, entries.length === 0 ? 'authorityReadNotCurrent' : 'authorityReadInvalidCardinality');
-      return { kind: 'readFailed' };
-    }
-    const [connectionId, snapshot] = entries[0]!;
-    if (connectionId !== listed.connectionId || snapshot.connectionId !== listed.connectionId) {
-      skipWorker(listed, context, 'authorityReadIdentityMismatch');
-      return { kind: 'readFailed' };
-    }
-    return { kind: 'snapshot', snapshot };
-  };
-
   const reconcile = async (context: BackgroundServiceContext): Promise<void> => {
     if (updateRequired) return;
     recoveryAt = undefined;
@@ -725,29 +677,16 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       phase: 'reconciliation', connectionCount: Object.keys(parsed.data).length,
     });
 
-    const snapshots: ConversationProviderConnectionReconciliationSnapshotV1[] = [];
+    if (updateRequired || context.signal.aborted) return;
+    // The caller-scoped list is the authoritative census. Each snapshot already
+    // includes current authority and demand; the next push reconciles changes.
+    const snapshots = Object.values(parsed.data);
     const currentIds = new Set<string>();
-    const unreadFactKeys = new Set<string>();
-    for (const listed of Object.values(parsed.data)) {
-      const read = await readCurrentConnection(listed, context);
-      if (updateRequired || context.signal.aborted) return;
-      if (read.kind === 'readFailed') {
-        retryReconciliation();
-        // Preserve the listed worker and any pending facts until a successful
-        // read establishes current authority or a later list proves removal.
-        currentIds.add(listed.connectionId);
-        unreadFactKeys.add(connectionFactKey(listed));
-        const entry = workers.get(listed.connectionId);
-        if (entry !== undefined) {
-          unreadFactKeys.add(connectionFactKey(entry.snapshot));
-        }
-        continue;
-      }
-      snapshots.push(read.snapshot);
+    for (const snapshot of snapshots) {
       context.services.logger.info('[Discord Gateway] Current connection', {
-        phase: 'connectionRead', connectionId: read.snapshot.connectionId,
-        enabled: read.snapshot.enabled, deletionState: read.snapshot.deletionState,
-        requiresFullSharedMessageContent: read.snapshot.requiresFullSharedMessageContent,
+        phase: 'connectionSnapshot', connectionId: snapshot.connectionId,
+        enabled: snapshot.enabled, deletionState: snapshot.deletionState,
+        requiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent,
       });
     }
     const retainedFingerprints = new Set(snapshots.map(connectionFingerprint));
@@ -760,7 +699,6 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     }
     const retainedFactKeys = new Set(snapshots.map(connectionFactKey));
     for (const entry of workers.values()) retainedFactKeys.add(connectionFactKey(entry.snapshot));
-    for (const factKey of unreadFactKeys) retainedFactKeys.add(factKey);
     // A queued fact is only ever published against a reconciled connection and
     // authority epoch. Once that pair leaves reconciliation nothing can select
     // it again, so retaining the payload for the rest of the daemon generation

@@ -187,6 +187,7 @@ function harness(fixtures: Fixtures = {}) {
   });
   const removedTriggers: unknown[] = [];
   const reviewReads: string[] = [];
+  const commentReads: { actionId: string; commentId?: string }[] = [];
   const sessionTargets: string[] = [];
   const scmRequests: unknown[] = [];
   let checkIndex = 0;
@@ -257,12 +258,19 @@ function harness(fixtures: Fixtures = {}) {
     reviewEnginesList: async () => ({ items: [engine, otherEngine].map((value) => ({ value, label: value })) }),
     agentsBackendsList: async () => ({ items: [engine, otherEngine].map((targetKey) => ({ targetKey, label: targetKey, enabled: true })) }),
     reviewCommentAction: async ({ actionId, input }) => {
+      if (actionId === 'reviews.comments.get') {
+        const { commentId } = input as { commentId: string };
+        commentReads.push({ actionId, commentId });
+        const comment = fixtures.comments?.().find((entry) => entry.id === commentId);
+        return comment ? { comment } : { ok: false, errorCode: 'review_comment_not_found', error: 'review_comment_not_found' };
+      }
       if (actionId !== 'reviews.comments.list') {
         events.push(actionId);
         if (!fixtures.commentWrite) throw new Error('Unexpected canonical comment write');
         return fixtures.commentWrite(actionId, input);
       }
       const request = input as { limit?: number; cursor?: string; sessionId?: string };
+      commentReads.push({ actionId });
       if (request.sessionId) reviewReads.push(request.sessionId);
       const comments = fixtures.comments?.() ?? [];
       const offset = request.cursor ? Number(request.cursor) : 0;
@@ -373,7 +381,7 @@ function harness(fixtures: Fixtures = {}) {
     },
   });
   let goalInitialized = false;
-  return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, sessionTargets, sessionInputs, readGoal: () => goalControl('get'),
+  return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, commentReads, sessionTargets, sessionInputs, readGoal: () => goalControl('get'),
     runAccepted: async (snapshot: Awaited<ReturnType<typeof accepted>>, origin = true, runId = 'builtin-run') => {
       retainSnapshot(runId, snapshot);
       return coordinator().run({ ...snapshot, runId, ...(origin ? { originSessionId: 'origin' } : {}) });
@@ -689,7 +697,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     await expect(h.run(builtin(id), { engines: [engine] }, false)).rejects.toThrow('invalid_input');
     expect(h.launches).toEqual([]); expect(h.goals).toEqual([]);
   });
-  it('uses the admitted reviewSession for real review Actions, comment reads and verify input instead of the origin', async () => {
+  it('uses the admitted reviewSession for real review Actions and verify input instead of the origin', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }, { verdict: 'converged' }], session: (id) => {
       expect(id).toBe('verify'); return 'verified';
     } });
@@ -698,7 +706,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
     expect(h.launches.filter(({ request }) => request.intent === 'review').map(({ sessionId }) => sessionId))
       .toEqual(['review-target', 'review-target']);
-    expect(h.reviewReads).toEqual(['review-target', 'review-target', 'review-target', 'review-target']);
+    expect(h.reviewReads).toEqual([]);
     expect(h.sessionTargets).toEqual(['review-target']);
   });
   it('refuses a different Action Session operand even when its Workflow admits an accessible reviewSession', async () => {
@@ -862,18 +870,36 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       .toMatchObject({ lifecycle: 'failed', reason: 'review_comment_conflict' });
     expect(h.notifications).toHaveLength(1);
   });
-  it('reads all 51 current findings across comment pages alongside unrelated session comments', async () => {
-    const comments = Array.from({ length: 52 }, (_, index) => ReviewCommentV1Schema.parse({ v: 1,
+  it.each([false, true])('reads only current panel findings amid retained session history (Judge: %s)', async (useJudge) => {
+    const comments = Array.from({ length: 54 }, (_, index) => ReviewCommentV1Schema.parse({ v: 1,
       id: `finding-${index}`, accountId: 'account', projectId: 'project', sessionId: 'origin',
       anchor: { kind: 'line', filePath: 'a.ts', line: index + 1 }, snapshot: { kind: 'none', capturedAt: 1 },
-      body: `Persisted finding body ${index}`, bodyVersion: 1, edits: [], author: { kind: 'workflow', runId: index === 0 ? 'other-run' : 'builtin-run' },
+      body: `Persisted finding body [${index}]`, bodyVersion: 1, edits: [], author: { kind: 'workflow', runId: index < 51 ? 'other-run' : 'builtin-run' },
       state: 'resolved', flags: {}, dispositions: {}, threadId: `finding-${index}`, transitions: [],
       createdAt: 1, updatedAt: 1, serverRevision: 1 }));
-    const h = harness({ comments: () => comments, panelCommentIds: comments.slice(1).map((comment) => comment.id) });
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], maxRounds: 1 }))
+    const current = comments.slice(-3);
+    const unrelated = comments.slice(0, -3);
+    const h = harness({ comments: () => comments, panelCommentIds: current.map((comment) => comment.id) });
+    await expect(h.run(builtin('review-and-converge'), { engines: [engine], maxRounds: 1, useJudge }))
       .resolves.toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
     const check = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Check convergence'));
-    for (const comment of comments.slice(1)) expect(String(check?.request.instructions)).toContain(comment.body);
+    for (const comment of current) expect(String(check?.request.instructions)).toContain(comment.body);
+    for (const comment of unrelated) expect(String(check?.request.instructions)).not.toContain(comment.body);
+    expect(h.commentReads).toHaveLength(current.length * (useJudge ? 2 : 1));
+    expect(h.commentReads.every((read) => read.actionId === 'reviews.comments.get' && current.some((comment) => comment.id === read.commentId))).toBe(true);
+    const judge = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Rule only on disputed'));
+    if (useJudge) {
+      for (const comment of current) expect(String(judge?.request.instructions)).toContain(comment.body);
+      for (const comment of unrelated) expect(String(judge?.request.instructions)).not.toContain(comment.body);
+    } else expect(judge).toBeUndefined();
+  });
+  it('keeps a missing panel comment as persisted convergence failure evidence', async () => {
+    const h = harness({ panelCommentIds: ['missing-finding'], checks: [{ verdict: 'continue' }] });
+    await expect(h.run(builtin('review-and-converge'), { engines: [engine], maxRounds: 1 }))
+      .resolves.toMatchObject({ state: 'succeeded', completedWithFailures: true, finalOutput: { kind: 'exhausted', rounds: 1 } });
+    const check = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Check convergence'));
+    expect(String(check?.request.instructions)).toContain('review_comment_not_found');
+    expect(h.notifications).toHaveLength(1);
   });
   it('refuses an undeclared apply mode before launching any reviewer or verification turn', async () => {
     const h = harness();

@@ -1,6 +1,5 @@
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
-  ConversationProviderConnectionReadInputV1Schema,
   ConversationProviderConnectionReconciliationSnapshotV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
   type ConversationProviderConnectionReconciliationSnapshotV1,
@@ -100,15 +99,12 @@ function supervisorBackgroundHarness(input: Readonly<{
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<unknown>;
   executeAutomation?: (action: string, actionInput: unknown) => Promise<unknown>;
-  /** Exact current core result for tests that need a list/read race. */
-  readConnection?: (connectionId: string) => Promise<ConversationProviderConnectionReconciliationSnapshotV1 | null>;
   signal?: AbortSignal;
 }>): Readonly<{
   actions: Readonly<{ execute: ReturnType<typeof vi.fn> }>;
   background: BackgroundServiceContext;
 }> {
   let background!: BackgroundServiceContext;
-  let lastListedConnections: Record<string, ConversationProviderConnectionReconciliationSnapshotV1> = {};
   const actions = {
     execute: vi.fn(async (
       action: Readonly<{ pluginId: string; localId: string }> | string,
@@ -160,26 +156,6 @@ function supervisorBackgroundHarness(input: Readonly<{
           } as PluginInvocationContext,
         );
         return undefined;
-      }
-      if (
-        action.pluginId === 'happier.channels'
-        && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList
-      ) {
-        const result = await input.executeCore(action, actionInput, options);
-        const parsed = ConversationProviderConnectionsSnapshotV1Schema.safeParse(result);
-        lastListedConnections = parsed.success ? parsed.data : {};
-        return result as void | ProtocolJsonValue;
-      }
-      if (
-        action.pluginId === 'happier.channels'
-        && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead
-      ) {
-        const parsed = ConversationProviderConnectionReadInputV1Schema.safeParse(actionInput);
-        if (!parsed.success) return {};
-        const snapshot = input.readConnection === undefined
-          ? lastListedConnections[parsed.data.connectionId] ?? null
-          : await input.readConnection(parsed.data.connectionId);
-        return snapshot === null ? {} : { [snapshot.connectionId]: snapshot };
       }
       return await input.executeCore(action, actionInput, options) as void | ProtocolJsonValue;
     }),
@@ -293,13 +269,12 @@ function gatewaySocketUntilStopped(
 }
 
 describe('Discord Gateway supervisor', () => {
-  it.each([CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList, CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead])(
-    'settles a Collection update refusal from %s for this generation', async refusedAction => {
+  it('settles a Collection update refusal from the authoritative census for this generation', async () => {
       vi.useFakeTimers();
       const controller = new AbortController();
       const supervisor = createDiscordGatewaySupervisor();
       const execute = vi.fn(async (action: Readonly<{ localId: string }>) => {
-        if (action.localId === refusedAction) throw new PluginError({ code: 'collection_update_required', retryable: false });
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) throw new PluginError({ code: 'collection_update_required', retryable: false });
         return { 'connection-1': snapshot() };
       });
       const context = backgroundContext({ actions: { execute }, connectedAccounts: {
@@ -455,21 +430,23 @@ describe('Discord Gateway supervisor', () => {
     expect(invalidate).not.toThrow();
   });
 
-  it('re-reads each listed connection before starting its worker, so stale list evidence cannot select a Gateway generation', async () => {
-    const listed = snapshot({ authorityEpoch: 7, requiresFullSharedMessageContent: false });
-    const reread = snapshot({ authorityEpoch: 8, requiresFullSharedMessageContent: true });
-    let resolveWorker!: (result: Readonly<{ kind: 'stopped' }>) => void;
-    const workerFactory = vi.fn(() => ({
-      result: new Promise<Readonly<{ kind: 'stopped' }>>((resolve) => { resolveWorker = resolve; }),
-      stop: vi.fn(() => resolveWorker({ kind: 'stopped' })),
-    }));
+  it('uses one authoritative census for two workers and applies changed authority and demand on the next reconciliation', async () => {
+    let current = snapshot({ authorityEpoch: 7, requiresFullSharedMessageContent: false });
+    const other = snapshot({ connectionId: 'connection-2' });
+    const workerFactory = vi.fn(() => {
+      let resolveWorker!: (result: Readonly<{ kind: 'stopped' }>) => void;
+      return {
+        result: new Promise<Readonly<{ kind: 'stopped' }>>((resolve) => { resolveWorker = resolve; }),
+        stop: vi.fn(() => resolveWorker({ kind: 'stopped' })),
+      };
+    });
     const supervisor = createDiscordGatewaySupervisor({ workerFactory });
     const executeCore = vi.fn(async (
       action: Readonly<{ localId: string }>,
       actionInput: unknown,
     ) => {
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-        return { [listed.connectionId]: listed };
+        return { [current.connectionId]: current, [other.connectionId]: other };
       }
       throw new Error(`Unexpected core Action ${action.localId}`);
     });
@@ -487,29 +464,29 @@ describe('Discord Gateway supervisor', () => {
         openWebSocket: vi.fn(),
       },
       executeCore,
-      readConnection: async (connectionId) => {
-        expect(connectionId).toBe(listed.connectionId);
-        return reread;
-      },
     });
 
     await supervisor.reconcile(background);
 
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
-    expect(workerFactory).toHaveBeenLastCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
+    expect(actions.execute.mock.calls.filter(([action]) => typeof action !== 'string'
+      && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList)).toHaveLength(1);
+    expect(actions.execute.mock.calls.filter(([action]) => typeof action !== 'string'
+      && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead)).toHaveLength(0);
+    expect(workerFactory).toHaveBeenCalledWith(expect.objectContaining({
       connection: expect.objectContaining({
-        authorityEpoch: 8,
-        runtime: { requiresFullSharedMessageContent: true },
+        authorityEpoch: 7,
+        runtime: { requiresFullSharedMessageContent: false },
       }),
     }));
-    expect(actions.execute).toHaveBeenCalledWith(
-      {
-        pluginId: 'happier.channels',
-        localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead,
-      },
-      { connectionId: listed.connectionId },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    current = snapshot({ authorityEpoch: 8, requiresFullSharedMessageContent: true });
+    await supervisor.reconcile(background);
+    await vi.waitFor(() => expect(workerFactory.mock.results[0]?.value.stop).toHaveBeenCalledOnce());
+    await supervisor.reconcile(background);
+    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(3));
+    expect(workerFactory).toHaveBeenLastCalledWith(expect.objectContaining({ connection: expect.objectContaining({
+      authorityEpoch: 8, runtime: { requiresFullSharedMessageContent: true },
+    }) }));
     await supervisor.dispose();
   });
 
@@ -856,7 +833,7 @@ describe('Discord Gateway supervisor', () => {
     }
   });
 
-  it.each(['list', 'read', 'fact'] as const)('keeps the real Gateway socket alive across a transient authority %s failure', async failure => {
+  it.each(['list', 'fact'] as const)('keeps the real Gateway socket alive across a transient authority %s failure', async failure => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const controller = new AbortController();
@@ -881,10 +858,6 @@ describe('Discord Gateway supervisor', () => {
           : { url: 'wss://gateway.discord.gg/', shards: 1,
             session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 86_400_000, max_concurrency: 1 } }),
         openWebSocket,
-      },
-      readConnection: async () => {
-        if (failRead && failure === 'read') throw new PluginError({ code: 'channels_reconciliation_snapshot_changed', message: 'Account cursor moved.', retryable: true });
-        return current;
       },
       executeCore: async (action, input) => {
         if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
@@ -928,9 +901,7 @@ describe('Discord Gateway supervisor', () => {
       expect(reportedFacts).toHaveLength(0);
       expect(openWebSocket).toHaveBeenCalledTimes(1);
       expect(records().filter(record => record?.phase === 'workerStart')).toHaveLength(1);
-      expect(records()).toContainEqual(expect.objectContaining(failure === 'read'
-        ? { phase: 'workerDecision', decision: 'skip', reason: 'authorityReadFailed', errorCode: 'channels_reconciliation_snapshot_changed' }
-        : failure === 'fact'
+      expect(records()).toContainEqual(expect.objectContaining(failure === 'fact'
           ? { phase: 'workerDecision', decision: 'skip', reason: 'transportFactReportFailed', errorCode: 'network_error' }
           : { phase: 'reconciliationFailed', errorCode: 'channels_reconciliation_snapshot_changed' }));
       if (failure === 'fact') {
@@ -1606,62 +1577,6 @@ describe('Discord Gateway supervisor', () => {
     expect(workerFactory).toHaveBeenCalledTimes(1);
     expect(reportedFacts).toEqual([]);
     expect(events).toEqual(['worker']);
-    await supervisor.dispose();
-  });
-
-  it('keeps a healthy Gateway worker across an unavailable authoritative connection read and recovery', async () => {
-    const current = snapshot();
-    let readAvailable = true;
-    const reportedFacts: unknown[] = [];
-    const workerResults: DiscordGatewayWorkerResult[] = [];
-    const workerStops: Array<() => void> = [];
-    const workerFactory = vi.fn(() => ({
-      result: new Promise<DiscordGatewayWorkerResult>((resolve) => {
-        workerStops.push(() => resolve(workerResults.shift() ?? { kind: 'stopped' }));
-      }),
-      stop: vi.fn(() => workerStops.at(-1)?.()),
-    }));
-    const supervisor = createDiscordGatewaySupervisor({ workerFactory });
-    const executeCore = async (action: Readonly<{ localId: string }>, actionInput: unknown) => {
-      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-        return { [current.connectionId]: current };
-      }
-      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
-        reportedFacts.push(actionInput);
-        return { kind: 'recorded' };
-      }
-      throw new Error(`Unexpected core Action ${action.localId}`);
-    };
-    const { background } = supervisorBackgroundHarness({
-      supervisor,
-      connectedAccounts: {
-        materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
-      },
-      http: {
-        request: vi.fn(async (request: Readonly<{ url: string }>) => response(
-          request.url.endsWith('/oauth2/applications/@me')
-            ? { id: 'application-1', flags: 0, flags_new: '0' }
-            : { id: 'bot-1', username: 'Happier Bot', bot: true },
-        )),
-        openWebSocket: vi.fn(),
-      },
-      executeCore,
-      readConnection: async () => {
-        if (!readAvailable) return null;
-        return current;
-      },
-    });
-
-    await supervisor.reconcile(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
-
-    readAvailable = false;
-    await supervisor.reconcile(background);
-
-    readAvailable = true;
-    await supervisor.reconcile(background);
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-    expect(reportedFacts).toEqual([]);
     await supervisor.dispose();
   });
 

@@ -28,6 +28,9 @@ function readManifestEvent() {
 
 describe('Discord Automation Event contribution', () => {
   it('declares the Event once Channels durably owns its obligation lifecycle', () => {
+    const setup = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID);
+    expect(setup).toMatchObject({ dangerLevel: 'safe', readOnly: true });
+    expect(setup?.confirmation).toBeUndefined();
     expect(readManifestEvent()).toMatchObject({
       id: DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
       kind: 'event',
@@ -45,7 +48,7 @@ describe('Discord Automation Event contribution', () => {
     });
     const actions = PLUGIN_MANIFEST.contributes.actions ?? [];
     expect(actions.find((action) => action.id === DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID)?.surfaces)
-      .toContain('ui');
+      .toEqual(expect.arrayContaining(['ui', 'plugin', 'agent', 'mcp', 'cli']));
     expect(actions.map((action) => action.id))
       .toContain(DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID);
     expect(actions.find((action) => action.id === DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID))

@@ -141,6 +141,7 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
     executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
     approvalPolicy: {
       uiConfirmation: deletesRetainedContent ? 'policy' : 'direct',
+      ...(actionId === 'workflow.run.invocations.complete_review' ? { agentDefault: 'authority' as const } : {}),
       // Removing a child leaves the Habit intact; deleting the whole set loses its saved recipe.
       ...(actionId === 'workflow.trigger.remove' ? {
         uiConfirmationForInput: removesWholeTriggerSet,

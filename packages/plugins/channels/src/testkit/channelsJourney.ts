@@ -60,6 +60,20 @@ export async function createChannelsJourneyFixture(input: Readonly<{
   let attempt = 0;
   const pollResults: ConversationCheckpointedPollRunResult[] = [];
   const driver = definePlugin({ id: 'happier.channels', version: '0.0.0', actions: {
+    'journey/connections-list': { title: 'Invoke the activated provider census', surfaces: ['plugin'], dangerLevel: 'safe',
+      hostAccess: ['account-storage'], inputSchema: ConversationProviderConnectionsListInputV1Schema,
+      resultSchema: { type: 'object' }, async run(request, context) {
+        const handler = kit.registration('actions', 'provider/connections-list-v1');
+        if (!handler) throw new Error('The activated provider census handler is absent');
+        return await handler(request, withProviderCaller(context));
+      } },
+    'journey/connection-read': { title: 'Invoke the activated provider connection read', surfaces: ['plugin'], dangerLevel: 'safe',
+      hostAccess: ['account-storage'], inputSchema: ConversationProviderConnectionReadInputV1Schema,
+      resultSchema: { type: 'object' }, async run(request, context) {
+        const handler = kit.registration('actions', 'provider/connection-read-v1');
+        if (!handler) throw new Error('The activated provider connection read handler is absent');
+        return await handler(request, withProviderCaller(context));
+      } },
     'journey/resolve-attachments': { title: 'Resolve through the activated attachment runtime', scopes: ['session'], surfaces: ['plugin'], dangerLevel: 'safe',
       hostAccess: ['account-storage', 'bound-session'], inputSchema: { type: 'object' }, resultSchema: { type: 'object' },
       async run(request, context) {
@@ -163,6 +177,10 @@ export async function createChannelsJourneyFixture(input: Readonly<{
       : action.localId === 'provider/transport-fact-report-v1' ? ConversationTransportFactReportInputV1Schema : undefined;
     const handler = kit.registration('actions', action.localId);
     if (schema === undefined || handler === undefined) throw new Error('Missing activated core Action');
+    if (action.localId === 'provider/connections-list-v1' || action.localId === 'provider/connection-read-v1') {
+      return await kit.invokeAction(action.localId === 'provider/connections-list-v1' ? 'journey/connections-list' : 'journey/connection-read',
+        schema.parse(value), { surface: 'plugin', signal: context.signal, services: channelsTargetedContributionServices(kit) });
+    }
     if (action.localId === 'provider/observation-ingest-v1') {
       // Use the existing host driver so downstream provider Event obligations
       // receive the SDK's real admitted-operation executor, not provider services.

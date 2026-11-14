@@ -77,6 +77,8 @@ describe('Channels V1 provider barrel', () => {
             'ConversationProviderConnectionsSnapshotV1Schema',
             'ConversationProviderDescriptorV1JsonSchema',
             'ConversationProviderDescriptorV1Schema',
+            'ConversationProviderMessageObservationSourcesInputV1Schema',
+            'ConversationProviderMessageObservationSourcesResultV1Schema',
             'ConversationProviderSetupOutcomeV1JsonSchema',
             'ConversationProviderSetupOutcomeV1Schema',
             'ConversationProviderSetupRemediationResultV1JsonSchema',

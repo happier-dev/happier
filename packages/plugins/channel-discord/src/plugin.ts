@@ -34,6 +34,7 @@ import {
 } from './discordGatewaySupervisor.js';
 import {
   DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID,
   DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
   DISCORD_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
   DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
@@ -44,6 +45,7 @@ import {
   DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
   DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
   setupDiscordAutomationMessageSource,
+  readDiscordMessageObservationSources,
 } from './discordAutomationEvent.js';
 import { admitDiscordAutomationEvent } from './discordAutomationEventAdmission.js';
 
@@ -56,6 +58,7 @@ const endpointResolveOperation = discordProviderOperations.endpointResolve;
 const messageDeliverOperation = discordProviderOperations.messageDeliver;
 const attachmentFetchOperation = discordProviderOperations.attachmentFetch;
 const automationEventAdmitOperation = discordProviderOperations.automationEventAdmit;
+const messageObservationSourcesOperation = discordProviderOperations.messageObservationSources;
 
 /**
  * The setup handler reads the same declaration, so the manifest the host
@@ -268,6 +271,10 @@ function createDiscordPlugin() {
       dangerLevel: discordProviderOperations.notificationDestinationSetup.declaration.dangerLevel,
       inputSchema: discordProviderOperations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
       resultSchema: discordProviderOperations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      // The form a person sees through the Channels picker: the picker supplies the connection, they search for the place.
+      inputHints: { description: 'Find the Discord channel Happier sends notifications to.', submitLabel: 'Search',
+        fields: [{ path: 'connectionId', title: 'Connection', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } },
+          { path: 'query', title: 'Channel', description: 'A channel your bot can post in.', placeholder: '#releases', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } }] },
       hostAccess: ['discord-rest', DISCORD_BOT_CREDENTIAL_PURPOSE],
       run: setupDiscordNotificationDestination,
     },
@@ -286,7 +293,9 @@ function createDiscordPlugin() {
     [DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Watch a Discord channel for Workflows',
       description: 'Resolves a Discord channel to immutable source facts for a Workflow Event.',
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
+      dangerLevel: 'safe',
+      readOnly: true,
       inputSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       inputHints: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
       resultSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
@@ -305,6 +314,14 @@ function createDiscordPlugin() {
       inputSchema: automationEventAdmitOperation.declaration.input.schema.jsonSchema,
       resultSchema: automationEventAdmitOperation.declaration.resultSchema.jsonSchema,
       run: admitDiscordAutomationEvent,
+    },
+    [DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID]: {
+      title: 'Read armed Discord message sources',
+      surfaces: messageObservationSourcesOperation.declaration.surfaces,
+      dangerLevel: messageObservationSourcesOperation.declaration.dangerLevel,
+      inputSchema: messageObservationSourcesOperation.declaration.input.schema.jsonSchema,
+      resultSchema: messageObservationSourcesOperation.declaration.resultSchema.jsonSchema,
+      run: readDiscordMessageObservationSources,
     },
     [DISCORD_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Discord Channels',
@@ -456,6 +473,7 @@ function createDiscordPlugin() {
             automationEventAdmit: discordProviderOperations.automationEventAdmit.bind(
               DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
             ),
+            messageObservationSources: messageObservationSourcesOperation.bind(DISCORD_AUTOMATION_MESSAGE_SOURCES_ACTION_ID),
             messageDeliver: discordProviderOperations.messageDeliver.bind(DISCORD_CHANNEL_ACTION_IDS.messageDeliver),
             attachmentFetch: attachmentFetchOperation.bind(DISCORD_CHANNEL_ACTION_IDS.attachmentFetch),
           },

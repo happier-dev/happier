@@ -2,6 +2,7 @@ import type { ConversationProviderSetupResultV1 } from '@happier-dev/channels-pr
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { DISCORD_MESSAGE_MAXIMUM_CODE_POINTS } from './discordDelivery.js';
+import { createDiscordConnectionKey } from './discordPluginConstants.js';
 
 export const DISCORD_MESSAGE_CONTENT_INTENT = 1 << 15;
 export const DISCORD_GUILDS_INTENT = 1 << 0;
@@ -181,7 +182,7 @@ export function createDiscordSetupResult(
   return {
     v: 1,
     credentialRef,
-    providerConnectionKey: `discord:application:${applicationId}`,
+    providerConnectionKey: createDiscordConnectionKey(applicationId),
     providerConfigVersion: 1,
     providerConfig: { applicationId, botUserId, inviteUrl: buildDiscordInviteUrl(applicationId) },
     integrationPrincipal: {
