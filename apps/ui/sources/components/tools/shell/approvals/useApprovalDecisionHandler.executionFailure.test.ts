@@ -8,7 +8,7 @@ vi.mock('@/modal', async () => {
 
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
-import { alertApprovalFailure, assertApprovalExecutionSucceeded } from './useApprovalDecisionHandler';
+import { alertApprovalFailure, assertApprovalExecutionSucceeded, presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 
 describe('approval decision execution outcome', () => {
     it('keeps confirmed execution cancellation quiet without treating the cancelled effect as success', () => {
@@ -91,5 +91,13 @@ describe('approval decision execution outcome', () => {
         expect(details).toBeTruthy();
         details!.onPress!();
         expect(alert.mock.calls[1]![1]).toBe('approval_origin_unavailable');
+    });
+    it('names an approved clone refused for agent isolation instead of saying no reason was recorded', () => {
+        // Recorded #151 projects.open execution (request replay151-eg-clone): typed refusal, no prose.
+        const presented = presentRecordedApprovalFailure({ errorCode: 'agent_isolation_unavailable', error: 'agent_isolation_unavailable',
+            details: { kind: 'refused', code: 'agent_isolation_unavailable', effectAttempted: false,
+                failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null } },
+            failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null } });
+        expect(presented).toEqual({ reason: t('errors.agentIsolationUnavailable'), code: 'agent_isolation_unavailable' });
     });
 });

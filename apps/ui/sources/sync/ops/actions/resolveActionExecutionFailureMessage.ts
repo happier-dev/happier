@@ -164,6 +164,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
+    if (code === 'agent_isolation_unavailable') return t('errors.agentIsolationUnavailable');
     if (code === 'sandbox_unavailable') return resolveReasonCopy({ kind: 'browserFrame', reasonCode: code }).body;
     if (code === 'profile_exists') return t('browserShell.profile.management.profileExists');
     if (code === 'profile_not_found') return t('browserShell.profile.management.profileNotFound');
