@@ -10,6 +10,38 @@ import { PLUGIN_MANIFEST as githubManifest } from '../../../../../../packages/pl
 import { buildActionSettingsContributedActions, buildActionSettingsEntries } from './buildActionSettingsEntries';
 
 describe('buildActionSettingsEntries', () => {
+    it('preserves declared confirmation defaults from daemon projection through settings, including explicit Ask', async () => {
+        const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+        const { getActionTargetApprovalPolicy } = await import('./actionSettingsTargetApproval');
+        const declaration = githubManifest.contributes.actions?.find(action => action.confirmationWhen?.presentUserUi === false);
+        if (!declaration) throw new Error('Missing GitHub present-user Action');
+        const { hostAccess, connectedAccountPurposeBindings, inputSchema, resultSchema, ...projectedDeclaration } = declaration;
+        const pluginId = githubManifest.id;
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'GitHub', enabled: true,
+                source: { kind: 'bundled', locator: '@happier-dev/plugin-scm-github' } } },
+            actionsById: { [`${pluginId}/${declaration.id}`]: { ...projectedDeclaration, pluginId, occurrenceId: 'github-occurrence' } },
+        });
+        const contributedActions = buildActionSettingsContributedActions(
+            adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection).pluginProjectionById,
+        );
+        const actionId = `${pluginId}/actions/${declaration.id}` as const;
+        const entries = buildActionSettingsEntries({ query: '', settings: DEFAULT_ACTIONS_SETTINGS_V1, contributedActions,
+            availability: { executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,
+                sessionHandoffEnabled: true, voiceShareDeviceInventory: true } });
+        const entry = entries.find(candidate => candidate.actionId === actionId);
+        if (!entry) throw new Error('Missing projected GitHub settings entry');
+        for (const targetId of ['contextual_ui', 'agent', 'mcp'] as const) {
+            const target = entry.targets.find(candidate => candidate.id === targetId);
+            if (!target) throw new Error(`Missing ${targetId} target`);
+            expect(getActionTargetApprovalPolicy({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId,
+                targetId, target: target.definition }).approvalRequiredByPolicy, targetId).toBe(targetId !== 'contextual_ui');
+            const settings = ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent', 'mcp'] } } });
+            expect(getActionTargetApprovalPolicy({ settings, actionId, targetId,
+                target: target.definition }).approvalRequiredByPolicy, `${targetId} explicit Ask`).toBe(true);
+        }
+    });
     it('exposes the foreign Session HTML policy beside the existing per-Action surface choices', () => {
         const entries = buildActionSettingsEntries({ query: '', settings: DEFAULT_ACTIONS_SETTINGS_V1,
             availability: { executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,

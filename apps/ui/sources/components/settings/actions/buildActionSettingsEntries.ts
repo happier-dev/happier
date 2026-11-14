@@ -264,6 +264,7 @@ export function buildActionSettingsContributedActions(
         contributedAction: {
             dangerLevel: action.dangerLevel,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}),
+            ...(action.confirmationWhen ? { confirmationWhen: action.confirmationWhen } : {}),
         },
     })), ...plugin.resources.map(resource => ({
         pluginId: plugin.pluginId, localId: resource.id, title: resource.id,
