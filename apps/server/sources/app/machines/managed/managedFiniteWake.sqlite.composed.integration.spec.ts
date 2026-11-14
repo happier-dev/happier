@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodeBase64, encodePlainMachineStoredContent,
     API_TOKEN_FULL_GRANT_V1,
-    PluginManifestV2Schema, ManagedPolicyAdmissionInputV1Schema, ManagedControllerMachineOutputV1Schema,
+    PluginManifestV2Schema, ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema,
     ManagedResourceV1Schema, createManagedPolicyProofV1, createManagedPolicyCensusProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER,
     ExternalActionExecutionAuthorizationV1Schema,
     ActionIdSchema, createActionExecutor, getActionSpec, normalizeActionsSettingsV1,
@@ -829,7 +829,10 @@ describe('finite managed wake original Action authority (real storage)', () => {
         try {
             const preview = await invoke(preparePath);
             expect(preview.statusCode, preview.body).toBe(200);
-            const prospective = ManagedControllerMachineOutputV1Schema.parse(preview.json()).machine;
+            const prepared = ManagedPolicyAdmissionOutputV1Schema.parse(preview.json());
+            expect(prepared).toMatchObject({ requestId: input.requestId, replayed: false });
+            expect(ManagedPolicyAdmissionOutputV1Schema.safeParse({ ...prepared, unreviewed: true }).success).toBe(false);
+            const prospective = prepared.machine;
             expect(prospective).toMatchObject({ id: test.row.id, desired: 'resume', intentRevision: original.intentRevision,
                 controller: test.target.controller, resource: test.row.resource });
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).toEqual(original);

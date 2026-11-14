@@ -346,7 +346,7 @@ it('starts the approved Setup child Run before an assignment exists and reads it
             });
             // No native executor runs in this test. The real zero-deadline wait
             // leaves the successfully admitted Run queued for its worker.
-            await expect(setup.machineSetupApply!({ input, context })).resolves.toMatchObject({ errorCode: 'outcome_unknown' });
+            await expect(setup.machineSetupApply!({ input, context })).resolves.toMatchObject({ errorCode: 'outcome_uncertain' });
             expect(accepted).toMatchObject({ operationId, runId: expect.any(String) });
             const run = await db.automationRun.findFirstOrThrow({ where: { accountId: account.id } });
             expect(accepted).toMatchObject({ runId: run.id });

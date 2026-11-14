@@ -4,7 +4,8 @@ import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDig
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { MachineInstallationProofV1Schema, MachineInstallationProofPayloadV1Schema, signMachineInstallationProof, type MachineInstallationProofPayloadV1 } from '../identity/installationIdentity.js';
-import { ManagedControllerCurrentnessV1Schema, ManagedCommittedIdleEvidenceV1Schema, ManagedControllerContextOutputV1Schema, ManagedNativeCredentialBindingV1Schema } from './actionsV1.js';
+import { ManagedControllerCurrentnessV1Schema, ManagedCommittedIdleEvidenceV1Schema, ManagedNativeCredentialBindingV1Schema } from './actionsV1.js';
+export { ManagedPolicyAdmissionOutputV1Schema } from './actionsV1.js';
 import { ManagedWakeTargetV1Schema } from './managedIntentV1.js';
 import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, type ManagedResourceV1, type ManagedNativeOperationReferenceV1 } from './providerFactsV1.js';
 import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1 } from './managedMachineV1.js';
@@ -52,11 +53,6 @@ export function createManagedPolicyCensusProofV1(input: Readonly<{ homeId: strin
   return signMachineInstallationProof({ payload: { version: 1, machineId: input.controller.machineId, installationId: input.controller.installationId,
     accountId: input.custodianAccountId, managedPolicyCensus: { homeId: input.homeId } }, privateKey: input.privateKey });
 }
-/** Policy admission is a controller context and preserves opaque preset delivery on restart. */
-export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => z.intersection(
-  ManagedControllerContextOutputV1Schema,
-  z.strictObject({ replayed: z.boolean() }),
-));
 export const ManagedPolicyProofV1Schema: z.ZodMiniObject<{
   payload: typeof MachineInstallationProofPayloadV1Schema;
   purpose: typeof ManagedPolicyPurposeV1Schema;

@@ -645,13 +645,16 @@ const managedControllerContextOutputFields = () => ({
   nativeCredentialDesiredBindingKeys: z.optional(z.array(id())),
   enrollmentInstallation: z.optional(ManagedEnrollmentInstallationV1Schema),
 });
-/** Context is the restart-safe delivery edge for opaque preset content. */
-export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ machine: ManagedMachinePublicFullV1Schema, ...managedControllerContextOutputFields() }),
+const managedControllerContextOutputVariants = <Fields extends Record<string, z.ZodMiniType>>(fields: Fields) => [
+  z.strictObject({ machine: ManagedMachinePublicFullV1Schema, ...managedControllerContextOutputFields(), ...fields }),
   z.strictObject({ machine: ManagedOpaquePresetMachineV1Schema, presetContent: ManagedAdmissionPresetContentV1Schema,
     presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
-    ...managedControllerContextOutputFields() }),
-]));
+    ...managedControllerContextOutputFields(), ...fields }),
+] as const;
+/** Context is the restart-safe delivery edge for opaque preset content. */
+export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.union(managedControllerContextOutputVariants({})));
+/** Policy admission retains the same strict context variants and their restart-safe delivery. */
+export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => z.union(managedControllerContextOutputVariants({ replayed: z.boolean() })));
 export const ManagedControllerMachineOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema }));
 export const ManagedControllerSubmitOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, submitted: mini.boolean() }));
 /** Only the admitted controller captures this source-owned metadata before native spend. */
