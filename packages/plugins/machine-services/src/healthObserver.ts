@@ -3,7 +3,7 @@ import { HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSch
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, arePluginMachineMaterializationRefsEqual,
     type HealthCheckSourceConfigV1, type HealthCheckResultV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
+import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
     defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
@@ -11,6 +11,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
 
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
 import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
+import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
@@ -24,6 +25,7 @@ const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
     }, { policy: 'closed' })).optional(),
 }, { policy: 'closed' });
 type Cursor = ReturnType<typeof cursorSchema.parse>;
+const cursorStoredSchema = createProtocolStoredReadSchema(cursorSchema);
 type Candidate = Readonly<{ key: string; expectedVersion: number | 'absent'; value: Cursor }>;
 
 /** The shared SDK runner owns lifecycle/adoption/wakes/admission. This finite
@@ -32,7 +34,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
     host?: BackgroundServiceContext['services']['events']['host'],
     pluginEvents?: BackgroundServiceContext['services']['events']['plugin']): PluginCheckpointedEventSourceAdapterV1<HealthCheckSourceConfigV1, Candidate> {
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
-        due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string>; monitorResults: Map<string, string> }>();
+        due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string>; monitorResults: Map<string, string>;
+        stored?: { version: number | 'absent'; current?: Cursor['current'] } }>();
     return {
         observeWhileAdmissionPending: true,
         decode(definition) {
@@ -53,7 +56,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             }
             const { due, failures, pendingChecks } = state;
             const retained = await storage.get(key, { signal: context.signal });
-            const parsed = retained && !('deleted' in retained) ? cursorSchema.parse(retained.value) : undefined;
+            const parsed = retained && !('deleted' in retained) ? cursorStoredSchema.parse(retained.value) : undefined;
             const previous: Cursor = parsed?.basis === basis ? parsed : { basis, checks: [] };
             let version: number | 'absent' = retained?.version ?? 'absent';
             const time = now();
@@ -82,9 +85,11 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             });
             const currentChanged = current.checks.length > 0 && (!previous.current
                 || healthResultProjectionIdentity(previous.current) !== healthResultProjectionIdentity(current));
-            const retainedCurrent = currentChanged ? current : previous.current;
+            let retainedCurrent = currentChanged ? current : previous.current;
             if (currentChanged) {
-                const written = await storage.set(key, { ...previous, current }, { expectedVersion: version, signal: context.signal });
+                const checkpoint = fitHealthResultCheckpoint({ ...previous, current });
+                const written = await storage.set(key, checkpoint, { expectedVersion: version, signal: context.signal });
+                retainedCurrent = checkpoint.current;
                 version = written.version;
             }
             for (const check of selected) {
@@ -128,8 +133,10 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
             }
             if (!replaying && pending.length) {
-                const written = await storage.set(key, { basis, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) },
+                const checkpoint = fitHealthResultCheckpoint({ basis, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) });
+                const written = await storage.set(key, checkpoint,
                     { expectedVersion: version, signal: context.signal });
+                retainedCurrent = checkpoint.current;
                 version = written.version;
             }
             const observations = pending.flatMap(value => {
@@ -150,15 +157,22 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             });
             const deadlines = source.checks.map(check => due.has(check.checkId) ? due.get(check.checkId) : time + check.periodMs)
                 .filter((value): value is number => typeof value === 'number');
+            state.stored = { version, current: retainedCurrent };
             return { observations, complete: true,
                 nextEligibleAt: pendingChecks.size ? time : deadlines.length ? Math.min(...deadlines) : null,
                 ...(changed || pending.length ? { checkpoint: { key, expectedVersion: version,
                     value: { basis, checks: [...next.values()], ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
             };
         },
-        async save({ context, checkpoint }) {
-            await requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv.set(checkpoint.key, checkpoint.value,
-                { expectedVersion: checkpoint.expectedVersion, signal: context.signal });
+        async save({ context, definition, checkpoint }) {
+            const state = live.get(definition.sourceInstanceId);
+            // The runner serializes this acknowledgement with observations, but
+            // current health may have advanced while its Event awaited approval.
+            const stored = state?.basis === checkpoint.value.basis ? state.stored : undefined;
+            const value = fitHealthResultCheckpoint({ ...checkpoint.value, ...(stored?.current ? { current: stored.current } : {}) });
+            const written = await requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv.set(checkpoint.key, value,
+                { expectedVersion: stored?.version ?? checkpoint.expectedVersion, signal: context.signal });
+            if (state && stored) state.stored = { version: written.version, current: value.current };
         },
         async retire({ context, definitions }) {
             const own = context.materialization;

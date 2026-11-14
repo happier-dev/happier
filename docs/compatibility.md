@@ -5,8 +5,9 @@
 The canonical result schema admits optional typed `cause` facts. Current finite
 producers write those facts directly and leave Forge evidence as readable prose.
 The nested cause and enclosing result use the health Action's recursively closed
-publication contract. Retained readers own additive-field projection, and no
-cause fact grants routing or execution authority.
+publication contract. Checkpoint and inventory persisted reads derive
+`createProtocolStoredReadSchema` from their canonical schema: known facts validate
+and unknown stored diagnostics are removed. No cause fact grants routing or execution authority.
 Older stored results without `cause` remain readable. The existing health
 checkpoint also admits optional recent samples, coverage and failed-streak facts;
 an absent sample collection means that checkpoint did not record history.

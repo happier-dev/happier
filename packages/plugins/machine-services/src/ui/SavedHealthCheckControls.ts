@@ -1,10 +1,9 @@
 import { createElement as h, useState, type ReactElement } from 'react';
-import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckKindCatalogV1ProtocolSchema,
-    HealthCheckResultV1ProtocolSchema, createHealthCheckSourceInstanceIdV1,
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1,
     type HealthCheckKindCatalogV1, type HealthCheckResultV1, type HealthCheckSetupInputV1,
     type HealthCheckSubjectV1 } from '@happier-dev/plugin-sdk';
 import { Button, Field, Row, Select, Stack, Text, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
-import { HEALTH_KINDS_ACTION_ID } from '../healthCatalog.js';
+import { runSavedHealthCheck } from '../savedHealthCheckRun.js';
 
 type Check = HealthCheckSetupInputV1['checks'][number];
 const K = 'machineServices.healthSetup.saved';
@@ -43,16 +42,11 @@ export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckS
                 setBusy(true);
                 setUnavailable(false);
                 try {
-                    const kinds = catalog ?? HealthCheckKindCatalogV1ProtocolSchema.parse(await host.executeAction(
-                        { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: HEALTH_KINDS_ACTION_ID }, {}, { signal: props.signal }));
+                    const { catalog: kinds, result } = await runSavedHealthCheck({ subject: props.subject, check,
+                        signal: props.signal, catalog }, (action, input, options) => host.executeAction(action, input, options));
                     if (props.signal.aborted) return;
                     setCatalog(kinds);
-                    const kind = kinds.find(item => item.pluginId === check.kind.pluginId && item.id === check.kind.localId);
-                    if (!kind) { setUnavailable(true); return; }
-                    const value = await host.executeAction({ pluginId: kind.pluginId, localId: kind.action },
-                        { sourceInstanceId: createHealthCheckSourceInstanceIdV1(props.subject), checkId: check.checkId },
-                    { signal: props.signal });
-                    if (!props.signal.aborted) setSettled({ checkId: check.checkId, result: HealthCheckResultV1ProtocolSchema.parse(value) });
+                    setSettled({ checkId: check.checkId, result });
                 } catch {
                     if (!props.signal.aborted) setUnavailable(true);
                 } finally { if (!props.signal.aborted) setBusy(false); }

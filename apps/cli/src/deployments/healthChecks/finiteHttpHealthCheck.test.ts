@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as undici from 'undici';
-import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { HealthCheckResultV1Schema, HealthCheckResultV1ProtocolSchema } from '@happier-dev/deployment-protocol/v1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
@@ -47,6 +47,19 @@ function context(url: string, overrides: Partial<HealthCheckFiniteLeafContextV1>
 }
 
 describe('finite saved HTTP and certificate health', () => {
+    it('keeps authored diagnostic causes recursively closed and validates known fields', () => {
+        const value = { status: 'down', observedAt: 10, cause: { kind: 'http', vantage: 'outside',
+            observerMachineId: 'observer', httpStatus: 503, futureDiagnostic: 'not executable' },
+            evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'HTTP check failed.' }] } };
+        expect(HealthCheckResultV1Schema.safeParse(value).success).toBe(false);
+        expect(HealthCheckResultV1ProtocolSchema.safeParse(value).success).toBe(false);
+        const { futureDiagnostic: _future, ...cause } = value.cause;
+        const known = { ...value, cause };
+        expect(HealthCheckResultV1Schema.safeParse(known).success).toBe(true);
+        expect(HealthCheckResultV1Schema.safeParse({ ...known, cause: { ...cause, httpStatus: '503' } }).success).toBe(false);
+        expect(HealthCheckResultV1ProtocolSchema.safeParse({ ...known, cause: { ...cause, httpStatus: '503' } }).success).toBe(false);
+        expect(HealthCheckResultV1Schema.safeParse({ ...known, unexpectedResultField: true }).success).toBe(false);
+    });
     afterEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
@@ -62,10 +75,12 @@ describe('finite saved HTTP and certificate health', () => {
         const check = admitted(url);
         const result = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1(check, context(url)));
         expect(result.status).toBe('up');
+        expect(result).toMatchObject({ cause: { kind: 'http', httpStatus: 200, expectStatus: 200,
+            vantage: 'outside', observerMachineId: 'observer-machine' } });
         expect(requests).toBe(1);
         expect(JSON.stringify(result)).not.toContain('private-body-sentinel');
         expect(JSON.stringify(result)).not.toContain(url);
-        expect(result.evidence.items[0]?.text).toContain('outside');
+        expect(result.evidence.items[0]?.text).not.toContain('"httpStatus"');
         expect((await readHttpHealthCheckV1({ ...check,
             target: { ...admitted(url).target, expectStatus: 201 } }, context(url))).status).toBe('down');
         expect(requests).toBe(2);
@@ -85,7 +100,7 @@ describe('finite saved HTTP and certificate health', () => {
             const result = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1({ ...admitted(url),
                 ...(keyword === undefined ? {} : { keyword }) }, context(url)));
             expect(result.status).toBe('down');
-            expect(JSON.parse(result.evidence.items[0]?.text ?? '{}')).toMatchObject({ httpStatus: 403,
+            expect(result.cause).toMatchObject({ httpStatus: 403,
                 reason: 'cloudflare_browser_integrity', providerCode: 1010,
                 disclosure: expect.stringMatching(/client.*signature/i), remedy: expect.stringMatching(/Cloudflare/i) });
             expect(JSON.stringify(result)).not.toContain('private-keyword');
@@ -95,7 +110,7 @@ describe('finite saved HTTP and certificate health', () => {
             const ordinary = await readHttpHealthCheckV1({ ...admitted(url),
                 target: { ...admitted(url).target, expectStatus: 403 } }, context(url));
             expect(ordinary.status).toBe('up');
-            expect(JSON.parse(ordinary.evidence.items[0]?.text ?? '{}')).not.toHaveProperty('providerCode');
+            expect(ordinary.cause).not.toHaveProperty('providerCode');
             expect(JSON.stringify(ordinary)).not.toContain(body);
         }
     });
@@ -108,7 +123,7 @@ describe('finite saved HTTP and certificate health', () => {
             const check = admitted(url);
             const observed = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1(check, context(url)));
             expect(observed.status).toBe('down');
-            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({
+            expect(observed.cause).toMatchObject({
                 httpStatus: originStatus, providerCode: originStatus, reason: 'cloudflare_origin_unavailable',
                 requiredFact: 'originServingResponse', remedy: expect.any(String),
             });
@@ -124,7 +139,7 @@ describe('finite saved HTTP and certificate health', () => {
             const observed = await readHttpHealthCheckV1({ ...check,
                 target: { ...check.target, expectStatus: ordinaryStatus } }, context(url));
             expect(observed.status).toBe('up');
-            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).not.toHaveProperty('providerCode');
+            expect(observed.cause).not.toHaveProperty('providerCode');
         }
     });
 
@@ -199,10 +214,10 @@ describe('finite saved HTTP and certificate health', () => {
             const invalid = await readCertificateHealthCheckV1(admitted(url), f);
             expect({ valid: HealthCheckResultV1Schema.parse(valid).status, invalid: invalid.status },
                 `Native TLS refusal: ${failureCode}`).toEqual({ valid: 'up', invalid: 'down' });
-            expect(JSON.parse(invalid.evidence.items[0]?.text ?? '{}')).toMatchObject({
+            expect(invalid.cause).toMatchObject({
                 reason: 'tls', requiredFact: 'validEndpointTlsConnection', remedy: expect.any(String),
             });
-            expect(valid.evidence.items[0]?.text).toContain('fingerprint256');
+            expect(valid.cause?.fingerprint256).toBeTruthy();
             expect(JSON.stringify(valid)).not.toContain('private-auth-body');
             expect(requests).toBe(1);
         } finally {
@@ -222,7 +237,7 @@ describe('finite saved HTTP and certificate health', () => {
         const url = `http://127.0.0.1:${address.port}/health`;
         const refused = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(refused.status).toBe('down');
-        expect(JSON.parse(refused.evidence.items[0]?.text ?? '{}')).toMatchObject({
+        expect(refused.cause).toMatchObject({
             reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy: expect.any(String),
         });
         // A connection failure has no certificate evidence of its own.
@@ -234,7 +249,7 @@ describe('finite saved HTTP and certificate health', () => {
         }); });
         const unresolved = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(unresolved.status).toBe('down');
-        expect(JSON.parse(unresolved.evidence.items[0]?.text ?? '{}')).toMatchObject({
+        expect(unresolved.cause).toMatchObject({
             reason: 'dns', requiredFact: 'resolvableHealthEndpoint', remedy: expect.any(String),
         });
         expect(JSON.stringify(unresolved)).not.toContain('private-');
@@ -247,7 +262,7 @@ describe('finite saved HTTP and certificate health', () => {
         }); });
         const observed = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(observed.status).toBe('unknown');
-        expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({ reason: 'transport_incomplete' });
+        expect(observed.cause).toMatchObject({ reason: 'transport_incomplete' });
         expect(JSON.stringify(observed)).not.toContain('private-');
     });
 
@@ -263,7 +278,7 @@ describe('finite saved HTTP and certificate health', () => {
         const result = await readHttpHealthCheckV1(check, context('https://public.example'));
         expect(result.status).toBe('up');
         expect(seen).toEqual(['https://public.example//health']);
-        expect(result.evidence.items[0]?.text).toContain('checked from the server itself');
+        expect(result.cause?.disclosure).toContain('checked from the server itself');
     });
 
     it('reports absent Domain probes as unknown without sending HTTP or certificate requests', async () => {
@@ -282,7 +297,7 @@ describe('finite saved HTTP and certificate health', () => {
         for (const read of [readHttpHealthCheckV1, readCertificateHealthCheckV1]) {
             const observed = await read(check, observation);
             expect(observed.status).toBe('unknown');
-            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({
+            expect(observed.cause).toMatchObject({
                 reason: 'not_checked', requiredFact: 'healthProbeEndpoint',
                 remedy: expect.stringMatching(/configure.*endpoint/i),
             });

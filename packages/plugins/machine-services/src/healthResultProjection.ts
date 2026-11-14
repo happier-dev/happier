@@ -1,5 +1,6 @@
 import { HealthCheckResultV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString,
+export { runSavedHealthCheck, type SavedHealthCheckRunInput } from './savedHealthCheckRun.js';
+import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
     ProtocolAutomationTriggerRevisionV1Schema } from '@happier-dev/plugin-sdk/protocol';
 
 /** A presentation of the observer's retained checkpoint, inside the existing encrypted Account KV row. */
@@ -19,9 +20,13 @@ export const healthResultProjectionSchema = defineProtocolObject({
         triggerRevision: ProtocolAutomationTriggerRevisionV1Schema, sourceSelectorId: defineProtocolString(),
     }, { policy: 'closed' })),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), result: HealthCheckResultV1ProtocolSchema,
-        history: historySchema.optional() }, { policy: 'closed' })),
+        history: historySchema.optional(), recentResults: defineProtocolArray(HealthCheckResultV1ProtocolSchema).optional(),
+        recentResultsCoverage: defineProtocolUnion([defineProtocolLiteral('complete'), defineProtocolLiteral('partial')]).optional(),
+        recentResultsOmittedThrough: count.optional(), failingSince: count.nullable().optional(), failureStreak: count.optional(),
+    }, { policy: 'closed' })),
 }, { policy: 'closed' });
 export type HealthResultProjection = ReturnType<typeof healthResultProjectionSchema.parse>;
+export const healthResultProjectionStoredSchema = createProtocolStoredReadSchema(healthResultProjectionSchema);
 
 /** Observation clocks and latency are request freshness, not a changed health condition. */
 export function healthResultProjectionIdentity(value: HealthResultProjection): string {
@@ -37,7 +42,7 @@ export function retainHealthResult(previous: HealthResultProjection['checks'][nu
     checkId: string, result: HealthResultProjection['checks'][number]['result']): HealthResultProjection['checks'][number] {
     const history = previous?.history;
     // Re-adoption and monitor wakes may return the same retained observation.
-    if (history && result.observedAt <= history.lastObservedAt) return { checkId, result, history };
+    if (previous && result.observedAt <= (history?.lastObservedAt ?? previous.result.observedAt)) return { ...previous, checkId, result, history };
     const dayStartAt = Math.floor(result.observedAt / DAY_MS) * DAY_MS;
     const days = history ? windowHistory(history, result.observedAt).days : [];
     const last = days.at(-1);
@@ -47,7 +52,22 @@ export function retainHealthResult(previous: HealthResultProjection['checks'][nu
     day.uptimePercent = uptime(day.up, day.down, day.degraded);
     if (last?.dayStartAt === dayStartAt) days[days.length - 1] = day;
     else days.push(day);
-    return { checkId, result, history: windowHistory({ lastObservedAt: result.observedAt, days, uptimePercent: null }, result.observedAt) };
+    const failed = result.status === 'down' || result.status === 'degraded';
+    const failedBefore = previous?.result.status === 'down' || previous?.result.status === 'degraded';
+    const retained = windowRecentResults({ recentResults: [...(previous?.recentResults ?? (previous ? [previous.result] : [])), result],
+        recentResultsOmittedThrough: previous?.recentResults === undefined ? previous?.result.observedAt
+            : previous.recentResultsOmittedThrough }, result.observedAt);
+    return { checkId, result, history: windowHistory({ lastObservedAt: result.observedAt, days, uptimePercent: null }, result.observedAt),
+        ...retained, failingSince: failed ? failedBefore ? previous?.failingSince ?? previous!.result.observedAt : result.observedAt : null,
+        failureStreak: failed ? failedBefore ? (previous?.failureStreak ?? 1) + 1 : 1 : 0 };
+}
+
+function windowRecentResults(check: Pick<HealthResultProjection['checks'][number], 'recentResults' | 'recentResultsOmittedThrough'>, at: number) {
+    const start = Math.floor(at / DAY_MS) * DAY_MS - (HISTORY_DAYS - 1) * DAY_MS;
+    const omitted = check.recentResultsOmittedThrough;
+    return { recentResults: check.recentResults?.filter(result => result.observedAt >= start && result.observedAt <= at),
+        ...(check.recentResults === undefined ? {} : { recentResultsCoverage: omitted !== undefined && omitted >= start ? 'partial' as const : 'complete' as const }),
+        ...(omitted !== undefined && omitted >= start ? { recentResultsOmittedThrough: omitted } : {}) };
 }
 
 function uptime(up: number, down: number, degraded: number) {
@@ -65,6 +85,6 @@ function windowHistory(history: NonNullable<HealthResultProjection['checks'][num
 /** Reads expire old buckets too, even when the observer is disconnected. No
  * clock extrapolation fills the unobserved portion of the window. */
 export function healthResultProjectionAt(value: HealthResultProjection, at: number): HealthResultProjection {
-    return { ...value, checks: value.checks.map(check => check.history
-        ? { ...check, history: windowHistory(check.history, at) } : check) };
+    return { ...value, checks: value.checks.map(check => ({ ...check, ...windowRecentResults(check, at),
+        ...(check.history ? { history: windowHistory(check.history, at) } : {}) })) };
 }

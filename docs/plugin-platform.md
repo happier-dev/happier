@@ -276,6 +276,23 @@ trusted plugin code; invocation still follows the person's ordinary Action polic
 Invocation presentation scopes do not choose Environment or Machine authority;
 the admitted subject's owner derives that scope at execution.
 
+In unreleased 0.3 source, finite results carry secret-free observer facts in
+`result.cause`, including HTTP status/expected status and the observer's vantage.
+Forge evidence remains readable text; consumers do not parse JSON from its prose.
+The existing encrypted Account KV checkpoint retains recent results in the same
+thirty-UTC-day window as uptime. Old checkpoints can omit `recentResults` because
+they never recorded samples. Present samples report `recentResultsCoverage` as
+`complete` or `partial`; the checkpoint writer drops oldest samples only when its
+existing Account KV byte capacity requires it, retaining the latest result,
+uptime buckets and `failingSince`/`failureStreak`. Down and degraded share a failed
+streak; up or unknown resets it. On an older checkpoint, the earliest known failed
+sample starts the reported streak; missing earlier samples remain partial history.
+No additional probe or scheduler produces history.
+Plugin saved-check controls and core controls share `runSavedHealthCheck`: it
+resolves the saved kind through the public catalog and invokes that kind's public
+Action with the exact saved selector. Core dispatch uses `action.invoke` through
+the ordinary UI Action front door, including approval and Machine targeting.
+
 The SDK's authored `definePlugin` adapter projects these descriptors without a
 registration API, scheduler or additional registry. CLI normalization and daemon
 projection carry the descriptor with its existing supplying occurrence and

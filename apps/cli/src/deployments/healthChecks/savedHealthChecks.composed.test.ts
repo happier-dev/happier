@@ -202,7 +202,7 @@ describe('saved source finite native producer binding', () => {
             ]);
             expect(execute).toHaveBeenCalledTimes(1);
             expect(f.readStoredDefinitions).toHaveBeenCalledTimes(1);
-            expect(results.every(value => value.result.evidence.items.some(item => item.text.includes('sameMachine')))).toBe(true);
+            expect(results.every(value => value.result.cause?.vantage === 'sameMachine')).toBe(true);
             expect(JSON.stringify(results)).not.toContain('app.example.test');
         } finally { dns.mockRestore(); await new Promise<void>(resolve => server.close(() => resolve())); }
     });
@@ -475,8 +475,8 @@ describe('saved source finite native producer binding', () => {
                 const domainContent = { contentArtifactId: domainArtifact.artifactId,
                     contentHeaderVersion: domainArtifact.revision.headerVersion,
                     contentBodyVersion: domainArtifact.revision.bodyVersion };
-                await db.artifactAccountGrant.createMany({ data: [environmentContent.contentArtifactId,
-                    targetContent.contentArtifactId, domainContent.contentArtifactId].map(artifactId => ({ artifactId,
+                await db.artifactGrant.createMany({ data: [environmentContent.contentArtifactId,
+                    targetContent.contentArtifactId, domainContent.contentArtifactId].map(artifactId => ({ artifactId, principalKind: 'account',
                     accountId: requester.id, accessLevel: 'view', createdByAccountId: home.accountId })) });
                 const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
                     createdByAccountId: home.accountId, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -548,10 +548,8 @@ describe('saved source finite native producer binding', () => {
                 }, heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({ code: 'source_config_invalid' });
                 const firstResult = (await ownerService.read({ sourceInstanceId: 'health:subject', checkIds: [kind] }))[0]?.result;
                 expect(firstResult?.status).toBe('up');
-                expect(firstResult?.evidence.items.map(item => item.text).join('\n'))
-                    .toContain('"vantage":"sameMachine"');
-                expect(firstResult?.evidence.items.map(item => item.text).join('\n'))
-                    .toContain('checked from the server itself');
+                expect(firstResult?.cause?.vantage).toBe('sameMachine');
+                expect(firstResult?.cause?.disclosure).toContain('checked from the server itself');
                 expect(requests).toEqual(['https://app.example.test/ready']);
                 const changedArtifact = await runWithServerHttpBaseUrl(home.baseUrl, () => artifacts.create({
                     header: { kind: 'deployment-domain.v1', title: 'Saved Domain authority' },

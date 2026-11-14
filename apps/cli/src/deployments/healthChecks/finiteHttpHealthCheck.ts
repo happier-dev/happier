@@ -67,7 +67,7 @@ function nativeFailure(error: unknown, url: string): 'tls' | 'dns' | 'connection
 
 function result(check: AdmittedHttpHealthCheckV1, kind: 'http' | 'certificate',
     context: HealthCheckFiniteLeafContextV1, startedAt: number, status: HealthCheckResultV1['status'],
-    facts: Readonly<Record<string, string | number | boolean>>): HealthCheckResultV1 {
+    facts: Parameters<typeof finiteHealthCheckResult>[5]): HealthCheckResultV1 {
     const observedAt = context.now();
     return finiteHealthCheckResult(check, kind, observedAt, startedAt, status, facts);
 }

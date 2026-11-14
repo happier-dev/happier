@@ -20,7 +20,7 @@ describe('finite TCP and DNS saved checks', () => {
             const result = HealthCheckResultV1Schema.parse(await readTcpHealthCheckV1(check, context()));
             expect(result.status).toBe('up');
             expect(JSON.stringify(result)).not.toContain(check.host);
-            expect(result.evidence.items[0]?.text).toContain('not from outside');
+            expect(result.cause?.disclosure).toContain('not from outside');
         } finally {
             await new Promise<void>(resolve => server.close(() => resolve()));
         }

@@ -1,6 +1,9 @@
-import { healthResultProjectionSchema, healthResultProjectionIdentity, healthResultProjectionAt, HEALTH_RESULT_CHECKPOINT_PREFIX,
+import { healthResultProjectionStoredSchema, healthResultProjectionIdentity, healthResultProjectionAt, HEALTH_RESULT_CHECKPOINT_PREFIX,
     type HealthResultProjection } from '@happier-dev/plugins-machine-services/health-results';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
+import type { HealthCheckResultV1 } from '@happier-dev/plugin-sdk';
+import { runSavedHealthCheck, type SavedHealthCheckRunInput } from '@happier-dev/plugins-machine-services/health-results';
+import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type ConfiguredHealthResultsState = Readonly<{ kind: 'loading' }> | Readonly<{ kind: 'neverObserved' }>
@@ -13,6 +16,15 @@ export type ConfiguredHealthResultsSnapshot = ReadonlyMap<string, Readonly<{ rev
 export type ConfiguredHealthResultsPage = Readonly<{ results: ConfiguredHealthResultsSnapshot; nextCursor?: string; preceding: boolean }>;
 export type ConfiguredHealthResultsRead = ConfiguredHealthResultsPage | Readonly<{ kind: 'unavailable'; code: string }>;
 export const configuredHealthResultKey = (automationId: string, triggerId: string) => JSON.stringify([automationId, triggerId]);
+
+/** The existing public Action front door owns policy, approval and Machine targeting. */
+export async function checkNowConfiguredHealthCheck(input: SavedHealthCheckRunInput & Readonly<{
+    serverId: string; expectedAccountId?: string;
+}>, execute = createFrontDoorUiActionExecutor(undefined, { serverId: input.serverId, expectedAccountId: input.expectedAccountId }),
+    operation?: UiActionOperation): Promise<HealthCheckResultV1> {
+    return (await runSavedHealthCheck(input, (action, value, options) => execute('action.invoke', { action, input: value },
+        { ...operation, signal: options.signal }))).result;
+}
 
 /** observedAt is the actual probe time retained with the current sample history. */
 export function configuredHealthResultsForTrigger(page: ConfiguredHealthResultsPage, automationId: string,
@@ -30,7 +42,7 @@ export async function readConfiguredHealthResults(kv: Pick<AccountKvService, 'li
     const next = new Map<string, Readonly<{ revision: number; selector: string; state: ConfiguredHealthResultsState }>>();
     for (const row of page.items) {
         if ('deleted' in row || !isJsonObject(row.value)) continue;
-        const parsed = healthResultProjectionSchema.safeParse(row.value.current);
+        const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
         if (!parsed.success) continue;
         const projection = healthResultProjectionAt(parsed.data, Date.now());
         for (const member of projection.members) {

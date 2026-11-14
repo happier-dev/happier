@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { plugin } from '../../../../../packages/plugins/machine-services/src/manifest';
-import { healthResultProjectionSchema, healthResultProjectionAt } from '../../../../../packages/plugins/machine-services/src/healthResultProjection';
+import { healthResultProjectionSchema, healthResultProjectionAt, retainHealthResult } from '../../../../../packages/plugins/machine-services/src/healthResultProjection';
 import { createHealthCheckSourceAdapter } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
@@ -15,6 +15,8 @@ import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountA
 import { createConfiguredHealthCheckNotices } from '../deploymentServiceHealthNotices';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { normalizePluginAccountStorageJsonValueV1 } from '@happier-dev/protocol/plugins/data/accountKvValueV1';
+import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
@@ -46,6 +48,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
     const kv = {
         async get(key: string) { return rows.get(key) ?? null; },
         async set(key: string, value: JsonValue, options: { expectedVersion: number | 'absent' }) {
+            normalizePluginAccountStorageJsonValueV1(value);
             const previous = rows.get(key);
             if ((previous?.version ?? 'absent') !== options.expectedVersion) throw new Error('CAS conflict');
             const version = (previous?.version ?? 0) + 1;
@@ -96,7 +99,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
             try { return await sourceAdapter.observe(input); } catch (error) { errors.push(error); throw error; }
         } }, mode: 'once', now: () => now,
     });
-    return { context, adapter, errors, read, writes, admissions, cycle, kv, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
+    return { context, adapter, errors, read, writes, rows, admissions, cycle, kv, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
         clock(time: number) { now = time; },
         async heartbeat(payload: JsonValue) {
             for (const listener of hostListeners.get('@happier/health-check/heartbeat-received') ?? []) await listener({ payload });
@@ -119,6 +122,48 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it('reads additive nested checkpoint diagnostics without accepting invalid known fields', async () => {
+        const f = fixture();
+        await f.cycle();
+        const [key, entry] = [...f.rows][0]!;
+        if (!entry || !('value' in entry) || !entry.value || typeof entry.value !== 'object' || Array.isArray(entry.value)) throw Error('Expected checkpoint');
+        const value = entry.value;
+        const current = healthResultProjectionSchema.parse(value.current);
+        const withCause = (httpStatus: number | string) => ({ ...value, futureCheckpoint: true, current: { ...current,
+            checks: current.checks.map(check => ({ ...check, result: { ...check.result, cause: { kind: 'http', vantage: 'outside',
+                observerMachineId: 'observer', httpStatus, futureDiagnostic: { detail: true } } } })) } });
+        f.rows.set(key, { version: entry.version, value: withCause(503) });
+        f.tick('up'); await f.cycle();
+        expect(f.errors).toEqual([]);
+        const latest = f.rows.get(key)!;
+        if (!('value' in latest)) throw Error('Expected checkpoint');
+        f.rows.set(key, { version: latest.version, value: withCause('503') });
+        f.tick('up'); await f.cycle();
+        expect(f.errors).toHaveLength(1);
+    });
+    it('acknowledges an admitted transition after a newer current result without losing that result', async () => {
+        const configured = { ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
+        const f = fixture(configured);
+        const input = { context: f.context, definition, definitions: [definition], source: configured, isCurrent: async () => true };
+        const failed = await f.adapter.observe(input);
+        if (!failed.checkpoint) throw Error('Expected failed transition checkpoint');
+        f.tick('up'); await f.adapter.observe(input);
+        await f.adapter.save({ ...input, checkpoint: failed.checkpoint });
+        expect(f.writes.at(-1)).toMatchObject({ current: { checks: [{ result: { status: 'up', observedAt: 2000 } }] } });
+        f.tick('up');
+        const recovery = await f.adapter.observe(input);
+        expect(recovery.observations[0]?.payload).toMatchObject({ transition: 'recovered' });
+        expect(f.read).toHaveBeenCalledTimes(3);
+    });
+    it('retains the known latest failed sample when upgrading an old checkpoint with incomplete history', () => {
+        const previous = healthResultProjectionSchema.parse({ v: 1, members: [], checks: [{ checkId: 'http', result: result('down', 10) }] }).checks[0]!;
+        expect(previous.recentResults).toBeUndefined();
+        expect(retainHealthResult(previous, 'http', result('down', 10)).recentResults).toBeUndefined();
+        const next = retainHealthResult(previous, 'http', result('down', 20));
+        expect(next).toMatchObject({ recentResults: [{ observedAt: 10 }, { observedAt: 20 }],
+            recentResultsCoverage: 'partial', failingSince: 10, failureStreak: 2 });
+        expect(retainHealthResult(next, 'http', result('up', 30))).toMatchObject({ failingSince: null, failureStreak: 0 });
+    });
     it('admits a revision-zero health trigger through failure Notice and recovery', async () => {
         const artifacts = createPlainAccountArtifactHttpBoundary();
         const environment = createDeploymentEnvironmentDetailV1();
@@ -246,6 +291,34 @@ describe('saved health source registration and finite cycles', () => {
             expect(f.admissions[1]?.payload).toMatchObject({ transition: 'recovered', observedAt: 3000 });
         } finally { subscription?.dispose(); }
     });
+    it('keeps the newest results inside the actual Account KV byte capacity without losing uptime or failure state', async () => {
+        const f = fixture();
+        f.clock(86_400_000); await f.cycle();
+        const [key, entry] = [...f.rows][0]!;
+        if (!entry || !('value' in entry) || !entry.value || typeof entry.value !== 'object' || Array.isArray(entry.value)) throw Error('Expected checkpoint');
+        const value = entry.value;
+        const current = healthResultProjectionSchema.parse(value.current);
+        const check = current.checks[0]!;
+        const samples: HealthCheckResultV1[] = [];
+        const checkpoint = () => ({ ...value, current: { ...current, checks: [{ ...check, recentResults: samples,
+            recentResultsCoverage: 'complete' as const }] } });
+        const bytes = (candidate: unknown) => new TextEncoder().encode(JSON.stringify(candidate)).byteLength;
+        while (bytes(checkpoint()) <= PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes) {
+            samples.unshift(result('down', f.now() - samples.length));
+        }
+        samples.shift();
+        f.rows.set(key, { version: entry.version, value: checkpoint() });
+        f.tick('down'); await f.cycle();
+        expect(f.errors).toEqual([]);
+        const retained = f.writes.at(-1)!;
+        expect(bytes(retained)).toBeLessThanOrEqual(PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes);
+        if (!retained || typeof retained !== 'object' || Array.isArray(retained)) throw Error('Expected checkpoint');
+        const actual = healthResultProjectionSchema.parse(retained.current).checks[0]!;
+        expect(actual).toMatchObject({ result: { observedAt: f.now() }, failureStreak: 2, failingSince: 86_400_000,
+            recentResultsCoverage: 'partial', history: { days: [{ down: 2 }] } });
+        expect(actual.recentResults?.at(-1)?.observedAt).toBe(f.now());
+        expect(f.read).toHaveBeenCalledTimes(2);
+    });
     it('retains thirty UTC days of sample uptime through equal results, missing days and restart without extra probes', async () => {
         const day = 86_400_000;
         const f = fixture();
@@ -257,13 +330,18 @@ describe('saved health source registration and finite cycles', () => {
         f.clock(day); await f.cycle();
         expect(current()).toMatchObject({ history: { uptimePercent: 0,
             days: [{ dayStartAt: day, up: 0, down: 1, degraded: 0, unknown: 0 }] } });
+        expect(current()).toMatchObject({ recentResults: [{ status: 'down', observedAt: day }],
+            failingSince: day, failureStreak: 1 });
         const writes = f.writes.length;
         await f.cycle();
         expect(f.writes).toHaveLength(writes);
         expect(f.read).toHaveBeenCalledTimes(1);
         f.tick('up'); await f.cycle();
+        expect(current()).toMatchObject({ failingSince: null, failureStreak: 0 });
         f.tick('degraded'); await f.cycle();
+        expect(current()).toMatchObject({ failingSince: f.now(), failureStreak: 1 });
         f.tick('unknown'); await f.cycle();
+        expect(current()).toMatchObject({ failingSince: null, failureStreak: 0 });
         expect(current()).toMatchObject({ history: { uptimePercent: 100 / 3,
             days: [{ up: 1, down: 1, degraded: 1, unknown: 1 }] } });
         // Gaps remain unobserved; no invented up/down duration. Re-adoption of
@@ -278,6 +356,9 @@ describe('saved health source registration and finite cycles', () => {
         expect(current().history?.days).toHaveLength(30);
         expect(current().history?.days[0]?.dayStartAt).toBe(2 * day);
         expect(current().history?.uptimePercent).toBe(100);
+        expect(current()).toMatchObject({ recentResults: expect.not.arrayContaining([
+            expect.objectContaining({ observedAt: day }),
+        ]) });
         expect(healthResultProjectionAt({ v: 1, members: [], checks: [current()] }, 65 * day).checks[0]?.history)
             .toMatchObject({ days: [], uptimePercent: null });
         f.clock(65 * day); f.tick('unknown'); await f.cycle();
