@@ -72,11 +72,35 @@ export function treeImportWarnings({ cwd, tree, paths }) {
     const options = configs.get(config);
     const source = ts.createSourceFile(file, contents.get(blobs.get(file)), ts.ScriptTarget.Latest, true);
     const imports = new Set();
+    // A locally bound require (notably createRequire(new URL(...))) has its
+    // own base. Only Node's implicit module require resolves from this file.
+    const requireScopes = new Set();
+    const isRequire = name => name && ts.isIdentifier(name) && name.text === 'require';
+    function collectRequireBindings(node) {
+      if (ts.isVariableDeclaration(node) && ts.isVariableDeclarationList(node.parent) && isRequire(node.name)) {
+        const blockScoped = Boolean(node.parent.flags & ts.NodeFlags.BlockScoped);
+        let scope = node.parent;
+        while (scope.parent && !ts.isSourceFile(scope) && !ts.isFunctionLike(scope)
+          && !(blockScoped && ts.isBlock(scope))) scope = scope.parent;
+        requireScopes.add(scope);
+      }
+      if (ts.isFunctionLike(node) && node.parameters.some(parameter => isRequire(parameter.name))) requireScopes.add(node);
+      if (ts.isCatchClause(node) && isRequire(node.variableDeclaration?.name)) requireScopes.add(node);
+      if (ts.isImportClause(node) && isRequire(node.name)
+        || ts.isImportSpecifier(node) && isRequire(node.name)
+        || ts.isNamespaceImport(node) && isRequire(node.name)) requireScopes.add(source);
+      ts.forEachChild(node, collectRequireBindings);
+    }
+    collectRequireBindings(source);
+    function isModuleRequire(node) {
+      for (let scope = node; scope; scope = scope.parent) if (requireScopes.has(scope)) return false;
+      return true;
+    }
     function visit(node) {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier
         && ts.isStringLiteral(node.moduleSpecifier)) imports.add(node.moduleSpecifier.text);
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-        || ts.isIdentifier(node.expression) && node.expression.text === 'require')
+        || ts.isIdentifier(node.expression) && node.expression.text === 'require' && isModuleRequire(node))
         && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) imports.add(node.arguments[0].text);
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
         && ts.isStringLiteral(node.argument.literal)) imports.add(node.argument.literal.text);

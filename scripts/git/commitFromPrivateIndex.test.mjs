@@ -72,6 +72,26 @@ export const value = [absent, present, widget, lazy];`);
   assert.ok(warnings.every(value => value.includes('src/consumer.ts')));
 });
 
+test('does not resolve createRequire calls against the importing file', async t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.cwd, 'src'));
+  f.write('package.json', '{"type":"module"}');
+  f.write('metro.config.js', 'export default {};');
+  f.write('src/relocated.mjs', `import { createRequire } from 'node:module';
+const require = createRequire(new URL('../package.json', import.meta.url));
+require('./metro.config.js');`);
+  f.write('src/native.cjs', `require('./missing.js');
+function relocated() {
+  const require = createRequire(new URL('../package.json', import.meta.url));
+  require('./outside-this-module.js');
+}`);
+  const warnings = [];
+  await commitFromPrivateIndex({ ...f, paths: ['package.json', 'metro.config.js', 'src/relocated.mjs', 'src/native.cjs'],
+    warn: warning => warnings.push(warning) });
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('src/native.cjs -> ./missing.js'));
+});
+
 test('waits for an existing index.lock without deleting it', async (t) => {
   const f = fixture(t);
   f.write('changed', 'selected\n');
