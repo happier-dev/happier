@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
@@ -679,6 +679,44 @@ describe('bundled plugin installed runtime publication', () => {
       expect(readFileSync(join(runtimeRoot, 'agent/runtime/engine.js'), 'utf8')).toBe('new runner\n');
       expect(existsSync(join(runtimeRoot, '.happier-chunks/old.js'))).toBe(false);
       expect(existsSync(join(runtimeRoot, 'agent/runtime/factory.js'))).toBe(false);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('republishes only changed runtime files: an unchanged write rewrites nothing, one changed chunk rewrites only that chunk', async () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), 'happier-runtime-unchanged-reconcile-'));
+    const runtimeRoot = join(packageRoot, '.happier-plugin');
+    const markerPath = join(packageRoot, '.happier-plugin-build/.happier-daemon-outputs.json');
+    const expectedFiles = new Map([
+      ['.happier-plugin/plugin.json', Buffer.from('{"id":"happier.agent.codex"}\n')],
+      ['.happier-plugin/daemon.js', Buffer.from('daemon\n')],
+      ['.happier-plugin/.happier-chunks/a.js', Buffer.from('chunk a\n')],
+      ['.happier-plugin/.happier-chunks/b.js', Buffer.from('chunk b\n')],
+    ]);
+    const reconcile = async (files: ReadonlyMap<string, Buffer>) => await reconcileBundledPluginInstalledRuntime({
+      packageRoot, pluginPackageId: 'codex', daemonRelativePath: '.happier-plugin/daemon.js', expectedFiles: files, mode: 'write',
+    });
+    const paths = [...[...expectedFiles.keys()].map(path => join(packageRoot, path)), markerPath];
+    const backdate = () => { for (const path of paths) utimesSync(path, 1_000_000, 1_000_000); };
+    const rewritten = () => paths.filter(path => existsSync(path) && statSync(path).mtimeMs !== 1_000_000_000)
+      .map(path => path.slice(packageRoot.length + 1)).sort();
+    try {
+      await reconcile(expectedFiles);
+      backdate();
+      await reconcile(expectedFiles);
+      expect(rewritten()).toEqual([]);
+
+      await reconcile(new Map(expectedFiles).set('.happier-plugin/.happier-chunks/b.js', Buffer.from('chunk b2\n')));
+      expect(rewritten()).toEqual(['.happier-plugin/.happier-chunks/b.js']);
+      expect(readFileSync(join(runtimeRoot, '.happier-chunks/b.js'), 'utf8')).toBe('chunk b2\n');
+
+      backdate();
+      const withoutA = new Map(expectedFiles);
+      withoutA.delete('.happier-plugin/.happier-chunks/a.js');
+      await reconcile(withoutA);
+      expect(existsSync(join(runtimeRoot, '.happier-chunks/a.js'))).toBe(false);
+      expect(rewritten()).toEqual(['.happier-plugin-build/.happier-daemon-outputs.json', '.happier-plugin/.happier-chunks/b.js']);
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }

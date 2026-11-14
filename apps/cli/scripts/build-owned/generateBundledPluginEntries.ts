@@ -2317,7 +2317,10 @@ export async function reconcileBundledPluginInstalledRuntime(params: Readonly<{
     .map((relativePath) => resolve(params.packageRoot, ...relativePath.split('/')));
 
   if (params.mode === 'write') {
-    await cleanupPluginDaemonOutputManifest(params.packageRoot);
+    // Retire only what the prior bundle claimed and this one no longer emits;
+    // unchanged leaves keep their bytes and mtime so downstream package
+    // admission and caches see no change.
+    await cleanupPluginDaemonOutputManifest(params.packageRoot, { retainOutputs: currentDaemonOutputPaths });
     for (const retiredUnmarkedOutputPath of retiredUnmarkedOutputPaths) {
       rmSync(retiredUnmarkedOutputPath, { force: true });
     }
@@ -2327,6 +2330,7 @@ export async function reconcileBundledPluginInstalledRuntime(params: Readonly<{
     ));
     for (const [relativePath, bytes] of publicationFiles) {
       const installedPath = resolve(params.packageRoot, ...relativePath.split('/'));
+      if (existsSync(installedPath) && lstatSync(installedPath).isFile() && readFileSync(installedPath).equals(bytes)) continue;
       mkdirSync(dirname(installedPath), { recursive: true });
       writeFileSync(installedPath, bytes);
     }

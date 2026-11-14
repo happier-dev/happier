@@ -179,23 +179,39 @@ export async function writePluginDaemonOutputManifest(params: Readonly<{
     targetPath: outputManifestPath,
     label: 'Plugin daemon output manifest',
   });
-  await writeFile(
-    outputManifestPath,
-    `${JSON.stringify({ version: PLUGIN_DAEMON_OUTPUT_MANIFEST_VERSION, outputs }, null, 2)}\n`,
-    'utf8',
-  );
+  const contents = `${JSON.stringify({ version: PLUGIN_DAEMON_OUTPUT_MANIFEST_VERSION, outputs }, null, 2)}\n`;
+  // An unchanged ownership record keeps its bytes and mtime: callers republish only real changes.
+  const current = await readFile(outputManifestPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (current === contents) return;
+  await writeFile(outputManifestPath, contents, 'utf8');
 }
 
 /**
  * Remove only the files claimed by the prior bundle, then retire the claim.
  * Unknown files are intentionally left alone: descriptor source may own other
  * JavaScript under dist and cannot be inferred from a package files glob.
+ *
+ * `retainOutputs` names the outputs the caller is about to republish: they stay
+ * in place (the caller rewrites only changed bytes) and the current ownership
+ * record is left for `writePluginDaemonOutputManifest` to update. The legacy
+ * record is always retired.
  */
-export async function cleanupPluginDaemonOutputManifest(projectRootInput: string): Promise<void> {
-  for (const path of OUTPUT_MANIFEST_PATHS) await cleanupOutputManifest(projectRootInput, path);
+export async function cleanupPluginDaemonOutputManifest(
+  projectRootInput: string,
+  options: Readonly<{ retainOutputs?: readonly string[] }> = {},
+): Promise<void> {
+  const retained = options.retainOutputs === undefined ? undefined : new Set(normalizeOutputPaths(options.retainOutputs));
+  for (const path of OUTPUT_MANIFEST_PATHS) await cleanupOutputManifest(projectRootInput, path, retained);
 }
 
-async function cleanupOutputManifest(projectRootInput: string, relativePath: string): Promise<void> {
+async function cleanupOutputManifest(
+  projectRootInput: string,
+  relativePath: string,
+  retained: ReadonlySet<string> | undefined,
+): Promise<void> {
   const projectRoot = resolve(projectRootInput);
   // No marker means no owned executable output to retire. Check that cheap
   // lexical path first so callers that have not created a project tree yet do
@@ -215,6 +231,7 @@ async function cleanupOutputManifest(projectRootInput: string, relativePath: str
 
   const removableOutputPaths: string[] = [];
   for (const outputRelativePath of manifest.outputs) {
+    if (retained?.has(outputRelativePath)) continue;
     const outputPath = resolve(projectRoot, ...outputRelativePath.split('/'));
     await assertContainedNoFollowPath({
       projectRoot,
@@ -244,6 +261,7 @@ async function cleanupOutputManifest(projectRootInput: string, relativePath: str
       if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
     }
   }
+  if (retained && relativePath === PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH) return;
   await unlink(outputManifestPath);
 }
 
