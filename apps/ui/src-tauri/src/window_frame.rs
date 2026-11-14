@@ -219,11 +219,21 @@ impl FrameTracker {
                 return;
             }
             let window = &window_for_events;
+            let presentation =
+                match super::read_native_window_presentation(&window.as_ref().window()) {
+                    Ok(presentation) => presentation,
+                    Err(error) => {
+                        log::warn!(
+                            "could not read native main-window presentation for frame: {error}"
+                        );
+                        return;
+                    }
+                };
             // These are temporary presentation modes, not a new normal or maximized frame.
-            if window.is_minimized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+            if presentation.minimized || presentation.fullscreen {
                 return;
             }
-            let maximized = window.is_maximized().unwrap_or(false);
+            let maximized = presentation.maximized;
             let normal = if maximized {
                 None
             } else {
