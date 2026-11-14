@@ -2212,6 +2212,19 @@ that captured identity for later transfers and reconnects. Its credentials use a
 Sync relationship scope in the existing private requester-custody store;
 automatic conflict recovery
 requires that exact retained relationship capture at daemon ingress.
+Add Machine uses this same path for a Can use destination (owner ruling
+2026-11-14). `resolveWorkspaceSyncDestinationPlacement` in
+`apps/ui/sources/sync/ops/workspaceSyncRelationshipCreate.ts` reads the
+published Machine access fact (`canManageMachine`) once. For a Can use Machine
+other than the source, it runs `projects.open` on that Machine with a `sync`
+materialization that creates the relationship. The source-run
+`workspace.sync.relationship.create` is not used. Home admits Project Open with
+Use, the native member owner admits only a direct child of the person's own
+member folder, and a cold member is provisioned on this deliberate Open. Later
+writes run as that member. Arbitrary Machine paths, replacing a non-empty
+folder, relationship replacement and worker clean copies still need Manage.
+Add Machine shows `machine_manage_required` for the last two instead of
+offering them.
 Machine-level shell, setup scripts, package installs,
 service execution/control, reboot, elevation and firewall configuration require
 Manage. Home decides the role once; the terminal intent/custody owner consumes

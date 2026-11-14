@@ -14769,6 +14769,10 @@ const enWorkspaceSync = {
       'Workspace sync needs attention. Refresh its status, then try again.',
     requesterAccessUnavailable:
       'Happier could not restore access to this sync link. Check that you are using the original Account, or ask a Machine manager to check access.',
+    ownFolderOnly:
+      "With Can use access, you can sync only into a new folder in your own space on that machine. Choose a folder there, or ask its owner for Manage access.",
+    manageRequired:
+      "This needs Manage access to the destination machine. Ask its owner for Manage access.",
   },
   start: {
     blocked: {

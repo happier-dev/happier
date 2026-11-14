@@ -17704,6 +17704,8 @@ const it = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'La cartella dell’area di lavoro è cambiata e non è più autorizzata. Controlla il collegamento prima di riprovare.',
         conflictNeedsAttention: 'Questo conflitto è cambiato. Aggiornalo prima di scegliere una versione.',
         requesterAccessUnavailable: "Happier non ha potuto ripristinare l’accesso a questo collegamento di sincronizzazione. Verifica di usare l’account originale o chiedi a un gestore della macchina di controllare l’accesso.",
+        ownFolderOnly: "Con l’accesso d’uso puoi sincronizzare solo in una nuova cartella del tuo spazio su quella macchina. Scegli lì una cartella o chiedi al proprietario l’accesso di gestione.",
+        manageRequired: "Serve l’accesso di gestione alla macchina di destinazione. Chiedilo al proprietario.",
         needsAttention: 'La sincronizzazione dell’area di lavoro richiede attenzione. Aggiorna lo stato e riprova.',
     },
     start: { blocked: {

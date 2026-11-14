@@ -863,6 +863,10 @@ describe('Project Open RPC', () => {
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal' },
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cleanup' },
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cancelled' },
+    // Can use Add Machine (owner ruling 2026-11-14): a fresh guest member is
+    // provisioned on this deliberate Open; a non-empty own folder still needs Manage.
+    { mode: 'plain', action: 'create_relationship', fault: 'cold_member' },
+    { mode: 'plain', action: 'create_relationship', fault: 'nonempty_target' },
   ] as const)('keeps a scoped Use requester Source on member execution without custodian credentials ($mode/$action/$fault)', async ({ mode, action, fault }) => {
     const syncing = action !== 'attach';
     socketIo.mockImplementation((await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io);
@@ -888,7 +892,8 @@ describe('Project Open RPC', () => {
     const member = deriveAgentIsolationMemberIdentity(requesterIdentity);
     memberPreparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
       requesterIdentity, custodianAccountId: 'requester', encryptionMode: 'plain', uid: 2401 });
-    for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
+    const coldMember = fault === 'cold_member';
+    if (!coldMember) for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
       binaryPath: '/opt/happier/cli/current/happier' })) memberPreparation.installed.add(step.id);
     const backingHome = join(installed.directory, 'native-home');
     const backingWorkspace = join(installed.directory, 'native-workspace');
@@ -898,7 +903,7 @@ describe('Project Open RPC', () => {
     nativeBoundary.accountLookups.set(JSON.stringify(['--service=files', 'passwd', member.username]),
       `${member.username}:x:2401:2401:${member.ownershipMarker}:${member.home}:/usr/sbin/nologin\n`);
     nativeBoundary.accountLookups.set(JSON.stringify(['--service=files', 'group', 'happier']), 'happier:x:1001:\n');
-    await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+    if (!coldMember) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
     const root = join(member.workspaceRoot, 'bob-checkout');
     nativeBoundary.launch = async (input, output) => {
       const frame = await readAgentLaunchFrame(input);
@@ -1209,6 +1214,19 @@ describe('Project Open RPC', () => {
           nativeBoundary.runAsUsers.length = 0;
           nativeBoundary.phases.length = 0;
         }
+      }
+      if (fault === 'nonempty_target') {
+        // Replacing a non-empty folder needs Manage; Can use Open has no replacement approval.
+        await mkdir(targetRoot, { recursive: true });
+        await writeFile(join(targetRoot, 'existing.txt'), 'member bytes');
+        const refusedOpen = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
+        expect(refusedOpen, JSON.stringify(refusedOpen)).toMatchObject({ kind: 'refused' });
+        expect(await readFile(join(targetRoot, 'existing.txt'), 'utf8')).toBe('member bytes');
+        await expect(access(join(targetRoot, 'payload.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+        const graph = rows.find(row => row.key.kind === 'relationship-graph');
+        if (graph?.content) expect(cipher.open(graph.key, graph.content).value).toMatchObject({ relationships: [] });
+        expect(productionSync?.handoffAdapter.listPrivateExecutions?.()).toEqual([]);
+        return;
       }
       // Signed Open reads describe child placement. Retained transfers use
       // Account bearer admission once at their next natural boundary.

@@ -17723,6 +17723,8 @@ const pl = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'Folder obszaru roboczego zmienił się i nie jest już autoryzowany. Sprawdź łącze przed ponowną próbą.',
         conflictNeedsAttention: 'Ten konflikt zmienił się. Odśwież go przed wybraniem wersji.',
         requesterAccessUnavailable: "Nie udało się przywrócić dostępu do tego połączenia synchronizacji w Happier. Sprawdź, czy używasz pierwotnego konta, lub poproś administratora maszyny o sprawdzenie dostępu.",
+        ownFolderOnly: "Z dostępem do używania możesz synchronizować tylko do nowego folderu we własnej przestrzeni na tej maszynie. Wybierz tam folder lub poproś właściciela o dostęp do zarządzania.",
+        manageRequired: "Wymaga to dostępu do zarządzania maszyną docelową. Poproś właściciela o ten dostęp.",
         needsAttention: 'Synchronizacja obszaru roboczego wymaga uwagi. Odśwież jej stan i spróbuj ponownie.',
     },
     start: { blocked: {

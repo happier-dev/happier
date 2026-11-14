@@ -43,6 +43,8 @@ export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.conflictNeedsAttention'
     | 'workspaceSync.error.updateRequired'
     | 'workspaceSync.error.requesterAccessUnavailable'
+    | 'workspaceSync.error.ownFolderOnly'
+    | 'workspaceSync.error.manageRequired'
     | 'sessionHandoff.failure.partialLinked'
     | 'workspaceSync.error.needsAttention';
 
@@ -134,6 +136,11 @@ export function resolveWorkspaceSyncErrorTranslationKey(value: unknown): Workspa
             return 'sessionHandoff.failure.partialLinked';
         case 'relationship_not_owned':
             return 'workspaceSync.error.requesterAccessUnavailable';
+        // A Can use destination opens only into the person's own member folder.
+        case 'workspace_private_checkout_review_required':
+            return 'workspaceSync.error.ownFolderOnly';
+        case 'machine_manage_required':
+            return 'workspaceSync.error.manageRequired';
         case 'engine_problems':
         case 'relationship_not_ready':
         case 'workspace_root_in_use':

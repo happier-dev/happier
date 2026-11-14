@@ -17750,6 +17750,8 @@ const fr = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'Le dossier de l’espace de travail a changé et n’est plus autorisé. Vérifie le lien avant de réessayer.',
         conflictNeedsAttention: 'Ce conflit a changé. Actualise-le avant de choisir une version.',
         requesterAccessUnavailable: "Happier n’a pas pu rétablir l’accès à ce lien de synchronisation. Vérifiez que vous utilisez le compte d’origine ou demandez à un gestionnaire de la machine de vérifier l’accès.",
+        ownFolderOnly: "Avec un accès Utilisation, vous ne pouvez synchroniser que dans un nouveau dossier de votre propre espace sur cette machine. Choisissez-y un dossier ou demandez au propriétaire un accès Gestion.",
+        manageRequired: "Cette action nécessite un accès Gestion à la machine de destination. Demandez-le à son propriétaire.",
         needsAttention: 'La synchronisation de l’espace de travail nécessite ton attention. Actualise son état, puis réessaie.',
     },
     start: { blocked: {

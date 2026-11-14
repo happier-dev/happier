@@ -17703,6 +17703,8 @@ const pt = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'A pasta do espaço de trabalho mudou e deixou de estar autorizada. Revê a ligação antes de tentar novamente.',
         conflictNeedsAttention: 'Este conflito mudou. Atualiza-o antes de escolher uma versão.',
         requesterAccessUnavailable: "O Happier não conseguiu restaurar o acesso a este vínculo de sincronização. Verifique se está usando a conta original ou peça a um administrador da máquina para verificar o acesso.",
+        ownFolderOnly: "Com acesso de uso, você só pode sincronizar para uma nova pasta no seu próprio espaço nessa máquina. Escolha uma pasta lá ou peça ao proprietário acesso de gestão.",
+        manageRequired: "Isso exige acesso de gestão à máquina de destino. Peça esse acesso ao proprietário.",
         needsAttention: 'A sincronização do espaço de trabalho requer atenção. Atualiza o estado e tenta novamente.',
     },
     start: { blocked: {

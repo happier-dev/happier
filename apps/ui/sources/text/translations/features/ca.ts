@@ -17725,6 +17725,8 @@ const ca = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'La carpeta de l’espai de treball ha canviat i ja no està autoritzada. Revisa l’enllaç abans de tornar-ho a provar.',
         conflictNeedsAttention: 'Aquest conflicte ha canviat. Actualitza’l abans de triar una versió.',
         requesterAccessUnavailable: "Happier no ha pogut restaurar l’accés a aquest enllaç de sincronització. Comprova que fas servir el compte original o demana a un gestor de la màquina que revisi l’accés.",
+        ownFolderOnly: "Amb accés d’ús, només pots sincronitzar en una carpeta nova del teu propi espai en aquesta màquina. Tria-hi una carpeta o demana al propietari accés de gestió.",
+        manageRequired: "Això requereix accés de gestió a la màquina de destinació. Demana al propietari accés de gestió.",
         needsAttention: 'La sincronització de l’espai de treball necessita atenció. Actualitza’n l’estat i torna-ho a provar.',
     },
     start: { blocked: {

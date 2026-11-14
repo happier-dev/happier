@@ -17191,6 +17191,8 @@ const de = completeWorkspaceSyncTranslation({
         rootNoLongerAuthorized: 'Der Arbeitsbereichsordner wurde geändert und ist nicht mehr autorisiert. Prüfe die Verbindung, bevor du es erneut versuchst.',
         conflictNeedsAttention: 'Dieser Konflikt hat sich geändert. Aktualisiere ihn, bevor du eine Version auswählst.',
         requesterAccessUnavailable: "Happier konnte den Zugriff auf diese Synchronisierungsverknüpfung nicht wiederherstellen. Prüfe, ob du das ursprüngliche Konto verwendest, oder bitte einen Maschinenverwalter, den Zugriff zu prüfen.",
+        ownFolderOnly: "Mit Nutzungszugriff kannst du nur in einen neuen Ordner in deinem eigenen Bereich auf dieser Maschine synchronisieren. Wähle dort einen Ordner oder bitte den Eigentümer um Verwaltungszugriff.",
+        manageRequired: "Dafür ist Verwaltungszugriff auf die Zielmaschine nötig. Bitte den Eigentümer um Verwaltungszugriff.",
         needsAttention: 'Die Arbeitsbereichssynchronisierung benötigt Aufmerksamkeit. Aktualisiere den Status und versuche es erneut.',
     },
     start: { blocked: {

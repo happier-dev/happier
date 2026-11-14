@@ -1,7 +1,12 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, type WorkspaceSyncRelationshipWriteActionInputV1, type WorkspaceSyncRelationshipCreateResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
+import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 /**
  * Present-user adapter for direct Project linking ("Add machine").
@@ -17,10 +22,13 @@ export type CreateWorkspaceSyncRelationshipRequest = Readonly<{
     serverId?: string | null;
     actionRequestId: string;
     signal?: AbortSignal;
+    /** From `resolveWorkspaceSyncDestinationPlacement`; absent keeps the source-run relationship. */
+    placement?: WorkspaceSyncDestinationPlacement;
 }>;
 
 export type CreateWorkspaceSyncRelationshipOutcome =
     | Readonly<{ kind: 'linked'; result: WorkspaceSyncRelationshipCreateResultV1 }>
+    | Readonly<{ kind: 'opened'; workspace: WorkspaceAddressV1 }>
     | Readonly<{ kind: 'approval_required'; artifactId: string }>;
 
 function actionError(errorCode: string, message: string): Error {
@@ -62,10 +70,59 @@ function readApprovedCreateResult(raw: unknown): WorkspaceSyncRelationshipCreate
     return readCreateResult(executionRecord.result);
 }
 
+/**
+ * Where Add Machine runs, decided once from the published Machine access fact.
+ * Manage (and the source Machine itself) keeps the source-run relationship
+ * Action. A Can use destination on another Machine opens the source Workspace
+ * there through Project Open Sync, whose native member owner admits only the
+ * person's own member folder (owner ruling 2026-11-14).
+ */
+export type WorkspaceSyncDestinationPlacement = 'source_relationship' | 'destination_open';
+
+export function resolveWorkspaceSyncDestinationPlacement(input: Readonly<{
+    sourceMachineId: string;
+    destination: Pick<Machine, 'id' | 'isShared' | 'access'>;
+}>): WorkspaceSyncDestinationPlacement {
+    return input.destination.id === input.sourceMachineId || canManageMachine(input.destination)
+        ? 'source_relationship' : 'destination_open';
+}
+
+/** Project Open Sync result in this adapter's outcome; refusals keep their typed code. */
+function readDestinationOpenResult(raw: unknown): CreateWorkspaceSyncRelationshipOutcome {
+    const parsed = OpenProjectResultV1Schema.safeParse(raw);
+    if (!parsed.success) throw actionError('workspace_sync_unavailable', 'Unsupported workspace link result');
+    const result = parsed.data;
+    if (result.kind === 'opened') return { kind: 'opened', workspace: result.workspace };
+    if (result.kind === 'refused') throw actionError(result.code, result.code);
+    if (result.kind === 'outcomeUnknown') throw actionError('indeterminate', 'The workspace link outcome is unknown');
+    throw actionError('workspace_sync_unavailable', 'The source Workspace is ambiguous');
+}
+
+async function openSourceIntoDestination(request: CreateWorkspaceSyncRelationshipRequest,
+    actionInput: WorkspaceSyncRelationshipWriteActionInputV1): Promise<CreateWorkspaceSyncRelationshipOutcome> {
+    // Replacement and worker copies need Manage; Project Open Sync cannot express them.
+    if ('replaceRelationshipId' in actionInput || actionInput.purpose) {
+        throw actionError('machine_manage_required', 'This needs Manage access to the destination Machine');
+    }
+    if (!request.serverId) throw actionError('workspace_sync_unavailable', 'The source Home is unavailable');
+    const input = OpenProjectInputV1Schema.parse({
+        serverId: request.serverId, machineId: actionInput.targetMachineId,
+        source: { kind: 'workspace', workspaceId: actionInput.sourceWorkspaceRefId },
+        materialization: { kind: 'sync', targetPath: actionInput.targetPath, workspaceAction: {
+            kind: 'create_relationship', mode: actionInput.mode, contentPolicy: actionInput.contentPolicy, flushBeforeCommit: true } },
+    });
+    const opened = await createDefaultActionExecutor().execute('projects.open', input, {
+        serverId: request.serverId, surface: 'ui', actionRequestId: request.actionRequestId, signal: request.signal,
+    });
+    if (!opened.ok) throw actionError(opened.errorCode, opened.error);
+    return readDestinationOpenResult(opened.result);
+}
+
 export async function createWorkspaceSyncRelationship(
     request: CreateWorkspaceSyncRelationshipRequest,
 ): Promise<CreateWorkspaceSyncRelationshipOutcome> {
     const actionInput = WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(request.input);
+    if (request.placement === 'destination_open') return await openSourceIntoDestination(request, actionInput);
     const executor = createDefaultActionExecutor();
     const started = await executor.execute('replaceRelationshipId' in actionInput ? 'workspace.sync.relationship.replace' : 'workspace.sync.relationship.create', actionInput, {
         serverId: request.serverId ?? undefined,

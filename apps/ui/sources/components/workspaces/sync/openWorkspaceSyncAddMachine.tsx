@@ -37,7 +37,7 @@ import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolve
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
-import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate } from '@/sync/ops/workspaceSyncRelationshipCreate';
+import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate, resolveWorkspaceSyncDestinationPlacement } from '@/sync/ops/workspaceSyncRelationshipCreate';
 import { useWorkspaceSyncTargetFolderState } from './useWorkspaceSyncTargetFolderState';
 import { useWorkspaceSyncRequesterAvailability } from '@/hooks/machine/useWorkspaceSyncRequesterAvailability';
 import { sync } from '@/sync/sync';
@@ -205,10 +205,14 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         setPhase('idle');
         setError(null);
     }, []);
+    const placement = selectedMachine && hub
+        ? resolveWorkspaceSyncDestinationPlacement({ sourceMachineId: hub.machineId, destination: selectedMachine }) : null;
     const blockedReason = hubConflict || !hub
         ? t('workspaceSync.error.needsAttention')
         : !selectedMachine
         ? t('workspaceSync.start.blocked.targetMachine')
+        : placement === 'destination_open' && (replacement || props.options.purpose)
+            ? t('workspaceSync.error.manageRequired')
         : !canAttemptMachineSpawn({ machine: selectedMachine, selectedMachineId: machineId, scope })
             ? t('workspaceSync.start.blocked.targetMachineOffline')
         : !sourceRoots || !targetRoots
@@ -346,7 +350,13 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 serverId: props.source.serverId,
                 actionRequestId: requestIdentity.current.id,
                 signal: controller.signal,
+                ...(placement ? { placement } : {}),
             });
+            if (outcome.kind === 'opened') {
+                setLinkedConflictCount(null);
+                setPhase('linked');
+                return;
+            }
             if (outcome.kind === 'approval_required') {
                 setPendingApprovalId(outcome.artifactId);
                 setPhase('approval_pending');
@@ -375,7 +385,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             props.operation.inFlight = false;
             props.operation.abortController = null;
         }
-    }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSourceRefId, mode, patternsDraft, pendingApprovalId, phase, props, resolvedPath, selectedMachine]);
+    }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSourceRefId, mode, patternsDraft, pendingApprovalId, phase, placement, props, resolvedPath, selectedMachine]);
 
     const footer = React.useMemo(() => (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
