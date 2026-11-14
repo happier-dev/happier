@@ -32,7 +32,7 @@ import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema }
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
 import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionAccountInvocationSurface,
   resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
-import { admitExternalActionRequesterInvocationAttributionV1, isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1,
+import { admitExternalActionRequesterInvocationAttributionV1, isManagedControllerCodecRootV1, isReviewedMachineSetupCodecV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1,
   type ExternalActionRequesterAccountContextPurposeV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActionAdapter';
@@ -326,7 +326,7 @@ async function executeExternalActionRequest(input: Readonly<{
   const managedControllerCodec = executionAuthorization?.success
     && (executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
       || isReviewedMachineSetupCodecV1(executionAuthorization.data.binding))
-    && isManagedControllerCodecActionV1(executionAuthorization.data.binding);
+    && isManagedControllerCodecRootV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
   let controllerInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
   let managedReviewedParent: HostReviewedParentV1 | undefined;
@@ -899,7 +899,7 @@ async function executeExternalActionRequest(input: Readonly<{
   // Home already admitted the exact custodian-reviewed preset. Consume that
   // signed decision instead of creating a requester Ask in custodian custody.
   const approvedDelegatedAcquire = actionId.data === 'machines.managed.acquire'
-    && originalRootCurrentness !== undefined && managedControllerCodec
+    && originalRootCurrentness !== undefined
     && admittedAuthorization?.binding.managedAcquireDelegation === true;
   const approvedCreationRecovery = (actionId.data === 'machines.managed.cancel' || actionId.data === 'machines.managed.delete')
     && originalRootCurrentness !== undefined && managedControllerCodec
@@ -972,6 +972,7 @@ async function executeExternalActionRequest(input: Readonly<{
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
           ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || isSessionAgentReadinessRootActionIdV1(actionId.data) || actionId.data === 'projects.open'
+            || actionId.data === 'machines.managed.acquire'
             || actionId.data === 'action.operations.cancel' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
             || isWorkspaceSyncRelationshipWriteActionId(actionId.data)
             || executionAuthorization.data.binding.deploymentChildRoot === true

@@ -378,6 +378,12 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
       && binding.managedAdmission?.actionId === binding.actionId;
 }
 
+/** Account roots and reviewed Setup leaves carry this codec; ordinary PAT roots use their own transport. */
+export function isManagedControllerCodecRootV1(binding: ExternalActionExecutionAuthorizationV1['binding']): boolean {
+  return isManagedControllerCodecActionV1(binding)
+    && ('authentication' in binding || isReviewedMachineSetupCodecV1(binding));
+}
+
 export function sealManagedControllerActionCodecV1(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   material: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
@@ -386,8 +392,7 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
-  if (!isManagedControllerCodecActionV1(authorization.binding)
-    || !('authentication' in authorization.binding) && !isReviewedMachineSetupCodecV1(authorization.binding)
+  if (!isManagedControllerCodecRootV1(authorization.binding)
     || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== authorization.binding.machineId)
     throw new Error('managed_controller_codec_root_mismatch');
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
@@ -489,8 +494,7 @@ export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAcco
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'>): ManagedControllerCodecMaterial | null;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation?: boolean }>) {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
-  if (!parsed.success || !isManagedControllerCodecActionV1(parsed.data.binding)
-    || !('authentication' in parsed.data.binding) && !isReviewedMachineSetupCodecV1(parsed.data.binding)
+  if (!parsed.success || !isManagedControllerCodecRootV1(parsed.data.binding)
     || parsed.data.binding.target.kind !== 'machine'
     || parsed.data.binding.target.machineId !== input.machineId) return null;
   const plaintext = openInstallationContext({ ...input, purpose: { kind: 'managed_controller_codec' } });

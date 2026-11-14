@@ -2,7 +2,7 @@ import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machin
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
-import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isDeploymentActionIdV1 } from "@happier-dev/protocol";
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
@@ -509,7 +509,7 @@ resolveServerFeaturesSnapshot?: () =>
           const http = authorization?.requesterHttpProjection;
           const installation = externalActionInstallationIdentity;
           if (!authorization || !binding || role !== 'use' || !apiMachineForSessions || !installation || !http
-            || !isManagedControllerCodecActionV1(binding) || binding.actionId !== actionId
+            || !isManagedControllerCodecRootV1(binding) || binding.actionId !== actionId
             || binding.accountId === binding.custodianAccountId
             || binding.custodianAccountId !== readPreviewAccountIdFromToken(credentials.token)
             || binding.machineId !== params.machineId || binding.installationId !== installation.installationId
@@ -551,7 +551,7 @@ resolveServerFeaturesSnapshot?: () =>
       };
       const root = executionContext?.externalActionExecutionAuthorization;
       if (!requesterAccountContext && root && root.binding.accountId !== root.binding.custodianAccountId
-        && isManagedControllerCodecActionV1(root.binding)) {
+        && isManagedControllerCodecRootV1(root.binding)) {
         const ingress = resolveRequesterIngress(executionContext);
         if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent
           || !await ingress.verifyMachineAdmissionCurrent()) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

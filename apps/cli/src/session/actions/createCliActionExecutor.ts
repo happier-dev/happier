@@ -43,7 +43,7 @@ import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/
 import { MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
-import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -435,7 +435,7 @@ export function createCliActionExecutor(
     let managedControllerUiBinding: NonNullable<typeof authorization>['binding'] | null = null;
     if (authorization
       && readExternalActionBindingAuthority(authorization.binding) === 'present_user'
-      && isManagedControllerCodecActionV1(authorization.binding)
+      && isManagedControllerCodecRootV1(authorization.binding)
       && authorization.binding.accountId !== authorization.binding.custodianAccountId
       && runtimeAccountId === authorization.binding.custodianAccountId
       && !authorization.binding.sessionActionOrigin && !authorization.binding.workflowActionOrigin

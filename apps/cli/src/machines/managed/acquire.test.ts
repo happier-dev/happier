@@ -1,3 +1,6 @@
+import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
+import fastify from 'fastify';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -1835,7 +1838,13 @@ describe('opaque managed preset admission', () => {
             recipients: carrier.admission.presetContent.recipients, accountId: 'owner', accountKey: carrier.custodianKey });
         expect(opened?.nativeResult).toMatchObject({ kind: 'bound', resource: { value: privateCrabboxResource } });
     });
-    it.each(['explicit', 'preset'] as const)('routes real requester dispatch through the admitted custodian broker (%s controller)', async controllerSource => {
+    it.each([
+        { controllerSource: 'explicit', ingress: 'account' },
+        { controllerSource: 'preset', ingress: 'account' },
+        { controllerSource: 'preset', ingress: 'api-token' },
+        { controllerSource: 'preset', ingress: 'workflow' },
+        { controllerSource: 'preset', ingress: 'agent-session' },
+    ] as const)('routes real requester dispatch through the admitted custodian broker ($controllerSource controller/$ingress)', async ({ controllerSource, ingress }) => {
         const homeId = 'srv_team_e2ee_brokered_child';
         const requestId = 'team-e2ee-brokered-child-request';
         const provider = { pluginId: 'acme.compute', localId: 'vm' };
@@ -1880,25 +1889,42 @@ describe('opaque managed preset admission', () => {
         };
         // Real external dispatch stamps requester identity and the receiving Machine
         // independently for delegated requests; the ordinary owner entry stays separate.
-        const invokeOnController = async (custodianAccountId = 'owner', currentMachineId = controller.machineId, requesterAccountId = 'team-member') => {
+        const invokeOnController = async (custodianAccountId = 'owner', currentMachineId = controller.machineId, requesterAccountId = 'team-member', homeCurrent = true,
+            delegated = requesterAccountId !== 'owner') => {
             const { controller: _explicitController, ...presetAcquisition } = carrier.acquisition;
             const parentInput = controllerSource === 'explicit' ? carrier.acquisition : presetAcquisition;
-            const principal = { accountId: requesterAccountId, authority: 'present_user' as const,
-                authentication: { kind: 'account' as const, tokenEpoch: 7 } };
+            const origin = ingress === 'workflow' ? { workflowActionOrigin: { runId: 'accepted-workflow', requestId } }
+                : ingress === 'agent-session' ? { sessionActionOrigin: { v: 1 as const,
+                    caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 0, turnDepth: 0 },
+                    sourceTurnId: 'source-turn', requestId, callerPermissionMode: 'default' as const } } : {};
+            const authentication = { kind: 'account' as const, tokenEpoch: 7 };
+            const identity = ingress === 'api-token' ? { accountId: requesterAccountId, principalId: requesterAccountId,
+                credentialId: '2c67deea-5ae7-4706-9ad6-b5b992df1cba', grant: API_TOKEN_FULL_GRANT_V1 }
+                : { accountId: requesterAccountId, authentication, ...origin };
+            const principal = { ...identity, authority: ingress === 'account' ? 'present_user' as const : 'account_automation' as const };
             const target = { kind: 'machine' as const, machineId: controller.machineId };
             const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(31) };
-            const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-                binding: { serverIdentityId: homeId, accountId: principal.accountId, authentication: principal.authentication,
+            const envelope = ingress === 'api-token' ? { v: 1 as const, requestId, target, input: parentInput }
+                : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: homeId, accountId: principal.accountId,
+                    authentication,
                     actionId: 'machines.managed.acquire', requestId, target },
                 material, input: parentInput, randomBytes: tweetnacl.randomBytes });
-            const authorization = sealManagedControllerActionCodecV1({
-                authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-team-acquire', binding: {
-                    serverIdentityId: homeId, accountId: principal.accountId, authentication: principal.authentication,
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-team-acquire', binding: {
+                    serverIdentityId: homeId, ...identity,
+                    ...(ingress === 'agent-session' ? { sessionActionSource: { machineId: 'source-machine', installationId: 'source-installation' } } : {}),
                     custodianAccountId, machineId: controller.machineId, installationId: controller.installationId,
-                    actionId: 'machines.managed.acquire', requestId, target, accountEncryptionMode: 'e2ee',
+                    actionId: 'machines.managed.acquire', requestId, target,
+                    accountEncryptionMode: ingress === 'api-token' ? 'plain' : 'e2ee',
+                    ...(delegated ? { managedAcquireDelegation: true } : {}),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-                } }), material, installationPublicKey: signing.publicKey, randomBytes: tweetnacl.randomBytes,
-                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+                } });
+            const authorization = ingress === 'api-token' ? root : sealManagedControllerActionCodecV1({
+                authorization: root, material, installationPublicKey: signing.publicKey, randomBytes: tweetnacl.randomBytes,
+                // Session and Workflow origin is Home-signed; the real source
+                // producer does not project it as a host/plugin invocation.
+                ...(ingress === 'account' ? { invocation: { caller: { kind: 'host' as const },
+                    surface: 'cli' as const, authority: principal.authority } } : {}),
             });
             let acquisitionFailure: unknown;
             let retained = carrier.admission.machine;
@@ -1907,6 +1933,12 @@ describe('opaque managed preset admission', () => {
             const previousBrokerRoles = brokeredRoles.length;
             const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
                 const path = String(url);
+                if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset: {
+                    id: carrier.acquisition.selection.id, homeId, revision: carrier.acquisition.selection.revision,
+                    owner: { kind: 'team', teamId: 'team-a' }, teamAcquireDelegated: true, controller,
+                    contentEncryptionMode: 'e2ee', ...carrier.admission.presetContent,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                } } };
                 if (path.endsWith('/admit')) return { status: 200, data: carrier.admission };
                 if (path.endsWith('/submit')) {
                     retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
@@ -1965,7 +1997,23 @@ describe('opaque managed preset admission', () => {
                 execute: async operationContext => {
                     const admittedContext = { ...context, ...operationContext };
                     expect(admittedContext.runtimeAccountId).toBe(principal.accountId);
+                    if (requesterAccountId !== 'owner') expect(admittedContext.bypassApprovals === true).toBe(delegated);
                     if (requesterAccountId === 'owner') expect(admittedContext.defaultSessionMachineId).toBeUndefined();
+                    if (ingress === 'api-token') {
+                        // Exercise the actual approval owner too: Home's signed
+                        // delegation bypasses requester Ask, ordinary PATs do not.
+                        const executor = createActionExecutor({ managedMachineAction: async ({ input: actionInput, context: actionContext }) => {
+                            acquisitionWork = acquisition.execute('machines.managed.acquire', actionInput, { requestId,
+                                context: actionContext, signal: actionContext.signal });
+                            try { return await acquisitionWork; }
+                            catch (error) { acquisitionFailure = error; throw error; }
+                        } });
+                        return executor.execute('machines.managed.acquire', dispatchedInput, { ...admittedContext,
+                            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                                'machines.managed.acquire': { approvalRequiredSurfaces: ['api'] },
+                            } }),
+                        });
+                    }
                     acquisitionWork = acquisition.execute('machines.managed.acquire', dispatchedInput, { requestId,
                         context: admittedContext, signal: admittedContext.signal });
                     try { return { ok: true, result: await acquisitionWork }; }
@@ -1976,7 +2024,7 @@ describe('opaque managed preset admission', () => {
                 },
             });
 
-            let response: Awaited<ReturnType<typeof executeExternalAction>> | undefined;
+            let response: { kind: string; errorCode?: string } | undefined;
             if (requesterAccountId === 'owner') {
                 const ownAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization,
                     serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
@@ -1987,6 +2035,26 @@ describe('opaque managed preset admission', () => {
                 // already agree; no receiving-Machine context fact is required.
                 await executeAcquisition({ runtimeAccountId: principal.accountId, actionRequestId: requestId, surface: 'cli',
                     externalActionExecutionAuthorization: ownAuthorization, externalActionTarget: target });
+            } else if ('credentialId' in identity) {
+                const app = fastify();
+                registerDaemonExternalActionRoute(app, { currentMachineId, currentServerId: 'daemon-local-profile',
+                    currentServerHttpBaseUrl: 'https://home.example',
+                    verifyPat: async () => ({ ok: true, ...identity, authority: 'account_automation', expiresAt: null }),
+                    mintExecutionAuthorization: async () => ({ ok: true, authorization }),
+                    resolveInstallationId: () => controller.installationId,
+                    externalActionMachineRequestPrivateKey: signing.secretKey, verifyExecutionAuthorization: async () => homeCurrent,
+                    resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: carrier.token, encryption: null } }),
+                    executor: { execute: async (_action, actionInput, context) => {
+                        if (!context) throw new Error('Missing real PAT dispatch context');
+                        return await executeAcquisition(context, actionInput);
+                    } },
+                });
+                try {
+                    const http = await app.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
+                        headers: { authorization: `Bearer hap_v1_${identity.credentialId}_${'A'.repeat(43)}` }, payload: envelope });
+                    response = http.statusCode === 200 ? { kind: 'response', errorCode: http.json().execution.errorCode }
+                        : { kind: 'invalid_request', errorCode: http.json().code };
+                } finally { await app.close(); }
             } else response = await executeExternalAction({ actionId: 'machines.managed.acquire', envelope, principal,
                 executionAuthorization: authorization, currentMachineId, currentAccountId: 'owner',
                 currentInstallationId: controller.installationId, currentServerId: 'daemon-local-profile',
@@ -1994,7 +2062,7 @@ describe('opaque managed preset admission', () => {
                 externalActionMachineRequestPrivateKey: signing.secretKey, surface: 'cli',
                 resolveEncryption: async () => ({ serverIdentityId: homeId, material }),
                 // Home's already-admitted root verification is the network boundary.
-                verifyExecutionAuthorization: async () => true,
+                verifyExecutionAuthorization: async () => homeCurrent,
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: carrier.token, encryption: null } }),
                 executor: { execute: async (action, actionInput, context) => {
                     expect(action).toBe('machines.managed.acquire');
@@ -2011,22 +2079,37 @@ describe('opaque managed preset admission', () => {
         };
 
         const admitted = await invokeOnController();
-        expect(admitted.acquisitionFailure).toMatchObject({ code: 'managed_controller_request_failed' });
+        expect(admitted.acquisitionFailure, admitted.acquisitionFailure instanceof Error ? admitted.acquisitionFailure.stack : JSON.stringify(admitted.response))
+            .toMatchObject({ code: 'managed_controller_request_failed' });
         expect(admitted.brokeredRoles).toEqual(['acquire', 'check', 'options']);
         expect(admitted.reports).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
         expect(native.effects()).toBe(0);
 
-        const owner = await invokeOnController('owner', controller.machineId, 'owner');
-        expect(owner.acquisitionFailure).toMatchObject({ code: 'managed_controller_request_failed' });
-        expect(owner.brokeredRoles).toEqual(['acquire', 'check', 'options']);
-        expect(owner.reports).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
+        const owner = ingress === 'api-token' ? null : await invokeOnController('owner', controller.machineId, 'owner');
+        if (owner) {
+            expect(owner.acquisitionFailure).toMatchObject({ code: 'managed_controller_request_failed' });
+            expect(owner.brokeredRoles).toEqual(['acquire', 'check', 'options']);
+            expect(owner.reports).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
+        }
 
         const wrongCustodian = await invokeOnController('unrelated-custodian');
         expect(wrongCustodian.acquisitionFailure).toMatchObject({ code: 'credential_scope_denied' });
         expect(wrongCustodian.brokeredRoles).toEqual([]);
         const wrongController = await invokeOnController('owner', 'unrelated-controller');
-        expect(wrongController.response).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
+        expect(wrongController.response).toMatchObject({ kind: 'invalid_request',
+            errorCode: ingress === 'api-token' ? 'invalid_envelope' : 'invalid_encrypted_envelope' });
         expect(wrongController.brokeredRoles).toEqual([]);
+        if (ingress === 'api-token') {
+            const ordinary = await invokeOnController('owner', controller.machineId, 'team-member', true, false);
+            expect(ordinary.response).toMatchObject({ kind: 'response', errorCode: 'approvals_not_supported' });
+            expect(ordinary.acquisitionFailure).toBeUndefined();
+            expect(ordinary.brokeredRoles).toEqual([]);
+            expect(ordinary.reports).toEqual([]);
+            const withdrawn = await invokeOnController('owner', controller.machineId, 'team-member', false);
+            expect(withdrawn.response).toMatchObject({ kind: 'response', errorCode: 'not_authenticated' });
+            expect(withdrawn.brokeredRoles).toEqual([]);
+            expect(withdrawn.reports).toEqual([]);
+        }
         expect(native.effects()).toBe(0);
     });
 });
