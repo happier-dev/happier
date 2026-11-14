@@ -1431,6 +1431,18 @@ export async function createMemoryIndexer(params: Readonly<{
       while (!stopped && settings.enabled && tier1 && indexesQualified) {
         signal.throwIfAborted();
         for (const sessionId of [...editedSessionIds]) {
+          const observedSeq = candidateObservedSeqBySessionId.get(sessionId);
+          // A transcript revision changes no eligibility input (seq, owner locality, archive,
+          // access): the admission already supplied for this Session stays current, and its own
+          // carriers (worker re-read without the locality proof, removal, archive) replace it.
+          // Only a Session without a held admission re-reads its source.
+          if (candidateSessionIds.includes(sessionId) && observedSeq !== undefined) {
+            await runTrackedSessionOperation({ sessionIds: [sessionId], signal }, async (included, operationSignal) => {
+              await applySessionObservations([{ sessionId, eligibility: { sessionId, observedSeq,
+                allowInitialBackfill: candidateAllowInitialBackfillSessionIds.has(sessionId) } }], operationSignal, included);
+            });
+            continue;
+          }
           await ensureUpToDate(sessionId, signal);
         }
         if (inventoryAdmitted && settings.backfillPolicy !== 'new_only'

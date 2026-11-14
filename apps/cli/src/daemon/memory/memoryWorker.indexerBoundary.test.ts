@@ -123,6 +123,45 @@ describe('Memory daemon/indexer boundary', () => {
     expect(worker.getWorkerStatus()).toMatchObject({ lastTickAtMs: 200, lastInventoryAtMs: 90 });
   });
 
+  it('re-indexes transcript revisions of an admitted Session without re-reading its Session or Account currentness', async () => {
+    const { createMemoryIndexer } = await import('./memoryIndexer');
+    const { normalizeMemorySettings } = await import('@happier-dev/protocol/memory/memorySettings');
+    const signal = new AbortController().signal;
+    const { createSessionRecordFixture } = await import('@/testkit/backends/sessionFixtures');
+    const session = createSessionRecordFixture({ id: 'revised', seq: 1, createdAt: Date.now(), updatedAt: Date.now(),
+      encryptionMode: 'plain', share: null, metadata: JSON.stringify({ machineId: 'machine_1', path: '/workspace' }) });
+    const reads = { session: 0, currentness: 0 };
+    const axios = (await import('axios')).default;
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') { reads.currentness++; return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }; }
+      if (path === '/v2/sessions/revised') { reads.session++; return { status: 200, data: { session } }; }
+      if (path === '/v1/sessions/revised/messages') return { status: 200, data: { hasMore: false, messages: [
+        { id: 'm1', seq: 1, messageRole: 'user', createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'revised row' } } } }] } };
+      throw new Error(`Unexpected boundary fixture HTTP path: ${path}`);
+    });
+    const engine = await createMemoryIndexer({ credentials: { token: 'fixture', encryption: null }, machineId: 'machine_1',
+      host: { publish() {}, failed(error) { throw error; }, observeSessions: async ids => ids,
+        runHint: async () => { throw new Error('Unexpected hint'); }, commitHint: async () => {},
+        readExternalSources: async () => ({ changes: [], configuredSourceKeys: [], sources: [] }) },
+      // No external native sources are configured; the reader is never asked for a transport.
+      resolveExternalReader: async () => { throw new Error('Unexpected external reader'); } });
+    try {
+      await engine.applySettings(normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'deep', hints: { enabled: false } }), signal);
+      // The worker admitted this Session (its own read or pushed locality proof).
+      await engine.inventory(signal, [{ sessionId: 'revised', eligibility: { sessionId: 'revised', observedSeq: 1, allowInitialBackfill: true } }]);
+      await engine.runUntilSettled(signal);
+      const admitted = { ...reads };
+      for (let revision = 0; revision < 3; revision++) {
+        await engine.noteSessionTranscriptRevised({ sessionId: 'revised', seq: 1, messageId: 'm1' });
+        await engine.runUntilSettled(signal);
+      }
+      expect({ session: reads.session - admitted.session, currentness: reads.currentness - admitted.currentness })
+        .toEqual({ session: 0, currentness: 0 });
+    } finally { await engine.stop(); }
+  });
+
   it('drains finite native pages and admits zero further ticks without another source change', async () => {
     const { createMemoryIndexer } = await import('./memoryIndexer');
     const { normalizeMemorySettings } = await import('@happier-dev/protocol/memory/memorySettings');
