@@ -36,7 +36,11 @@ export class CliVersionCache {
         }
         const run = async () => {
             const version = await params.probe();
-            if (identity && version) cache.setSuccess(params.name, { identity, version });
+            // Updates may retarget a launcher while the bounded process probe is running.
+            // Admit only an observation bracketed by the same executable identity.
+            if (identity && version && await readNativeExecutableIdentity(params.resolvedPath) === identity) {
+                cache.setSuccess(params.name, { identity, version });
+            }
             return version;
         };
         // Explicit recovery never waits on an older ordinary observation. Only the existing

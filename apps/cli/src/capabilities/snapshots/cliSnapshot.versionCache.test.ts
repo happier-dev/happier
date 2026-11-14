@@ -1,19 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, writeFile, utimes } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { mkdir, writeFile, utimes, rename, symlink, unlink } from 'node:fs/promises';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-const processBoundary = vi.hoisted(() => ({ calls: 0, version: '1.2.3', wait: Promise.resolve() }));
+const processBoundary = vi.hoisted(() => ({ calls: 0, version: '1.2.3', wait: Promise.resolve(), beforeProbe: null as (() => Promise<void>) | null }));
 
 // Only OS process execution is replaced; provider catalog, resolution and filesystem stay real.
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
   const execFile = Object.assign(vi.fn(), {
     [promisify.custom]: async (file: string) => {
-      if (file.includes('opencode')) processBoundary.calls++;
+      if (file.includes('opencode')) {
+        processBoundary.calls++;
+        await processBoundary.beforeProbe?.();
+      }
       const version = processBoundary.version;
       await processBoundary.wait;
       return { stdout: version ? `opencode ${version}\n` : 'no version\n', stderr: '' };
@@ -33,6 +36,7 @@ async function withNativeCli(run: (context: {
   processBoundary.calls = 0;
   processBoundary.version = '1.2.3';
   processBoundary.wait = Promise.resolve();
+  processBoundary.beforeProbe = null;
   const fixture = await createProbeTempDir('happier-version-cache');
   const env = createEnvKeyScope(['HOME', 'USERPROFILE', 'PATH', 'HAPPIER_OPENCODE_PATH']);
   try {
@@ -69,6 +73,33 @@ describe('CLI version reuse', () => {
       await detect(request);
       expect(processBoundary.calls).toBe(3);
     }, header);
+  });
+
+  it('does not admit a version if an update retargets the executable during its probe', async () => {
+    await withNativeCli(async ({ binary, detect }) => {
+      const bin = dirname(binary);
+      const targetA = join(dirname(bin), 'version-a');
+      const targetB = join(dirname(bin), 'version-b');
+      await rename(bin, targetA);
+      await mkdir(targetB);
+      await writeExecutableScript(join(targetB, basename(binary)), '\x7fELFnative-version-b');
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+      await symlink(targetA, bin, linkType);
+      processBoundary.beforeProbe = async () => {
+        processBoundary.beforeProbe = null;
+        await unlink(bin);
+        await symlink(targetB, bin, linkType);
+        processBoundary.version = '2.0.0';
+      };
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+      await unlink(bin);
+      await symlink(targetA, bin, linkType);
+      processBoundary.version = '1.2.3';
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('1.2.3');
+      expect(processBoundary.calls).toBe(2);
+    });
   });
 
   it('explicit refresh and verification probe even an unchanged native executable', async () => {
