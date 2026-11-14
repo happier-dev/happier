@@ -3,6 +3,7 @@ import { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdent
     type ManagedReconciliationHome } from '@happier-dev/cli-common/machines/managed';
 import { ManagedAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedErrorV1Schema,
+    projectManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1,
     type ManagedAcquireInputV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isManagedOpaquePresetMachineV1, ManagedMachineFullV1Schema, type ManagedMachineFullV1,
@@ -126,6 +127,8 @@ export function createUiManagedAccountHome(params: Readonly<{
     }
     const home: ManagedReconciliationHome = {
         correlation, row,
+        projectEnrollmentCorrelation: (machine: ManagedMachineFullV1, correlation: ManagedEnrollmentFullCorrelationV1) =>
+            projectManagedEnrollmentCorrelationV1(structuralUiManagedAccountMachine(params.normalizer, machine), correlation),
         submit: async machine => {
             const submitted = await post('submit', correlation(machine), ManagedControllerSubmitOutputV1Schema);
             const normalized = normalizeUiManagedAccountMachine(params.normalizer, submitted.machine);

@@ -1,7 +1,8 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedMachineActionClient, invokeManagedInstallationResponse, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
-import { ManagedTerminalPairingContextV1Schema, type ManagedInstallationResponseV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedTerminalPairingContextV1Schema, projectManagedEnrollmentCorrelationV1, unwrapManagedMachineReadV1,
+    type ManagedInstallationResponseV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { approveTerminalPairing } from '@/auth/terminal/approveTerminalPairing';
 import { buildEstablishedHomeTransportDescriptor, resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import { decodeBase64 } from '@/encryption/base64';
@@ -28,6 +29,7 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
             return await withActionAccountRequestSignal(account, context.signal, async signal => {
                 const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
                     { homeId: input.homeId, managedId: input.managedId }, { signal });
+                const originalMachine = unwrapManagedMachineReadV1(read);
                 const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
                 let machine: ManagedMachineV1 | undefined;
                 try {
@@ -53,9 +55,10 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
                     // installed runner check the exact current row/request/operation/task instead.
                     if (machine.enrollmentAccountId !== account.accountId || !account.credentials
                         || account.credentialAuthorityKind !== 'account') return fail('action_account_scope_changed');
-                    const binding = { homeId: input.homeId, managedId: input.managedId, operationId: input.operationId,
+                    const binding = projectManagedEnrollmentCorrelationV1(originalMachine, {
+                        homeId: input.homeId, managedId: input.managedId, operationId: input.operationId,
                         taskId: input.taskId, controller, resource: machine.resource,
-                        expectedIntentRevision: machine.intentRevision };
+                        expectedIntentRevision: machine.intentRevision });
                     const promptKind = input.purpose === 'establish' ? 'administrator.establish' : input.prompt.kind;
                     const respond = (response: Pick<ManagedInstallationResponseV1, 'answer' | 'delivery'>) =>
                         invokeManagedInstallationResponse({ account, signal, input: { ...binding, expectedPromptKind: promptKind,

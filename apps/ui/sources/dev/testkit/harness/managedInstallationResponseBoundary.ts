@@ -1,8 +1,7 @@
 import { vi } from 'vitest';
 import nacl from 'tweetnacl';
-import { ManagedInstallationResponseV1Schema, type ManagedInstallationResponseV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedInstallationResponseV1Schema, type ManagedInstallationResponseV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 
@@ -20,7 +19,7 @@ export function installManagedInstallationResponseBoundary(input: Readonly<{
     homeId: string;
     token: string;
     enrollmentAccountId: string;
-    readMachine: () => ManagedMachineV1;
+    readMachine: () => ManagedMachineReadV1;
     onAnswer: (response: ManagedInstallationResponseV1) => void;
     refuseAnswer?: string;
     readReviewedChild?: () => HostReviewedChildPortV1 | undefined;

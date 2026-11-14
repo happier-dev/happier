@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedEnrollmentFullCorrelationV1Schema,
+    projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -49,6 +51,8 @@ describe('app managed enrollment', () => {
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { nativeId: 'retained' } } });
         const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: machine.enrollmentIdentity,
             selection: { kind: 'one-off', homeId, launch, retention: machine.retention, wakeOnAcceptedMessage: true } });
+        const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ homeId, managedId: machine.id,
+            requestId: 'create', expectedIntentRevision: 1, resource: machine.resource });
         const pairing = { secretB64Url: encodeBase64(new Uint8Array(32).fill(23), 'base64url'),
             createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };
         const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
@@ -86,7 +90,7 @@ describe('app managed enrollment', () => {
             managedMachineAction: async call => {
                 recipeEntered = true;
                 const enrolled = await runUiManagedMachineEnrollment({
-                    correlation: { homeId, managedId: machine.id, requestId: 'create', expectedIntentRevision: 1, resource: machine.resource! },
+                    correlation, homeCorrelation: projectManagedEnrollmentCorrelationV1(machine, correlation),
                     target, carrier: { kind: 'native', transport: { contributionRef: launch.provider, schemaVersion: 1 } },
                     channel: 'stable', signal: lifetime.signal, credentials,
                     reviewedAction: review === 'mismatched'
@@ -119,7 +123,8 @@ describe('app managed enrollment', () => {
             },
         }));
         const context = bindPresentUserActionConfirmation('machines.managed.acquire', input,
-            { surface: 'ui', authority: 'present_user', runtimeAccountId: 'creator', serverIdentityId: homeId, actionRequestId: 'create' });
+            { surface: 'ui', authority: 'present_user', runtimeAccountId: 'creator', serverIdentityId: homeId, actionRequestId: 'create',
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
         const result = await executor.execute('machines.managed.acquire', input, context);
         expect(recipeEntered).toBe(true);
         if (review === 'mismatched' || review === 'forged') {

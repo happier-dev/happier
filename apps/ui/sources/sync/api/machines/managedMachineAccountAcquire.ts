@@ -431,7 +431,8 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     }
                     const target = await params.account.resolveHomeTarget();
                     await runUiManagedMachineEnrollment({
-                        correlation: enrollment.correlation, carrier: enrollment.carrier, target,
+                        correlation: enrollment.correlation, homeCorrelation: enrollment.homeCorrelation,
+                        carrier: enrollment.carrier, target,
                         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), operationId: params.context.operationAcceptance?.operationId ?? params.requestId,
                         onInstalled: enrollment.onInstalled,
                         credentials: params.account.credentials, context: params.context, reviewedAction: params.input, signal: params.signal,
