@@ -41,7 +41,7 @@ vi.mock('expo-constants', async original => {
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: native.fetch }));
 // The receiving CLI uses Undici directly. Replace that third-party HTTP
 // boundary too, keeping Account activation and credential materialization real.
-vi.mock('undici', async original => ({ ...await original<typeof import('undici')>(),
+vi.mock('undici/index.js', async original => ({ ...await original<typeof import('undici')>(),
     fetch: (url: string, init?: RequestInit) => new URL(url).origin === 'https://api.vercel.com'
         ? native.fetch(url, init) : globalThis.fetch(url, init),
 }));
@@ -112,6 +112,7 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['native opaque E2EE preset', false, null, false, false, true, false],
     ['native opaque E2EE preset missing policy', false, null, false, false, true, false],
     ['native opaque Plain preset missing policy', false, null, false, false, true, false],
+    ['native opaque Plain preset delegated policy', false, null, false, false, true, false],
     ['native opaque E2EE preset refuses keyless Account', false, null, false, false, true, true],
     ['native authored failure', false, null, false, false, false, false],
 ] : [
@@ -126,6 +127,7 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
 ];
 it.each(cases)('%s host carries the designed Create/Send review through the public Account path', async (label, startAgent, cleanupAction, alreadyAbsent, stoppedCleanup, opaquePreset, keylessE2ee, uncertainDelete) => {
     const missingPolicy = label.includes('missing policy');
+    const delegatedPolicy = label.includes('delegated policy');
     const plainPreset = label.includes('Plain preset');
     const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
     const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
@@ -291,7 +293,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 return Response.json({ kind: 'found', preset: {
                     id: 'opaque-preset', homeId, revision: 1, owner: { kind: 'account', accountId },
                     contentEncryptionMode: presetMode, ...sourcePresetContent,
-                    ...(missingPolicy ? {} : { retention, wakeOnAcceptedMessage: false }),
+                    ...(missingPolicy || delegatedPolicy ? {} : { retention, wakeOnAcceptedMessage: false }),
                 } });
             }
             if (path === '/v1/machines/managed/actions/get') {
@@ -392,6 +394,13 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 admissions++;
                 const body = await new Response(init?.body).json();
                 admittedPresetPolicy = body.presetPolicy;
+                if (delegatedPolicy) {
+                    const { resolveMachineRetentionPolicyV1 } = await import('@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1');
+                    const expected = resolveMachineRetentionPolicyV1({ billing: provisioner.billing, nativeCapabilities: provisioner.retention });
+                    expect(body.presetPolicy).toEqual({ retention: expected.retention, wakeOnAcceptedMessage: expected.wakeOnAcceptedMessage });
+                    expect(body.input).toEqual(input);
+                    return Response.json({ code: 'permission_denied' }, { status: 403 });
+                }
                 if (missingPolicy && managed) {
                     return Response.json({ machine: managed, presetContent: admittedPresetContent,
                         ...(presetContentOverride === undefined ? {} : { presetContentOverride }), replayed: true });
@@ -535,6 +544,31 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect((await reader.ensureCurrentAccountExecution(PLUGIN_MANIFEST.id)).kind).toBe('available');
         const projection = reader.readAccountUiProjection();
         if (!projection) throw new Error('Missing Account projection');
+        if (delegatedPolicy) {
+            input = await createOpaquePresetInput();
+            const requestId = 'delegated-native-policy';
+            const target = { kind: 'machine' as const, machineId: 'delegated-controller' };
+            const originalActionEnvelope = { v: 1 as const, requestId, target, input };
+            const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-delegation', binding: {
+                serverIdentityId: homeId, accountId: 'delegated-member', custodianAccountId: accountId,
+                authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+                actionId: 'machines.managed.acquire', requestId, target, machineId: target.machineId,
+                installationId: 'delegated-installation', managedAcquireDelegation: true,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+            } });
+            const context = bindPresentUserActionConfirmation('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
+                serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: requestId,
+                externalActionExecutionAuthorization: authorization, originalActionEnvelope,
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+            const { executeManagedMachineNativeAction } = await import('./managedMachineOrigination');
+            const refused = await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.acquire', input, context,
+                signal: new AbortController().signal });
+            expect(refused).toMatchObject({ ok: false, errorCode: 'permission_denied' });
+            expect({ admissions, allocations, machineRpcs }).toEqual({ admissions: 1, allocations: 0, machineRpcs: 0 });
+            expect(homePaths.filter(path => path.includes('/machines/presets/'))).toEqual(['/v1/machines/presets/get']);
+            return;
+        }
         if (host === 'browser') {
             const [{ default: Fastify }, { enableExternalActionHttpBody }, { installAxiosFastifyAdapter },
                 { createRequesterCurrentnessSocketHarness }, { executeExternalAction },
@@ -840,7 +874,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect(await executor.execute('machines.provisioners.check', probe, discoveryContext))
             .toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
         const providerCheck = await executor.execute('machines.provisioners.check', { ...probe, credentials: launch.credentials }, discoveryContext);
-        expect(providerCheck, JSON.stringify(providerCheck)).toMatchObject({ ok: true, result: { available: true } });
+        expect(providerCheck, JSON.stringify({ providerCheck, homePaths,
+            vendorPaths: native.fetch.mock.calls.map(([url]) => new URL(String(url)).pathname) }))
+            .toMatchObject({ ok: true, result: { available: true } });
         expect(await executor.execute('machines.provisioners.options', {
             ...probe, credentials: launch.credentials, selectors: launch.choices,
         }, discoveryContext)).toMatchObject({ ok: true, result: { base: { available: true, launch: launch.choices } } });

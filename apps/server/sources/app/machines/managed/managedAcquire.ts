@@ -113,12 +113,6 @@ export async function admitManagedAcquire(params: Readonly<{
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
                 if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
-                if (selected.delegated && ((selected.preset.retention !== undefined && review.retention !== undefined
-                    && !sameManagedInput(review.retention, selected.preset.retention))
-                    || (selected.preset.wakeOnAcceptedMessage !== undefined && review.wakeOnAcceptedMessage !== undefined
-                        && review.wakeOnAcceptedMessage !== selected.preset.wakeOnAcceptedMessage))) {
-                    throw new ManagedMachineError('permission_denied');
-                }
                 const preset = { id: selected.preset.id, revision: selected.preset.revision } as const;
                 const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);
                 const presetContentOverride = request.input.presetContentOverride;
@@ -126,9 +120,17 @@ export async function admitManagedAcquire(params: Readonly<{
                     throw new ManagedMachineError('account_mode_mismatch');
                 }
                 const controller = selected.preset.controller;
-                const retention = selected.preset.retention ?? review.retention ?? request.presetPolicy?.retention;
-                const wakeOnAcceptedMessage = selected.preset.wakeOnAcceptedMessage ?? review.wakeOnAcceptedMessage ?? request.presetPolicy?.wakeOnAcceptedMessage;
-                if (retention === undefined || wakeOnAcceptedMessage === undefined) throw new ManagedMachineError('invalid_request');
+                const retention = selected.preset.retention
+                    ?? (selected.delegated ? request.presetPolicy?.retention : review.retention ?? request.presetPolicy?.retention);
+                const wakeOnAcceptedMessage = selected.preset.wakeOnAcceptedMessage
+                    ?? (selected.delegated ? request.presetPolicy?.wakeOnAcceptedMessage : review.wakeOnAcceptedMessage ?? request.presetPolicy?.wakeOnAcceptedMessage);
+                if (retention === undefined || wakeOnAcceptedMessage === undefined) {
+                    throw new ManagedMachineError(selected.delegated ? 'permission_denied' : 'invalid_request');
+                }
+                if (selected.delegated && ((review.retention !== undefined && !sameManagedInput(review.retention, retention))
+                    || (review.wakeOnAcceptedMessage !== undefined && review.wakeOnAcceptedMessage !== wakeOnAcceptedMessage))) {
+                    throw new ManagedMachineError('permission_denied');
+                }
                 if (request.presetPolicy && (!sameManagedInput(request.presetPolicy.retention, retention)
                     || request.presetPolicy.wakeOnAcceptedMessage !== wakeOnAcceptedMessage)) throw new ManagedMachineError('permission_denied');
                 const scopeChoice = request.input.creationScopeRetention;

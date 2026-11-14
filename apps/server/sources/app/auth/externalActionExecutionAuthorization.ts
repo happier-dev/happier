@@ -1568,8 +1568,10 @@ async function verifyCommon(
         && isManagedPowerOrDeleteActionIdV1(binding.actionId)
         && /^\/v1\/machines\/[^/]+$/u.test(proof.path.split('?')[0]);
     const nativeControllerPurpose = binding.actionId === 'machines.managed.credentials.install'
-        && proof.path.split('?')[0].startsWith('/v1/machines/managed/controller/');
-    // Guest key publication is controller custody, not requester/source custody.
+        && proof.path.split('?')[0].startsWith('/v1/machines/managed/controller/')
+        || binding.managedAcquireDelegation === true && proof.method.toUpperCase() === 'POST'
+            && proof.path.split('?')[0] === '/v1/machines/managed/controller/admit';
+    // Guest key publication and delegated policy qualification belong to controller custody.
     if ((!signatureCurrent || binding.handoffPreflight) && !custodyTarget && !managedGuestMetadata && !nativeControllerPurpose && !reviewedMachineSetupChild) {
         const sourceKey = await readCurrentExternalActionSourceSigningPublicKey(binding);
         signatureCurrent = sourceKey !== null && verifySignature(sourceKey);

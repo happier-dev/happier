@@ -1,3 +1,5 @@
+import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyRequest } from 'fastify';
 import tweetnacl from 'tweetnacl';
@@ -1107,6 +1109,7 @@ describe("Machine preset relational owner", () => {
         const created = await requestPreset(owner, 'create', {
             id, homeId, owner: { kind: 'team', teamId: team.id }, controller,
             teamAcquireDelegated: true, contentEncryptionMode: 'e2ee',
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             content: sealed.content, recipients: sealed.recipients,
         });
         expect(created.statusCode, created.body).toBe(200);
@@ -1395,6 +1398,43 @@ describe("Machine preset relational owner", () => {
         await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
             accountId: owner, homeId, id, revision: 3,
         }))).resolves.toMatchObject({ kind: 'ready', presetContent: { content: definition.content, recipients: [] } });
+    });
+
+    it.each(['member-unqualified', 'member-different', 'member-wake', 'member-omits', 'member-matches', 'owner-customizes'] as const)(
+        'admits delegated retention only from the custodian policy (%s)', async scenario => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `policy-owner-${scenario}`;
+        const member = `policy-member-${scenario}`;
+        await db.account.createMany({ data: [owner, member].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Policy authority Team' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const definition = taggedPlainPreset({ id: `policy-preset-${scenario}`, homeId,
+            owner: { kind: 'team', teamId: team.id }, name: 'Owner policy', privateFields: { launch },
+            controller, teamAcquireDelegated: true });
+        expect((await requestPreset(owner, 'create', definition)).statusCode).toBe(200);
+        const { category: _category, ...ownerPolicy } = resolveMachineRetentionPolicyV1({
+            billing: { location: 'local', stoppedBilling: 'not-billed' }, nativeCapabilities: { supportedIntents: ['start', 'stop', 'delete'] } });
+        const customPolicy = { retention: { kind: 'unused' as const, afterMs: 17, effect: 'delete' as const }, wakeOnAcceptedMessage: true };
+        const requested = scenario === 'member-omits' ? {} : scenario === 'member-matches' ? ownerPolicy
+            : scenario === 'member-wake' ? { ...ownerPolicy, wakeOnAcceptedMessage: !ownerPolicy.wakeOnAcceptedMessage } : customPolicy;
+        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: definition.id, revision: 0 },
+            controller, ...requested });
+        const requestId = `policy-request-${scenario}`;
+        const presetPolicy = scenario === 'owner-customizes' ? customPolicy : ownerPolicy;
+        const request = { custodianAccountId: owner, requesterAccountId: scenario === 'owner-customizes' ? owner : member,
+            requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false, input,
+                ...(scenario === 'member-unqualified' ? {} : { presetPolicy,
+                    originalActionEnvelope: { v: 1 as const, requestId, input } }) } };
+        if (scenario === 'member-unqualified' || scenario === 'member-different' || scenario === 'member-wake') {
+            await expect(admitManagedAcquire(request)).rejects.toMatchObject({ code: 'permission_denied' });
+            expect(await db.managedMachine.count({ where: { admittedActionRequestId: requestId } })).toBe(0);
+        } else {
+            const admitted = await admitManagedAcquire(request);
+            expect(admitted.machine).toMatchObject({ retention: presetPolicy.retention, wakeOnAcceptedMessage: presetPolicy.wakeOnAcceptedMessage });
+            expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
+        }
     });
 
     it('uses current Team membership and controller ownership for delegation without creating a Machine grant', async () => {

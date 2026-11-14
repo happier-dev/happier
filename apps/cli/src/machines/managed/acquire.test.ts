@@ -1,3 +1,4 @@
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
@@ -112,7 +113,6 @@ import type { ResolvedInstallableContribution } from '@/plugins/projection/regis
 import { createDevelopmentPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { describeManagedOperationDiagnostic } from '../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -1301,7 +1301,9 @@ function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamM
 }
 
 describe('opaque managed preset admission', () => {
-    it.each(['plain', 'e2ee'] as const)('qualifies omitted saved policy before the sole native admission (%s)', async mode => {
+    it.each([['plain', 'omitted', false], ['e2ee', 'omitted', false], ['plain', 'both', true],
+        ['e2ee', 'both', true], ['plain', 'partial', true], ['plain', 'partial', false], ['plain', 'both', false]] as const)(
+        'qualifies saved policy independently of delegated overrides (%s, %s, delegated=%s)', async (mode, fields, delegated) => {
         const homeId = 'native-policy-home';
         const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'native-policy-machine',
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
@@ -1309,18 +1311,28 @@ describe('opaque managed preset admission', () => {
         const native = nativeFixture({ credentialPurposes: [] });
         const { retention: _retention, wakeOnAcceptedMessage: _wake, ...root } = carrier.acquisition;
         const preset = { id: root.selection.id, homeId, revision: root.selection.revision,
-            owner: { kind: 'account', accountId: 'owner' }, controller, contentEncryptionMode: mode,
+            owner: { kind: 'team', teamId: 'shared-policy-team' }, teamAcquireDelegated: true, controller, contentEncryptionMode: mode,
             ...(mode === 'e2ee' ? carrier.admission.presetContent : {
                 content: { t: 'plain', v: { v: 1, name: 'Private qualified launch', launch: {
                     provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
                     name: 'Private qualified launch', choices: {} }, enrollmentIdentity: input.enrollmentIdentity } }, recipients: [] }),
         };
-        const acquisition = mode === 'e2ee' ? root : { selection: root.selection, controller };
+        const base = mode === 'e2ee' ? root : { selection: root.selection, controller };
+        const customRetention = { kind: 'unused' as const, afterMs: 17, effect: 'delete' as const };
+        const acquisition = { ...base, ...(fields === 'omitted' ? {} : { retention: customRetention }),
+            ...(fields === 'both' ? { wakeOnAcceptedMessage: true } : {}) };
         const requestId = 'native-policy-request';
         const originalActionEnvelope = { v: 1 as const, requestId, target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, version: 1, settingsVersion: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: mode === 'e2ee'
                 ? computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey) : null, updatedAt: 1 } });
+        const wire = originAuthorization(homeId, requestId);
+        const { sessionActionOrigin: _origin, sessionActionSource: _source, ...binding } = wire.binding;
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...wire, binding: { ...binding,
+            accountId: delegated ? 'team-member' : 'owner', accountEncryptionMode: mode,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+            ...(delegated ? { managedAcquireDelegation: true } : {}) } });
+        const signing = tweetnacl.sign.keyPair();
         const admitted: unknown[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
             if (String(url).endsWith('/presets/get')) {
@@ -1336,14 +1348,16 @@ describe('opaque managed preset admission', () => {
             throw new Error(`Unexpected Home POST ${String(url)}`);
         });
         const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
-            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: signing.secretKey,
             credentials: mode === 'e2ee' ? { token: carrier.token, encryption: { type: 'dataKey',
                 machineKey: carrier.custodianKey, publicKey: carrier.custodianPublicKey } } : { token: carrier.token, encryption: null } });
         await expect(driver.execute('machines.managed.acquire', acquisition, { requestId,
-            context: { surface: 'cli', originalActionEnvelope,
+            context: { surface: 'cli', originalActionEnvelope, externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
                 operationAcceptance: { operationId: 'native-policy-operation', accept() {} } } })).rejects.toBeDefined();
+        const qualified = delegated || fields !== 'both';
         expect(admitted).toEqual([{ input: acquisition, requestId, continuationPresent: false,
-            presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope }]);
+            ...(qualified ? { presetPolicy: { retention: !delegated && fields !== 'omitted' ? customRetention : { kind: 'until-delete' },
+                wakeOnAcceptedMessage: false }, originalActionEnvelope } : {}) }]);
         expect(JSON.stringify(admitted)).not.toContain('Private qualified launch');
         expect(native.effects()).toBe(0);
     });
@@ -2023,6 +2037,7 @@ describe('managed acquisition durable custody', () => {
             expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'provider_unavailable',
                 details: { kind: 'managedNative', nativeCause } } } });
             if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
+            const { describeManagedOperationDiagnostic } = await import('../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation');
             expect(describeManagedOperationDiagnostic(settled.operation.error))
                 .toBe(outcome === 'invalid-fields' ? 'provider_unavailable · HTTP 4xx · invalid_input · image'
                     : `provider_unavailable · HTTP 4xx · ${outcome === 'quota' ? 'resource_limit_exceeded' : 'uniqueness_error'}`);
@@ -3225,6 +3240,7 @@ describe('managed acquisition durable custody', () => {
             errorCode: 'native_access_refused', details: { kind: 'managedNative', nativeCause },
         } } });
         if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
+        const { describeManagedOperationDiagnostic } = await import('../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation');
         expect(describeManagedOperationDiagnostic(settled.operation.error)).toBe('native_access_refused · HTTP 4xx · forbidden');
         expect(JSON.stringify(settled)).not.toContain('private response body');
         expect(native.effects()).toBe(1);

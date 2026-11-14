@@ -1,3 +1,4 @@
+import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
@@ -823,13 +824,14 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
-    it.each(['plain', 'e2ee'] as const)('admits omitted preset policy only from the exact signed native root (%s)', async mode => {
+    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner']] as const)(
+        'admits omitted preset policy only from the exact signed native root (%s, Session source=%s)', async (mode, sessionSource) => {
         const selected = await fixture(true);
-        const requester = await fixture(true, mode);
+        const requester = sessionSource === 'owner' ? selected : await fixture(true, mode);
         const team = await db.team.create({ data: { name: 'Native policy Team' } });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId: selected.account.id, role: 'owner' },
-            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+            ...(requester.account.id === selected.account.id ? [] : [{ teamId: team.id, accountId: requester.account.id, role: 'member' }]),
         ] });
         const id = crypto.randomUUID();
         const content = { t: 'plain' as const, v: { v: 1, name: 'Private native policy', launch: selected.input.selection.launch } };
@@ -854,7 +856,30 @@ describe('composed CLI managed Action origination', () => {
             const issued = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire/execution-authorization',
                 headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
             expect(issued.statusCode, issued.body).toBe(200);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            let authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            let sourceKeys: typeof selected.keys | undefined;
+            if (sessionSource !== 'none') {
+                const source = sessionSource === 'owner' ? await fixture(true) : requester;
+                if (sessionSource === 'owner') await db.machine.update({ where: { id: source.controller.machineId },
+                    data: { accountId: selected.account.id } });
+                sourceKeys = source.keys;
+                // Socket ownership is the external boundary; DB Session-source admission remains real.
+                instance.resolveCurrentSessionMachine = async () => source.controller.machineId;
+                const session = await db.session.create({ data: { accountId: requester.account.id,
+                    tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+                await db.accessKey.create({ data: { accountId: requester.account.id,
+                    machineId: source.controller.machineId, sessionId: session.id, data: 'opaque-session-key' } });
+                const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+                    caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
+                    sourceTurnId: 'native-policy-turn', callerPermissionMode: 'default', requestId: binding.requestId,
+                    causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+                authorization = await auth.mintExternalActionExecutionAuthorization({ ...authorization.binding,
+                    managedAcquireDelegation: undefined, sessionActionOrigin: origin,
+                    sessionActionSource: { machineId: source.controller.machineId, installationId: source.controller.installationId } },
+                { input, resolveCurrentSessionMachine: async () => source.controller.machineId });
+                expect(authorization.binding).toMatchObject({ sessionActionOrigin: origin,
+                    ...(sessionSource === 'member' ? { managedAcquireDelegation: true } : {}) });
+            }
             const policy = resolveMachineRetentionPolicyV1({ billing: { location: 'cloud', stoppedBilling: 'billed' },
                 nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } });
             const body = { requestId: binding.requestId, input, continuationPresent: false,
@@ -874,6 +899,12 @@ describe('composed CLI managed Action origination', () => {
             const requesterOnly = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
                 headers: { authorization: `Bearer ${requester.token}` } });
             expect(requesterOnly.statusCode).toBe(403);
+            if (sessionSource === 'member') {
+                if (!sourceKeys) throw new Error('Missing member Session source keys');
+                const forged = await send({ ...body,
+                    presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } }, sourceKeys.secretKey);
+                expect(forged.statusCode, forged.body).toBe(401);
+            }
             expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(0);
             await db.managedMachinePreset.update({ where: { id }, data: { retentionOverride: { kind: 'until-delete' } } });
             expect((await send(body)).statusCode).toBe(403);
@@ -885,6 +916,11 @@ describe('composed CLI managed Action origination', () => {
                 enrollmentAccountId: requester.account.id });
             expect(accepted.json().machine).not.toHaveProperty('launch');
             expect((await send(body)).json()).toMatchObject({ replayed: true });
+            if (sessionSource === 'owner') {
+                if (!sourceKeys) throw new Error('Missing owner Session source keys');
+                const ownSource = await send(body, sourceKeys.secretKey);
+                expect(ownSource.statusCode, ownSource.body).toBe(200);
+            }
             const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: { homeId, admittedActionRequestId: binding.requestId } } });
             const { presetContentOverride: _override, ...computeInput } = input;
             expect(row.admittedInput).toMatchObject({ computeInput, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });

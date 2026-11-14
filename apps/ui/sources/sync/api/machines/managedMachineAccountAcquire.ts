@@ -294,7 +294,8 @@ export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccou
     let opaque: UiManagedOpaquePresetHydration | undefined;
     try {
         let qualification: Parameters<typeof admitUiManagedAccountHome>[3];
-        if (params.input.retention === undefined || params.input.wakeOnAcceptedMessage === undefined) {
+        const delegated = params.context.externalActionExecutionAuthorization?.binding.managedAcquireDelegation === true;
+        if (delegated || params.input.retention === undefined || params.input.wakeOnAcceptedMessage === undefined) {
             // Keep the original envelope intact: Home binds this native policy to
             // the same admitted public compute input, including encrypted roots.
             if (params.context.externalActionExecutionAuthorization && !params.context.originalActionEnvelope) {
@@ -310,7 +311,8 @@ export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccou
             await preparation.prepare(preset, params.input.presetContentOverride);
             const policy = resolveMachineRetentionPolicyV1({ billing: preparation.provisioner.billing,
                 nativeCapabilities: preparation.provisioner.retention, presetOverride: preset,
-                machineOverride: { retention: params.input.retention, wakeOnAcceptedMessage: params.input.wakeOnAcceptedMessage } });
+                ...(delegated ? {} : { machineOverride: { retention: params.input.retention,
+                    wakeOnAcceptedMessage: params.input.wakeOnAcceptedMessage } }) });
             qualification = { presetPolicy: { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage },
                 originalActionEnvelope: params.context.originalActionEnvelope ?? ExternalActionRequestEnvelopeV1Schema.parse({
                     v: 1, requestId: params.requestId, input: params.input,

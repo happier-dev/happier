@@ -108,7 +108,7 @@ async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDrive
 
 async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInput,
     acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
-    hydrator: ManagedPresetHydrator, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
+    hydrator: ManagedPresetHydrator, delegated: boolean, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
         provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>, signal?: AbortSignal) {
     const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
         { homeId: acquisition.selection.homeId, id: acquisition.selection.id },
@@ -125,7 +125,8 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         const { category: _category, ...policy } = resolveMachineRetentionPolicyV1({ billing: provisioner.billing,
             nativeCapabilities: provisioner.retention, presetOverride: preset,
-            machineOverride: { retention: acquisition.retention, wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } });
+            ...(delegated ? {} : { machineOverride: { retention: acquisition.retention,
+                wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } }) });
         return await accept(policy, provisioner, open);
     }, signal);
 }
@@ -1078,8 +1079,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const { agentStart, ...computeInput } = acquisition;
                 let admittedExecutionOptions = options;
                 let openedRequiresEnrollmentRead = false;
+                const delegated = options.context?.externalActionExecutionAuthorization?.binding.managedAcquireDelegation === true;
                 const needsPresetPolicy = isManagedPresetAcquireInputV1(acquisition)
-                    && (acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
+                    && (delegated || acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
                 if (needsPresetPolicy && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
                 const admission = await executeManagedMachineAcquire({ host: 'native',
                     admit: async () => {
@@ -1094,7 +1096,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                                 hydrator, signal: options.signal, ...(preparation ? { preparation } : {}) });
                         };
                         const machine = needsPresetPolicy && isManagedPresetAcquireInputV1(acquisition)
-                            ? await withManagedPresetPolicy(input, acquisition, hydrator,
+                            ? await withManagedPresetPolicy(input, acquisition, hydrator, delegated,
                                 (policy, provisioner, open) => admit(policy, { provisioner, open }), options.signal)
                             : await admit();
                         if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
