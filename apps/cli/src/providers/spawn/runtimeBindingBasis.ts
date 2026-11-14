@@ -19,6 +19,7 @@ export function projectProviderRuntimeBindingBasis(
     connectionId: binding.selection.connectionId,
     contributionKey: binding.contributionKey,
     runtimeCredentialTransport: binding.runtimeCredentialTransport,
+    ...(binding.roleModels !== undefined ? { roleModels: binding.roleModels } : {}),
     prepared: authorization.prepared,
     adapterVersion: authorization.adapterVersion,
     agentSupport: authorization.support,

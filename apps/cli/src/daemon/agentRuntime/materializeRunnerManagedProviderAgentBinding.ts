@@ -1,7 +1,7 @@
+import type { ProviderRuntimeBindingBasisV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     AgentProviderBindingCredential,
-    AgentProviderBindingPrepared,
     AgentProviderBindingResolvedFacts,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -22,8 +22,10 @@ function fail(): never {
 export async function materializeRunnerManagedProviderAgentBinding(
     input: Readonly<{
         capturedAgentBinding: CapturedAgentProviderBindingAdapter;
-        binding: AgentProviderBindingResolvedFacts;
-        prepared: AgentProviderBindingPrepared;
+        runtimeBindingBasis: ProviderRuntimeBindingBasisV1;
+        model: AgentProviderBindingResolvedFacts['selection']['model'];
+        endpointUrl: string;
+        compatibilityFingerprint: string;
         credential: AgentProviderBindingCredential;
         isCapturedAgentRegistrationCurrent(): boolean;
         isManagedProviderCurrent(): boolean | Promise<boolean>;
@@ -59,8 +61,17 @@ export async function materializeRunnerManagedProviderAgentBinding(
     try {
         materialization = await materializeCapturedAgentProviderBinding({
             resolved: input.capturedAgentBinding,
-            binding: input.binding,
-            prepared: input.prepared,
+            binding: {
+                v: 1,
+                agentTargetKey: input.runtimeBindingBasis.agentTargetKey,
+                selection: { connectionId: input.runtimeBindingBasis.connectionId, model: input.model },
+                contributionKey: input.runtimeBindingBasis.contributionKey,
+                endpoint: { ...input.runtimeBindingBasis.endpoint, normalizedUrl: input.endpointUrl },
+                runtimeCredentialTransport: input.runtimeBindingBasis.runtimeCredentialTransport,
+                ...(input.runtimeBindingBasis.roleModels !== undefined ? { roleModels: input.runtimeBindingBasis.roleModels } : {}),
+                compatibilityFingerprint: input.compatibilityFingerprint,
+            },
+            prepared: input.runtimeBindingBasis.prepared,
             credential: input.credential,
         });
     } catch (error) {

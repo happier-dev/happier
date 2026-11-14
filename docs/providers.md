@@ -11,6 +11,15 @@ This distinction is a product and architecture invariant:
 
 See [Agents catalog](./agents-catalog.md) for executable-agent ownership.
 
+In 0.3 development source, the retained Provider runtime binding carries the
+Agent's selected helper-model roles alongside its prepared adapter binding key.
+Managed gateway creation, retained Session reopening and remote gateway placement
+reconstruct the Agent binding through the shared daemon materialization owner.
+Claude's default helper selection is an empty role map and remains distinct from
+an absent selection: preparation pins its helpers to the selected Session model.
+A preparation mismatch reports `claude_provider_binding_preparation_invalid`
+through the existing sanitized failure cause.
+
 In 0.3 development source, Provider plugins own vendor catalog decoding through
 their declared `catalogParsers` and `commandParsers`. A contributed parser takes
 precedence for its declared id; the host retains generic OpenAI and Anthropic

@@ -1,5 +1,19 @@
 # Compatibility and version skew
 
+## Retained Provider helper models (unreleased 0.3)
+
+`ProviderRuntimeBindingBasisV1` retains optional `roleModels` through the existing
+closed role-model schema. The authorization projector writes the admitted roles;
+managed Agent materialization consumes them with the prepared adapter binding key.
+Earlier records without roles remain valid. Records prepared without roles keep
+that behavior; a historical Claude record whose retained basis lost its prepared
+roles requires a new launch through current authorization. Protocol and CLI
+daemon/Runner peers reload together because older strict development readers
+reject the added field. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no counterpart at
+`packages/protocol/src/providers/sessions/bindingMetadataV1.ts`.
+No migration, capability, compatibility adapter or new storage owner is added.
+
 ## Provider broker refusal causes (unreleased 0.3)
 
 Broker admission and finite Action refusals accept optional `failureCause` using
@@ -8486,6 +8500,15 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Computer interrupted input results may carry optional `code`,
+retaining the native refusal independently of completion certainty. The result
+and its target identity remain closed; omission remains valid. Matching Protocol,
+daemon and UI source reload together: older strict development readers reject
+the added field. This diagnostic adds no authority, retry, persisted format,
+wire epoch or adapter. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no Computer protocol or daemon
+counterpart at these paths.
 
 Unreleased 0.3 authenticated Session detail adds optional `computerMachineBinding`
 with a closed `{ homeId, machineId }` object. C79 limits this recipient projection

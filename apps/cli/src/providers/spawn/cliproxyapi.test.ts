@@ -19,13 +19,16 @@ import {
 } from '@happier-dev/plugins-claude';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
-import { materializeLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
+import { materializeLeasedAgentProviderBinding, prepareLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveProviderConnectionForMachine } from '../registry';
 import { createProviderSpawnAuthorizationAttempt } from './authorize';
 import { resolveProviderCredentialPlaintext } from './credentials';
-import { resolveProviderSpawnAuthorization } from './resolve';
+import { resolveProviderSpawnAuthorization, selectProviderSpawnRoleModels } from './resolve';
+import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
+import { materializeRunnerManagedProviderAgentBinding } from '@/daemon/agentRuntime/materializeRunnerManagedProviderAgentBinding';
+import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 
 const contributionKey = 'happier.provider.cliproxyapi/cliproxyapi';
 const connectionId = ProviderConnectionIdSchema.parse('pc_cliproxyapi_remote');
@@ -446,6 +449,32 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
       machineId: 'machine-a',
     }));
     if (!credential.ok) throw new Error('Expected external Saved Secret resolution');
+    // Managed gateway launches retain admission facts before the runner opens.
+    // Exercise that projection with the real Claude preparation/materializer:
+    // even default helper pins ({}) participate in its prepared binding key.
+    const roleModels = selectProviderSpawnRoleModels({ adapter: CLAUDE_PROVIDER_BINDING_ADAPTER_V1 });
+    const managedPreparation = prepareLeasedAgentProviderBinding({ lease: runtimeLease, agentId: 'claude',
+      input: { v: 1, agentTargetKey: result.authorization.binding.agentTargetKey, connectionId,
+        model: claudeModel, roleModels } });
+    const basis = projectProviderRuntimeBindingBasis({ ...result.authorization,
+      binding: { ...result.authorization.binding, roleModels }, prepared: managedPreparation });
+    const captured = readLeasedAgentProviderBindingAdapter({ lease: runtimeLease, agentId: 'claude' });
+    if (!captured) throw new Error('Expected Claude adapter');
+    const retained = await materializeRunnerManagedProviderAgentBinding({
+      capturedAgentBinding: captured,
+      runtimeBindingBasis: basis, model: claudeModel,
+      endpointUrl: result.authorization.binding.endpoint.normalizedUrl,
+      compatibilityFingerprint: result.authorization.binding.compatibilityFingerprint,
+      credential: { kind: 'apiKey', transport: result.authorization.binding.runtimeCredentialTransport!, value: 'gateway-placeholder' },
+      isCapturedAgentRegistrationCurrent: () => true,
+      isManagedProviderCurrent: () => true,
+      cleanup: async () => {},
+    });
+    expect(Object.fromEntries(retained.env.map(row => [row.name, row.value]))).toMatchObject({
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeModel.id,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: claudeModel.id,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: claudeModel.id,
+    });
     const attempt = createProviderSpawnAuthorizationAttempt({
       initial: result.authorization,
       resolveCredential: () => credential,

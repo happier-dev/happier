@@ -30,7 +30,7 @@ import {
 } from '../contributions/v1.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
-import { ProviderGatewayPlacementV1Schema } from '../connections/v1.js';
+import { ProviderRoleModelsV1Schema, ProviderGatewayPlacementV1Schema } from '../connections/v1.js';
 
 import type { AgentProviderBindingLaunchMaterialization } from '../materialization/v1.js';
 import {
@@ -63,6 +63,7 @@ const ProviderRuntimeBindingBasisCommonV1Schema = lazyZodSchema(() => z.strictOb
   connectionId: ProviderConnectionIdSchema,
   contributionKey: z.nullable(ProviderContributionKeySchema),
   runtimeCredentialTransport: z.nullable(ProviderCredentialTransportV1Schema),
+  roleModels: z.optional(ProviderRoleModelsV1Schema),
   prepared: z.strictObject({
     v: z.literal(1),
     materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),

@@ -113,10 +113,9 @@ export async function createRemoteManagedProviderSessionProjection<TLaunchAuthor
         capturedAgentBinding: input.capturedAgentProviderBinding,
         isCapturedAgentRegistrationCurrent: input.isCapturedAgentRegistrationCurrent,
         isManagedProviderCurrent: isCurrent, cleanup: input.cleanup,
-        binding: { v: 1, agentTargetKey: basis.agentTargetKey, selection: { connectionId: basis.connectionId, model: input.metadata.model },
-          contributionKey: basis.contributionKey, endpoint: { ...basis.endpoint, normalizedUrl: endpoint.normalizedUrl },
-          runtimeCredentialTransport: basis.runtimeCredentialTransport, compatibilityFingerprint: input.metadata.compatibilityFingerprint },
-        prepared: basis.prepared, credential: { kind: 'apiKey', transport: basis.runtimeCredentialTransport, value: credentialPlaceholder },
+        runtimeBindingBasis: basis, model: input.metadata.model, endpointUrl: endpoint.normalizedUrl,
+        compatibilityFingerprint: input.metadata.compatibilityFingerprint,
+        credential: { kind: 'apiKey', transport: basis.runtimeCredentialTransport, value: credentialPlaceholder },
       });
     },
     isCurrent,

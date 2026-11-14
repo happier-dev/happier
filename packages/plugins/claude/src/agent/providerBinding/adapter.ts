@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   AgentProviderBindingAdapter,
   AgentProviderBindingMaterializeInput,
@@ -198,7 +199,7 @@ async function materializeClaudeProviderBindingV1(
     : helperModelBindingKey(input.binding.selection.model.id, input.binding.roleModels);
   if (input.prepared.materialization !== 'spawnEnv'
     || input.prepared.adapterBindingKey !== expectedKey) {
-    throw new Error('Claude provider binding preparation is invalid');
+    throw new PluginError({ code: 'claude_provider_binding_preparation_invalid', message: 'Claude provider binding preparation is invalid' });
   }
   if (input.binding.endpoint.protocol !== 'anthropic') {
     throw new Error('Claude provider binding supports only the Anthropic protocol');

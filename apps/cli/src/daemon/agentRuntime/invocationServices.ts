@@ -725,25 +725,10 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                       isCapturedAgentRegistrationPreOpen,
                     isManagedProviderCurrent: isRetainedProviderCurrent,
                     cleanup: cleanupManagedProvider,
-                    binding: {
-                      v: 1,
-                      agentTargetKey: basis.agentTargetKey,
-                      selection: {
-                        connectionId: basis.connectionId,
-                        model: metadata.model,
-                      },
-                      contributionKey: basis.contributionKey,
-                      endpoint: {
-                        endpointTemplateId: basis.endpoint.endpointTemplateId,
-                        normalizedUrl: assessed.normalizedUrl,
-                        protocol: basis.endpoint.protocol,
-                        publicHeaders: basis.endpoint.publicHeaders,
-                      },
-                      runtimeCredentialTransport:
-                        basis.runtimeCredentialTransport,
-                      compatibilityFingerprint: metadata.compatibilityFingerprint,
-                    },
-                    prepared: basis.prepared,
+                    runtimeBindingBasis: basis,
+                    model: metadata.model,
+                    endpointUrl: assessed.normalizedUrl,
+                    compatibilityFingerprint: metadata.compatibilityFingerprint,
                     credential:
                       credentialPlaceholder === null
                         ? { kind: 'none' }
@@ -1158,28 +1143,10 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     isCapturedAgentRegistrationPreOpen,
                   isManagedProviderCurrent,
                   cleanup: cleanupManagedProvider,
-                  binding: {
-                    v: 1,
-                    agentTargetKey: runtimeBindingBasis.agentTargetKey,
-                    selection: {
-                      connectionId: runtimeBindingBasis.connectionId,
-                      model: authorization.model,
-                    },
-                    contributionKey: runtimeBindingBasis.contributionKey,
-                    endpoint: {
-                      endpointTemplateId:
-                        runtimeBindingBasis.endpoint.endpointTemplateId,
-                      normalizedUrl: assessed.normalizedUrl,
-                      protocol: runtimeBindingBasis.endpoint.protocol,
-                      publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
-                    },
-                    runtimeCredentialTransport:
-                      runtimeBindingBasis.runtimeCredentialTransport,
-                    compatibilityFingerprint:
-                      authorization.sessionBindingMetadata
-                        .compatibilityFingerprint,
-                  },
-                  prepared: runtimeBindingBasis.prepared,
+                  runtimeBindingBasis,
+                  model: authorization.model,
+                  endpointUrl: assessed.normalizedUrl,
+                  compatibilityFingerprint: authorization.sessionBindingMetadata.compatibilityFingerprint,
                   credential:
                     credentialPlaceholder === null
                       ? { kind: 'none' }
