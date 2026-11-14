@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
@@ -122,12 +123,12 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 open(loaded.environment.contentArtifactId), 'contentArtifactId' in input ? open(input.contentArtifactId) : null,
             ]);
             const current = readDeploymentEnvironmentArtifactV1(loaded.environment, currentArtifact);
-            if (!current.ok) return refuse(current.error);
+            if (!current.ok) return refuseDeploymentArtifactRead(current);
             const candidate = 'set' in input ? { ok: true as const, content: { ...current.content,
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
                     { set: input.set, remove: input.remove }, randomUUID) } }
                 : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
-            if (!candidate.ok) return refuse(candidate.error);
+            if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
                 : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content)) return refuse('deployment_invalid');
             if ('providerVariables' in input && input.providerVariables) {
@@ -175,7 +176,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 if (readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
                     bindings: candidate.content.bindings, existingGrants: [], writer: 'variables' }) === null) return refuse('deployment_invalid');
                 const opened = readDeploymentTargetLinkArtifactV1(platformLink, await open(platformLink.contentArtifactId));
-                if (!opened.ok) return refuse(opened.error);
+                if (!opened.ok) return refuseDeploymentArtifactRead(opened);
                 const synchronized = await host.preparePlatformBindings({ input, environment: loaded, content: candidate.content,
                     previousContent: current.content, targetLink: platformLink, linkContent: opened.content, context });
                 providerVariables = synchronized.providerVariables;

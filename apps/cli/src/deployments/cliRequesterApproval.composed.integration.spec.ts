@@ -49,6 +49,7 @@ it.each([
     ['controller-terminal', 'plain', 'dataKey'],
     ['targeted-terminal', 'e2ee', 'dataKey'], ['targeted-terminal', 'e2ee', 'legacy'],
     ['targeted-terminal-local', 'e2ee', 'legacy'],
+    ['targeted-invalid-deploy', 'e2ee', 'legacy'],
 ] as const)('retains the %s binding review through its canonical approval decision (%s, %s)', async (entry, encryptionMode, credentialVariant) => withConfiguredDaemonTestHome({
     prefix: 'happier-cli-binding-review-', env: { HAPPIER_ACTIVE_SERVER_ID: 'cli-review-profile' },
 }, async () => {
@@ -133,7 +134,9 @@ it.each([
             expect({ machineId: publication?.machineId, accountId: publication?.accountId, port: publication?.httpPort })
                 .toEqual({ machineId: home.machineId, accountId: home.accountId, port: control.port });
         }
-        const caller = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+        const callerCredentials = entry === 'targeted-invalid-deploy' ? { ...credentials,
+            token: await auth.createToken(home.accountId, undefined, { kind: 'terminal', authority: 'account_automation' }) } : credentials;
+        const caller = createCliActionExecutorFromCredentials({ credentials: callerCredentials, readCredentials: async () => callerCredentials,
             externalActionClient: true, machineId: home.machineId,
             serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
         const invoke = (action: string, input: unknown) => runWithServerHttpBaseUrl(home.baseUrl,
@@ -182,6 +185,24 @@ it.each([
         if (!opened.ok) throw new Error(opened.errorCode);
         const detail = DeploymentEnvironmentGetResultV1Schema.parse(opened.result);
         if (!detail.ok) throw new Error(detail.error);
+        if (entry === 'targeted-invalid-deploy') {
+            // The #153 CLI request supplied an Environment Artifact as a prepared
+            // receipt. Keep the real Home content opening and daemon preparation.
+            const link = detail.targetLinks[0];
+            if (!link) throw new Error('Expected the created runtime target');
+            const refused = await invoke('deployments.deploy', {
+                serverId: home.serverId, environmentId: detail.environment.id,
+                expectedRevision: detail.environment.revision,
+                targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                requestKey: randomUUID(), contentArtifactId: detail.environment.contentArtifactId,
+                contentHeaderVersion: detail.environment.contentHeaderVersion,
+                contentBodyVersion: detail.environment.contentBodyVersion,
+            });
+            expect(refused).toMatchObject({ ok: false, errorCode: 'deployment_content_unavailable',
+                failureCause: { phase: 'deployment.artifact.kind', errorClass: 'TypeError',
+                    errorCode: 'deployment_content_unavailable', httpStatus: null } });
+            return;
+        }
         const resourceId = randomUUID();
         const resourceDataKey = crypto.getRandomValues(new Uint8Array(32));
         const secretContent = { v: 1 as const, name: 'Binding credential', kind: 'token' as const, value: randomUUID() };

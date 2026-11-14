@@ -143,7 +143,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             const targetLinks = await Promise.all(detail.targetLinks.map(async targetLink => {
                 if (targetLink.id !== request.targetLinkId) return { targetLink };
                 const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId, request.context));
-                if (!content.ok) return refuse(content.error);
+                if (!content.ok) return refuse(content.error, undefined, content.failureCause);
                 return { targetLink, content: content.content };
             }));
             return { environment: detail.environment, content: detail.content, targetLinks };

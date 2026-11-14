@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
@@ -35,7 +36,7 @@ export async function admitForkPreviewDeploymentForHost(input: Readonly<{
         || prepared.preview.pullRequestId !== input.environment.environment.previewPullRequestId
         || input.environment.environment.protection !== 'nonProduction') return refuse('credential_scope_denied');
     const opened = readDeploymentEnvironmentArtifactV1(prepared, await open(prepared.contentArtifactId));
-    if (!opened.ok) return refuse(opened.error);
+    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
     if (opened.content.definition.kind !== 'repository' || !input.sha
         || opened.content.definition.ref !== input.sha
         || !sameStrictJsonValue(opened.content.previewProvenance, input.environment.content.previewProvenance))

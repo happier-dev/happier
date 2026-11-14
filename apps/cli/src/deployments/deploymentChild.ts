@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { projectDeploymentFailure as failure } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
@@ -52,7 +53,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
         content: DeploymentContentV1) {
         const opened = readDeploymentEnvironmentArtifactV1(input.destinationContent,
             await open(input.destinationContent.contentArtifactId, context));
-        if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+        if (!opened.ok) return refuseDeploymentArtifactRead(opened);
         const promotion = await readStoredPromotionCandidateForHost({ input, context }, host);
         if (!isDeepStrictEqual(opened.content, promotion.candidateEnvironmentContent)
             || !isDeepStrictEqual(content.sourceIntent, promotion.candidateEnvironmentContent.definition)
@@ -119,7 +120,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             if (job.kind === 'review') {
                 if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
                 const candidate = readDeploymentReceiptArtifactV1(job.input, await open(job.input.contentArtifactId, context));
-                if (!candidate.ok) return failure(candidate.error);
+                if (!candidate.ok) return failure(candidate.error, candidate);
                 await admitSource(candidate.content, false);
                 const candidateEnvironmentContent = job.actionId === 'deployments.promote'
                     ? await readPromotion(job.input, context, candidate.content) : undefined;
@@ -154,7 +155,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 // Stages advance the Artifact versions but never its stable id.
                 // Build consumes this same admitted header and opened content.
                 const current = readDeploymentReceiptArtifactV1(deployment, await open(deployment.contentArtifactId, context));
-                if (!current.ok) return failure(current.error);
+                if (!current.ok) return failure(current.error, current);
                 if (job.actionId === 'deployments.deploy') await admitSource(current.content, true, environment);
                 if (job.actionId === 'deployments.promote' && (!deployment.acceptedExecution?.builder
                     || deployment.operation !== 'promote' || deployment.environmentId !== job.input.environmentId

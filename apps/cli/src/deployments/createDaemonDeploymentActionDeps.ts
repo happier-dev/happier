@@ -384,7 +384,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 : new Set(selected ? [selected.id] : []);
             const links = await Promise.all(detail.targetLinks.filter(link => lineage.has(link.id)).map(async targetLink => {
                 const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId, context));
-                if (!content.ok) return refuse(content.error);
+                if (!content.ok) return refuse(failure(content.error, content));
                 return { targetLink, content: content.content };
             }));
             await assertCurrent(context);
@@ -684,7 +684,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             await assertCurrent(request.context);
             const opened = readDeploymentReceiptArtifactV1(request.input,
                 await open(request.input.contentArtifactId, request.context));
-            if (!opened.ok) return failure(opened.error);
+            if (!opened.ok) return failure(opened.error, opened);
             await assertCurrent(request.context);
             return { ok: true as const, content: opened.content };
         } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
@@ -742,7 +742,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (!artifact) return refuse('deployment_content_unavailable');
             const opened = readDeploymentReceiptArtifactV1({ ...input,
                 contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion }, artifact);
-            return opened.ok ? opened.content : refuse(opened.error);
+            return opened.ok ? opened.content : refuse(failure(opened.error, opened));
         },
         createCandidate: (environment, content, context) => createReceiptCandidate({ environment, content, context,
             assertCurrent: () => assertCurrent(context) }),
@@ -953,7 +953,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const opened = readDeploymentReceiptArtifactV1({ ...input,
                 contentHeaderVersion: artifact.revision.headerVersion,
                 contentBodyVersion: artifact.revision.bodyVersion }, artifact);
-            if (!opened.ok) return failure(opened.error);
+            if (!opened.ok) return failure(opened.error, opened);
             const intent = opened.content.teardown;
             const retained = await findTeardownReceipt(input, context);
             const retainedIntent = retained?.deployment.operation === 'teardown'
@@ -1210,7 +1210,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     || (candidate.input.whenBusy ?? 'refuse') !== (request.whenBusy ?? 'refuse')) return failure('target_mismatch');
                 const opened = readDeploymentReceiptArtifactV1(candidate.input, await open(candidate.input.contentArtifactId,
                     request.context, candidateArtifactAuthorization(request.context)));
-                if (!opened.ok) return failure(opened.error);
+                if (!opened.ok) return failure(opened.error, opened);
                 if (!isDeepStrictEqual(opened.content, candidate.content)) return failure('target_mismatch');
                 return candidate;
             }
@@ -1617,7 +1617,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     try {
                         const prepared = copy.data;
                         const opened = readDeploymentEnvironmentArtifactV1(prepared, await open(prepared.contentArtifactId, request.context));
-                        if (!opened.ok) return failure(opened.error);
+                        if (!opened.ok) return failure(opened.error, opened);
                         // Approved replay reconstructs the same invocation-local template continuation.
                         const previewHost = previewCreateHost(request.context);
                         let previewDefinition = opened.content.definition;
@@ -2180,7 +2180,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const candidate = preparedCandidate ? { ok: true as const, ...preparedCandidate }
                     : readDeploymentReceiptArtifactV1(request.input, await open(request.input.contentArtifactId,
                         request.context, candidateArtifactAuthorization(request.context)));
-                if (!candidate.ok) return failure(candidate.error);
+                if (!candidate.ok) return failure(candidate.error, candidate);
                 const environment = preparationEnvironment ?? await targetHostReaders.readEnvironment({
                     environmentId: request.input.environmentId, context: request.context });
                 if (!authorsCandidate) {
@@ -2241,7 +2241,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         if (!isDeepStrictEqual(nativeCandidate.ownServer.imageArchives, sourceImageArchives)) return failure('target_mismatch');
                         const retained = readDeploymentEnvironmentArtifactV1(request.input.destinationContent,
                             await open(request.input.destinationContent.contentArtifactId, request.context));
-                        if (!retained.ok || !isDeepStrictEqual(retained.content, candidateEnvironmentContent)) return failure('target_mismatch');
+                        if (!retained.ok) return failure('target_mismatch', retained);
+                        if (!isDeepStrictEqual(retained.content, candidateEnvironmentContent)) return failure('target_mismatch');
                         content = nativeCandidate;
                     } else {
                         const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,

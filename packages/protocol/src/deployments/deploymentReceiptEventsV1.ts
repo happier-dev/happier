@@ -4,7 +4,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
   DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetRoleFailureV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { readDeploymentArtifactJsonBodyV1, type DeploymentArtifactContentReferenceV1,
+import { readDeploymentArtifactJsonBodyV1, deploymentArtifactReadFailureV1, type DeploymentArtifactContentReferenceV1,
   type OpenedDeploymentArtifactV1, type DeploymentArtifactReadFailureV1 } from './deploymentArtifactContentReferenceV1.js';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArtifactKindsV1.js';
 import { ActionInputIssueSchema } from '../actions/executor/actionInputValidation.js';
@@ -202,8 +202,8 @@ export function readDeploymentReceiptEventFailureV1(reference: DeploymentArtifac
 ): Readonly<{ ok: true; failure: DeploymentReceiptFailureV1 | null }> | DeploymentArtifactReadFailureV1 {
   const opened = readDeploymentArtifactJsonBodyV1(reference, artifact, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1);
   if (!opened.ok) return opened;
-  if (!opened.body || typeof opened.body !== 'object' || Array.isArray(opened.body)) return { ok: false, error: 'deployment_content_unavailable' };
+  if (!opened.body || typeof opened.body !== 'object' || Array.isArray(opened.body)) return deploymentArtifactReadFailureV1('content');
   if (!('failure' in opened.body)) return { ok: true, failure: null };
   const failure = DeploymentReceiptFailureV1Schema.safeParse(opened.body.failure);
-  return failure.success ? { ok: true, failure: failure.data } : { ok: false, error: 'deployment_content_unavailable' };
+  return failure.success ? { ok: true, failure: failure.data } : deploymentArtifactReadFailureV1('content');
 }

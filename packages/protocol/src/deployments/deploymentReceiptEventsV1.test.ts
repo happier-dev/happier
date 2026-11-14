@@ -9,11 +9,11 @@ it('projects the exact private receipt failure phase without disclosing content'
   expect(events.readDeploymentReceiptEventFailureV1(reference, artifact))
     .toEqual({ ok: true, failure: { code: 'build_failed', phase: 'build' } });
   expect(events.readDeploymentReceiptEventFailureV1(reference, { ...artifact, artifactId: 'other' }))
-    .toEqual({ ok: false, error: 'deployment_conflict' });
+    .toMatchObject({ ok: false, error: 'deployment_conflict', failureCause: { phase: 'deployment.artifact.revision' } });
   expect(events.readDeploymentReceiptEventFailureV1(reference, { ...artifact, body: '{}' }))
     .toEqual({ ok: true, failure: null });
   expect(events.readDeploymentReceiptEventFailureV1(reference, { ...artifact, body: '{"failure":{"code":"bad","phase":"invented"}}' }))
-    .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+    .toMatchObject({ ok: false, error: 'deployment_content_unavailable', failureCause: { phase: 'deployment.artifact.content' } });
   expect(events.DeploymentFailedEventV1Schema.safeParse({ environmentId: 'env', deploymentId: 'receipt', targetLinkId: 'link',
     receiptRevision: 2, observedAt: 10, operation: 'deploy', state: 'failed', phase: 'build', failureCode: 'build_failed', logs: 'private' }).success).toBe(false);
 });

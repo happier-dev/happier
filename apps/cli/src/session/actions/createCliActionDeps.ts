@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -657,7 +658,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
               if (targetLink.id !== detail.environment.runtimeTargetLinkId) return { targetLink };
               const opened = readDeploymentTargetLinkArtifactV1(targetLink,
                 await openDeploymentArtifact(targetLink.contentArtifactId, context));
-              if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+              if (!opened.ok) return refuseDeploymentArtifactRead(opened);
               return { targetLink, content: opened.content };
             }));
             return { ...detail, targetLinks };

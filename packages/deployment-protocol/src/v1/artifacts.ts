@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
-import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeaderV1, readDeploymentArtifactJsonBodyV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeaderV1, readDeploymentArtifactJsonBodyV1,
+    deploymentArtifactReadFailureV1, type DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DeploymentEnvironmentContentStoredReadV1Schema } from './environment.js';
@@ -25,7 +26,7 @@ export type DeploymentArtifactDocumentV1 = Pick<z.infer<typeof ArtifactDocumentV
 };
 export type DeploymentArtifactHeaderV1 = Omit<DeploymentArtifactDocumentV1, 'body'>;
 type ContentReference = z.infer<typeof DeploymentArtifactContentReferenceV1Schema>;
-type ReadFailure = { ok: false; error: 'deployment_content_unavailable' | 'deployment_conflict' };
+type ReadFailure = DeploymentArtifactReadFailureV1;
 export type DeploymentArtifactReadResultV1<T> = { ok: true; content: T; title: string } | ReadFailure;
 
 export function readDeploymentEnvironmentArtifactHeaderV1(reference: ContentReference, artifact: DeploymentArtifactHeaderV1 | null): { ok: true; title: string } | ReadFailure {
@@ -36,7 +37,7 @@ export function readDeploymentReceiptArtifactHeaderV1(reference: ContentReferenc
     const header = readDeploymentArtifactHeaderV1(reference, artifact, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1);
     if (!header.ok) return header;
     const steps = DeploymentReceiptArtifactHeaderV1Schema.shape.steps.safeParse(artifact?.header.steps);
-    return steps.success ? { ...header, steps: steps.data ?? null } : { ok: false, error: 'deployment_content_unavailable' };
+    return steps.success ? { ...header, steps: steps.data ?? null } : deploymentArtifactReadFailureV1('steps');
 }
 
 function readContent<T>(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null,
@@ -44,7 +45,7 @@ function readContent<T>(reference: ContentReference, artifact: DeploymentArtifac
     const opened = readDeploymentArtifactJsonBodyV1(reference, artifact, expectedKind);
     if (!opened.ok) return opened;
     const content = contentSchema.safeParse(opened.body);
-    return content.success ? { ok: true, content: content.data, title: opened.title } : { ok: false, error: 'deployment_content_unavailable' };
+    return content.success ? { ok: true, content: content.data, title: opened.title } : deploymentArtifactReadFailureV1('content');
 }
 
 export function readDeploymentEnvironmentArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentEnvironmentContentStoredReadV1Schema>> {

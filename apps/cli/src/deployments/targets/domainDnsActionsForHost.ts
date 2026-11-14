@@ -5,6 +5,8 @@ import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployment-protocol
 import type { createOwnServerDomainActions } from './ownServer/ownServerDomainActions';
 import { buildDomainDnsRecordChildren } from './domainDnsRecords';
 import { projectDeploymentFailure } from '../deploymentFailure';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { HostReviewedChildrenDomainPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 
 export { buildDomainDnsRecordChildren } from './domainDnsRecords';
 type Host = Pick<Parameters<typeof createOwnServerDomainActions>[0], 'storage' | 'open' | 'readEnvironment'>;
@@ -12,20 +14,20 @@ type Preparation = Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewe
 
 /** DNS uses the existing Domain read/admission and reviewed child port; it does not settle route or application state. */
 export function createDomainDnsActionsForHost(host: Host) {
-    async function prepare(request: Preparation): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+    async function prepare(request: Preparation): Promise<HostReviewedChildrenDomainPreparationV1> {
         if (!isDeploymentDomainDnsActionIdV1(request.actionId)) return null;
         const input = DeploymentDomainDnsInputV1Schema.parse(request.input);
         const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
         if (environment.environment.revision !== input.expectedRevision) return projectDeploymentFailure('deployment_conflict');
         const read = await host.storage('deployments.domains.get', { serverId: input.serverId,
             environmentId: input.environmentId, domainId: input.domainId }, request.context);
-        if ('errorCode' in read) return read;
+        if (isActionExecuteFailure(read)) return read;
         const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(read);
         if (!parsed.ok) return projectDeploymentFailure(parsed.error);
         if (parsed.domain.revision !== input.expectedDomainRevision || parsed.domain.deletedAtMs !== undefined)
             return projectDeploymentFailure('deployment_conflict');
         const opened = readDeploymentDomainArtifactV1(parsed.domain, await host.open(parsed.domain.contentArtifactId, request.context));
-        if (!opened.ok) return projectDeploymentFailure(opened.error);
+        if (!opened.ok) return projectDeploymentFailure(opened.error, opened);
         return buildDomainDnsRecordChildren(input, opened.content);
     }
     async function execute(actionId: string, raw: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult | null> {

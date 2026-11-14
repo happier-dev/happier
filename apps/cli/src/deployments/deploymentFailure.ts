@@ -13,6 +13,12 @@ import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Sch
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
+import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+
+/** Throwing host readers retain the Artifact owner's code-only validation cause. */
+export function refuseDeploymentArtifactRead(failure: DeploymentArtifactReadFailureV1): never {
+    throw Object.assign(new TypeError(failure.error), { code: failure.error, failureCause: failure.failureCause });
+}
 
 /** The acquisition boundary supplies context; arbitrary deployment network errors
  * are not reclassified as service-forward failures. */

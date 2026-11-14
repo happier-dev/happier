@@ -15,12 +15,15 @@ describe('opened deployment Artifact identity and content', () => {
       { ...artifact, revision: { headerVersion: 3, bodyVersion: 3 } },
       { ...artifact, revision: { headerVersion: 2, bodyVersion: 4 } }]) {
       expect(readDeploymentArtifactJsonBodyV1(reference, stale, 'deployment-environment.v1'))
-        .toEqual({ ok: false, error: 'deployment_conflict' });
+        .toMatchObject({ ok: false, error: 'deployment_conflict', failureCause: { phase: 'deployment.artifact.revision' } });
     }
-    for (const invalid of [null, { ...artifact, header: { ...artifact.header, kind: 'deployment-receipt.v1' } },
-      { ...artifact, body: '{malformed' }, { ...artifact, body: null }]) {
+    for (const [invalid, step] of [[null, 'missing'],
+      [{ ...artifact, header: { ...artifact.header, kind: 'deployment-receipt.v1' } }, 'kind'],
+      [{ ...artifact, header: { ...artifact.header, title: null } }, 'header'],
+      [{ ...artifact, body: '{malformed' }, 'json'], [{ ...artifact, body: null }, 'body']] as const) {
       expect(readDeploymentArtifactJsonBodyV1(reference, invalid, 'deployment-environment.v1'))
-        .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+        .toMatchObject({ ok: false, error: 'deployment_content_unavailable',
+          failureCause: { phase: `deployment.artifact.${step}` } });
     }
   });
 });

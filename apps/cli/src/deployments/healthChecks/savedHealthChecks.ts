@@ -1,3 +1,5 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { deploymentUnavailableDiagnostic } from '../deploymentFailure';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { SavedHealthCheckSourceRead } from './readSavedHealthCheckSource';
@@ -40,16 +42,17 @@ function contributed(check: HealthCheckDefinitionV1, kinds: HealthCheckKindCatal
     return kind;
 }
 
-function unavailable(code: string): never {
-    throw new PluginError({ code, message: 'The saved health check is unavailable', retryable: false });
+function unavailable(code: string, cause?: unknown, phase = 'deployment.health_check'): never {
+    const error = new PluginError({ code, message: 'The saved health check is unavailable', retryable: false }, { cause });
+    throw code === 'deployment_unavailable' ? deploymentUnavailableDiagnostic(error, phase, 'native_failure', cause) : error;
 }
 
 function missingDomainServingAddress(cause?: unknown): never {
-    throw new PluginError({ code: 'deployment_unavailable',
+    throw deploymentUnavailableDiagnostic(new PluginError({ code: 'deployment_unavailable',
         message: 'The app has no available Domain serving address for this health check.', retryable: false,
         details: { requiredFact: 'domainServingAddress',
             remedy: 'Deploy the app successfully, then add its Domain before setting up this health check.' },
-    }, { cause });
+    }, { cause }), 'deployment.health_check.domain.serving_address', 'binding_missing', cause);
 }
 
 export type SavedMachineServiceHealthResult = Readonly<{
@@ -99,7 +102,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     { serverId: input.homeServerIdentityId, environmentId }, { signal });
                 signal.throwIfAborted();
                 const detail = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-                if (!detail.ok) return unavailable(detail.error);
+                if (!detail.ok) return unavailable(detail.error, detail, 'deployment.health_check.environment.read');
                 // The deployment Action admits the exact Home; its portable id can differ from this local profile id.
                 if (detail.environment.id !== environmentId || detail.environment.deletedAtMs !== undefined) {
                     return unavailable('health_check_subject_mismatch');
@@ -122,7 +125,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                 const detail = DeploymentDomainMutationResultV1Schema.parse(loaded);
                 if (!detail.ok) {
                     if (detail.error === 'deployment_unavailable') return missingDomainServingAddress(detail);
-                    return unavailable(detail.error);
+                    return unavailable(detail.error, detail, 'deployment.health_check.domain.read');
                 }
                 const domain = detail.domain;
                 if (detail.environmentId !== environment.environment.id || domain.id !== domainId
@@ -131,7 +134,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                 const opened = readDeploymentDomainArtifactV1(domain,
                     await input.openDomainArtifact(domain.contentArtifactId, signal));
                 signal.throwIfAborted();
-                if (!opened.ok) return unavailable(opened.error);
+                if (!opened.ok) return refuseDeploymentArtifactRead(opened);
                 return { domain, targetLink, content: opened.content };
             };
             type SaveRequest = Parameters<HealthChecksService['setup']>[0];
@@ -151,7 +154,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     const { mode, ...draft } = request.sourceConfig;
                     const saved = await input.readSavedSource?.(request.sourceInstanceId, signal);
                     signal.throwIfAborted();
-                    if (saved?.kind === 'unavailable') return unavailable(saved.code);
+                    if (saved?.kind === 'unavailable') return unavailable(saved.code, saved, 'deployment.health_check.saved_source.read');
                     const retained = saved?.kind === 'available' ? saved : undefined;
                     const sourceConfig = { ...(retained?.source ?? {}), ...draft };
                     const environment = draft.subject.kind === 'environment' ? await readEnvironment(draft.subject.environmentId, signal) : undefined;
@@ -164,7 +167,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                                 contentArtifactId: header.contentArtifactId, contentHeaderVersion: header.contentHeaderVersion,
                                 contentBodyVersion: header.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts',
                             }, { signal }));
-                            if (!prepared.ok) return unavailable(prepared.error);
+                            if (!prepared.ok) return unavailable(prepared.error, prepared, 'deployment.health_check.alerts.prepare');
                             if (!prepared.creationDefaults) return unavailable('account_settings_unavailable');
                             channels = prepared.creationDefaults.values.alertChannels;
                         } else {

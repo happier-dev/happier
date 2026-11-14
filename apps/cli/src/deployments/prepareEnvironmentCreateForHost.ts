@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { DeploymentEnvironmentCreateInputV1Schema,
     type ActionExecutorContext, type DeploymentEnvironmentCreateInputV1,
     type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol';
@@ -131,7 +132,7 @@ export async function resolveEnvironmentCreatePreviewForHost(
                 },
             }));
             const opened = readDeploymentTargetLinkArtifactV1(targetLink, artifact);
-            if (!opened.ok) return refuse(opened.error);
+            if (!opened.ok) return refuseDeploymentArtifactRead(opened);
             const provider = DeploymentTargetLinkProviderContentV1Schema.safeParse(opened.content);
             if (!provider.success) return refuse('deployment_content_unavailable');
             dataTargetLinks.push({ targetLink, content: provider.data });

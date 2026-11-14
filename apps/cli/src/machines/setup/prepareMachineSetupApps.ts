@@ -1,3 +1,4 @@
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineSetupAppChildV1, MachineSetupAppReviewV1, MachineSetupPlanInputV1,
@@ -94,7 +95,7 @@ async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlan
     || !host.deploymentAction || !host.readArtifact) return failure('machine_setup_app_preparation_unavailable');
   const selected = child.input;
   const receipt = readDeploymentReceiptArtifactV1(selected, await host.readArtifact(selected, context));
-  if (!receipt.ok) return failure(receipt.error);
+  if (!receipt.ok) return projectDeploymentFailure(receipt.error, receipt);
   const definition = item.definition.definition;
   const intent = receipt.content.sourceIntent;
   if (intent?.kind !== 'stored' || intent.document !== definition.document
@@ -117,7 +118,7 @@ async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlan
     || !runtime.members.some(member => member.machineId === input.machineId)) return failure('machine_setup_app_plan_changed');
   const opened = readDeploymentEnvironmentArtifactV1(environment,
     await host.readArtifact({ ...environment, serverId: selected.serverId }, context));
-  if (!opened.ok) return failure(opened.error);
+  if (!opened.ok) return projectDeploymentFailure(opened.error, opened);
   const basis = receipt.content.ownServer?.approvedInputBasis;
   if (opened.title !== item.definition.name || !sameStrictJsonValue(opened.content.definition, intent)
     || !sameStrictJsonValue(opened.content.bindings, item.definition.bindings)

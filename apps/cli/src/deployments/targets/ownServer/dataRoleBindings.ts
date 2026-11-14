@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { randomUUID } from 'node:crypto';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -39,7 +40,7 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
             const candidate = 'set' in job.input ? { ok: true as const, content: { ...current.content,
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings, { set: settledSet, remove: job.input.remove }, randomUUID) } }
                 : readDeploymentEnvironmentArtifactV1(job.input, await host.open(job.input.contentArtifactId, context));
-            if (!candidate.ok) return refuse(candidate.error);
+            if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
             environment = { ...current, content: candidate.content };
         }
         const scope = await acquireOwnServerDataServiceForHost(host, { ...job.input, targetLinkId: job.targetLinkId,

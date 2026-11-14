@@ -23,10 +23,11 @@ describe('deployment Artifact content boundary', () => {
             header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Production provider link' }, body: JSON.stringify(content) });
         expect(readDeploymentTargetLinkArtifactV1(reference, targetArtifact)).toEqual({ ok: true, content, title: 'Production provider link' });
         expect(readDeploymentTargetLinkArtifactV1(reference, { ...targetArtifact, revision: { headerVersion: 1, bodyVersion: 2 } }))
-            .toEqual({ ok: false, error: 'deployment_conflict' });
+            .toMatchObject({ ok: false, error: 'deployment_conflict' });
         expect(readDeploymentTargetLinkArtifactV1(reference, { ...targetArtifact,
             body: JSON.stringify({ ...content, providerIdentity: { ...content.providerIdentity, credentialId: 'private-credential' } }) }))
-            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+            .toMatchObject({ ok: false, error: 'deployment_content_unavailable',
+                failureCause: { phase: 'deployment.artifact.content' } });
     });
     it('opens strict direct content while preserving generic Artifact metadata', () => {
         expect(readDeploymentEnvironmentArtifactV1(reference, artifact)).toEqual({ ok: true, content: detail.content, title: 'Staging' });
@@ -41,7 +42,7 @@ describe('deployment Artifact content boundary', () => {
             body: JSON.stringify(content) };
         expect(readDeploymentDomainArtifactV1(reference, domain)).toEqual({ ok: true, content, title: 'Application' });
         expect(readDeploymentDomainArtifactV1(reference, { ...domain, revision: { headerVersion: 1, bodyVersion: 2 } }))
-            .toEqual({ ok: false, error: 'deployment_conflict' });
+            .toMatchObject({ ok: false, error: 'deployment_conflict' });
         const { healthCheck: _healthCheck, ...unchecked } = content;
         expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(unchecked) }))
             .toEqual({ ok: true, content: unchecked, title: 'Application' });
@@ -49,10 +50,10 @@ describe('deployment Artifact content boundary', () => {
             { ...content, basicAuth: { username: 'operator', password: 'private' } },
             { ...content, redirectTo: 'https://example.test' }]) {
             expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(body) }))
-                .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+                .toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
         }
         expect(readDeploymentDomainArtifactV1(reference, { ...domain, header: artifact.header }))
-            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+            .toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
     });
     it('reads writer-produced receipt steps with exact versions, generic metadata and explicit legacy unknown', () => {
         const receipt = createDeploymentReceiptDetailV1();
@@ -71,15 +72,15 @@ describe('deployment Artifact content boundary', () => {
         expect(readDeploymentReceiptArtifactHeaderV1(receipt.deployment, { ...header,
             header: { ...header.header, steps: undefined } })).toEqual({ ok: true, title: 'Exact A', steps: null });
         expect(readDeploymentReceiptArtifactHeaderV1(receipt.deployment, { ...header,
-            revision: { headerVersion: 1, bodyVersion: 2 } })).toEqual({ ok: false, error: 'deployment_conflict' });
+            revision: { headerVersion: 1, bodyVersion: 2 } })).toMatchObject({ ok: false, error: 'deployment_conflict' });
         expect(readDeploymentReceiptArtifactHeaderV1(receipt.deployment, { ...header,
             header: { ...header.header, steps: [{ ...receipt.content.steps[0], state: 'invented' }] } }))
-            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+            .toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
     });
     it('refuses stale identity, revisions, wrong private kinds and stored wrappers', () => {
-        expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, artifactId: 'other' })).toEqual({ ok: false, error: 'deployment_conflict' });
-        expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, revision: { headerVersion: 2, bodyVersion: 1 } })).toEqual({ ok: false, error: 'deployment_conflict' });
-        expect(readDeploymentEnvironmentArtifactHeaderV1(reference, { ...artifact, revision: { headerVersion: 1, bodyVersion: 2 } })).toEqual({ ok: false, error: 'deployment_conflict' });
+        expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, artifactId: 'other' })).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, revision: { headerVersion: 2, bodyVersion: 1 } })).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        expect(readDeploymentEnvironmentArtifactHeaderV1(reference, { ...artifact, revision: { headerVersion: 1, bodyVersion: 2 } })).toMatchObject({ ok: false, error: 'deployment_conflict' });
         expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, header: { ...artifact.header, kind: 'other' } }).ok).toBe(false);
         expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, body: JSON.stringify({ t: 'plain', v: detail.content }) }).ok).toBe(false);
         expect(readDeploymentEnvironmentArtifactV1(reference, { ...artifact, body: JSON.stringify({ ...detail.content, unknown: 'secret' }) }).ok).toBe(false);

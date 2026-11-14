@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1,
     type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import { readDeploymentDomainServingUrlV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
@@ -42,7 +43,7 @@ export async function readPreviewDomainForHost(input: Readonly<{
     if (result.domain.id !== input.selection.domainId || result.domain.environmentId !== input.templateEnvironmentId)
         return refuse('target_mismatch');
     const opened = readDeploymentDomainArtifactV1(result.domain, await host.open(result.domain.contentArtifactId));
-    if (!opened.ok) return refuse(opened.error);
+    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
     return preparePreviewDomainForHost({ selection: input.selection, pullRequestNumber: input.pullRequestNumber, domain: opened.content });
 }
 

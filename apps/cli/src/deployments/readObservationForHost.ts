@@ -39,7 +39,7 @@ export async function readDeploymentObservationForHost(
     const targetFailure = readDeploymentObservationTargetFailure(targetLink.targetKind);
     if (targetFailure) return targetFailure;
     const link = readDeploymentTargetLinkArtifactV1(targetLink, await host.open(targetLink.contentArtifactId, context));
-    if (!link.ok) return { ok: false, error: link.error };
+    if (!link.ok) return link;
     if (!link.content.credentialPrincipal) return { ok: false, error: 'deployment_content_unavailable' };
     const opened = receipt && await openDeploymentReceiptForHost(receipt, context, host);
     const providerDeploymentId = opened?.content.platform?.observation.providerDeploymentId;

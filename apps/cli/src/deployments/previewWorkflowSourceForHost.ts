@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
@@ -70,7 +71,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
             const header = environment.targetLinks.find(link => link.id === reference.targetLinkId);
             if (!header) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
             const opened = readDeploymentTargetLinkArtifactV1(header, await open(header.contentArtifactId));
-            if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+            if (!opened.ok) return refuseDeploymentArtifactRead(opened);
             return { header, provider: DeploymentTargetLinkProviderContentV1Schema.parse(opened.content) };
         },
         readTargetDeclaration: async source => readDeploymentTargetV1(source, input.contributes.deploymentTargets),

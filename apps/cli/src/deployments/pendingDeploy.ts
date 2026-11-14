@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
@@ -30,7 +31,7 @@ async function readPendingResource(environment: DeploymentEnvironmentHeaderV1,
     const resource = await read(environment.contentArtifactId);
     if (!resource) return refuse('deployment_content_unavailable');
     const opened = readDeploymentEnvironmentArtifactV1(environment, resource.artifact);
-    if (!opened.ok) return refuse(opened.error);
+    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
     return resource;
 }
 
@@ -75,7 +76,7 @@ export async function validatePendingDeploymentInputForHost(request: Readonly<{
     const environment = current.environment;
     if (environment.id !== input.environmentId || !environment.capabilities.deploy) return refuse('deployment_access_denied');
     const candidate = readDeploymentReceiptArtifactV1(input, await host.open(input.contentArtifactId));
-    if (!candidate.ok) return refuse(candidate.error);
+    if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
     const binding = resourceBinding(environment);
     const intent = input.pendingDeploy
         ? await readPendingDeploymentIntentForHost({ environment, pendingDeploy: input.pendingDeploy }, host)

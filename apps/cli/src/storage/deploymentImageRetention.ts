@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -106,7 +107,7 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
             const relevantLinkIds = new Set(localTargets.flatMap(targetLink => [...getDeploymentTargetLinkLineageV1(targetLink, targetHeaders)]));
             const links = await Promise.all(targetHeaders.filter(targetLink => relevantLinkIds.has(targetLink.id)).map(async targetLink => {
                 const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId));
-                if (!content.ok) return refuse(content.error);
+                if (!content.ok) return refuseDeploymentArtifactRead(content);
                 return { targetLink, content: content.content };
             }));
             const detail: DeploymentEnvironmentDetailV1 = { ...environment, targetLinks: links };

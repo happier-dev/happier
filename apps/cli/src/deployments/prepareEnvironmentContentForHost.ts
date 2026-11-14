@@ -79,7 +79,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
             };
             const artifact = await open(request.input.contentArtifactId);
             let candidate = readDeploymentEnvironmentArtifactV1(request.input, artifact);
-            if (!candidate.ok) return { ok: false, errorCode: candidate.error, error: candidate.error };
+            if (!candidate.ok) return projectDeploymentFailure(candidate.error, candidate);
             // Create cannot bypass the existing binding and backup update writers,
             // including in E2EE mode where the server cannot inspect these leaves.
             if (request.actionId === 'deployments.environments.create'
@@ -114,7 +114,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     && request.input.contentBodyVersion === loaded.environment.contentBodyVersion;
                 const previous = currentReference ? candidate
                     : readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
-                if (!previous.ok) return { ok: false, errorCode: previous.error, error: previous.error };
+                if (!previous.ok) return projectDeploymentFailure(previous.error, previous);
                 previousDefinition = previous.content.definition;
                 let desiredTemplate = previous.content.template;
                 let desiredOwnServer = previous.content.ownServer;

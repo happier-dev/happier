@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
 import { readDeploymentReceiptArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1,
@@ -45,7 +46,7 @@ export async function openDeploymentReceiptForHost(deployment: DeploymentReceipt
         assertCurrent(context: ActionExecutorContext): Promise<void>;
     }>): Promise<DeploymentReceiptDetailV1> {
     const content = readDeploymentReceiptArtifactV1(deployment, await host.open(deployment.contentArtifactId, context));
-    if (!content.ok) throw Object.assign(new Error(content.error), { code: content.error });
+    if (!content.ok) return refuseDeploymentArtifactRead(content);
     await host.assertCurrent(context);
     const receipt = { deployment, content: content.content };
     const cancellationConsequence = projectDeploymentCancellationConsequenceV1(receipt);

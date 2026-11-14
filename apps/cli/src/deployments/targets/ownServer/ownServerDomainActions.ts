@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { previewOwnServerDomainDns } from './ownServerDomainDnsPreview';
 import { deploymentOutputValidationFailure } from '../../outputValidation';
 import axios from '@/api/client/credentialAxios';
@@ -227,7 +228,7 @@ export async function prepareOwnServerDomainReviewedChildren(
             domain = parsed.domain;
         }
         const opened = readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, request.context));
-        if (!opened.ok) return failure(opened.error);
+        if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
         content = opened.content;
     }
     const environment = add
@@ -286,7 +287,7 @@ export function createOwnServerDomainContentWriter(host: Readonly<{
             const resource = await host.artifacts.readForUpdate(domain.contentArtifactId, { signal: context.signal,
                 prepareRecipients: false, includeSharedAudience: false, authorizationHeaders });
             const opened = readDeploymentDomainArtifactV1(domain, resource?.artifact ?? null);
-            if (!opened.ok) return refuse(opened.error);
+            if (!opened.ok) return refuseDeploymentArtifactRead(opened);
             if (!resource) return refuse('deployment_content_unavailable');
             const prepared = await resource.prepareJsonUpdate({ header: resource.artifact.header, body: JSON.stringify(content),
                 beforeWrite: () => context.signal?.throwIfAborted() });
@@ -362,7 +363,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 })() : original;
                 const opened = 'content' in original ? { ok: true as const, content: original.content }
                     : readDeploymentDomainArtifactV1(preparedInput, await host.open(preparedInput.contentArtifactId, context));
-                if (!opened.ok) return failure(opened.error);
+                if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                 const discovered = await discoverOwnServerDomainPlacement({ actionId, input: preparedInput,
                     environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
                 if (!discovered.ok) return discovered;
@@ -396,12 +397,12 @@ export function createOwnServerDomainActions(host: Readonly<{
                 domain = await prepareCloudflareDomainForHost({ domain, topology, context, host });
                 captures = domain.placements ?? [];
                 const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-                if (!opened.ok) return failure(opened.error);
+                if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                 privateContent = opened.content;
             } else if (actionId === 'deployments.domains.verify' || isDeploymentDomainRemoveActionIdV1(actionId)) {
                 if (!privateContent) {
                     const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-                    if (!opened.ok) return failure(opened.error);
+                    if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                     privateContent = opened.content;
                 }
                 if (isDeploymentDomainRemoveActionIdV1(actionId)) await disableCloudflareDomainForHost(privateContent, context);
@@ -501,7 +502,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 try {
                     context.signal?.throwIfAborted();
                     const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-                    if (!opened.ok) result = failure(opened.error);
+                    if (!opened.ok) result = failure(opened.error, undefined, opened.failureCause);
                     else {
                         hostname = opened.content.hostname;
                         result = domain.provider ? host.retireProviderDomain

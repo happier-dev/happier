@@ -8,7 +8,7 @@ import { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/proto
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { readDeploymentDomainArtifactV1, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
-import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { projectDeploymentFailure } from '../deploymentFailure';
@@ -84,13 +84,14 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const role = deploymentTargetDomainRoleForActionV1(actionId);
         if (!role) return null;
         const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
+        if ('mode' in input) return null;
         const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
         const add = isDeploymentDomainAddActionIdV1(actionId) ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
         let retained: DeploymentDomainHeaderV1 | undefined;
         if (!add) {
             const read = await host.storage('deployments.domains.get', { serverId: input.serverId,
                 environmentId: input.environmentId, domainId: input.domainId }, request.context);
-            if ('errorCode' in read) return read;
+            if ('ok' in read && !read.ok && 'errorCode' in read) return read;
             const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(read);
             if (!parsed.ok) return projectDeploymentFailure(parsed.error);
             retained = parsed.domain;
@@ -102,12 +103,13 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const opened = add && 'content' in add ? { ok: true as const, content: add.content }
             : readDeploymentDomainArtifactV1(add && 'contentArtifactId' in add ? add : retained!,
                 await host.open(add && 'contentArtifactId' in add ? add.contentArtifactId : retained!.contentArtifactId, request.context));
-        if (!opened.ok) return projectDeploymentFailure(opened.error);
+        if (!opened.ok) return projectDeploymentFailure(opened.error, opened);
         const content = opened.content;
         if (content.target.kind !== 'provider') return refuse('target_mismatch');
+        const target = content.target;
         return host.target.withTargetRole({ environmentId: input.environmentId, targetLinkId, context: request.context }, environment, role, async scope => {
             const childInput = { ...scope.common, domainId: input.domainId, domain: { hostname: content.hostname,
-                ...(content.target.zone ? { zone: content.target.zone } : {}) } };
+                ...(target.zone ? { zone: target.zone } : {}) } };
             await scope.admit(childInput, 'execution');
             return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(childInput) }] };
         });
@@ -116,6 +118,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         if (!isDeploymentDomainChildActionIdV1(actionId)) return null;
         const role = deploymentTargetDomainRoleForActionV1(actionId);
         const input = DeploymentActionInputSchemasV1[actionId].parse(raw);
+        if ('mode' in input) return null;
         const child = context.hostReviewedChild?.preparedChildren?.find(child => child.role === role
             && isRecord(child.input) && child.input.domainId === input.domainId);
         if (!child) return null;
@@ -126,7 +129,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             if (!add) {
                 const read = await host.storage('deployments.domains.get', { serverId: input.serverId,
                     environmentId: input.environmentId, domainId: input.domainId }, context);
-                if ('errorCode' in read) return read;
+                if ('ok' in read && !read.ok && 'errorCode' in read) return read;
                 const loaded = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(read);
                 if (!loaded.ok) return projectDeploymentFailure(loaded.error);
                 retained = loaded.domain;
@@ -135,7 +138,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             const opened = add && 'content' in add ? { ok: true as const, content: add.content }
                 : readDeploymentDomainArtifactV1(add && 'contentArtifactId' in add ? add : retained!,
                     await host.open(add && 'contentArtifactId' in add ? add.contentArtifactId : retained!.contentArtifactId, context));
-            if (!opened.ok) return projectDeploymentFailure(opened.error);
+            if (!opened.ok) return projectDeploymentFailure(opened.error, opened);
             const content = opened.content;
             let accepted: Awaited<ReturnType<NativeHost['storage']>>;
             if (actionId === 'deployments.domains.verify') {
@@ -149,7 +152,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
                 })() : input;
                 accepted = await host.storage(actionId, { ...prepared, ...(add ? { provider: true, placements: [] } : {}) }, context);
             }
-            if ('errorCode' in accepted) return accepted;
+            if ('ok' in accepted && !accepted.ok && 'errorCode' in accepted) return accepted;
             const loaded = DeploymentActionOutputSchemasV1['deployments.domains.add'].parse(accepted);
             if (!loaded.ok) return projectDeploymentFailure(loaded.error);
             if (loaded.domain.deletedAtMs !== undefined) return { ok: true, result: loaded };

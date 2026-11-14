@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import type { ActionExecutorContext, DeploymentChildRpcV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
@@ -48,7 +49,7 @@ export async function assertReviewedDeploymentArchiveSourceForHost(input: Readon
     if (!artifact) return refuse('deployment_content_unavailable');
     const opened = readDeploymentReceiptArtifactV1({ contentArtifactId: input.contentArtifactId,
         contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion }, artifact);
-    if (!opened.ok) return refuse(opened.error);
+    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
     assertReviewedDeploymentSource({ intent: root, content: opened.content });
 }
 

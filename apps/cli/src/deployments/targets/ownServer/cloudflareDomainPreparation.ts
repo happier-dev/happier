@@ -1,3 +1,4 @@
+import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -38,7 +39,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
 }>): Promise<DeploymentDomainHeaderV1> {
     const { host, domain, topology, context } = input;
     const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-    if (!opened.ok) return refuse(opened.error);
+    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
     const selected = readCloudflareNamedControllerSelection(opened.content.ingress);
     if (!selected) return domain;
     const origin = topology.tunnelOrigin;

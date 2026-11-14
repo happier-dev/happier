@@ -178,7 +178,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             const reference = job.kind === 'domain' ? job.capture.content : job.input;
             return readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, context));
         })();
-        if (!opened.ok) return refuse(opened.error);
+        if (!opened.ok) return refuse(opened.error, undefined, opened.failureCause);
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing || job.kind === 'domainDns';
@@ -198,9 +198,9 @@ export function createOwnServerDomainNative(host: Readonly<{
             const { environmentContent: environmentRef, targetLinkContent: linkRef } = job.capture;
             if (!environmentRef || !linkRef || !job.topology) return refuse('target_mismatch');
             const environment = readDeploymentEnvironmentArtifactV1(environmentRef, await host.open(environmentRef.contentArtifactId, context));
-            if (!environment.ok) return refuse(environment.error);
+            if (!environment.ok) return refuse(environment.error, undefined, environment.failureCause);
             const link = readDeploymentTargetLinkArtifactV1(linkRef, await host.open(linkRef.contentArtifactId, context));
-            if (!link.ok) return refuse(link.error);
+            if (!link.ok) return refuse(link.error, undefined, link.failureCause);
             environmentContent = environment.content;
             members = job.topology.members.map(member => ({ ...member, state: 'active' }));
         }
