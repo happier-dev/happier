@@ -8444,6 +8444,10 @@ const machineDetailPageTranslations = { ja: translated({
                 select: ({ name }) => `${name} を片付ける`,
             },
         },
+        machineWhatRunsHere: {
+            title: "ここで動いているもの",
+            description: ({ count }: { count: number }) => count === 1 ? "このマシンで 1 個の環境が動いています。" : `このマシンで ${count} 個の環境が動いています。`,
+        },
         machineScheduled: {
             title: "スケジュール",
             description: ({ machine }: { machine: string }) => `${machine} で定期実行されるもの：crontab とタイマー。開いたときに読み取ります。`,

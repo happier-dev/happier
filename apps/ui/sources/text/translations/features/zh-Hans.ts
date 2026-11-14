@@ -8439,6 +8439,10 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 select: ({ name }) => `清理 ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "这里运行的内容",
+            description: ({ count }: { count: number }) => count === 1 ? "这台机器上运行着 1 个环境。" : `这台机器上运行着 ${count} 个环境。`,
+        },
         machineScheduled: {
             title: "计划任务",
             description: ({ machine }: { machine: string }) => `在 ${machine} 上按计划运行的内容：crontab 和定时器，打开时读取。`,

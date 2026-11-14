@@ -8447,6 +8447,10 @@ const machineDetailPageTranslations = { fr: translated({
                 select: ({ name }) => `Nettoyer ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Ce qui tourne ici",
+            description: ({ count }: { count: number }) => count === 1 ? "1 environnement tourne sur cette machine." : `${count} environnements tournent sur cette machine.`,
+        },
         machineScheduled: {
             title: "Planifié",
             description: ({ machine }: { machine: string }) => `Ce qui s’exécute selon un horaire sur ${machine} : ses crontabs et minuteurs, lus à l’ouverture.`,

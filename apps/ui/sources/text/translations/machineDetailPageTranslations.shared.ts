@@ -2072,6 +2072,10 @@ export const english = {
             select: ({ name }: { name: string }) => `Clean up ${name}`,
         },
     },
+    machineWhatRunsHere: {
+        title: "What runs here",
+        description: ({ count }: { count: number }) => count === 1 ? "1 environment runs on this machine." : `${count} environments run on this machine.`,
+    },
     machineScheduled: {
         title: "Scheduled",
         description: ({ machine }: { machine: string }) => `What runs on a schedule on ${machine}: its crontabs and timers, read when you open it.`,

@@ -91,13 +91,13 @@ export function parseStorageParams(raw: Readonly<Record<string, string | undefin
 export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
     { id: 'overview', icon: 'desktop', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, BarAccessory: MachineVitalsBarAccessory, parseParams: () => OVERVIEW_PARAMS },
     { id: 'services', icon: 'stack', titleKey: 'machineServices.tab', Body: MachineServicesTab, suspendWhenHidden: true, parseParams: parseServicesParams },
+    { id: 'scheduled', icon: 'clock', titleKey: 'machineScheduled.title', Body: MachineScheduledTab, suspendWhenHidden: true, parseParams: () => SCHEDULED_PARAMS },
     { id: 'processes', icon: 'cpu', titleKey: 'machineProcesses.tab', Body: MachineProcessesTab, suspendWhenHidden: true, parseParams: parseMachineProcessesParams },
     { id: 'storage', icon: 'hard-drives', titleKey: 'machineStorage.tab', Body: MachineStorageTab, suspendWhenHidden: true, BarAccessory: StorageTabBarAccessory, parseParams: parseStorageParams,
         ownsScroll: params => params.id === 'storage' && params.page === 'suggestions' },
     { id: 'guard', icon: 'shield', titleKey: 'machineGuard.tab', Body: GuardTab, suspendWhenHidden: true, BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
     { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
     { id: 'security', icon: 'shield-check', titleKey: 'machineDetailPage.subPages.security', Body: MachineSecurityTab, suspendWhenHidden: true, parseParams: parseSecurityParams },
-    { id: 'scheduled', icon: 'clock', titleKey: 'machineScheduled.title', Body: MachineScheduledTab, suspendWhenHidden: true, parseParams: () => SCHEDULED_PARAMS },
 ];
 
 export type MachinePagePluginTabEntry = MachinePageTabEntry & Readonly<{ id: 'plugin'; key: string; pluginId: string; localId: string; label: string }>;

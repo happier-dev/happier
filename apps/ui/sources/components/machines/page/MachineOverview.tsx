@@ -13,6 +13,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { MachineWhatRunsHereSection } from './MachineWhatRunsHereSection';
 import { t } from '@/text';
 
 import { MachineCapabilitiesSection } from './MachineCapabilitiesSection';
@@ -96,6 +97,9 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
                 isServerSwitching={target.isServerSwitching} refreshKey={refreshKey} />
             <MachineRecentSessionsSection machineId={props.machineId} serverId={props.serverId} />
             <MachineProjectTerminalsSection machineId={props.machineId} serverId={props.serverId} />
+
+            {/* What runs here (pfc-redesign mOv): the Environments this Machine runs, with the one environment row. */}
+            <MachineWhatRunsHereSection serverId={props.serverId} machineId={props.machineId} lifetime={binding ?? null} />
 
             {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
             <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}

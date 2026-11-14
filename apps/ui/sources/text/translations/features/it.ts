@@ -8449,6 +8449,10 @@ const machineDetailPageTranslations = { it: translated({
                 select: ({ name }) => `Ripulisci ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Cosa gira qui",
+            description: ({ count }: { count: number }) => count === 1 ? "1 ambiente gira su questa macchina." : `${count} ambienti girano su questa macchina.`,
+        },
         machineScheduled: {
             title: "Pianificato",
             description: ({ machine }: { machine: string }) => `Ciò che viene eseguito a orari su ${machine}: crontab e timer, letti all’apertura.`,

@@ -8441,6 +8441,10 @@ const machineDetailPageTranslations = { de: translated({
                 select: ({ name }) => `${name} aufräumen`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Was hier läuft",
+            description: ({ count }: { count: number }) => count === 1 ? "1 Umgebung läuft auf dieser Maschine." : `${count} Umgebungen laufen auf dieser Maschine.`,
+        },
         machineScheduled: {
             title: "Geplant",
             description: ({ machine }: { machine: string }) => `Was auf ${machine} zeitgesteuert läuft: Crontabs und Timer, beim Öffnen gelesen.`,

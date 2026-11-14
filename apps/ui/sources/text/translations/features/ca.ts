@@ -8449,6 +8449,10 @@ const machineDetailPageTranslations = { ca: translated({
                 select: ({ name }) => `Neteja ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Què s’hi executa",
+            description: ({ count }: { count: number }) => count === 1 ? "1 entorn s’executa en aquesta màquina." : `${count} entorns s’executen en aquesta màquina.`,
+        },
         machineScheduled: {
             title: "Programat",
             description: ({ machine }: { machine: string }) => `El que s’executa de manera programada a ${machine}: els crontabs i temporitzadors, llegits en obrir-ho.`,

@@ -8476,6 +8476,10 @@ const machineDetailPageTranslations = { ru: translated({
                 select: ({ name }) => `Очистить ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Что здесь работает",
+            description: ({ count }: { count: number }) => count === 1 ? "На этой машине работает 1 окружение." : `На этой машине работает окружений: ${count}.`,
+        },
         machineScheduled: {
             title: "По расписанию",
             description: ({ machine }: { machine: string }) => `Что запускается по расписанию на ${machine}: crontab и таймеры, читаются при открытии.`,

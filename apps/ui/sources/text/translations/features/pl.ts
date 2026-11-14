@@ -8467,6 +8467,10 @@ const machineDetailPageTranslations = { pl: translated({
                 select: ({ name }) => `Posprzątaj ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "Co tu działa",
+            description: ({ count }: { count: number }) => count === 1 ? "1 środowisko działa na tej maszynie." : `${count} środowisk działa na tej maszynie.`,
+        },
         machineScheduled: {
             title: "Zaplanowane",
             description: ({ machine }: { machine: string }) => `Co działa według harmonogramu na ${machine}: crontaby i timery, odczytywane przy otwarciu.`,

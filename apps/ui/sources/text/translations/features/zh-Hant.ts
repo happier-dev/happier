@@ -8438,6 +8438,10 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 select: ({ name }) => `清理 ${name}`,
             },
         },
+        machineWhatRunsHere: {
+            title: "這裡執行的內容",
+            description: ({ count }: { count: number }) => count === 1 ? "這台機器上執行著 1 個環境。" : `這台機器上執行著 ${count} 個環境。`,
+        },
         machineScheduled: {
             title: "排程",
             description: ({ machine }: { machine: string }) => `在 ${machine} 上按排程執行的內容：crontab 與計時器，開啟時讀取。`,
