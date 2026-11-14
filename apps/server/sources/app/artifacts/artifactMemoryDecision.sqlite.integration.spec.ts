@@ -19,7 +19,7 @@ import { inTx } from '@/storage/inTx';
 import { createArtifactTx } from './artifactWriteService';
 import { createSessionMessageFromPending } from '@/app/session/pending/pendingMessageTranscriptCommit';
 import { createDiscussion, postDiscussionMessage } from '@/app/discussions/mutations';
-import { inviteDiscussionParticipant, removeDiscussionParticipant } from '@/app/discussions/accessService';
+import { removeDiscussionParticipant } from '@/app/discussions/accessService';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from './artifactMutationHttpResponse';
@@ -184,6 +184,12 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             expect(await db.artifact.findUnique({ where: { id: unanchoredId }, select: { bodyVersion: true } })).toEqual({ bodyVersion: 1 });
 
             await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: reader.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            // A new passage thread already includes the Doc's readers, so the reader is a source participant.
+            // Only an Account outside the Discussion makes this Memory's audience broader than its source.
+            expect(await db.discussionGrant.findFirst({ where: { discussionId, principalKind: 'account', accountId: reader.id },
+                select: { id: true } })).not.toBeNull();
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: outsider.id, accessLevel: 'view', createdByAccountId: owner.id } });
             const update = (actorAccountId: string, ref = memoryDecisionSource, expectedBodyVersion = 1) => app.inject({ method: 'POST', url: `/v1/artifacts/${memory.id}/memory-decision`,
                 headers: { ...protocolHeaders, 'x-test-user-id': actorAccountId },
                 payload: { body: plain({ body: 'decision' }), expectedBodyVersion, memoryDecisionSource: ref } });
@@ -191,8 +197,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             expect(broader.statusCode, broader.body).toBe(403);
             expect(broader.json()).toEqual({ error: 'memory_decision_disclosure_denied' });
             expect(await db.artifact.findUnique({ where: { id: memory.id }, select: { bodyVersion: true } })).toEqual({ bodyVersion: 1 });
-            expect(await inviteDiscussionParticipant({ actorAccountId: owner.id, discussionId, authentication,
-                request: { participant: { kind: 'account', accountId: reader.id } } })).toMatchObject({ ok: true });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: memory.id, accountId: outsider.id } } });
             // The saver still reads the Doc; only the other Memory/Discussion member loses its source grant.
             await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
             const beforeDenied = await db.artifact.findUniqueOrThrow({ where: { id: memory.id } });
