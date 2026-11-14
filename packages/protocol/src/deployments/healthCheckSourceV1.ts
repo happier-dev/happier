@@ -10,6 +10,20 @@ import { EnvironmentHealthCheckSubjectV1Schema, HealthCheckSubjectV1Schema, type
 import type { AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
 import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from './healthCheckV1.js';
+import type { DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
+
+/** Syntax-only projection shared by saved HTTP/certificate probes and their settings display. Admission remains with the host. */
+export function readHealthCheckHttpTargetV1(target:
+    | Readonly<{ hostname: string; healthCheck?: DeploymentDomainHealthCheckV1 }>
+    | Readonly<{ endpoint: string; expectStatus: number }>,
+): Readonly<{ url: string; expectStatus: number }> | null {
+    if ('hostname' in target && !target.healthCheck) return null;
+    const address = 'hostname' in target ? `https://${target.hostname}${target.healthCheck!.path}` : target.endpoint;
+    // Concatenation keeps an admitted hostname even when the configured path starts with //.
+    const url = new URL(address);
+    url.hash = '';
+    return { url: url.href, expectStatus: 'hostname' in target ? target.healthCheck!.expectStatus : target.expectStatus };
+}
 
 const positive = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));
 const keyword = lazyZodSchema(() => z.string().check(z.minLength(1)));

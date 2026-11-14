@@ -221,6 +221,28 @@ const healthCheckSummary = (id: string, enabled = true) => createAutomationDefin
         eventRef: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' }, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
         sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null }] } as never);
 
+async function healthCheckDetail(id: string, enabled = true, encryption?: Readonly<{ secret: Uint8Array }>) {
+    const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
+    const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+    const summary = healthCheckSummary(id, enabled);
+    const { detail: _privateDetail, linkedExistingSessionId: _linkedSession, ...summaryInput } = summary;
+    const trigger = summary.triggers[0]!;
+    if (trigger.kind !== 'pluginEvent') throw new Error('Expected health Event fixture');
+    return AutomationDefinitionDetailSchema.parse({ ...summaryInput, targetType: null, existingSessionId: null,
+        observationOnly: { kind: 'observationOnly', templateVersion: summary.templateVersion },
+        triggers: [{ ...trigger, triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            ...(encryption ? { mode: 'e2ee' as const, material: { type: 'legacy' as const, secret: encryption.secret },
+                randomBytes: (length: number) => new Uint8Array(length).fill(3) } : { mode: 'plain' as const }),
+            binding: { v: 1, automationId: summary.id, triggerId: trigger.id, triggerRevision: trigger.revision,
+                triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+            definition: { v: 1, sourceInstanceId: `health:shop:${id}`, displayLabel: 'Shop availability',
+                sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [{ checkId: 'readiness',
+                    kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' }, binding: { kind: 'healthCheck' },
+                    config: { endpoint: 'https://shop.example/ready', expectStatus: 204 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 1 }] },
+                filter: null, maximumObservationAgeMs: null },
+        })) }] });
+}
+
 it('lists each attached preset as Setup on its Machine, including one that has never run, without a Software duplicate for direct installs', async () => {
     const identity = 'srv_inventory_setup';
     const setup = setupField([
@@ -244,7 +266,10 @@ it('lists each attached preset as Setup on its Machine, including one that has n
 });
 
 it('lists saved Checks from Automation summaries, keeps never-run and off subjects, and does not place them on a selected Machine', async () => {
-    await account.restore({ serverIdentityId: 'srv_inventory_checks', machines: [] });
+    const details = await Promise.all([healthCheckDetail('a'), healthCheckDetail('b', false)]);
+    await account.restore({ serverIdentityId: 'srv_inventory_checks', machines: [], httpAnswers: {
+        'POST /v3/automations/query': { body: { automations: details, nextCursor: null } },
+    } });
     const scope = storage.getState().settingsScope!;
     await act(async () => { storage.setState({ automations: { a: healthCheckSummary('a'), b: healthCheckSummary('b', false) }, isDataReady: true, automationDefinitionNextCursor: null }); });
     let query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true };
@@ -263,4 +288,57 @@ it('lists saved Checks from Automation summaries, keeps never-run and off subjec
     await hook.rerender();
     expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
     await hook.unmount();
+});
+
+it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts once for the presented Account and releases private page demand when hidden (%s)', async mode => {
+    const { createAutomationDefinitionFromDetail } = await import('@/sync/domains/automations/automationDefinitionProjection');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { readAutomationDefinitionDetailsDemand } = await import('@/sync/domains/automations/automationReadDemand');
+    const secret = new Uint8Array(32).fill(17);
+    await account.restore({ serverIdentityId: 'srv_inventory_check_facts', machines: [], ...(mode === 'e2ee' ? { e2eeSecret: secret } : {}) });
+    const scope = storage.getState().settingsScope!;
+    const detail = await healthCheckDetail('a', true, mode === 'e2ee' ? { secret } : undefined);
+    await act(async () => storage.setState({ automations: { a: createAutomationDefinitionFromDetail(detail) }, isDataReady: true }));
+    let query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
+        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', targetLabel: 'shop.example/ready', periodMs: 300_000 }] },
+    }));
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(true);
+    const ownedReads = () => account.home.requests.filter(request => request.path.startsWith('/v3/automations')
+        || request.path.startsWith('/v1/deployments/domains') || request.path === '/v1/account/encryption/currentness');
+    const reads = ownedReads().length;
+    const rows = hook.getCurrent().operationalFamilies.configuredCheck.rows;
+    expect(rows[0]!.native.name).toBe('Check a');
+    if (rows[0]!.definitionFacts.kind !== 'available') throw new Error('Expected readable source facts');
+    expect(rows[0]!.definitionFacts.checks[0]).not.toHaveProperty('address');
+    await hook.rerender(); await flushHookEffects();
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toBe(rows);
+    expect(ownedReads().length).toBe(reads);
+    query = { ...query, presented: false };
+    await hook.rerender(); await flushHookEffects();
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
+    expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(false);
+    expect(ownedReads().length).toBe(reads);
+    let releaseCurrentness!: () => void;
+    const currentnessGate = new Promise<void>(resolve => { releaseCurrentness = resolve; });
+    let currentnessRequested = false;
+    account.home.answer(scope.serverId, '/v1/account/encryption/currentness', {
+        select: () => { currentnessRequested = true; return { status: 503, body: { error: 'unavailable' }, respondAfter: currentnessGate }; },
+    });
+    try {
+        query = { ...query, presented: true };
+        await hook.rerender();
+        await vi.waitFor(() => expect(currentnessRequested).toBe(true));
+        expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]?.definitionFacts.kind).toBe('loading');
+    } finally { releaseCurrentness(); }
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]?.definitionFacts.kind).toBe('unavailable'));
+    query = { ...query, presented: false };
+    await hook.rerender(); await flushHookEffects();
+    await account.restore({ accountId: 'other-account', serverIdentityId: 'srv_inventory_check_facts', machines: [] });
+    query = { ...query, scope: storage.getState().settingsScope!, presented: true };
+    await hook.rerender(); await flushHookEffects();
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
+    expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(false);
 });

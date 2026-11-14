@@ -14,6 +14,7 @@ import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serve
 import type { AutomationRequestContext } from '@/sync/api/automations/apiAutomations';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
+import { readPluginEventAutomationPrivateDetail } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './syncAutomations';
 
@@ -138,6 +139,67 @@ afterEach(async () => {
 });
 
 describe('fetchAndApplyAutomations', () => {
+
+    it('acquires one private definition page instead of summaries for presented saved Checks, including never-observed sources', async () => {
+        const trigger = eventSummary.triggers[0];
+        if (!trigger || trigger.kind !== 'pluginEvent') throw new Error('Expected Event fixture');
+        const eventRef = { pluginId: 'happier.machine.services', localId: 'health-check-failed' };
+        const sourceConfig = { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [{
+            checkId: 'site', kind: { pluginId: eventRef.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+            config: { endpoint: 'https://shop.example/ready', expectStatus: 200 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 1,
+        }] };
+        const detail = { ...eventSummary, targetType: null, existingSessionId: null,
+            observationOnly: { kind: 'observationOnly', templateVersion: eventSummary.templateVersion },
+            triggers: [{ ...trigger, eventRef, triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain', binding: { v: 1, automationId: eventSummary.id, triggerId: trigger.id,
+                    triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: trigger.sourceSelectorId },
+                definition: { v: 1, sourceInstanceId: 'health:shop', sourceConfig, displayLabel: 'Shop availability',
+                    automationDisplay: { name: 'Shop availability', description: 'Public readiness route' },
+                    filter: null, maximumObservationAgeMs: null },
+            })) }] };
+        const cursors: unknown[] = [];
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            });
+            if (path === '/v3/automations/query') {
+                const query = JSON.parse(String(init?.body));
+                cursors.push(query.cursor ?? null);
+                const second = { ...detail, id: 'event-second', triggers: [{ ...detail.triggers[0]!,
+                    triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                        mode: 'plain', binding: { v: 1, automationId: 'event-second', triggerId: trigger.id,
+                            triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: trigger.sourceSelectorId },
+                        definition: { v: 1, sourceInstanceId: 'health:second', sourceConfig, displayLabel: 'Second readiness',
+                            filter: null, maximumObservationAgeMs: null },
+                    })),
+                }] };
+                return Response.json({ automations: [query.cursor ? second : detail], nextCursor: query.cursor ? null : 'following-page' });
+            }
+            if (path === '/v3/automations') return Response.json(await listAutomationDefinitionsMock());
+            return null;
+        });
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const request = { credentials, requestContext, applyAutomations, includePrivateDefinitions: true };
+        const first = await fetchAndApplyAutomations(request);
+        const row = storage.getState().automations[eventSummary.id]!;
+        expect(row.detail.kind).toBe('available');
+        expect(row.name).toBe('Shop availability');
+        expect(readPluginEventAutomationPrivateDetail(row, trigger.id, { mode: 'plain' })?.storedDefinition.sourceConfig)
+            .toEqual(sourceConfig);
+        expect(row.lastRunAt).toBeNull();
+        expect(first.nextCursor).toBe('following-page');
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
+            .map(({ method, url }) => [method, new URL(url).pathname])).toEqual([['POST', '/v3/automations/query']]);
+        await fetchAndApplyAutomations({ ...request, cursor: 'following-page', traversalToken: first.traversalToken!,
+            appendAutomations: storage.getState().appendAutomations });
+        expect(cursors).toEqual([null, 'following-page']);
+        expect(storage.getState().automations[eventSummary.id]?.detail.kind).toBe('available');
+        expect(storage.getState().automations['event-second']?.detail.kind).toBe('available');
+        expect(storage.getState().automationDefinitionNextCursor).toBeNull();
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v3/automations')).toEqual([]);
+    });
 
     it('applies content-free summaries and refreshes already-loaded Event runs through the current API', async () => {
         const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));

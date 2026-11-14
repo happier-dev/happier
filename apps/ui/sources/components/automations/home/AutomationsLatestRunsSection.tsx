@@ -16,7 +16,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useAutomations, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
-import { retainAutomationRunHistoryDemand } from '@/sync/domains/automations/automationRunHistoryDemand';
+import { retainAutomationRunHistoryDemand } from '@/sync/domains/automations/automationReadDemand';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';

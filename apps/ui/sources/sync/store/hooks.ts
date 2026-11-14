@@ -1,7 +1,7 @@
 import { readSessionArchivePending, readSessionArchiveOperationsForServers, projectSessionArchiveRow, projectSessionArchiveRowsByServerId } from '../domains/session/listing/sessionArchiveState';
 import { resolveSessionRpcAvailabilityState } from '../domains/session/sessionRpcAvailability';
 import React from 'react';
-import { retainAutomationRunHistoryDemand } from '../domains/automations/automationRunHistoryDemand';
+import { retainAutomationRunHistoryDemand } from '../domains/automations/automationReadDemand';
 import { readMachineField, type MachineFieldContent } from './machineFieldRead';
 import { subscribeMachineField, subscribeMachineFields } from './machineFieldSubscription';
 import { useSetting, useLocalSetting } from './settingsReadHooks';

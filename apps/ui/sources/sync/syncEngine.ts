@@ -5,7 +5,7 @@ import { readSessionOrganizationWorkspaceLabel } from '@/sync/domains/session/or
 import { requireSessionOrganizationMutationScope, writeSessionOrganizationWorkspaceLabels } from '@/sync/ops/sessionOrganization';
 import { registerSyncRuntime } from './sync';
 import { ViewDemandSync, type PeripheralFeed } from './engine/viewDemandSync';
-import { readAutomationRunHistoryDemand } from './domains/automations/automationRunHistoryDemand';
+import { readAutomationRunHistoryDemand, readAutomationDefinitionDetailsDemand } from './domains/automations/automationReadDemand';
 import { type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { repairTeamGroupLabelEnvelopes } from './ops/teams/teamGroupLabelEnvelopes';
@@ -8944,7 +8944,9 @@ class Sync {
      * pending pass instead. Writers that just changed a definition use refreshAutomations.
      */
     public ensureAutomationsRead = async (): Promise<void> => {
-        if (this.automationsReadForCredentials !== null && this.automationsReadForCredentials === this.credentials) {
+        const privatePageNeeded = readAutomationDefinitionDetailsDemand(captureActiveServerAccountScopeLifetime())
+            && Object.values(storage.getState().automations).some(definition => definition.detail.kind === 'unloaded');
+        if (!privatePageNeeded && this.automationsReadForCredentials !== null && this.automationsReadForCredentials === this.credentials) {
             await this.automationsSync.awaitQueue();
             return;
         }
@@ -8976,6 +8978,7 @@ class Sync {
         const result = await fetchAndApplyAutomations({
             credentials: this.credentials,
             cursor: expectedCursor,
+            includePrivateDefinitions: readAutomationDefinitionDetailsDemand(captureActiveServerAccountScopeLifetime()),
             traversalToken: expectedTraversalToken ?? undefined,
             requestContext,
             shouldContinue,
@@ -9930,6 +9933,7 @@ class Sync {
         try {
             const result = await fetchAndApplyAutomations({
                 credentials,
+                includePrivateDefinitions: readAutomationDefinitionDetailsDemand(historyLifetime),
                 requestContext: this.createAppliedAutomationRequestContext(target),
                 shouldContinue,
                 onDefinitionsRead,

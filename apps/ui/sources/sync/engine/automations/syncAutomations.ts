@@ -3,9 +3,10 @@ import type {
     AutomationDefinition,
     AutomationDefinitionRun,
 } from '@/sync/domains/automations/automationTypes';
-import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
+import { createAutomationDefinitionSummary, createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
 import {
     listAutomationDefinitions,
+    listAutomationDefinitionDetails,
     type AutomationRequestContext,
 } from '@/sync/api/automations/apiAutomations';
 import { listAutomationDefinitionRuns } from '@/sync/api/automations/apiAutomationRuns';
@@ -26,13 +27,13 @@ import {
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { deriveAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
-async function openAutomationListDisplays(params: Readonly<{
+async function openAutomationListDisplays<T extends AutomationDefinitionListResponse['automations'][number]>(params: Readonly<{
     credentials: AuthCredentials;
     requestContext?: AutomationRequestContext;
     serverId: string | null | undefined;
-    automations: AutomationDefinitionListResponse['automations'];
+    automations: T[];
     shouldContinue: () => boolean;
-}>): Promise<AutomationDefinitionListResponse['automations']> {
+}>): Promise<T[]> {
     if (!params.automations.some(hasPrivateAutomationDefinitionDisplayCarrierV1)) return params.automations;
     const resolveEncryption = async (): Promise<AvailableAutomationAccountEncryptionV1> => {
         const resolved = await resolveValidatedAutomationAccountEncryptionV1({
@@ -83,6 +84,8 @@ export async function fetchAndApplyAutomations(params: {
         nextCursor: string | null,
     ) => boolean;
     cursor?: string;
+    /** Presented source readers replace the summary acquisition with this same private page. */
+    includePrivateDefinitions?: boolean;
     traversalToken?: number;
     getDemandedAutomationRunIds?: () => readonly string[];
     /**
@@ -118,20 +121,21 @@ export async function fetchAndApplyAutomations(params: {
     }
     if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
 
-    const result = await listAutomationDefinitions(params.credentials, {
-        ...(params.cursor ? { cursor: params.cursor } : {}),
-    }, params.requestContext);
+    const projectPage = async <T extends AutomationDefinitionListResponse['automations'][number]>(
+        page: Readonly<{ automations: T[]; nextCursor: string | null }>, project: (value: T) => AutomationDefinition,
+    ) => {
+        if (!shouldContinue()) return { automations: [], nextCursor: null };
+        params.onDefinitionsRead?.(page);
+        const opened = await openAutomationListDisplays({ credentials: params.credentials!, requestContext: params.requestContext,
+            serverId, automations: page.automations, shouldContinue });
+        return { automations: opened.map(project), nextCursor: page.nextCursor };
+    };
+    const query = { ...(params.cursor ? { cursor: params.cursor } : {}) };
+    const result = params.includePrivateDefinitions
+        ? await projectPage(await listAutomationDefinitionDetails(params.credentials, query, params.requestContext), createAutomationDefinitionFromDetail)
+        : await projectPage(await listAutomationDefinitions(params.credentials, query, params.requestContext), createAutomationDefinitionSummary);
     if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
-    params.onDefinitionsRead?.(result);
-    const openedAutomations = await openAutomationListDisplays({
-        credentials: params.credentials,
-        requestContext: params.requestContext,
-        serverId,
-        automations: result.automations,
-        shouldContinue,
-    });
-    if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
-    const automations = openedAutomations.map(createAutomationDefinitionSummary);
+    const automations = result.automations;
     if (!shouldContinue()) return { nextCursor: null, traversalToken: null };
     let traversalToken: number | null;
     if (params.cursor) {

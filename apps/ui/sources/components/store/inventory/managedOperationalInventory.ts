@@ -17,6 +17,8 @@ import { machineSetupSourceName } from '@/components/machines/setup/machineSetup
 import { t } from '@/text';
 import type { InstalledAppRow, InstalledAppsResult } from '../catalog/storeApps';
 import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
+import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useConfiguredCheckDefinitions, configuredCheckDefinitionKey, CONFIGURED_CHECK_DEFINITION_LOADING, type ConfiguredCheckDefinitionFacts } from './useConfiguredCheckDefinitions';
 
 /** Saved backup configuration, independent of whether a backup has ever run. */
 export type ManagedConfiguredBackupRow = Omit<InstalledAppRow, 'kind'> & Readonly<{ kind: 'configuredBackup' }>;
@@ -72,8 +74,9 @@ const NO_SERVER_IDS: readonly string[] = Object.freeze([]);
 export type ManagedConfiguredCheckRow = Readonly<{
     kind: 'configuredCheck'; key: string; scope: ServerAccountScope; automationId: string; triggerId: string; native: AutomationDefinition;
     lastResults: ConfiguredHealthResultsState;
+    definitionFacts: ConfiguredCheckDefinitionFacts;
 }>;
-type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | 'automation_page' | 'health_result_page' | 'health_result_unavailable' | 'health_result_loading', () => void>;
+type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | 'automation_page' | 'check_definition' | 'domain_page' | 'health_result_page' | 'health_result_unavailable' | 'health_result_loading', () => void>;
 const EMPTY_CHECK_ROWS: readonly ManagedConfiguredCheckRow[] = Object.freeze([]);
 
 /** P30 records only adopted Machine watches here; Environment services stay with their App. */
@@ -186,6 +189,11 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
     const ready = useIsDataReady();
     const scope = admitted.scope;
     const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
+    const lifetime = React.useMemo(() => admitted.binding ? readServerAccountScopeOwnerLifetime(admitted.binding) : null, [admitted.binding]);
+    const definitions = useConfiguredCheckDefinitions(lifetime, listed, automations);
+    const loadAutomations = React.useCallback(async () => {
+        if (nextCursor) await (await import('@/sync/sync')).sync.loadMoreAutomations(nextCursor);
+    }, [nextCursor]);
     const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
         isPluginEventAutomationTrigger(trigger) && trigger.eventRef.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1)));
     const previous = React.useRef(EMPTY_CHECK_ROWS);
@@ -198,21 +206,25 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
             const retained = byKey.get(key);
             const lastResults = !healthResults ? CONFIGURED_HEALTH_LOADING : 'kind' in healthResults.value ? healthResults.value
                 : configuredHealthResultsForTrigger(healthResults.value, native.id, trigger);
-            return [retained?.native === native && retained.lastResults === lastResults ? retained : { kind: 'configuredCheck', key, scope, automationId: native.id, triggerId: trigger.id, native, lastResults }];
+            const definitionFacts = definitions.byTrigger.get(configuredCheckDefinitionKey(native.id, trigger.id)) ?? CONFIGURED_CHECK_DEFINITION_LOADING;
+            return [retained?.native === native && retained.lastResults === lastResults && retained.definitionFacts === definitionFacts ? retained
+                : { kind: 'configuredCheck', key, scope, automationId: native.id, triggerId: trigger.id, native, lastResults, definitionFacts }];
         }));
         if (next.length !== previous.current.length || next.some((row, index) => row !== previous.current[index])) previous.current = next.length === 0 ? EMPTY_CHECK_ROWS : next;
         return previous.current;
-    }, [automations, listed, scope, healthResults]);
+    }, [automations, listed, scope, healthResults, definitions.byTrigger]);
     return React.useMemo<ConfiguredCheckResult>(() => {
         if (!scope) return { rows: EMPTY_CHECK_ROWS, coverage: admitted.coverage };
         if (input.projectKey || input.machine) return { rows: EMPTY_CHECK_ROWS, coverage: 'available' };
         if (!demand.presented || !ready) return { rows: EMPTY_CHECK_ROWS, coverage: 'loading' };
-        if (nextCursor !== null) return { rows, coverage: { partial: 'automation_page' } };
+        if (nextCursor !== null) return { rows, coverage: { partial: 'automation_page' }, continuation: loadAutomations };
         if (rows.length === 0) return { rows, coverage: 'available' };
+        if (rows.some(row => row.definitionFacts.kind !== 'available')) return { rows, coverage: { partial: 'check_definition' } };
+        if (definitions.domainsPending || definitions.domainContinuation) return { rows, coverage: { partial: 'domain_page' }, continuation: definitions.domainContinuation };
         if (!healthResults) return { rows, coverage: { partial: 'health_result_loading' } };
         if ('kind' in healthResults.value) return { rows, coverage: { partial: 'health_result_unavailable' }, continuation: healthResults.loadNext };
         const partial = healthResults.value.preceding || healthResults.value.nextCursor !== undefined;
         return { rows, coverage: partial ? { partial: 'health_result_page' } : 'available',
             ...(partial ? { continuation: healthResults.loadNext } : {}) };
-    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, healthResults]);
+    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, healthResults, loadAutomations, definitions.domainsPending, definitions.domainContinuation]);
 }

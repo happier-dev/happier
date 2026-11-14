@@ -2,7 +2,12 @@ import {
   HealthCheckServiceHttpConfigV1Schema,
   HealthCheckSourceConfigV1Schema,
   HealthCheckTcpConfigV1Schema,
+  HealthCheckDnsConfigV1Schema,
+  type HealthCheckDefinitionV1,
+  readHealthCheckHttpTargetV1,
 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { readDeploymentDomainHostnameV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
 import type { HealthCheckSubjectV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
@@ -11,6 +16,7 @@ import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { t } from '@/text';
+import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 type Checks = Extract<
   ConfiguredHealthResultsState,
@@ -122,6 +128,64 @@ export type ServiceCheckSettings = Readonly<{
   }>;
 }>;
 
+export type ServiceCheckDefinitionFacts = Readonly<{
+  checkId: string;
+  name: string;
+  targetLabel: string | null;
+  periodMs: number;
+  domainId: string | null;
+  address: string | null;
+  expectStatus: number | null;
+  keyword: string | null;
+}>;
+export type ServiceCheckDefinitionReadOptions = Readonly<{
+  kindName?: (kind: HealthCheckDefinitionV1['kind']) => string | null;
+  domains?: readonly Readonly<{
+    domain: Readonly<{ id: string; environmentId: string; targetLinkId: string }>;
+    content: DeploymentDomainContentV1;
+  }>[];
+}>;
+const storedHealthSource = createStoredReadSchema(HealthCheckSourceConfigV1Schema);
+const storedHttpConfig = createStoredReadSchema(HealthCheckServiceHttpConfigV1Schema);
+const storedTcpConfig = createStoredReadSchema(HealthCheckTcpConfigV1Schema);
+const storedDnsConfig = createStoredReadSchema(HealthCheckDnsConfigV1Schema);
+
+/** Saved definition facts are independent of results. Domain targets come from the current Domain projection. */
+export function readServiceCheckDefinitions(
+  saved: Readonly<{ sourceConfig: unknown; displayLabel: string }>,
+  options: ServiceCheckDefinitionReadOptions = {},
+): readonly ServiceCheckDefinitionFacts[] | null {
+  const parsed = storedHealthSource.safeParse(saved.sourceConfig);
+  if (!parsed.success) return null;
+  const source = parsed.data;
+  const environmentId = source.subject.kind === 'environment' ? source.subject.environmentId : null;
+  return source.checks.map(check => {
+    const builtin = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
+    const http = builtin && (check.kind.localId === 'http' || check.kind.localId === 'certificate')
+      ? storedHttpConfig.safeParse(check.config) : null;
+    const tcp = builtin && check.kind.localId === 'tcp' ? storedTcpConfig.safeParse(check.config) : null;
+    const dns = builtin && check.kind.localId === 'dns' ? storedDnsConfig.safeParse(check.config) : null;
+    const binding = check.binding;
+    const domainId = binding.kind === 'healthCheck' ? null : binding.domainId;
+    const domain = binding.kind !== 'healthCheck' && source.subject.kind === 'environment'
+      ? options.domains?.find(item => item.domain.id === binding.domainId && item.domain.targetLinkId === binding.targetLinkId
+        && item.domain.environmentId === environmentId) : undefined;
+    const hostname = domain ? readDeploymentDomainHostnameV1(domain.content.hostname) : null;
+    const target = domain && hostname ? readHealthCheckHttpTargetV1({ hostname, healthCheck: domain.content.healthCheck })
+      : http?.success ? readHealthCheckHttpTargetV1(http.data) : null;
+    const address = domain ? target?.url ?? null : http?.success ? http.data.endpoint : tcp?.success ? `${tcp.data.host}:${tcp.data.port}` : null;
+    const labelUrl = target ? new URL(target.url) : null;
+    if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
+    return {
+      checkId: check.checkId, name: options.kindName?.(check.kind) ?? saved.displayLabel,
+      targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}` : null),
+      periodMs: check.periodMs, domainId, address,
+      expectStatus: target?.expectStatus ?? null,
+      keyword: http?.success ? http.data.keyword ?? null : null,
+    };
+  });
+}
+
 /**
  * One saved Check's settings as its saved source holds them (the automation edit seed). The shown check is the one
  * whose results the detail shows, else the source's first. Nothing is inferred: an unreadable source gives null.
@@ -129,9 +193,10 @@ export type ServiceCheckSettings = Readonly<{
 export function readServiceCheckSettings(
   seed: PluginEventAutomationEditSeed | null,
   checkId: string | null,
+  options: ServiceCheckDefinitionReadOptions = {},
 ): ServiceCheckSettings | null {
   if (!seed) return null;
-  const parsed = HealthCheckSourceConfigV1Schema.safeParse(seed.source.sourceConfig);
+  const parsed = storedHealthSource.safeParse(seed.source.sourceConfig);
   if (!parsed.success) return null;
   const source = parsed.data;
   const check = source.checks.find((candidate) => candidate.checkId === checkId) ?? source.checks[0];
@@ -139,13 +204,12 @@ export function readServiceCheckSettings(
   const builtin = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
   const kind = builtin && (HEALTH_CHECK_KINDS_V1 as readonly string[]).includes(check.kind.localId)
     ? (check.kind.localId as HealthCheckKindV1) : null;
-  const http = kind === 'http' ? HealthCheckServiceHttpConfigV1Schema.safeParse(check.config) : null;
-  const tcp = kind === 'tcp' ? HealthCheckTcpConfigV1Schema.safeParse(check.config) : null;
+  const facts = readServiceCheckDefinitions(seed.source, options)?.find(candidate => candidate.checkId === check.checkId);
   return {
     kind,
-    address: http?.success ? http.data.endpoint : tcp?.success ? `${tcp.data.host}:${tcp.data.port}` : null,
-    expectStatus: http?.success ? http.data.expectStatus : null,
-    keyword: http?.success ? (http.data.keyword ?? null) : null,
+    address: facts?.address ?? null,
+    expectStatus: facts?.expectStatus ?? null,
+    keyword: facts?.keyword ?? null,
     periodMs: check.periodMs,
     failuresBeforeAlert: check.consecutiveFailuresBeforeAlerting,
     alertChannels: source.alerts?.channels.length ?? 0,

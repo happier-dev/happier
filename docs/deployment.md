@@ -3785,6 +3785,17 @@ Machine. An unavailable or ambiguous saved source stays unavailable instead of
 opening an empty replacement draft; a subject with no saved source starts a new
 draft through the same writer.
 
+Presented Account Checks borrow the existing Automation private-definition page
+instead of issuing a detail read for each row. The authored Automation name stays
+on `native.name`; `definitionFacts.checks[]` carries the current check-kind `name`,
+human `targetLabel`, saved `periodMs`, `checkId` and nullable `domainId`.
+These facts exist before a first observation. Domain targets use current Domain
+content and the same HTTP/certificate target builder as the probe; row labels omit
+URL queries and fragments. Unknown definitions or target content stay unavailable.
+The existing `lastResults` projection remains the last-result owner. Hiding the
+read releases private-page demand and opened Account material; reopening uses the
+ordinary currentness read before disclosing facts again.
+
 The shared Environment read controller consumes those exact selected Resources
 only while an Environment or full receipt page demands current health. Both
 page hooks expose the same `healthFeed`: per Environment, active member and

@@ -4,6 +4,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  readServiceCheckDefinitions,
   serviceCheckResultWord,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
@@ -137,6 +138,32 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
   it('says nothing it cannot read: an unparsable source or a missing seed yields no settings', () => {
     expect(readServiceCheckSettings(null, null)).toBeNull();
     expect(readServiceCheckSettings(seed({ v: 2 }), null)).toBeNull();
+  });
+
+  it('reads a Domain check target from current Domain content, including its health route before any result exists', () => {
+    const config = { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [
+      check('public', {}, { binding: { kind: 'domain', domainId: 'shop-domain', targetLinkId: 'runtime', condition: 'domain_probe_failed' } }),
+    ] };
+    const options = { domains: [{ domain: { id: 'shop-domain', environmentId: 'shop', targetLinkId: 'runtime' },
+      content: { hostname: 'shop.example', target: { service: 'web', containerPort: 3000, path: '/store' },
+        healthCheck: { path: '/ready', expectStatus: 204 } } }] };
+    const read = readServiceCheckSettings as (...args: [...Parameters<typeof readServiceCheckSettings>, typeof options]) => ReturnType<typeof readServiceCheckSettings>;
+    expect(read(seed(config), 'public', options)).toMatchObject({ address: 'https://shop.example/ready', expectStatus: 204, periodMs: 300_000 });
+  });
+
+  it.each(['http', 'certificate'] as const)('uses the probe target builder for a Domain query route and exposes only its human route label (%s)', kind => {
+    const name = kind === 'http' ? 'HTTP' : 'Certificate';
+    const saved = { sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [
+      check('public', {}, { kind: { pluginId: 'happier.machine.services', localId: kind }, binding: { kind: 'domain', domainId: 'shop-domain', targetLinkId: 'runtime',
+        condition: kind === 'http' ? 'domain_probe_failed' : 'certificate_renewal_failed' } }),
+    ] }, displayLabel: 'Saved health checks' };
+    const facts = readServiceCheckDefinitions(saved, { kindName: () => name, domains: [{
+      domain: { id: 'shop-domain', environmentId: 'shop', targetLinkId: 'runtime' },
+      content: { hostname: 'shop.example', target: { service: 'web', containerPort: 3000, path: '/store' },
+        healthCheck: { path: '/ready?access_token=synthetic#ignored', expectStatus: 204 } },
+    }] });
+    expect(facts).toMatchObject([{ name, address: 'https://shop.example/ready?access_token=synthetic',
+      targetLabel: 'shop.example/ready', periodMs: 300_000 }]);
   });
 
   it('a TCP check has an address but no HTTP expectation; a webhook-delivered source has no observing Machine', () => {

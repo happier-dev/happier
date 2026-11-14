@@ -496,6 +496,7 @@ describe('saved source finite native producer binding', () => {
                         targetLinkId: link.id, condition: 'domain_probe_failed' } }] };
                 const f = await adopted(sourceConfig, home.machineId);
                 const actionSeed: PluginInvocationServicesSeed = { ...f.seed, surface: 'cli',
+                    approvalContext: { serverId: profile.id, serverIdentityId: home.serverId },
                     contribution: { id: `health/${kind}`, qualifiedId: `happier.machine.services/actions/health/${kind}` } };
                 const requests: string[] = [];
                 let expectedStatus = 204;
