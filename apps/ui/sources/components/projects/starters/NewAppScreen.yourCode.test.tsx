@@ -138,6 +138,12 @@ it('the Deploy route keeps its Machine through Your code and the catalog (lab dM
     await screen.pressByTestIdAsync('newApp.continue');
     expect(routerMock.spies.push).toHaveBeenCalledWith(
       `/deployments/source-invoices?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=repository&deployMachine=hetzner-fsn1`);
+    // QA-DEPLOY-1114 #25: an Already built door (Compose file) keeps the Machine too, not the draft's default one.
+    routerMock.spies.push.mockClear();
+    await screen.pressByTestIdAsync('newApp.built.compose');
+    await screen.pressByTestIdAsync('newApp.continue');
+    expect(routerMock.spies.push).toHaveBeenCalledWith(
+      `/deployments/new?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=compose&deployMachine=hetzner-fsn1`);
     routerMock.spies.push.mockClear();
     await screen.pressByTestIdAsync('newApp.fromCatalog');
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(/kind=app.*machine=/));

@@ -288,7 +288,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     if (!scope) return;
     if (chosen === 'built:image' || chosen === 'built:compose') {
       stepAside();
-      router.push(buildDeploymentNewDefinitionHref({ serverId: scope.serverId, kind: chosen === 'built:image' ? 'image' : 'compose' }) as never);
+      router.push(buildDeploymentNewDefinitionHref({ serverId: scope.serverId, kind: chosen === 'built:image' ? 'image' : 'compose',
+        machineId: props.machine?.machineId ?? null }) as never);
       return;
     }
     const item = catalogApps.find((candidate) => catalogDoor(candidate) === chosen);

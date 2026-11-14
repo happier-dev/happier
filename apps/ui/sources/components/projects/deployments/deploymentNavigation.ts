@@ -49,8 +49,11 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
 export type DeploymentNewDefinitionKind = 'compose' | 'image';
 
 /** A Project's new-Environment draft, opened on a stored definition (Store → Apps' Paste a Compose file, Run an image). */
-export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: string; projectSourceId?: string; kind: DeploymentNewDefinitionKind }>): string {
-    return `/deployments/${input.projectSourceId ? encodeURIComponent(input.projectSourceId) : 'new'}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${input.kind}`;
+export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: string; projectSourceId?: string; kind: DeploymentNewDefinitionKind;
+    /** The Machine a "Deploy an app here" door already chose; the draft starts on it (as the repository draft does). */
+    machineId?: string | null }>): string {
+    return `/deployments/${input.projectSourceId ? encodeURIComponent(input.projectSourceId) : 'new'}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${input.kind}`
+        + (input.machineId ? `&deployMachine=${encodeURIComponent(input.machineId)}` : '');
 }
 
 /** The draft door's value for a Project's own repository (Deploy an app → Your code); not a stored definition. */
