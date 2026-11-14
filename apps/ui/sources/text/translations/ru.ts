@@ -3556,7 +3556,7 @@ export const ru: TranslationStructure = {
     trayOpenInHappier: 'Открыть в Happier',
     traySettings: 'Настройки…',
     trayStartAtLogin: 'Запускать при входе',
-    trayStopAndQuit: 'Остановить фоновые службы и выйти',
+    trayStopAndQuit: 'Выйти из Happier (остановить фоновые службы)',
     trayStart: 'Запустить',
     trayRestart: 'Перезапустить',
     trayStop: 'Остановить',

@@ -3414,7 +3414,7 @@ export const ca: TranslationStructure = {
         trayOpenInHappier: 'Obre a Happier',
         traySettings: 'Configuració…',
         trayStartAtLogin: 'Inicia en entrar',
-        trayStopAndQuit: 'Atura els serveis en segon pla i surt',
+        trayStopAndQuit: 'Surt de Happier (atura els serveis en segon pla)',
         trayStart: 'Inicia',
         trayRestart: 'Reinicia',
         trayStop: 'Atura',

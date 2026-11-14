@@ -3905,7 +3905,7 @@ localTailscale: {
     trayOpenInHappier: 'Happier で開く',
     traySettings: '設定…',
     trayStartAtLogin: 'ログイン時に起動',
-    trayStopAndQuit: 'バックグラウンドサービスを停止して終了',
+    trayStopAndQuit: 'Happier を終了（バックグラウンドサービスを停止）',
     trayStart: '開始',
     trayRestart: '再起動',
     trayStop: '停止',
