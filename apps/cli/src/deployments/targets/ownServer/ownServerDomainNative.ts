@@ -1,3 +1,4 @@
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { homedir } from 'node:os';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
@@ -504,7 +505,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             : job.kind === 'domainDiscover' ? await discover(job, context) : await execute(job, context); }
         catch (error) {
             const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
+                : normalizeActionExecutorThrownError(error).errorCode,
                 error, 'deployment.domain.native_execution');
             const failureCause = error instanceof Error && 'failureCause' in error && error.failureCause !== undefined
                 ? readActionFailureCauseV1(error.failureCause) : undefined;

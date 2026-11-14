@@ -6,8 +6,9 @@ import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import nacl from 'tweetnacl';
 import { MachineServicesDetailResultV1Schema, MachineServicesListResultV1Schema,
-    DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
+    DeploymentChildRpcV1Schema, accountSettingsParse, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -39,12 +40,19 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDeploymentChildRpc';
 import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
-    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false) {
+    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false, prepareReadRole = false) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -59,9 +67,13 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         endpoints: [{ kind: 'https', url: serverUrl }],
     } });
     // Installed identity is an OS-file boundary; all source and service owners remain real.
+    const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+    const installation = { machineId: 'machine-a', installationId: 'installation-a',
+        publicKey: Buffer.from(installationKeys.publicKey).toString('base64url') };
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
-        installationId: 'installation-a', createdAt: 1, publicKey: Buffer.alloc(32).toString('base64url'),
-        privateKey: Buffer.alloc(64).toString('base64url') });
+        installationId: installation.installationId, createdAt: 1,
+        publicKey: prepareReadRole ? installation.publicKey : Buffer.alloc(32).toString('base64url'),
+        privateKey: prepareReadRole ? Buffer.from(installationKeys.secretKey).toString('base64url') : Buffer.alloc(64).toString('base64url') });
     const target = { serverId: profile.id, machineId: 'machine-a' };
     // Reload16: serving B reused the native container created from retained A.
     const sourceDeploymentId = sourceCase ? 'cmvxhjin9002amcvu7wok7vi1' : 'deployment-a';
@@ -78,6 +90,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 { target: 5432, published: '35432', host_ip: '127.0.0.1', protocol: 'udp' }] : [] }])) });
     const definition = { kind: 'stored' as const, contentRevision: 1, document,
         composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: composeServices };
+    const runtimeBindings = prepareReadRole ? [{ purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
+        grantRef: '00000000-0000-4000-8000-000000000041', source: { kind: 'value' as const, value: 'fixture_database' } }] : [];
     const admission = { ...sourceIdentity, ...target, deploymentId: sourceDeploymentId, installationId: 'installation-a',
         artifactDirectory: join(root, 'artifacts'), definition,
         ...(restoration ? { restorationForDeploymentId: sourceDeploymentId } : {}), async assertCurrent() {} };
@@ -124,7 +138,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 v: 1, environmentId: sourceIdentity.environmentId, environmentRevision: environment.revision, targetLinkId: link.id,
                 targetLinkRevision: link.revision, sourceIntent: definition, manifestFingerprint: source.manifestFingerprint,
                 configInputDigests: [{ path: 'compose.yaml', digest: definition.composeDigest }], physicalProjectName: sourceIdentity.projectName,
-                toolVersion: '2.39.4', services: composeServices, profiles: [], bindings: [], images,
+                toolVersion: '2.39.4', services: composeServices, profiles: [], bindings: runtimeBindings, images,
                 ownServer: { rollout: 'recreate', autoRestorePreviousRelease: false, serviceExports: appliedServiceExports },
                 members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
             } } },
@@ -147,6 +161,12 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', jti: home })).toString('base64url')}.signature`;
     const credentials: StoredCredentials = { token, encryption: homeInventoryMode === 'e2ee'
         ? { type: 'legacy', secret: new Uint8Array(32).fill(23) } : null };
+    const readRoleRef = formatSharedSavedSecretRefV1('recovery-read-role');
+    const bindingEnvironment = prepareReadRole ? createDeploymentEnvironmentDetailV1({ environment,
+        content: { ...createDeploymentEnvironmentDetailV1({ environment }).content, definition, bindings: runtimeBindings,
+            template: { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: definition.composeDigest }, services: composeServices,
+                data: [{ engine: 'postgres', service: primaryService, version: '16', variables: { database: 'DB_NAME' } }] } } }) : undefined;
     let requester: Awaited<ReturnType<typeof createDeploymentChildRequesterHarness>> | undefined;
     if (homeInventoryMode) {
         const mode = homeInventoryMode;
@@ -163,6 +183,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         // opens its historical receipt through the mode-correct Artifact owner.
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             const path = new URL(request.url!).pathname;
+            if (prepareReadRole && path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true,
+                grants: [], bindingPreparation: { runtimeInstallations: [installation], buildInstallation: installation } } };
             expect(request.method).toBe('GET');
             if (path === '/v1/deployments/environments') {
                 expect(new URL(request.url!).searchParams.get('machineId')).toBe(target.machineId);
@@ -179,8 +201,16 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
-            if (requester && path === '/v1/account/profile') return { status: 200, data: { id: 'bob' } };
-            if (requester && path === '/v2/account/settings') return { status: 200, data: { content: requester.settingsContent, version: 1 } };
+            if ((requester || prepareReadRole) && path === '/v1/account/profile') return { status: 200, data: { id: requester ? 'bob' : 'owner' } };
+            if ((requester || prepareReadRole) && path === '/v2/account/settings') return { status: 200,
+                data: { content: requester?.settingsContent ?? { t: 'plain', v: {} }, version: 1 } };
+            if (prepareReadRole && path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: {
+                resources: [{ resourceId: 'recovery-read-role', encryptionMode: 'plain', recipientEnvelope: null,
+                    entry: { ref: readRoleRef, source: 'shared_resource', relationship: 'owner', name: 'Read role', kind: 'token',
+                        ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'recovery-read-role', mode: 'plain',
+                        content: { v: 1, name: 'Read role', kind: 'token', value: 'fixture-read-role-password' } }) }] } };
             if (path === '/v1/account/encryption/currentness') return { status: 200,
                 data: requester?.currentness ?? createAccountEncryptionCurrentnessFixture({ mode }) };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 0 } };
@@ -193,7 +223,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 const document = id === 'domain-content' ? { kind: 'deployment-domain.v1', value: {
                     hostname: 'store.example.test', target: { service: primaryService, containerPort: 9090 } } }
                     : id === environment.contentArtifactId ? { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
-                        value: createDeploymentEnvironmentDetailV1({ environment }).content }
+                        value: bindingEnvironment?.content ?? createDeploymentEnvironmentDetailV1({ environment }).content }
                         : id === link.contentArtifactId ? { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, value: {} } : null;
                 if (document) return { status: 200, data: { id, ownerAccountId: 'bob', access: 'owner', publicAudience: 'none',
                     encryptionMode: mode, dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
@@ -237,6 +267,25 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     return { docker, runtime, reads, context, readInput, service, serviceFor,
         readHandle: () => fixture.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service),
         targetLinkId: link.id,
+        async prepareBindings() {
+            const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: serverUrl,
+                snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+                    settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token) }, async isCurrent() { return true; } });
+            const requesterIdentity = selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: identity.homeServerIdentityId,
+                hostAccountAutomation: { accountId: 'owner', custodianAccountId: 'owner', machineId: target.machineId,
+                    installationId: installation.installationId } });
+            const host = { ...target, credentials, serverHttpBaseUrl: serverUrl,
+                resolveRequesterIdentity: async () => requesterIdentity, savedSecretOperationContext: operation };
+            const daemon = createDaemonDeploymentActionDeps({ ...host,
+                runtime: createOwnServerDeploymentRuntimeForHost({ ...host, async acquirePluginRuntimeRegistryLease() {
+                    const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+                    if (!lease) throw new Error('Expected admitted native runtime');
+                    return lease;
+                } }), ensureServiceObservations: runtime.ensureEnvironmentServices });
+            return await daemon.deploymentAction!('deployments.bindings.set', { serverId: target.serverId,
+                environmentId: environment.id, expectedRevision: environment.revision, set: [{ purpose: 'dataRole',
+                    service: primaryService, role: 'readOnlyPassword', source: { kind: 'secret', ref: readRoleRef, resourceRevision: 1 } }], remove: [] }, {});
+        },
         async discoverDomain(job: DeploymentChildRpcV1) {
             const channel = await createRequesterCurrentnessSocketHarness();
             let prepared: Awaited<ReturnType<Awaited<ReturnType<typeof createDeploymentChildRequesterHarness>>['prepare']>> | undefined;
@@ -284,6 +333,16 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it('preserves the retained service restoration cause through default bindings preparation', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', undefined, true, false, 'app', [], true, true);
+        try {
+            await rm(fixture.sourcePath, { recursive: true });
+            await expect(fixture.runtime.ensureEnvironmentServices()).rejects.toMatchObject({ ok: false, errorCode: 'ENOENT',
+                failureCause: { phase: 'service.restoration', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null } });
+            expect(await fixture.prepareBindings()).toMatchObject({ ok: false, errorCode: 'ENOENT',
+                failureCause: { phase: 'service.restoration', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null } });
+        } finally { await fixture.dispose(); }
+    });
     it('keeps healthy services visible when a retained restoration source directory is missing', async () => {
         const fixture = await createRestartedEnvironmentFixture('running', 'plain', 'mixed-service-sources', true, false, 'app', [], true);
         try {

@@ -13,6 +13,7 @@ import { isDeploymentSourceUnchangedManifestInput } from './exactCommitRelease';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { withMachineServiceLogTarget } from '@/daemon/local/services/launch/machineServiceTarget';
 import { projectDeploymentFailure as failure } from '@/deployments/deploymentFailure';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 type ReadInput = DeploymentHealthReadInputV1 | DeploymentDriftReadInputV1 | DeploymentLogsReadInputV1;
 const isRuntimeLogsInput = (input: ReadInput): input is Extract<DeploymentLogsReadInputV1, { kind: 'runtime' }> =>
@@ -105,12 +106,14 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 context.signal?.throwIfAborted();
                 return DeploymentActionOutputSchemasV1[actionId].parse({ ok: true, ...placement, kind: 'build', logs });
             }
+            const service = input.service;
+            if (!service) return failure('invalid_parameters');
             if (!link.members.some(member => member.machineId === input.machineId && member.installationId === input.installationId)) return failure('target_mismatch');
             await host.ensureServiceObservations?.();
             lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
             const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
                 serverId: host.serverId, environmentId: input.environmentId });
-            const handle = lease?.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, input.service);
+            const handle = lease?.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service);
             if (!handle) return failure('service_unavailable');
             const assertDisclosureCurrent = async () => {
                 await assertReadCurrent();
@@ -119,7 +122,7 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 context.signal?.throwIfAborted();
             };
             await assertDisclosureCurrent();
-            const target = { ...placement, service: input.service };
+            const target = { ...placement, service };
             const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' as const : 'unavailable' as const;
             const observedAtMs = facts?.observedAt ?? null;
@@ -166,8 +169,8 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 if (basis) missingFields.push('ownerLabels');
             }
             else {
-                if (basis && containers.some(row => row.composeProject !== basis.physicalProjectName || row.service !== input.service.composeService)) differingFields.push('ownerLabels');
-                const expectedImages = receipt.content.images.filter(image => image.service === input.service.composeService);
+                if (basis && containers.some(row => row.composeProject !== basis.physicalProjectName || row.service !== service.composeService)) differingFields.push('ownerLabels');
+                const expectedImages = receipt.content.images.filter(image => image.service === service.composeService);
                 if (!expectedImages.length || containers.some(row => !row.imageConfigDigest || row.configurationMatches === undefined)) missingFields.push('configDigest');
                 if (containers.some(row => row.configurationMatches === false
                     || row.imageConfigDigest && expectedImages.length && !expectedImages.some(image => image.configDigest === row.imageConfigDigest))) differingFields.push('configDigest');
@@ -177,8 +180,8 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                 freshness, observedAtMs, status: differingFields.length ? 'drifted' : missingFields.length ? 'unknown' : 'in_sync',
                 differingFields, missingFields });
         } catch (error) {
-            return failure(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-                && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error, 'deployment.read');
+            return failure(context.signal?.aborted ? 'cancelled' : normalizeActionExecutorThrownError(error).errorCode,
+                error, 'deployment.read');
         } finally { await lease?.release(); }
     };
 }

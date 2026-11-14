@@ -1,4 +1,4 @@
-import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -36,12 +36,8 @@ import { deploymentUnavailableError, projectDeploymentFailure } from '../deploym
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 function failure(error: unknown): ActionExecuteFailure {
-    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code
-        : error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object'
-            && 'code' in error.data && typeof error.data.code === 'string' ? error.data.code : 'deployment_content_unavailable';
-    return code === 'deployment_unavailable'
-        ? projectDeploymentFailure(code, error, 'deployment.bindings.prepare')
-        : { ok: false, errorCode: code, error: code };
+    const { errorCode } = normalizeActionExecutorThrownError(error);
+    return projectDeploymentFailure(errorCode, error, 'deployment.bindings.prepare');
 }
 export { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 

@@ -3,6 +3,7 @@ import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost
 import { isDeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentFailure } from './deploymentFailure';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
 import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
@@ -72,7 +73,7 @@ import { createDeploymentMemberVersionProjectionV1, deploymentDomainProbeVantage
     projectDeploymentDomainHealthFactsV1 } from '@happier-dev/deployments';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { ExternalActionInstalledMachineUnavailableSchema, readExternalActionInstalledMachineResult,
@@ -205,8 +206,7 @@ const failure = (errorCode: string, error?: unknown): ActionExecuteFailure =>
     (errorCode === 'machine_unavailable' ? readMachineUnavailable(error) : null)
         ?? projectDeploymentFailure(errorCode, error);
 const errorCode = (error: unknown) => {
-    const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error && typeof error.code === 'string'
-        ? error.code : 'deployment_content_unavailable');
+    const { errorCode: code } = normalizeActionExecutorThrownError(error);
     const details = error instanceof Error && 'details' in error ? error.details : undefined;
     // Project only the native owner's closed reason. Native stderr, messages
     // and arbitrary PluginError details never enter the public Action result.

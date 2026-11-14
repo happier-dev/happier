@@ -1,3 +1,4 @@
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { createHash } from 'node:crypto';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
@@ -156,13 +157,11 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                     }
                     return { ok: true, result: MachineServiceAdoptResultV1Schema.parse({ kind: 'adopted', environmentId, revision, targetLinkId }) };
                 } catch (error) {
-                    return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-                        && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error));
+                    return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : normalizeActionExecutorThrownError(error).errorCode, error));
                 }
             } });
         } };
     } catch (error) {
-        return projectDeploymentFailure(request.context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error);
+        return projectDeploymentFailure(request.context.signal?.aborted ? 'cancelled' : normalizeActionExecutorThrownError(error).errorCode, error);
     }
 }

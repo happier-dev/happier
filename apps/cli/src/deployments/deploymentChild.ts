@@ -1,4 +1,5 @@
 import { projectDeploymentFailure as failure } from './deploymentFailure';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema,
@@ -19,8 +20,7 @@ import { projectDeploymentTransitionResultForHost } from './deploymentTransition
 import type { OwnServerDeploymentRequest, OwnServerDeploymentTargetHostInput,
     OwnServerDeploymentTargetForHost, OwnServerDeploymentResult, OwnServerDeploymentMemberRequest } from './targets/ownServer/ownServerDeploymentTarget';
 
-const errorCode = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
-    ? error.code : 'deployment_content_unavailable';
+const errorCode = (error: unknown) => normalizeActionExecutorThrownError(error).errorCode;
 
 /** Decode the native child transport result at its existing domain boundary. */
 export function readDeploymentChildResult(result: unknown): OwnServerDeploymentResult {
