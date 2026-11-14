@@ -2137,7 +2137,7 @@ describe('memoryWorker', () => {
       let secondPageRequested = false;
       const session = () => ({
         id: 'sess-1', machineId: 'machine_1', seq: observedSeq, createdAt: 1_000, updatedAt: 9_000,
-        active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain',
+        active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain', metadataVersion: 4,
       });
       const fetchSessionsPage = vi.fn(async ({ activeOnly }: { activeOnly?: boolean }) => ({
         sessions: activeOnly ? [] : [session()],
@@ -2224,6 +2224,19 @@ describe('memoryWorker', () => {
       expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess-1', reason: 'memory-change' }));
       expect(secondPageRequested).toBe(true);
       expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({ roles: ['user', 'agent'], scope: 'main' }));
+
+      // A change row that pushes the transcript seq and proves owner-metadata locality unchanged:
+      // indexed with no Session read. Without the locality proof the Session is read.
+      rows.push({ seq: 3, createdAtMs: Date.now(), role: 'user' as const,
+        content: { type: 'text', text: 'pushed append is indexed without a Session read' } });
+      observedSeq = 3;
+      const readsBeforePushed = fetchSessionById.mock.calls.length;
+      await worker.noteSessionChanged!({ sessionId: 'sess-1', pushed: { transcriptSeq: 3, localityUnchanged: true } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(worker.getWorkerStatus()).toMatchObject({ state: 'idle', activeOperations: [] }));
+      expect(fetchSessionById.mock.calls.length).toBe(readsBeforePushed);
+      await worker.noteSessionChanged!({ sessionId: 'sess-1', pushed: { transcriptSeq: 3 } });
+      expect(fetchSessionById.mock.calls.length).toBe(readsBeforePushed + 1);
       const tier1DbPath = worker.getTier1DbPath()!;
       const deepDbPath = worker.getDeepDbPath()!;
       const stopPromise = worker.stop();
@@ -2231,7 +2244,7 @@ describe('memoryWorker', () => {
       await stopPromise;
 
       const tier1After = openSummaryShardIndexDb({ dbPath: tier1DbPath });
-      expect(tier1After.getSessionCursors({ sessionId: 'sess-1', nowMs: 15_000 }).lastDeepIndexedSeq).toBe(2);
+      expect(tier1After.getSessionCursors({ sessionId: 'sess-1', nowMs: 15_000 }).lastDeepIndexedSeq).toBe(3);
       tier1After.close();
       const { searchTier2Memory } = await import('./searchMemory');
       const indexed = await searchTier2Memory({

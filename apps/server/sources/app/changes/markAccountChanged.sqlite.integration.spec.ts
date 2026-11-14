@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionMemoryInputsChangedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 
 import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
+import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { db } from "@/storage/db";
 import { afterTx, inTx, transactionResult } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -155,6 +156,41 @@ describe("terminal AccountChange publication on SQLite", () => {
         await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
         expect((await read()).hint).not.toHaveProperty('memoryInputsChanged');
         expect((await read()).hint).not.toHaveProperty('memoryInputsUnchangedSinceCursor');
+    });
+
+    it('keeps the Memory-unchanged floor across pending-queue bookkeeping after a consumed transcript change', async () => {
+        const account = await db.account.create({ data: { publicKey: 'memory-inputs-pending' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-inputs-pending', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+            hint: { lastMessageSeq: 1 } }));
+        const transcript = await read();
+        // Enqueue and activation: queue rows are not Memory inputs.
+        await inTx(tx => markPendingStateChangedRecipients({ tx, sessionId: session.id, pendingVersion: 1, pendingCount: 1 }));
+        await inTx(tx => markPendingStateChangedRecipients({ tx, sessionId: session.id, pendingVersion: 2, pendingCount: 0 }));
+        expect(readSessionMemoryInputsChangedV1(await read(), transcript.cursor)).toBe(false);
+    });
+
+    it('pushes the transcript seq and keeps the Memory locality floor across transcript and queue writes', async () => {
+        const account = await db.account.create({ data: { publicKey: 'memory-locality-floor' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-locality', metadata: '{}', seq: 7 } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+            hint: { metadataVersion: 2 }, followSourceChanged: false, usageAccountingChanged: false }));
+        const consumed = await read();
+        await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+            hint: { lastMessageSeq: 7 }, memoryLocalityChanged: false }));
+        await inTx(tx => markPendingStateChangedRecipients({ tx, sessionId: session.id, pendingVersion: 3, pendingCount: 0 }));
+        const latest = await read();
+        expect(readSessionMemoryPushedFactsV1(latest, consumed.cursor)).toEqual({ transcriptSeq: 7, localityUnchanged: true });
+        // A metadata write withdraws the locality proof.
+        await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+            hint: { metadataVersion: 3 }, followSourceChanged: false, usageAccountingChanged: false }));
+        expect(readSessionMemoryPushedFactsV1(await read(), consumed.cursor)).toEqual({ transcriptSeq: 7 });
     });
 
     it('attributes committed connected-service publications without credential or Account identifiers', async () => {

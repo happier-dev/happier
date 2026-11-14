@@ -2744,8 +2744,10 @@ readers can ignore it; new readers accept older unhinted producers.
 Development Session Account changes may likewise carry optional
 `memoryInputsChanged: false` with `memoryInputsUnchangedSinceCursor`. Only the
 runtime-activity, publisher-presence (register, heartbeat activation, expiry,
-activity loss) and ready-projection writers mark it; they change no Session seq,
-archive state, timestamps used by Memory selection, or owner locality. The same
+activity loss), ready-projection, pending-queue bookkeeping, Turn status and
+Agent-state-only writers mark it; they change no Session seq, archive state or
+owner locality. A later `updatedAt` can only widen the 30-day selection, and the
+transcript write that follows any queued input carries that change. The same
 coalesced change owner keeps the floor, so a later activity write cannot hide an
 earlier, unconsumed metadata, transcript or archive change. The daemon Memory
 worker skips its Session read only when the consumed range is covered; missing,

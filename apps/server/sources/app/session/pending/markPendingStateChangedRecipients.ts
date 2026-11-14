@@ -28,6 +28,9 @@ export async function markPendingStateChangedRecipients(params: {
         // into an original message publishes through its own writer.
         followSourceChanged: false,
         usageAccountingChanged: false,
+        // Queue rows are not indexed; materialization writes the transcript row
+        // (and its seq) through the transcript writer, which carries the change.
+        memoryInputsChanged: false,
         hint,
         ...(params.activationTarget
             ? {

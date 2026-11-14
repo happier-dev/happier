@@ -1247,6 +1247,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
             tx: params.tx,
             sessionId: params.sessionId,
             hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
+            // Transcript rows never change owner metadata (Memory locality).
+            memoryLocalityChanged: false,
             recipientAccountIds: access.recipientAccountIds,
             // Every createSessionMessage caller pushes `message-updated` to each recipient.
             sessionAudienceReceivesUpdate: true,
@@ -1287,6 +1289,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         tx: params.tx,
         sessionId: params.sessionId,
         hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
+        // Transcript rows never change owner metadata (Memory locality).
+        memoryLocalityChanged: false,
         recipientAccountIds: access.recipientAccountIds,
         // Every createSessionMessage caller pushes `message-updated` to each recipient.
         sessionAudienceReceivesUpdate: true,
@@ -1587,6 +1591,8 @@ async function createSessionMessageAttempt(
                 tx,
                 sessionId,
                 hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
+                // Transcript rows never change owner metadata (Memory locality).
+                memoryLocalityChanged: false,
                 recipientAccountIds: access.recipientAccountIds,
                 publication: persisted.publication,
                 // Every createSessionMessage caller pushes `new-message` to each recipient.
@@ -1898,6 +1904,8 @@ async function createSessionMessageAttempt(
                         tx,
                         sessionId,
                         hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
+                        // Transcript rows never change owner metadata (Memory locality).
+                        memoryLocalityChanged: false,
                         recipientAccountIds: access.recipientAccountIds,
                         // Every createSessionMessage caller pushes `message-updated` to each recipient.
                         sessionAudienceReceivesUpdate: true,
@@ -2557,6 +2565,8 @@ export async function updateSessionAgentState(params: {
                 tx, sessionId, recipientAccountIds: access.recipientAccountIds,
                 hint: { agentStateVersion: written.agentState.version },
                 usageAccountingChanged: false,
+                // Agent state is not a Memory input (eligibility reads transcript seq, metadata, archive).
+                memoryInputsChanged: false,
                 ...(params.publishCurrentView ? { currentViewPublication: { kind: 'legacy_v0', sessionOwnerId: access.sessionOwnerId } } as const : {}),
             });
             const settledPendingRequestObservedAt = pendingSummary.pendingRequestObservedAt instanceof Date
@@ -3183,6 +3193,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 tx, sessionId, recipientAccountIds: access.recipientAccountIds,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
+                // Turn rows and the latest-status projection: no transcript seq, metadata or archive change.
+                memoryInputsChanged: false,
                 // Participant-marking callers (applySessionTurnMutation) publish through publishSessionTurnMutationUpdate.
                 sessionAudienceReceivesUpdate: true,
             }) : [];
@@ -3471,6 +3483,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 recipientAccountIds: access.recipientAccountIds,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
+                // Turn rows and the latest-status projection: no transcript seq, metadata or archive change.
+                memoryInputsChanged: false,
                 // Participant-marking callers (applySessionTurnMutation) publish through publishSessionTurnMutationUpdate.
                 sessionAudienceReceivesUpdate: true,
             })
@@ -3789,6 +3803,7 @@ async function patchSessionAfterAdmissionInTx(
         ...(params.publishCurrentView ? { currentViewPublication: { kind: 'legacy_v0', sessionOwnerId: access.sessionOwnerId } } as const : {}),
         followSourceChanged: written.agentStateChanged,
         usageAccountingChanged: false,
+        ...(written.metadataChanged ? {} : { memoryInputsChanged: false as const }),
         hint: {
             ...(written.metadataChanged ? { metadataVersion: written.metadata.version } : {}),
             ...(written.agentStateChanged ? { agentStateVersion: written.agentState.version } : {}),

@@ -1,4 +1,4 @@
-import { readSessionFollowProjectionOnlySinceCursorV1, readSessionMemoryInputsProjectionOnlySinceCursorV1, readSessionUsageAccountingProjectionOnlySinceCursorV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
+import { readSessionFollowProjectionOnlySinceCursorV1, readSessionMemoryInputsProjectionOnlySinceCursorV1, readSessionMemoryLocalityProjectionOnlySinceCursorV1, readSessionUsageAccountingProjectionOnlySinceCursorV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
 import type { Tx } from '@/storage/inTx';
 
 function readDeletionHint(hint: unknown) {
@@ -54,6 +54,8 @@ export function retainSessionSourceChangeHint(hint: unknown): unknown {
     delete retained.usageAccountingUnchangedSinceCursor;
     delete retained.memoryInputsChanged;
     delete retained.memoryInputsUnchangedSinceCursor;
+    delete retained.memoryLocalityChanged;
+    delete retained.memoryLocalityUnchangedSinceCursor;
     return retained;
 }
 
@@ -67,7 +69,8 @@ export async function coalesceSessionProjectionChangeHintInTx(
     const projectionOnly = hint && typeof hint === 'object' && !Array.isArray(hint)
         && ((hint as Record<string, unknown>).followSourceChanged === false
             || (hint as Record<string, unknown>).usageAccountingChanged === false
-            || (hint as Record<string, unknown>).memoryInputsChanged === false);
+            || (hint as Record<string, unknown>).memoryInputsChanged === false
+            || (hint as Record<string, unknown>).memoryLocalityChanged === false);
     if (cursor === undefined && hint !== undefined && !projectionOnly) return sessionChangeHint(hint);
     const current = await tx.accountChange.findUnique({
         where: { accountId_kind_entityId: { accountId, kind: 'session', entityId } },
@@ -85,6 +88,7 @@ export async function coalesceSessionProjectionChangeHintInTx(
         ['followSourceChanged', 'followSourceUnchangedSinceCursor', readSessionFollowProjectionOnlySinceCursorV1],
         ['usageAccountingChanged', 'usageAccountingUnchangedSinceCursor', readSessionUsageAccountingProjectionOnlySinceCursorV1],
         ['memoryInputsChanged', 'memoryInputsUnchangedSinceCursor', readSessionMemoryInputsProjectionOnlySinceCursorV1],
+        ['memoryLocalityChanged', 'memoryLocalityUnchangedSinceCursor', readSessionMemoryLocalityProjectionOnlySinceCursorV1],
     ] as const) {
         if (next[changed] !== false) continue;
         const since = readSince(current?.hint);

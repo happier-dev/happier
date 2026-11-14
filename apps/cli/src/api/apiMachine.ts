@@ -319,7 +319,7 @@ import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conne
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
-import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeKind } from '@happier-dev/protocol/changes';
+import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeKind } from '@happier-dev/protocol/changes';
 import {
     registerMachineRpcHandlers,
     type MachineRpcHandlerDeps,
@@ -472,6 +472,8 @@ export type SessionChangeNotification = Readonly<{
     followReceiverAvailabilityChanged?: boolean;
     /** The consumed Account range proves daemon Memory inputs unchanged (activity/presence/ready only). */
     memoryInputsChanged?: false;
+    /** Memory facts the change row carries (`readSessionMemoryPushedFactsV1`). */
+    pushed?: Readonly<{ transcriptSeq?: number; localityUnchanged?: true }>;
     /** A removal callback in this batch owns derived-state cleanup. */
     removed?: true;
 }>;
@@ -6907,7 +6909,8 @@ export class ApiMachineClient {
                                 ...(removedSessionIds.has(sessionId) ? { removed: true as const }
                                     : {
                                         ...(readSessionFollowSourceChangedV1(change, after) ? {} : { followSourceChanged: false as const }),
-                                        ...(readSessionMemoryInputsChangedV1(change, after) ? {} : { memoryInputsChanged: false as const }),
+                                        ...(readSessionMemoryInputsChangedV1(change, after) ? { pushed: readSessionMemoryPushedFactsV1(change, after) }
+                                            : { memoryInputsChanged: false as const }),
                                     }) });
                             signal.throwIfAborted();
                         }

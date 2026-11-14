@@ -45,7 +45,9 @@ export type MemoryWorkerHandle = Readonly<{
   ensureUpToDate: (sessionId?: string, signal?: AbortSignal) => Promise<void>;
   /** Exact authorized changes arrive through the incumbent Account carrier. */
   /** `memoryInputsChanged: false` is the change feed's proof that no eligibility input moved. */
-  noteSessionChanged?: (change: Readonly<{ sessionId: string; memoryInputsChanged?: false }>) => Promise<void>;
+  noteSessionChanged?: (change: Readonly<{ sessionId: string; memoryInputsChanged?: false;
+    /** Facts the consumed Account change row carries (see `SessionChangeNotification.pushed`). */
+    pushed?: Readonly<{ transcriptSeq?: number; localityUnchanged?: true }> }>) => Promise<void>;
   /** Transcript revisions arrive through the incumbent durable Account change stream. */
   noteSessionTranscriptRevised?: (change: Readonly<{ sessionId: string; seq: number; messageId?: string }>) => Promise<void>;
   attachExternalObservation?: (observation: MemoryExternalObservation) => () => void;
@@ -445,6 +447,14 @@ export async function prepareMemoryWorker(params: Readonly<{
     for (const id of deep?.listIndexedSessionIds() ?? []) if (!externalIds.has(id)) ids.add(id);
     return [...ids];
   };
+  /**
+   * The last Session read that admitted each Session, with its eligibility under this settings basis.
+   * Only the transcript seq and owner-metadata locality can move an admitted Session's Memory inputs
+   * (archive, removal and access have their own carriers; a later `updatedAt` only widens selection),
+   * so a change row that pushes the seq and proves locality unchanged needs no Session read.
+   */
+  const pushedAdmissions = new Map<string, Readonly<{ basis: MemorySettingsV1;
+    eligibility: NonNullable<ReturnType<typeof resolveMemoryInventorySessionEligibility>> }>>();
   const hasAdmittedSessionWork = (sessionId: string) => observedSessionIds.has(sessionId) || pendingRevisions.has(sessionId)
     || [...activeSessionRequests].some(request => request.sessionId === sessionId)
     || snapshot.candidateSessionIds.includes(sessionId) || snapshot.editedSessionIds.includes(sessionId)
@@ -454,6 +464,7 @@ export async function prepareMemoryWorker(params: Readonly<{
   const hasSessionWork = (sessionId: string) => hasAdmittedSessionWork(sessionId)
     || withReaders((tier1, deep) => tier1?.hasSessionIndexData(sessionId) === true || deep?.hasSessionIndexData(sessionId) === true);
   function discardPendingEligibility() {
+    pushedAdmissions.clear();
     for (const [id, change] of pendingRevisions) {
       if (change.revised) {
         const { eligibility: _eligibility, ...revision } = change;
@@ -462,7 +473,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     }
   }
   const forgetPendingSessionObservations = (sessionIds: readonly string[]) => {
-    for (const id of sessionIds) { observedSessionIds.delete(id); pendingRevisions.delete(id); }
+    for (const id of sessionIds) { observedSessionIds.delete(id); pendingRevisions.delete(id); pushedAdmissions.delete(id); }
     for (const request of activeSessionRequests) if (sessionIds.includes(request.sessionId)) request.removed = true;
   };
   const resolveDocumentSearchScope = async (scope: MemorySearchQueryV1['scope'], signal?: AbortSignal): Promise<MemoryDocumentSearchScope> => {
@@ -563,6 +574,20 @@ export async function prepareMemoryWorker(params: Readonly<{
       if (change.memoryInputsChanged === false) return;
       await waitForReady();
       if (stopped || !desired.enabled) return;
+      const held = pushedAdmissions.get(change.sessionId);
+      const pushedSeq = change.pushed?.transcriptSeq;
+      if (held && held.basis === desired && pushedSeq !== undefined
+        && change.pushed?.localityUnchanged === true && hasAdmittedSessionWork(change.sessionId)) {
+        const pending = pendingRevisions.get(change.sessionId);
+        const observed = pending?.eligibility?.observedSeq ?? snapshot.observedSeqBySessionId.find(([id]) => id === change.sessionId)?.[1];
+        if (observed !== undefined && pushedSeq <= observed) return;
+        const eligibility = { ...held.eligibility, observedSeq: pushedSeq };
+        pushedAdmissions.set(change.sessionId, { ...held, eligibility });
+        pendingRevisions.set(change.sessionId, { ...pending, sessionId: change.sessionId,
+          seq: Math.max(pending?.seq ?? 0, pushedSeq), eligibility });
+        workLoop?.trigger();
+        return;
+      }
       const request = { sessionId: change.sessionId, removed: false };
       activeSessionRequests.add(request);
       try {
@@ -580,6 +605,7 @@ export async function prepareMemoryWorker(params: Readonly<{
             includeArchivedSessions: basis.includeArchivedSessions, enabledAtMs: basis.enabledAtMs ?? 0, nowMs: Date.now() }) : null;
         if (!eligibility) {
           // This ineligible read cannot write; only other admitted work needs removal.
+          pushedAdmissions.delete(change.sessionId);
           activeSessionRequests.delete(request);
           if (!hasSessionWork(change.sessionId)) return;
           forgetPendingSessionObservations([change.sessionId]);
@@ -594,7 +620,8 @@ export async function prepareMemoryWorker(params: Readonly<{
         }
         const pending = pendingRevisions.get(change.sessionId);
         const observed = pending?.eligibility?.observedSeq ?? snapshot.observedSeqBySessionId.find(([id]) => id === change.sessionId)?.[1];
-        if (observed === eligibility.observedSeq) return;
+        const admit = () => { pushedAdmissions.set(change.sessionId, { basis, eligibility }); };
+        if (observed === eligibility.observedSeq) { admit(); return; }
         // A never-admitted Session wakes the indexer child only once it holds a row the child
         // indexes: user/agent rows (`memoryIndexer` reads roles user/agent plus legacy unclassified
         // rows, which only released clients wrote and the inventory pass admits). A new Session's
@@ -611,6 +638,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         }
         pendingRevisions.set(change.sessionId, { ...pending, sessionId: change.sessionId,
           seq: Math.max(pending?.seq ?? 0, eligibility.observedSeq), eligibility });
+        admit();
         // Do not hold the change carrier behind transcript/index IO.
         workLoop?.trigger();
       } finally { activeSessionRequests.delete(request); }

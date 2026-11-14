@@ -321,6 +321,27 @@ export function readSessionMemoryInputsChangedV1(
   return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
 }
 
+/** The Account cursor preceding coalesced writes proven not to change the Session's owner metadata (Memory locality). */
+export function readSessionMemoryLocalityProjectionOnlySinceCursorV1(hint: unknown): number | null {
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const record = hint as Record<string, unknown>;
+  const cursor = record.memoryLocalityUnchangedSinceCursor;
+  return record.memoryLocalityChanged === false && typeof cursor === 'number'
+    && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+}
+
+/**
+ * Memory's only Session input besides the transcript seq and its own carriers (archive, removal,
+ * access) is owner-metadata locality. Transcript writers and every Memory-unchanged writer leave it
+ * unchanged; any other write withdraws the proof.
+ */
+export function readSessionMemoryLocalityChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean {
+  const since = change.kind === 'session' ? readSessionMemoryLocalityProjectionOnlySinceCursorV1(change.hint) : null;
+  return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
+}
+
 /** Availability is advisory; a retained event is relevant only before its Account cursor. */
 export function readSessionFollowReceiverAvailabilityChangedV1(
   change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
@@ -351,6 +372,24 @@ export function readSessionTranscriptChangeHintV1(
   const id = appended ? record.lastMessageId : record.updatedMessageId;
   const messageId = typeof id === 'string' ? id.trim() : '';
   return messageId ? { seq, messageId } : { seq };
+}
+
+/**
+ * Memory facts a coalesced Session change row carries: the Session's current transcript seq
+ * (every projection writer stamps it; an append hint carries it too) and whether owner-metadata
+ * locality is proven unchanged since `afterCursor`. Absent facts are unknown.
+ */
+export function readSessionMemoryPushedFactsV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): Readonly<{ transcriptSeq?: number; localityUnchanged?: true }> {
+  if (change.kind !== 'session') return {};
+  const hint = change.hint;
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return {};
+  const record = hint as Record<string, unknown>;
+  const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  const transcriptSeq = count(record.transcriptSeq) ?? count(record.lastMessageSeq);
+  return { ...(transcriptSeq !== undefined ? { transcriptSeq } : {}),
+    ...(readSessionMemoryLocalityChangedV1(change, afterCursor) ? {} : { localityUnchanged: true as const }) };
 }
 
 /** The server's existing advisory hint for a durable row revised at unchanged seq. */

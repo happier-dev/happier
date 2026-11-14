@@ -19,7 +19,8 @@ export function subscribeMemorySessionRemoval(params: Readonly<{
     MemoryWorkerHandle,
     'removeSessions' | 'reconcileRetainedSessionAccess' | 'applySessionArchivedState' | 'noteSessionTranscriptRevised' | 'noteSessionChanged'
   >;
-  onSessionChanged?: Subscribe<Readonly<{ sessionId: string; removed?: true; memoryInputsChanged?: false }>>;
+  onSessionChanged?: Subscribe<Readonly<{ sessionId: string; removed?: true; memoryInputsChanged?: false;
+    pushed?: Readonly<{ transcriptSeq?: number; localityUnchanged?: true }> }>>;
   onSessionTranscriptRevised?: Subscribe<Readonly<{ sessionId: string; seq: number; messageId?: string }>>;
   onSessionDeletedChange: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessRevoked: Subscribe<Readonly<{ sessionId: string }>>;

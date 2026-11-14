@@ -42,6 +42,10 @@ const rowHintFacts = {
   usageAccountingUnchangedSinceCursor: z.optional(sequence),
   memoryInputsChanged: z.optional(z.literal(false)),
   memoryInputsUnchangedSinceCursor: z.optional(sequence),
+  memoryLocalityChanged: z.optional(z.literal(false)),
+  memoryLocalityUnchangedSinceCursor: z.optional(sequence),
+  /** The Session's current transcript seq for an unrestricted recipient (a pushed fact). */
+  transcriptSeq: z.optional(sequence),
   followReceiverAvailabilityChanged: z.optional(z.boolean()),
   followReceiverAvailabilityChangedAtCursor: z.optional(sequence),
 };

@@ -38,8 +38,17 @@ export async function markSessionProjectionRecipientsChanged(params: {
     followSourceChanged?: boolean;
     /** False only at a writer that changes no Usage rows, transcript counts or publication ceiling. */
     usageAccountingChanged?: false;
-    /** False only at activity, presence and ready-projection writers: no daemon Memory input changed. */
+    /**
+     * False only at writers that change no daemon Memory input: Memory reads the transcript
+     * (Session `seq`), owner metadata locality, archive state and createdAt/updatedAt.
+     * Activity, presence, ready, pending-queue, turn-status and Agent-state writers qualify.
+     */
     memoryInputsChanged?: false;
+    /**
+     * False at writers that leave owner metadata (Memory locality) unchanged: transcript writers
+     * and every `memoryInputsChanged: false` writer. Any other write withdraws the proof.
+     */
+    memoryLocalityChanged?: false;
     /** Only canonical receiver lifecycle/presence writers mark an availability event. */
     followReceiverAvailabilityChanged?: boolean;
     recipientAccountIds?: readonly string[];
@@ -99,6 +108,11 @@ export async function markSessionProjectionRecipientsChanged(params: {
                     ...(params.followSourceChanged === false ? { followSourceChanged: false } : {}),
                     ...(params.usageAccountingChanged === false ? { usageAccountingChanged: false } : {}),
                     ...(params.memoryInputsChanged === false ? { memoryInputsChanged: false } : {}),
+                    ...(params.memoryInputsChanged === false || params.memoryLocalityChanged === false
+                        ? { memoryLocalityChanged: false } : {}),
+                    // A pushed fact for unrestricted recipients; a finite recipient's ceiling governs its seq.
+                    ...(typeof publication.seq === 'number' && !isFiniteSessionTranscriptPublicationRecipient(publication, accountId)
+                        ? { transcriptSeq: publication.seq } : {}),
                     followReceiverAvailabilityChanged: params.followReceiverAvailabilityChanged === true,
                 } };
         },
