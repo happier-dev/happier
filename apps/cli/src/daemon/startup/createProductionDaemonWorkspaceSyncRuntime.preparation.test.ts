@@ -122,7 +122,7 @@ describe('signed Project clean preparation', () => {
     await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['owner', 'manager', 'requester', 'native failure'] as const)('admits persistent Open before effects without retained private execution (%s)', async scenario => {
+  it.each(['owner', 'manager', 'requester', 'native failure'] as const)('requires requester custody for non-owner persistent Open before effects (%s)', async scenario => {
     const accountId = scenario === 'native failure' ? 'owner' : scenario;
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
@@ -197,12 +197,14 @@ describe('signed Project clean preparation', () => {
       expect(result).toMatchObject({ kind: 'outcomeUnknown' });
       expect(settlement.mock.calls).toContainEqual(['[Project Open] Source Sync settlement failed',
         expect.objectContaining({ effectsIssued: true })]);
-    } else if (accountId !== 'requester') {
+    } else if (accountId === 'owner') {
       expect(result, JSON.stringify(settlement.mock.calls)).toMatchObject({ kind: 'materialized' });
       expect(accountMutations).toBeGreaterThan(0);
       expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
       expect(rows.some(row => row.key.kind === 'relationship-graph')).toBe(true);
     } else {
+      // Manage admits Machine work, but does not lend the custodian's Account
+      // graph. Both non-owner roles need their own retained requester custody.
       expect(accountMutations).toBe(0);
       await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(result).toMatchObject({ kind: 'refused', code: 'project_requester_authority_unavailable' });

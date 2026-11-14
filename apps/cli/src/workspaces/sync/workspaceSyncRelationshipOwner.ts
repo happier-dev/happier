@@ -546,11 +546,11 @@ export function createWorkspaceSyncRelationshipOwner(
                 transient: true,
                 targetBootstrap: input.targetBootstrap,
                 ...(input.targetReplacementApproval
-                  ? { targetReplacementApproval: input.targetReplacementApproval }
+                  ? { targetReplacementApproval: input.targetReplacementApproval,
+                      targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput }
                   : {}),
                 ...(input.targetReplacementApprovalReceiptId ? {
                   targetReplacementApprovalReceiptId: input.targetReplacementApprovalReceiptId,
-                  targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput,
                 } : {}),
               },
         );

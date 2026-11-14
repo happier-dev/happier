@@ -18,6 +18,7 @@ import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodeStoredCredentials } from '@/persistence';
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
@@ -401,29 +402,70 @@ it.skipIf(process.platform !== 'linux')('preserves the encrypted original Action
 });
 
 
-it.skipIf(process.platform !== 'linux')('executes a local exact-copy destination approval under Allow through the requester receipt owner', async () => {
+it.skipIf(process.platform !== 'linux').each([
+  { role: 'manage' as const, remoteTarget: false },
+  { role: 'manage' as const, remoteTarget: true },
+  { role: 'use' as const, remoteTarget: false },
+  { role: 'use' as const, remoteTarget: true },
+])('executes native exact-copy review through SOURCE and TARGET without creating an approval Artifact ($role, remote $remoteTarget)', async ({ role, remoteTarget }) => {
+  executionBoundary.member = role === 'use';
+  const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo,
+    remoteTarget, targetCustodianAccountId: role === 'manage' ? 'requester' : 'member-a',
+    workerCleanCopy: true, originalActionHomeHttp: true });
+  const result = await setup.executeNativeRelationshipAction();
+  expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { created: true } });
+  expect(setup.approvalArtifacts.size).toBe(0);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  expect(setup.custodianRows).toEqual(setup.custodianBefore);
+});
+
+it.skipIf(process.platform !== 'linux')('executes local exact-copy native review under Allow without creating an approval Artifact', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
-    workerCleanCopy: true, allowRelationshipAction: true });
+    workerCleanCopy: true, allowRelationshipAction: true, originalActionHomeHttp: true });
 
   const preflight = vi.spyOn(setup.installed.machine, 'preflightWorkspaceSyncRelationshipTarget');
-  const result = await setup.executeRelationshipAction();
+  const result = await setup.executeNativeRelationshipAction();
   const preflightResults = await Promise.all(preflight.mock.results.map(async call => {
     try { return await call.value; }
     catch (error) { return error instanceof Error ? { message: error.message, stack: error.stack } : String(error); }
   }));
   expect(result, JSON.stringify({ result, preflightResults, diagnostics: setup.rpcDiagnostics,
     approvalArtifactIds: [...setup.approvalArtifacts.keys()] })).toMatchObject({ ok: true, result: { created: true } });
-  // Exact mirroring has a destination consequence even when ordinary Action
-  // approval is waived. The Action owner persists that consent before SOURCE
-  // validates its executing receipt; TARGET never invents another decision.
-  expect(setup.approvalArtifacts.size).toBe(1);
-  expect([...setup.approvalArtifacts.values()].every(row => row.ownerAccountId === 'member-a')).toBe(true);
+  expect(setup.homeActionRequests).toHaveLength(2);
+  expect(setup.approvalArtifacts.size).toBe(0);
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
 
-it.skipIf(process.platform !== 'linux')('refuses an unapproved requester receipt before dispatching to a shared Manage destination', async () => {
+it.skipIf(process.platform !== 'linux')('retains and executes an exact-copy approval Artifact for the Home-signed API host', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
+    workerCleanCopy: true, originalActionHomeHttp: true });
+  await setup.prepareActionIngress();
+  const result = await dispatchOriginalAccountAction({ actionId: 'workspace.sync.relationship.create',
+    input: setup.request.actionInput, requestId: setup.request.operationId, target: setup.envelope.target,
+    credentials: setup.credentials, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
+    serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
+    invocation: { surface: 'api', authority: 'present_user', caller: { kind: 'host' } },
+    onRequesterSessionCredentialDisclosure: () => true });
+  expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
+  expect(setup.approvalArtifacts.size).toBe(1);
+  expect([...setup.approvalArtifacts.values()]).toEqual([expect.objectContaining({ ownerAccountId: 'member-a' })]);
+  expect(await readdir(setup.targetPath)).toEqual([]);
+  const decision = await setup.executeApprovalDecision([...setup.approvalArtifacts.keys()][0]!, {
+    request: setup.request, envelope: setup.envelope, authorization: setup.authorization });
+  expect(decision, JSON.stringify({ decision, diagnostics: setup.rpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { execution: { ok: true, result: { created: true } } } });
+  expect(setup.approvalArtifacts.size).toBe(1);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  expect(setup.custodianRows).toEqual(setup.custodianBefore);
+});
+
+it.skipIf(process.platform !== 'linux').each([undefined, 'not-an-approved-artifact'])(
+  'refuses an unadmitted requester proof before dispatching to a shared Manage destination (receipt %s)', async receiptId => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
     targetCustodianAccountId: 'requester', workerCleanCopy: true });
@@ -434,7 +476,7 @@ it.skipIf(process.platform !== 'linux')('refuses an unapproved requester receipt
     targetReplacementApproval: { v: 1, consequences: ['delete_target_only_files_during_exact_mirror'],
       serverId: setup.installed.homeServerIdentityId, machineId: setup.targetRef.machineId,
       canonicalRoot: setup.targetPath, rootFingerprint: '0'.repeat(64), operationId: setup.request.operationId },
-    targetReplacementApprovalReceiptId: 'not-an-approved-artifact' });
+    ...(receiptId ? { targetReplacementApprovalReceiptId: receiptId } : {}) });
   const result = await setup.rpc.handleRequest({ method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
     params: fresh.request, callerAuthority: 'present_user', callerInputAuthorization: fresh.authorization,
     originalActionEnvelope: fresh.envelope, machineAdmission });
