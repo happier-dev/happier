@@ -1,6 +1,7 @@
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { buildTerminalDetailsTabKey, createTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
-import { createBrowserLaunchpadDetailsTab } from '@/components/browser/surfaces';
+// The tab model leaf, not the surfaces barrel: placement must not load browser control (and its Socket transport).
+import { createBrowserLaunchpadDetailsTab } from '@/components/browser/surfaces/browserSurfaceDetailsTabModel';
 import { t } from '@/text';
 
 export type EmbeddedTerminalDockLocation = 'sidebar' | 'details' | 'bottom';

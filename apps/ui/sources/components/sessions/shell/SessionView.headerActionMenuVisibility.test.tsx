@@ -371,9 +371,14 @@ vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     condition: null,
   }),
 }));
-vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-  useDaemonMergedProjectionInputs: () => ({ inputs: null }),
-}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => {
+  // Inert chrome (the Agent mark and name) reads the cache owner's summary; stable like the real reader.
+  const emptySummary = Object.freeze({ inputs: null, current: false });
+  return {
+    useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+    useDaemonMergedProjectionSummary: () => emptySummary,
+  };
+});
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['codex'],
 }));
