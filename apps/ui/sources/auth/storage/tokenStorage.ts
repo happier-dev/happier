@@ -2255,16 +2255,17 @@ function listKnownServerCleanupTargets(): CredentialCleanupTarget[] {
 }
 
 async function listHomeCredentialContextsUnderMutationAuthority(authority: HomeMutationAuthority): Promise<HomeCredentialContext[]> {
-    const contexts: HomeCredentialContext[] = [];
-    for (const target of listKnownServerCleanupTargets()) {
+    // Each Home's credential is its own key, read under the one authority this caller already holds:
+    // issue them together (one host round trip on Desktop) instead of one Home after another.
+    const contexts = await Promise.all(listKnownServerCleanupTargets().map(async (target): Promise<HomeCredentialContext | null> => {
         const options = { serverId: target.serverId };
         const identity = resolveHomeCredentialMutationTarget(target.serverUrl, options);
-        if (!identity) continue;
+        if (!identity) return null;
         const credentials = await getHomeCredentialsUnderMutationAuthority(authority, target.serverUrl, options);
         const scope = homeAccountCredentialScope(identity.serverId, credentials?.token);
-        contexts.push({ serverId: identity.serverId, accountId: scope?.accountId ?? null });
-    }
-    return contexts;
+        return { serverId: identity.serverId, accountId: scope?.accountId ?? null };
+    }));
+    return contexts.filter((context): context is HomeCredentialContext => context !== null);
 }
 
 type WebScopedCredentialSnapshot = Readonly<{
