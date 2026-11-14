@@ -19,7 +19,6 @@ import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/app
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -373,7 +372,6 @@ describe('managed native UI Action frontdoor', () => {
         expect(nativeEffects).toEqual([]);
     });
     it.each([
-        ['ui', 'machines.provisioners.options'], ['voice', 'machines.provisioners.options'],
         ['ui', 'machines.setup.apply'], ['voice', 'machines.setup.apply'],
         ['ui', 'machines.setup.plan'], ['voice', 'machines.setup.plan'],
         ['ui', 'machines.setup.remove'], ['voice', 'machines.setup.remove'],
@@ -386,19 +384,14 @@ describe('managed native UI Action frontdoor', () => {
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
         const setupEffect = actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove';
-        const input = actionId === 'machines.provisioners.options'
-            ? { homeId: 'srv_native_options', controller: { machineId: 'controller', installationId: 'installation' },
-                contribution: { pluginId: 'examples.machine-provisioner', localId: 'guest' }, selectors: {} }
-            : { homeId: 'srv_native_options', machineId: 'controller',
+        const input = { homeId: 'srv_native_options', machineId: 'controller',
                 ...(actionId === 'machines.setup.apply' ? { targets: [{ homeId: 'srv_native_options', machineId: 'controller',
                     sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, recipePlans: [] }] } : {}),
                 ...(actionId === 'machines.setup.remove' ? {
                     sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0,
                     removeItemKeys: [], removalPlans: [],
                 } : {}) };
-        const output = actionId === 'machines.provisioners.options'
-            ? createMachineProvisionerOptionsFixture({ base: { launch: { name: 'guest' } } })
-            : actionId === 'machines.setup.plan' ? { desiredRevision: 0, exclusions: [], support: [],
+        const output = actionId === 'machines.setup.plan' ? { desiredRevision: 0, exclusions: [], support: [],
                 sources: [{ kind: 'direct', setup: {} }] }
             : { operationId: 'setup', terminalId: 'setup-terminal' };
         const requests: unknown[] = [];

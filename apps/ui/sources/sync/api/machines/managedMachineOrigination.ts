@@ -1,4 +1,4 @@
-import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedAdmissionOutputV1Schema, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
@@ -270,10 +270,12 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
     const binding: ExternalActionEncryptionBindingV2 = { serverIdentityId: account.serverIdentityId, accountId: account.accountId,
         authentication, actionId, requestId, target };
+    const provisionerRole = readManagedProvisionerCredentialRootRoleV1(actionId);
+    const provisionerRead = provisionerRole === 'check' || provisionerRole === 'options';
     let material: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | undefined;
     let usesControllerCodec = false;
     let machineCustody: Parameters<typeof executeOriginalAccountActionTransport>[0]['machineCustody'];
-    if (accountMode === 'e2ee' || actionId === 'machines.managed.acquire' || foreignManagedCustody || confirmation) {
+    if (accountMode === 'e2ee' || actionId === 'machines.managed.acquire' || foreignManagedCustody || confirmation || provisionerRead) {
         if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
         if (scopedControllerAccess) {
             machineCustody = { accountMode, installationId: controller.installationId,
@@ -283,7 +285,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             const row = await readOriginalAccountActionMachine(account, target.machineId, params.signal);
             const access = row?.access;
             const foreignController = access !== undefined && access.custodian.accountId !== account.accountId;
-            if ((foreignController || confirmation) && row && access) {
+            if ((foreignController || confirmation || provisionerRead) && row && access) {
                 if (!row.installationId || !row.installationPublicKey) return failure('content_unavailable');
                 machineCustody = { accountMode, installationId: row.installationId,
                     installationPublicKey: row.installationPublicKey, custodian: access.custodian };
@@ -304,7 +306,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     // Narrow the authenticated Account carrier before the installed daemon's
     // canonical Action policy creates the Ask. Human replay stays with that owner.
     params.signal?.throwIfAborted();
-    const codecInvocation = usesControllerCodec || confirmation ? ExternalActionRequesterInvocationV1Schema.safeParse({
+    const codecInvocation = usesControllerCodec || confirmation || provisionerRead ? ExternalActionRequesterInvocationV1Schema.safeParse({
         caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
         callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,
         workspaceWrites: context.workspaceWrites,
