@@ -29,6 +29,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  glyph: {
+    position: 'relative',
+    zIndex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   paint: {
     width: '100%',
     height: '100%',
@@ -132,11 +138,15 @@ export const PrimaryCircleIconButton = React.memo(
                   style={StyleSheet.absoluteFillObject}
                 />
               ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })} borderRadius={16} />}
-              {props.loading ? (
-                <ActivitySpinner size="small" color={foreground} />
-              ) : (
-                normalizeNodeForView(typeof props.children === 'function' ? props.children(foreground) : props.children)
-              )}
+              {/* The glyph stacks above the fill's positioned gradient layer: a bare (unpositioned) glyph is painted under
+                  it on web, so Send and Stop read as blank discs (QA-SHELL-1114 F9). */}
+              <View style={styles.glyph}>
+                {props.loading ? (
+                  <ActivitySpinner size="small" color={foreground} />
+                ) : (
+                  normalizeNodeForView(typeof props.children === 'function' ? props.children(foreground) : props.children)
+                )}
+              </View>
             </View>
           )}
         </HappierPressable>
