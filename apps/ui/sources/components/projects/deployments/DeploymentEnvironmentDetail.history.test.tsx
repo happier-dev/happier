@@ -209,6 +209,28 @@ describe('Environment → History', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it('a failed or running row shows its compact step strip; a settled success keeps the single glyph (dHist)', async () => {
+    const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
+    const now = Date.now();
+    const steps = [
+      { id: 'build', label: 'Build', state: 'succeeded' as const },
+      { id: 'rollout', label: 'Roll out', state: 'failed' as const },
+      { id: 'route', label: 'Route', state: 'skipped' as const },
+    ];
+    const items = [
+      { ...createDeploymentReceiptHeaderV1({ id: 'receipt-failed', environmentId, state: 'failed',
+        requestedAtMs: now - 3_000, startedAtMs: now - 2_000, settledAtMs: now - 1_000 }), steps },
+      { ...createDeploymentReceiptHeaderV1({ id: 'receipt-ok', environmentId, state: 'succeeded',
+        requestedAtMs: now - 6_000, startedAtMs: now - 5_000, settledAtMs: now - 4_000 }),
+        steps: steps.map(step => ({ ...step, state: 'succeeded' as const })) },
+    ];
+    const { screen, controller, settle } = await renderHistory(() => ({ ok: true, items, nextCursor: null }));
+    try {
+      expect(await settle('project-deployments.receipt.row.receipt-failed.steps')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.receipt.row.receipt-ok.steps')).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('unrelated parent renders redraw 0 unchanged receipt rows, and a row still opens its own receipt', async () => {
     const { screen, controller, settle, opened, detail, rerenderParent } =
       await renderHistory(() => ({

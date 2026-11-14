@@ -68,7 +68,7 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentSourceMethodV1, DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
   deploymentDefinitionLabel,
@@ -1587,7 +1587,7 @@ export function describeReceipt(
 const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   props: Readonly<{
     receipt: DeploymentReceiptHeaderV1 & Readonly<{ title?: string; failure?: DeploymentReceiptFailureV1 | null;
-      source?: DeploymentReviewRevisionV1 | null }>;
+      source?: DeploymentReviewRevisionV1 | null; steps?: readonly DeploymentStepV1[] }>;
     live: boolean;
     byYou: boolean;
     phone: boolean;
@@ -1604,6 +1604,10 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   const facts = props.byYou ? [t('projects.deployments.byYou')] : [];
   // A phone keeps the title's width: duration and age join the facts line instead of a right column.
   if (props.phone) facts.push(...(duration !== null ? [formatElapsedDuration(duration)] : []), age);
+  // A failed or running deploy shows where it is or stopped (dHist): the compact strip with its caption. A settled
+  // success keeps the single glyph.
+  const strip = (receipt.state === 'failed' || receipt.state === 'running') && receipt.steps && receipt.steps.length > 0
+    ? receipt.steps : null;
   return (
     <Item
       testID={`project-deployments.receipt.row.${receipt.id}`}
@@ -1628,6 +1632,10 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
         ) : undefined
       }
       subtitle={lead || facts.length > 0 ? <ReceiptFactsLine sha={null} lead={lead} facts={facts} /> : undefined}
+      bottomElement={strip ? (
+        <DeploymentStepStrip variant="compact" captioned steps={strip} testID={`project-deployments.receipt.row.${receipt.id}.steps`} />
+      ) : undefined}
+      bottomElementInset="text"
       rightElement={props.phone ? undefined : (
         <View style={styles.rowMeta}>
           {duration !== null ? (
