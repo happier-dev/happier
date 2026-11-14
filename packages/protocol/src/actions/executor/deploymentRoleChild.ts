@@ -21,7 +21,6 @@ import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
 
 const deploymentRoleChild = Symbol('deploymentRoleChild');
 const credentialScopeAdmission = Symbol('credentialScopeAdmission');
-const managedOpaquePresetCustodianAdmission = Symbol('managedOpaquePresetCustodianAdmission');
 
 function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | 'aborted' | 'child_mismatch' | 'no_plan'): ActionExecuteFailure {
   return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
@@ -55,8 +54,6 @@ export type HostReviewedChildPolicyV1 = Readonly<{
   surface: NonNullable<ActionExecutorContext['surface']>;
   /** Host-private concrete credential admission; omitted by the wire policy schema. */
   [credentialScopeAdmission]?: Readonly<{ grant: ApiTokenGrantV1; target: ActionExecutorContext['externalActionTarget'] }>;
-  /** Exact opaque preset custody fact; only the managed acquire issuer can retain it. */
-  [managedOpaquePresetCustodianAdmission]?: ManagedOpaquePresetCustodianProof;
 }>;
 export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<{
   action: TAction | Exclude<HostReviewedChildInvocationV1['action'], ActionId>;
@@ -84,7 +81,6 @@ type ChildProof = Readonly<{
   environmentId?: string;
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
   [credentialScopeAdmission]?: HostReviewedChildPolicyV1[typeof credentialScopeAdmission];
-  [managedOpaquePresetCustodianAdmission]?: HostReviewedChildPolicyV1[typeof managedOpaquePresetCustodianAdmission];
 }>;
 type ChildContext = ActionExecutorContext & { [deploymentRoleChild]?: ChildProof };
 type ReviewedChildPort = HostReviewedChildPortV1 & Readonly<{ [deploymentRoleChild]?: true }>;
@@ -192,8 +188,6 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
     || binding.accountId !== proof.requesterAccountId
     || binding.custodianAccountId !== proof.custodianAccountId
     || context.runtimeAccountId !== proof.requesterAccountId
-    || (proof.requesterAccountId !== proof.custodianAccountId
-      && context.defaultSessionMachineId !== proof.controller.machineId)
     || context.actionRequestId !== proof.requestId
     || binding.requestId !== proof.requestId
     || binding.serverIdentityId !== proof.homeId
@@ -207,9 +201,9 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
 }
 
 /**
- * Retain Home's exact opaque-preset custody admission on the existing child
- * policy. The root retains the requester Account; the host's receiving
- * Machine proves placement when a different Account owns the custodian controller.
+ * Admit the opaque-preset child policy against Home's exact custody scope.
+ * The signed root retains requester and controller identity; the receiving
+ * transport owns placement admission.
  */
 export function retainManagedOpaquePresetCustodianAdmissionV1(policy: HostReviewedChildPolicyV1,
   params: Readonly<{ parent: HostReviewedParentV1; context: ActionExecutorContext;
@@ -217,8 +211,7 @@ export function retainManagedOpaquePresetCustodianAdmissionV1(policy: HostReview
   const binding = params.context.externalActionExecutionAuthorization?.binding;
   if (!binding || !matchesManagedOpaquePresetCustodianProof({ ...params.admission,
     requesterAccountId: binding.accountId, target: binding.target }, params.parent, params.context, binding)) return null;
-  return { ...policy, [managedOpaquePresetCustodianAdmission]: Object.freeze({ ...params.admission,
-    requesterAccountId: binding.accountId, target: structuredClone(binding.target) }) };
+  return policy;
 }
 
 /** Physical custody is independently admitted; the original SOURCE root stays unchanged. */
@@ -407,13 +400,10 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const binding = context.externalActionExecutionAuthorization?.binding;
   const receiving = params.receivingAdmission;
   if (context.signal?.aborted) return reviewedChildScopeDenied('aborted');
-  const custodianAdmission = !receiving && matchesManagedOpaquePresetCustodianProof(
-    params.admittedReview?.[managedOpaquePresetCustodianAdmission], parent, context, binding,
-  );
   // The domain admission owns the reviewed parent's relationship to the request.
   if (!parent.actionId || receiving && (!binding || receiving.actorAccountId !== binding.accountId
       || receiving.actorAccountId !== context.runtimeAccountId)
-    || binding && binding.accountId !== context.runtimeAccountId && !custodianAdmission) return reviewedChildScopeDenied('issuer_binding');
+    || binding && binding.accountId !== context.runtimeAccountId) return reviewedChildScopeDenied('issuer_binding');
   if (binding && !sameStrictJsonValue(context.externalActionTarget, binding.target)) return reviewedChildScopeDenied('issuer_target');
   const childInput = normalizeStrictJsonValue(child.input);
   const parentInput = normalizeStrictJsonValue(parent.input);
@@ -445,9 +435,6 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     ...(receiving ? { receivingAdmission: structuredClone(receiving) } : {}),
     ...(params.admittedReview?.[credentialScopeAdmission] ? {
       [credentialScopeAdmission]: params.admittedReview[credentialScopeAdmission],
-    } : {}),
-    ...(params.admittedReview?.[managedOpaquePresetCustodianAdmission] ? {
-      [managedOpaquePresetCustodianAdmission]: params.admittedReview[managedOpaquePresetCustodianAdmission],
     } : {}),
     operation: {
       ...(params.approvedBy ? { approvedBy: structuredClone(params.approvedBy), approvedRequestId: context.actionRequestId ?? undefined } : {}),
