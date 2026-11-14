@@ -46,6 +46,29 @@ function mcpRuntime(dispose: PluginMcpServerRuntime['dispose']): PluginMcpServer
 }
 
 describe('contribution module activation', () => {
+    it('cold-activates the GitHub Account artifact with every declared Account Action', async () => {
+        const github = await import('../../../../../../../packages/plugins/scm-github/src/manifest.js');
+        const account = await import('../../../../../../../packages/plugins/scm-github/src/accountRuntime.js');
+        const admitted = ingestCanonicalPluginManifest(github.PLUGIN_MANIFEST, {
+            manifestAuthority: 'bundled_first_party', sourceProvenance: 'registryCustodied',
+        });
+        if (!admitted.ok) throw new Error(admitted.diagnostics.map(item => item.message).join('\n'));
+        const manifest = admitted.manifest;
+        const execution = manifest.contributes.actions.find(action => action.id === github.GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits)?.execution;
+        if (execution?.target !== 'account') throw new Error('GitHub scope discovery must declare its Account artifact');
+        const result = await activateContributionModule({ pluginId: manifest.id, occurrenceId: 'github-cold-account',
+            manifest, moduleNamespace: { [execution.account.exportName]: account.activate },
+            target: { realm: 'account', ...execution.account }, isOccurrenceCurrent: () => true });
+        try {
+            expect(result.status, JSON.stringify(result.diagnostics)).toBe('active');
+            const expected = manifest.contributes.actions.filter(action => action.execution.target === 'account'
+                && action.execution.account.artifactId === execution.account.artifactId
+                && action.execution.account.exportName === execution.account.exportName).map(action => action.id).sort();
+            expect(result.registrations.filter(registration => registration.family === 'actions')
+                .map(registration => registration.localId).sort()).toEqual(expected);
+        } finally { await result.dispose(); }
+    });
+
     it('activates the exact Cloudflare Account Action artifact beside its separate authentication artifact', async () => {
         const cloudflare = await import('../../../../../../../packages/plugins/deploy-cloudflare/src/index.js');
         const admitted = ingestCanonicalPluginManifest(cloudflare.PLUGIN_MANIFEST, {

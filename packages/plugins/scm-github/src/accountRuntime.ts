@@ -1,3 +1,4 @@
+import { GITHUB_HOSTING_OPERATION_ACTIONS_V1 } from './actions/hosting.js';
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 import { githubAccountCredentialRuntime } from './auth/credentialMaterialization.js';
 import { GITHUB_CONNECTED_ACCOUNT_ID } from './observations/githubProviderContracts.js';
@@ -9,6 +10,9 @@ import { GITHUB_PROJECT_READINESS_ACTIONS_V1 } from './actions/projectReadiness.
 export function activate(api: PluginAccountApi): () => void {
   const githubRequestLifetime = {};
   api.connectedAccounts.register(GITHUB_CONNECTED_ACCOUNT_ID, githubAccountCredentialRuntime);
+  for (const [id, action] of Object.entries(GITHUB_HOSTING_OPERATION_ACTIONS_V1)) {
+    api.actions.register(id, (input, context) => action.run!(input, context));
+  }
   for (const [id, action] of Object.entries(GITHUB_ACCOUNT_READ_ACTIONS)) {
     api.actions.register(id, (input, context) => {
       const invocation = { ...context, githubRequestLifetime };
