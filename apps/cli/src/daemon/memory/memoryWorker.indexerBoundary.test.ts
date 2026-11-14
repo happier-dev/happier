@@ -38,6 +38,9 @@ describe('Memory daemon/indexer boundary', () => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (path === '/v2/sessions' || path === '/v2/sessions/archived') return { status: 200, data: readInventory(new URL(String(url))) };
+      // Fixture Sessions hold an indexed (user) row unless a test models an empty one.
+      if (/^\/v1\/sessions\/[^/]+\/messages$/.test(path)) return { status: 200, data: { hasMore: false,
+        messages: [{ id: 'm1', seq: 1, messageRole: 'user', content: { t: 'encrypted', c: 'AAAA' }, createdAt: 1 }] } };
       throw new Error(`Unexpected boundary fixture HTTP path: ${path}`);
     });
   });
@@ -172,11 +175,21 @@ describe('Memory daemon/indexer boundary', () => {
     const sessions = new Map(Array.from({ length: 1_024 }, (_, index) => [`session-${index}`, session(`session-${index}`, 'machine_1')]));
     let pages = 0;
     const exactReads: string[] = [];
+    // Sessions holding a row Memory indexes (user/agent); every other row (events) is never indexed.
+    const indexable = new Set(['new-local']);
+    const probes: string[] = [];
     const axios = (await import('axios')).default;
     vi.mocked(axios.get).mockImplementation(async url => {
-      const path = new URL(String(url)).pathname;
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) };
       if (path === '/v2/sessions') { pages++; return { status: 200, data: { sessions: [...sessions.values()], hasNext: false, nextCursor: null } }; }
+      if (path.endsWith('/messages')) {
+        const id = decodeURIComponent(path.split('/')[3]!);
+        probes.push(`${id}:${parsed.searchParams.get('roles')}`);
+        return { status: 200, data: { hasMore: false, messages: indexable.has(id)
+          ? [{ id: 'm1', seq: 1, messageRole: 'user', content: { t: 'encrypted', c: 'AAAA' }, createdAt: 1 }] : [] } };
+      }
       const id = decodeURIComponent(path.slice('/v2/sessions/'.length));
       exactReads.push(id);
       return sessions.has(id) ? { status: 200, data: { session: sessions.get(id) } } : { status: 404, data: { error: 'Session not found' } };
@@ -218,6 +231,20 @@ describe('Memory daemon/indexer boundary', () => {
       expect(admitted.at(-1)).toEqual([{ sessionId: 'new-local', eligibility: null }]);
       expect(pages).toBe(0);
       expect(opens).toHaveBeenCalledTimes(4);
+      // A brand-new local Session wakes no indexer child until it holds a row Memory indexes.
+      const before = admitted.length;
+      sessions.set('empty-local', session('empty-local', 'machine_1', 0));
+      await worker.noteSessionChanged?.({ sessionId: 'empty-local' });
+      sessions.set('event-only', session('event-only', 'machine_1', 1));
+      await worker.noteSessionChanged?.({ sessionId: 'event-only' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(admitted).toHaveLength(before);
+      indexable.add('event-only');
+      sessions.set('event-only', session('event-only', 'machine_1', 2));
+      await worker.noteSessionChanged?.({ sessionId: 'event-only' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(admitted.at(-1)).toEqual([{ sessionId: 'event-only', eligibility: expect.objectContaining({ sessionId: 'event-only', observedSeq: 2 }) }]);
+      expect(probes.filter(probe => probe.startsWith('event-only'))).toEqual(['event-only:user,agent', 'event-only:user,agent']);
     } finally { await worker.stop(); Object.assign(configuration, { isDaemonProcess: previous }); }
   });
 

@@ -13,6 +13,7 @@ import { subscribeOptionalRuntimeInstallSuccess } from '@/packagedRuntime/instal
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 import { readRequesterAccountEncryptionCurrentness, waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { collectRetainedSessionInventoryVisibility, fetchSessionInventoryPage } from '@/daemon/sessions/sessionInventoryVisibility';
@@ -593,6 +594,20 @@ export async function prepareMemoryWorker(params: Readonly<{
         const pending = pendingRevisions.get(change.sessionId);
         const observed = pending?.eligibility?.observedSeq ?? snapshot.observedSeqBySessionId.find(([id]) => id === change.sessionId)?.[1];
         if (observed === eligibility.observedSeq) return;
+        // A never-admitted Session wakes the indexer child only once it holds a row the child
+        // indexes: user/agent rows (`memoryIndexer` reads roles user/agent plus legacy unclassified
+        // rows, which only released clients wrote and the inventory pass admits). A new Session's
+        // creation, metadata and event rows have nothing to index; its first user row wakes it.
+        const known = observedSessionIds.has(change.sessionId) || snapshot.candidateSessionIds.includes(change.sessionId)
+          || startupRetainedSessionIds.has(change.sessionId) || withReaders((tier1, deep) =>
+            tier1?.hasSessionIndexData(change.sessionId) === true || deep?.hasSessionIndexData(change.sessionId) === true);
+        if (observed === undefined && !known) {
+          if (eligibility.observedSeq === 0) return;
+          const indexable = await fetchEncryptedTranscriptMessagesPage({ token: params.credentials.token, sessionId: change.sessionId,
+            afterSeq: 0, limit: 1, roles: ['user', 'agent'], scope: 'main', signal });
+          signal.throwIfAborted();
+          if (stopped || desired !== basis || request.removed || indexable.messages.length === 0) return;
+        }
         pendingRevisions.set(change.sessionId, { ...pending, sessionId: change.sessionId,
           seq: Math.max(pending?.seq ?? 0, eligibility.observedSeq), eligibility });
         // Do not hold the change carrier behind transcript/index IO.
