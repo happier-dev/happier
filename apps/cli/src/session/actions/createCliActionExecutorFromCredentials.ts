@@ -2322,7 +2322,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const executor = await resolveExecutor(credentials, undefined, routing);
         return await executor.continueConfidentialApprovalRequest(input, routing.context);
       },
-      replayApprovedApprovalRequest: async (args) => withApprovalActionTrace('approval.request.decide', () => timeApprovalPhase('approval.replay', async () => {
+      replayApprovedApprovalRequest: async (args, machineIngress) => withApprovalActionTrace('approval.request.decide', () => timeApprovalPhase('approval.replay', async () => {
         const selection = await timeApprovalPhase('approval.replay.credentials', readApprovalReplayCredentials);
         if (!selection.ok) return selection;
         const { credentials } = selection;
@@ -2331,7 +2331,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         return await executor.replayApprovedApprovalRequest({
           ...args,
           ...(signal ? { signal } : {}),
-        });
+        }, machineIngress);
       }), args.artifactId),
     });
   };

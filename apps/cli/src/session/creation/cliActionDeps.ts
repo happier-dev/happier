@@ -416,7 +416,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           : null
         : admittedCreationAuthorization;
       if ((prepareSpawn || context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start') && !creationAuthorization) {
-        return { type: 'error', code: 'permission_denied', retryable: false };
+        return { ok: false, errorCode: 'permission_denied', error: 'permission_denied', effectAttempted: false,
+          failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied' }, 'session.creation.authorization') };
       }
       let initialSessionRolesV1 = requestedInitialSessionRolesV1;
       const discussionParticipantLaunch = discussionParticipant

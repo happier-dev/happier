@@ -153,6 +153,7 @@ serverBaseUrl: string;
 runtimeActionExecute?: RuntimeActionExecute;
 acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
 managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
+executeTeamCredentialBrokerAction?: import('@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission').ExecuteTeamCredentialBrokerAction;
 workflowAcceptedAuthorizationCurrentness?: Parameters<
       typeof createCliActionExecutorFromCredentials
     >[0]['workflowAcceptedAuthorizationCurrentness'];
@@ -736,6 +737,7 @@ resolveServerFeaturesSnapshot?: () =>
           && await providerProjectionAccount.operationContext.isCurrent(signal);
         if (!await isCurrent()) return null;
         const { purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
+          executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
           operationContext: providerProjectionAccount.operationContext,
           accountId: providerProjectionAccount.accountId, machineId: params.machineId,
           reloadController: pluginRuntimeController, isCurrent,
@@ -777,6 +779,7 @@ resolveServerFeaturesSnapshot?: () =>
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
+        executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
         registerWorkflowTriggerList: list => { workflowTriggerList = list; },
         ...(requesterAccountContext ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: requesterAccountContext.credentials, happyHomeDir: configuration.happyHomeDir,
@@ -1059,6 +1062,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         managedMachineAction: managedPolicyAction?.managedMachineAction ?? createDaemonManagedMachineActionAdapter({
           credentials,
+          executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
           ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
           machineId: params.machineId,
           serverBaseUrl: params.serverBaseUrl,
@@ -1420,7 +1424,7 @@ resolveServerFeaturesSnapshot?: () =>
         try {
           const execute = () => confidential
             ? executor.continueConfidentialApprovalRequest(confidential.input, acceptedContext)
-            : replay ? executor.replayApprovedApprovalRequest(replay)
+            : replay ? executor.replayApprovedApprovalRequest(replay, replayIngress)
               : executor.execute(actionId, input, acceptedContext);
           return requesterAccountContext
             ? await runWithServerHttpBaseUrl(requesterAccountContext.serverHttpBaseUrl,

@@ -19,10 +19,7 @@ import { isOriginalSessionInputAccountActionCustody } from '@/daemon/sessionEncr
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 /** Receiving custody is host-private and never replaces the approved origin. */
-export type ExternalActionApprovalReplay = (
-  args: Parameters<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>[0],
-  machineIngress?: Pick<RpcHandlerContext, 'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>,
-) => ReturnType<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>;
+export type ExternalActionApprovalReplay = ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest'];
 
 export type ExternalActionRpcRegistrationOptions = Readonly<{
   machineId: string;

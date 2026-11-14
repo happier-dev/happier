@@ -633,7 +633,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     /** Current credential-bound host facts, never read from the approval or RPC operands.
      * Its Action settings are that same Account's current policy snapshot. */
     currentAccount?: Readonly<{ accountId: string; serverId: string; serverIdentityId: string; actionsSettings?: ActionsSettingsV1 }>;
-  }>) => Promise<ActionExecuteResult>;
+  }>, machineIngress?: Pick<ActionExecutorContext, 'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>) => Promise<ActionExecuteResult>;
 }> {
   const settleActionOutput: typeof projectTerminalActionOutput = (actionId, result, requestId, schema) =>
     projectTerminalActionOutput(actionId, result, requestId, schema, deps.recordActionOutputDiagnostic);
@@ -1897,6 +1897,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // This exact live plugin invocation already holds the receiver's admitted
       // Machine custody. Consent resumes that invocation rather than borrowing
       // the deciding person's filesystem identity.
+      ...(args.ctx.machineAdmission ? { machineAdmission: args.ctx.machineAdmission } : {}),
+      ...(args.ctx.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: args.ctx.verifyMachineAdmissionCurrent } : {}),
       ...(retainedPluginContext?.context.machineAdmission
         ? { machineAdmission: retainedPluginContext.context.machineAdmission } : {}),
       ...(retainedPluginContext?.context.verifyMachineAdmissionCurrent

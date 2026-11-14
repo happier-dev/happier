@@ -3855,8 +3855,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         : verified.signedChildPurpose.usesPublicRootCredential ? PublicActionIdSchema.safeParse(verified.binding.actionId)
         : verified.binding.handoffContinuation
             ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(verified.binding)) : effect;
-    // The purpose owner selected the credential ceiling. A qualified reviewed
-    // child need not also exist in the built-in Action catalog to spend it.
+    // All root-credential paths use their admitted root ceiling, including qualified
+    // effects absent from the built-in catalog. The signed-child purpose above
+    // must pin the effect and HTTP route before selecting that ceiling.
     if (!credentialAction.success || !resolveCredentialActionAdmissionV1({
         spec: getActionSpec(credentialAction.data),
         authority: verified.effectiveAuthority, grant: 'grant' in verified.binding ? verified.binding.grant : null,

@@ -28,7 +28,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
     preExecutionFailure?: ActionExecuteFailure; observeExecution?: boolean;
   }>): Promise<Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }> | ActionExecuteFailure>;
 }>): Replay {
-  return async args => {
+  return async (args, machineIngress) => {
     let effectMayHaveStarted = false;
     try {
       const artifactId = normalizeId(args.artifactId);
@@ -112,6 +112,9 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       })) return buildApprovalDecisionResult(request);
       const executed = await deps.executeApprovedActionForRequest({ artifactId, request, artifactServerId,
         ctx: { ...(args.signal ? { signal: args.signal } : {}),
+          ...(machineIngress?.machineAdmission ? { machineAdmission: machineIngress.machineAdmission } : {}),
+          ...(machineIngress?.verifyMachineAdmissionCurrent
+            ? { verifyMachineAdmissionCurrent: machineIngress.verifyMachineAdmissionCurrent } : {}),
           ...(args.currentAccount ? { surface: 'cli' as const, runtimeAccountId: args.currentAccount.accountId,
             serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId,
             ...(args.currentAccount.actionsSettings ? { actionsSettings: args.currentAccount.actionsSettings } : {}) } : {}),

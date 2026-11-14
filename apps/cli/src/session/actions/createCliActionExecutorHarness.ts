@@ -363,7 +363,7 @@ export function createCliActionExecutorHarness(
   }
   const deps = rawDeps as ActionExecutorDeps;
   const executor = createActionExecutor({ ...deps, recordActionOutputDiagnostic: diagnostic => {
-    logger.warnLocalFile('[Action] Invalid output', diagnostic);
+    logger.warnLocalFile('[Action] Private failure diagnostic', diagnostic);
     deps.recordActionOutputDiagnostic?.(diagnostic);
   } });
   const runtimeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : undefined;
@@ -570,7 +570,7 @@ export function createCliActionExecutorHarness(
         });
       }),
       continueConfidentialApprovalRequest: (input, context) => runOnCapturedHome(() => executor.continueConfidentialApprovalRequest(input, resolveContext(context))),
-      replayApprovedApprovalRequest: (args) => runOnCapturedHome(() => executor.replayApprovedApprovalRequest(args)),
+      replayApprovedApprovalRequest: (args, machineIngress) => runOnCapturedHome(() => executor.replayApprovedApprovalRequest(args, machineIngress)),
     },
   };
 }

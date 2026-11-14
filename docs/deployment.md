@@ -20,6 +20,13 @@ Host, Session and Workflow callers use that same owner. Ordinary Session birth,
 access and input owners retain their decisions; no additional permission or
 Account encryption-mode decision is made by Prepare.
 
+Approved replay retains the original bound envelope and the receiving Machine's
+host-private admission through the shared approval executor. The Session birth
+issuer consumes those facts for its existing child proof; consent does not
+reconstruct them from approval operands. If that proof cannot be issued, the
+Action receipt retains `session.creation.authorization`, `permission_denied`
+and `effectAttempted: false` before any Session launch.
+
 Reviewed provider children also retain the admitted deployment root's finite
 workspace census purpose. Home's native preparation owner selects workspace
 references on that Home; the Project-row route keeps Account isolation. This
@@ -772,6 +779,12 @@ it does not infer the requester's role from the Source owner's access or repeat
 the decision during an admitted deployment. Opaque encrypted definition changes
 need the same admission because Home cannot prove that their definition stayed
 unchanged.
+
+Creating a Team-owned Source requires the Team's settings-management capability.
+Ordinary membership and a ready Team Machine grant do not grant that authority.
+In 0.3 development, Create preparation preserves the Source owner's existing
+`source_access_denied` refusal through authorization and Action invocation;
+the authorization endpoint returns HTTP 403 before dispatch or approval.
 
 For a Team-owned Source, placement also requires an explicit Machine grant to
 that Team. A member's personal Machine ownership does not supply the Source's
@@ -3710,7 +3723,7 @@ retain current health, and the existing explicit refresh retries unavailable
 Resources. No timer, native inspection or second health reader is introduced.
 Historical receipt facts and L5's current URL/TLS remain separate projections.
 
-Operations outcome links consume this existing health feed through
+Operations outcome links consume this existing Environment detail through
 `useOperationsRunOutcome`. Receipt recovery requires its same Environment and
 runtime target link; service recovery selects the same Machine and service id.
 The model preserves the aggregate's recovery evidence and partial/unknown
@@ -4362,7 +4375,7 @@ database locally; selecting the adapter does not turn it into an API/worker spli
     deployment fails closed instead of appearing to work.
   - Changing either value changes the WorkOS runtime fingerprint, which invalidates
     already-started OAuth attempts bound to the previous runtime.
-- Logging format: Node (Docker image and source runs) writes JSON stdout on the main thread by default; `HAPPIER_SERVER_LOG_FORMAT=pretty` (Home settings or env) selects the `pino-pretty` transport worker, whose ring-buffer poll wakes about once a second while idle. The server configuration registry owns the default and the post-Home-overlay logger initialization applies it; unset or invalid values use JSON.
+- Logging format: `apps/server/sources/utils/logging/log.ts#resolveServerLogFormat` owns the default. An explicit `HAPPIER_SERVER_LOG_FORMAT` (Home settings or env) wins; otherwise `NODE_ENV=production` (every server Docker image stage) writes JSON stdout on the main thread, and development (source, stacks) keeps the `pino-pretty` transport worker, whose ring-buffer poll wakes about once a second while idle. The registry entry has no static default, so the Home setting stays editable in Docker.
 - Sentry native CPU profiling (development source): `SENTRY_PROFILE_SESSION_SAMPLE_RATE` defaults to `0`. A positive rate enables the native integration on Node. Bun-based servers cannot load the V8 profiler; they emit a `profiling-unavailable` warning and retain Sentry error capture. Native profiling is not available in Bun-compiled server binaries.
 - Debug logging: `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING` (enables file logging + dev log endpoint).
 

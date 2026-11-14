@@ -23,6 +23,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '../externalActionE
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { MachineServiceLogsReadInputV1Schema } from '../../local/services/nativeLogsV1.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+import { isSessionActionChildCreationRootV1 } from '../../sessions/creation/sessionCreationActionIdsV1.js';
 
 /** A signed reviewer may use the same Account reads as the local deciding person. */
 export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
@@ -334,6 +335,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
       || isWorkspaceSyncRelationshipWriteActionId(params.actionId)
       || externalAuthorization && 'credentialId' in externalAuthorization.binding
       || isProjectWorkspaceSyncPreparationActionV1(params.actionId)
+      || isSessionActionChildCreationRootV1(params.actionId)
       || externalAuthorization?.binding.deploymentChildRoot === true
       || params.actionId === 'deployments.teardown'
       || isMachineSetupPlanRpcChildV1({ rootActionId: params.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
