@@ -9,6 +9,7 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { pressTestInstance, pressTestInstanceAsync, renderScreen as renderCanonicalScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -555,9 +556,14 @@ function applyShellFixtures() {
   }) } });
   canonicalStorage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: localSettingsState.mobileWorkspaceExperienceV1 });
   const key = buildRealmQualifiedSessionCompanionPreferenceKey({ serverId: account.home.id, accountId: canonicalStorage.getState().profileScope!.accountId }, 's1');
+  // The settings owner stores only the authored layout; visible/collapsed are device interaction state.
+  const storedCompanion = companionPreferenceState.stored;
+  const authoredCompanion = storedCompanion
+    ? { v: storedCompanion.v, edge: storedCompanion.edge, density: storedCompanion.density, items: [...storedCompanion.items] }
+    : undefined;
   canonicalStorage.getState().applyLocalSettings({
     uiMultiPanePanelsEnabled: false,
-    sessionCompanionPreferencesBySessionV1: key && companionPreferenceState.stored ? { [key]: companionPreferenceState.stored } : {},
+    sessionCompanionPreferencesBySessionV1: key && authoredCompanion ? { [key]: authoredCompanion } : {},
   }, { persist: false });
   canonicalStorage.getState().applyAutomations(Array.from({ length: automationsState.enabledCount }, (_, index) => createAutomationDefinitionSummary({
     id: `automation-${index}`, name: 'Session task', description: null, enabled: true,
@@ -1010,7 +1016,11 @@ describe('SessionView header action menu visibility', () => {
     await screen.update(<SessionView id="s1" routeServerId="server-1" />);
 
     const rerenderedProps = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
-    expect(rerenderedProps?.extraItems).toBe(extraItems);
+    // The resolver no longer caches React elements: menu content stays the same,
+    // while actions receive the current Session instead of a captured old record.
+    expect(rerenderedProps?.extraItems.map(({ id, title, subtitle }: { id: string; title: string; subtitle?: string }) => ({ id, title, subtitle })))
+      .toEqual(extraItems.map(({ id, title, subtitle }: { id: string; title: string; subtitle?: string }) => ({ id, title, subtitle })));
+    expect(rerenderedProps?.session.metadata.host).toBe('alternate-host');
     const rerenderedHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
     expect(rerenderedHeaderProps?.badges).toEqual(firstBadges);
   });
@@ -1113,7 +1123,7 @@ describe('SessionView header action menu visibility', () => {
       flavor: firstHeaderProps?.flavor,
     });
     expect(rerenderedHeaderProps.badges).toBe(firstHeaderProps?.badges);
-    expect(rerenderedHeaderProps.rightElement).toBe(firstHeaderProps?.rightElement);
+    expect(headerActionMenuSpy.mock.calls.at(-1)?.[0]?.session.updatedAt).toBe(sessionState.session.updatedAt);
   });
 
   it('refreshes the header action menu when the mounted session gains a new machine target', async () => {
@@ -1222,6 +1232,7 @@ describe('SessionView header action menu visibility', () => {
       id: 'resource-current',
       teamId: 'team-current',
       displayName: 'Current Team account',
+      sourceOwnerDisplayName: null,
       resourceRevision: 7,
       readiness: { kind: 'available' },
       recoveryAction: null,
@@ -1631,11 +1642,14 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = true;
     const screen = await renderSessionView();
-    const landscapeBackButton = screen.findByTestId('session-view-landscape-back-button');
+    const landscapeBackButton = screen.findHostByTestId('session-view-landscape-back-button');
+    if (!landscapeBackButton) throw new Error('Expected the landscape Back control');
     pressTestInstance(landscapeBackButton);
 
     expect(landscapeBackButton).toBeTruthy();
-    expect(landscapeBackButton?.props.hitSlop).toBe(15);
+    const hitArea = readHitArea(landscapeBackButton);
+    expect(hitArea.width).toBeGreaterThanOrEqual(44);
+    expect(hitArea.height).toBeGreaterThanOrEqual(44);
     expect(routerPushSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).toHaveBeenCalledTimes(1);
   });

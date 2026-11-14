@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
+import type { WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import {
   getWidgetSizeFootprintV1,
   type WidgetSizeV1,
@@ -1048,7 +1049,13 @@ describe('Machines widget presentation', () => {
     // The rail door on a wide screen with the machine list column showing beside the index.
     const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
         <MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>
-    </AppShellColumnContext.Provider>);
+    </AppShellColumnContext.Provider>, { createNodeMock: element => {
+      // The sole card is visible; real viewport demand waits for its DOM geometry.
+      const node = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }) };
+      if (element.type === 'ScrollView') return { getInnerViewNode: () => node };
+      if (element.type === 'View') return node;
+      return null;
+    } });
     await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('machines.index.collection:stage'), 'onLayout', {
       nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
     }));
@@ -1374,7 +1381,7 @@ describe('Metric widget configuration', () => {
       return { state: 'reporting', sample: sample(sampledAt), series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] },
         attention: { level: 'calm', reasons: [] } };
     });
-    const lent: ({ title: string; mark: string } | null)[] = [];
+    const lent: (WidgetFrameBodyIdentity | null)[] = [];
     const draw = (metric: string) => (
       <WidgetFrameBodyIdentityContext.Provider value={(identity) => { lent.push(identity); }}>
         <MetaHost>
