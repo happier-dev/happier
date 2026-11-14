@@ -72,6 +72,7 @@ export const KILO_PLUGIN = definePlugin({
         connectedAccounts: [{
           purpose: KILO_CODEX_PURPOSE,
           service: OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
+          nativeModelIdPrefix: 'openai/',
           materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'],
         }, ...KILO_KEY_DECLARATIONS],
         providerRequirements: {
