@@ -8,7 +8,7 @@ import { DeploymentEnvironmentCreateActionInputV1Schema, DeploymentEnvironmentCr
     DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBindingsPatchInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { EnvironmentVariableBindingV1 } from '@happier-dev/protocol';
+import type { EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol';
 import { readPreviewTemplateNativeDataForHost } from './templates/previewCreate';
 
 /** A later PR event requires the original native copy and companion connection to finish. */
@@ -24,7 +24,7 @@ export async function readPreviewCopyReadinessForHost(
         || companionChild.environment.serverId !== child.environment.serverId)) return false;
     let companionRequired = Boolean(companionChild);
     let companionData: readonly Readonly<{ service: string; database: string }>[] = [];
-    let companionBindings: readonly EnvironmentVariableBindingV1[] = [];
+    let companionBindings: readonly EnvironmentVariableBindingInputV1[] = [];
     const connections: z.infer<typeof DeploymentBindingsPatchInputV1Schema>[] = [];
     const restored = new Set<string>();
     const restoreKey = (environmentId: string, runtimeTargetLinkId: string | undefined, service: string, database: string) =>

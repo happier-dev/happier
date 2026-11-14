@@ -16,7 +16,7 @@ import { DeploymentTargetVariablesReadResultV1Schema, DeploymentTargetVariablesS
 import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentControllerAvailabilityV1Schema } from './deploymentControllerAvailabilityV1.js';
 import { DeploymentPreviewForkEligibilityV1Schema } from './deploymentPreviewTemplateV1.js';
-import { EnvironmentVariableBindingV1Schema } from './storedAppInputV1.js';
+import { EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
@@ -450,7 +450,8 @@ export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.u
     runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
     previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
     previewCompanionRequired: z.optional(z.literal(true)),
-    previewNativeBindings: z.optional(z.array(EnvironmentVariableBindingV1Schema)),
+    // Authored companion bindings; the bindings.set writer assigns grant addresses.
+    previewNativeBindings: z.optional(z.array(EnvironmentVariableBindingInputV1Schema)),
     previewNativeData: z.optional(z.array(z.strictObject({ service: DeploymentIdentifierV1Schema,
       database: DeploymentIdentifierV1Schema }))),
   }), DeploymentActionFailureV1Schema,

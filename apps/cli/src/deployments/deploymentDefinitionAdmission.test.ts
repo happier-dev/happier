@@ -6,6 +6,7 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import { admitUseDeploymentDefinition, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import * as persistence from '@/persistence';
+import { createDeploymentTargetRoleAdmissionFixture } from './targets/deploymentTargetRoleAdmission.testkit';
 
 describe('deployment definition authority provenance', () => {
     afterEach(() => vi.restoreAllMocks());
@@ -18,6 +19,23 @@ describe('deployment definition authority provenance', () => {
         content.buildMachineId = environment.environment.buildMachineId ?? environment.environment.controllerMachineId;
         delete content.ingress;
         expect(() => admitUseDeploymentDefinition(environment, content, link.id, structuredClone(content))).not.toThrow();
+    });
+    // Platform candidates record the method the link's resolver selected. A Use
+    // member's full-input Deploy must consume that same resolution, not re-derive it.
+    it.each([
+        ['unrecorded link', undefined, 'gitIntegration', true],
+        ['recorded Git integration', 'gitIntegration', 'gitIntegration', true],
+        ['recorded upload', 'upload', 'upload', true],
+        ['override of a recorded upload', 'upload', 'gitIntegration', false],
+    ] as const)('admits a Use platform Deploy over a repository definition for %s', (_name, recorded, method, admitted) => {
+        const { state, input } = createDeploymentTargetRoleAdmissionFixture('deploy');
+        const environment = state.environment;
+        const row = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)!;
+        if (recorded) row.content = { ...row.content, sourceMethod: recorded };
+        const content = { ...state.receipt.content, sourceIntent: environment.content.definition, sourceMethod: method };
+        const admit = () => admitUseDeploymentDefinition(environment, content, input.targetLinkId);
+        if (admitted) expect(admit).not.toThrow();
+        else expect(admit).toThrow('action_forbidden');
     });
     it('consumes signed grants, never a synthesized role on an older foreign root', async () => {
         const identity = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',

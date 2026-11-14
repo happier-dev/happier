@@ -1,5 +1,6 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentContentV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol';
 import { isDeepStrictEqual } from 'node:util';
 import { isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -71,10 +72,14 @@ export async function resolveDeploymentDefinitionRoleForHost(context: ActionExec
 export function admitUseDeploymentDefinition(environment: DeploymentEnvironmentDetailV1, content: DeploymentContentV1,
     targetLinkId: string, retained?: DeploymentContentV1): void {
     const approved = retained?.sourceIntent ?? environment.content.definition;
-    const sourceMethod = retained?.sourceMethod ?? (content.platform && approved.kind === 'stored' ? 'upload' : undefined);
+    const linkRow = environment.targetLinks.find(row => row.targetLink.id === targetLinkId);
+    if (!linkRow) return refuse();
+    const link = linkRow.targetLink;
+    // Platform candidates spend the link's recorded method through the same
+    // resolver the target owner used; Use may not override it.
+    const sourceMethod = retained?.sourceMethod ?? (!content.platform ? undefined : approved.kind === 'stored' ? 'upload'
+        : resolveDeploymentSourceMethodV1({ recorded: linkRow.content?.sourceMethod }));
     if (!isDeepStrictEqual(content.sourceIntent, approved) || content.sourceMethod !== sourceMethod) return refuse();
-    const link = environment.targetLinks.find(row => row.targetLink.id === targetLinkId)?.targetLink;
-    if (!link) return refuse();
     // The contributed target owner already proves its retained provider/config
     // identity. Stored upload is its native source method, not a caller override.
     if (content.platform) {
