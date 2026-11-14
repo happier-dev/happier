@@ -467,7 +467,8 @@ export function buildMachineServiceTimeline(input: Readonly<{
 /** A service chart's scale: CPU at least one core (0–100 %) and up to the next round step above it; memory to its round step. */
 export function resolveMachineServiceUsageScales(timeline: MachineVitalsTimeline) {
   const peak = (values: readonly (number | null)[]) => Math.max(0, ...values.map((value) => value ?? 0));
-  const cpuMax = Math.max(100, resolveRateCeiling(peak(timeline.points.flatMap((point) => [point.cpu, point.cpuMax]))));
+  const cpuPeak = peak(timeline.points.flatMap((point) => [point.cpu, point.cpuMax]));
+  const cpuMax = cpuPeak <= 100 ? 100 : resolveRateCeiling(cpuPeak);
   const memoryMax = resolveRateCeiling(peak(timeline.points.flatMap((point) => [point.usedBytes, point.usedBytesMax])));
   return {
     cpu: { domain: { min: 0, max: cpuMax }, ticks: [0, cpuMax / 2, cpuMax] as const },

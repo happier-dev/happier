@@ -10,6 +10,7 @@ import { downsampleMachineVitalsHistory } from '../../../../../cli/src/daemon/vi
 
 import {
   buildMachineServiceTimeline,
+  resolveMachineServiceUsageScales,
   buildMachineVitalsTimeline,
   formatMachinePartOfWhole,
   resolveMachineCoreCount,
@@ -454,6 +455,15 @@ describe('a service\'s usage history (service page)', () => {
     expect(timeline?.points.map((entry) => [entry.cpu, entry.cpuMax, entry.usedBytes])).toEqual([[12, 17, 200], [null, null, null], [140, 145, 210]]);
     // The Machine's own figures never stand in for the service's.
     expect(timeline?.points.every((entry) => entry.rxBps === null && entry.txBps === null)).toBe(true);
+  });
+
+  it('scales CPU to one core (0–100 %) unless the service used more, then to the next round step', () => {
+    const timeline = (cpu: number) => buildMachineServiceTimeline({ range: '24h', serviceId: 'svc-1', history: history({ serviceId: 'svc-1',
+      points: [{ ...point(1_000_000, cpu, 200), cpuMaxPercent: cpu }] }) })!;
+    // An idle service (0 %, live 2026-11-14 on NLDW4-5-40-40) reads on 0–100 %, never 0–1,000 %.
+    expect(resolveMachineServiceUsageScales(timeline(0)).cpu.domain).toEqual({ min: 0, max: 100 });
+    expect(resolveMachineServiceUsageScales(timeline(60)).cpu.domain).toEqual({ min: 0, max: 100 });
+    expect(resolveMachineServiceUsageScales(timeline(140)).cpu.domain).toEqual({ min: 0, max: 200 });
   });
 
   it('has nothing to draw for another service, a Machine-only answer or a range with no measured minute', () => {

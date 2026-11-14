@@ -353,14 +353,13 @@ function MachineServicePresent(props: Readonly<{
           </View>
         </>
       ) : null}
-        {/* A Machine that isn't answering has no history to read; the stale line above already says so. */}
-        {props.offline ? null : (
-          <View style={usage && detail ? styles.history : null}>
-            <MachineServiceUsageHistory serverId={props.serverId} machineId={props.machineId} serviceId={service.serviceId}
-              active={props.active} />
-          </View>
-        )}
       </ItemGroup>
+      {/* The history's own groups follow Usage on the page's section edge. A Machine that isn't answering has no
+          history to read; the stale line above already says so. */}
+      {props.offline ? null : (
+        <MachineServiceUsageHistory serverId={props.serverId} machineId={props.machineId} serviceId={service.serviceId}
+          active={props.active} />
+      )}
       <ItemGroup
         title={t('machineServices.logs.title')}
         description={t('machineServices.logs.description', { service: serviceName })}
@@ -549,9 +548,6 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.space.s12,
   },
   facts: {
-    marginTop: theme.space.s16,
-  },
-  history: {
     marginTop: theme.space.s16,
   },
   measured: {

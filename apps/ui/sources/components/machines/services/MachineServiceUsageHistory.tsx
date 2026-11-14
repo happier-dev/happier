@@ -5,7 +5,7 @@ import type { HappierSeries } from '@happier-dev/plugin-ui/presentation';
 import { usageSignatureAccent, withUsageAccentAlpha } from '@/components/settings/usage/usageAccent';
 import { MachineVitalsRangeBar, useMachineVitalsRange } from '@/components/machines/vitals/MachineVitalsRangeBar';
 import { VitalsHistoryChart } from '@/components/machines/vitals/VitalsHistoryChart';
-import { VitalsSheet, VitalsTile, VitalsValue } from '@/components/machines/vitals/VitalsSheet';
+import { VitalsSheet, VitalsTile } from '@/components/machines/vitals/VitalsSheet';
 import {
   buildMachineServiceTimeline,
   formatMachineBytes,
@@ -13,6 +13,7 @@ import {
   type MachineVitalsTimeline,
 } from '@/components/machines/vitals/machineVitalsPresentation';
 import { formatVitalsPercent, resolveVitalsAxis, vitalsAreaWash } from '@/components/machines/vitals/vitalsFormat';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMachineServiceUsageHistory } from '@/sync/domains/machines/resources/useMachineVitalsHistory';
 import { t } from '@/text';
@@ -48,31 +49,37 @@ export const MachineServiceUsageHistory = React.memo(function MachineServiceUsag
   // The range picker shows with a history to draw; a service with none says so in one line, without a picker over nothing.
   return (
     <>
-      {timeline && charts ? <MachineVitalsRangeBar freshness={NO_FRESHNESS} showRange /> : null}
+      {timeline && charts ? (
+        <ItemGroup header="none" surface="none">
+          <MachineVitalsRangeBar freshness={NO_FRESHNESS} showRange />
+        </ItemGroup>
+      ) : null}
       {timeline && charts ? (
         <VitalsSheet testID="machine-service-usage-history">
           <VitalsTile testID="machine-service-usage-history-cpu" label={t('machineServices.usage.cpu')}
-            value={charts.cpu.latest === null ? <VitalsValue value={t('machineVitals.unmeasured')} />
-              : <VitalsValue value={formatVitalsPercent(charts.cpu.latest)} unit="%" />}>
+            value={null}>
             <VitalsHistoryChart testID="machine-service-usage-history-cpu-chart" label={t('machineServices.usage.cpu')}
               timeline={timeline} series={charts.cpu.series} variant="area" domain={charts.cpu.domain}
               scaleTicks={charts.cpu.ticks} axis={axis} format={formatPercentLabel} freshness="live" live={false} />
           </VitalsTile>
           <VitalsTile testID="machine-service-usage-history-memory" label={t('machineServices.facts.memory')}
-            value={<VitalsValue value={charts.memory.latest === null ? t('machineVitals.unmeasured')
-              : formatMachineBytes(charts.memory.latest, 'memory')} />}>
+            value={null}>
             <VitalsHistoryChart testID="machine-service-usage-history-memory-chart" label={t('machineServices.facts.memory')}
               timeline={timeline} series={charts.memory.series} variant="area" domain={charts.memory.domain}
               scaleTicks={charts.memory.ticks} axis={axis} format={formatMemoryLabel} freshness="live" live={false} />
           </VitalsTile>
         </VitalsSheet>
       ) : usage.status === 'error' ? (
-        <SurfaceStateCard testID="machine-service-usage-history-error" size="line" kind="error"
-          title={t('common.requestFailed')} action={{ label: t('common.retry'), onPress: usage.retry }} />
+        <ItemGroup header="none" surface="none">
+          <SurfaceStateCard testID="machine-service-usage-history-error" size="line" kind="error"
+            title={t('common.requestFailed')} action={{ label: t('common.retry'), onPress: usage.retry }} />
+        </ItemGroup>
       ) : usage.status === 'loading' ? null : (
         // An older Machine, or one that kept no minute for this service in the range: said, never drawn empty.
-        <SurfaceStateCard testID="machine-service-usage-history-none" size="line" kind="unavailable"
-          title={t('machineVitals.notReported')} />
+        <ItemGroup header="none" surface="none">
+          <SurfaceStateCard testID="machine-service-usage-history-none" size="line" kind="unavailable"
+            title={t('machineVitals.notReported')} />
+        </ItemGroup>
       )}
     </>
   );
@@ -86,14 +93,6 @@ function formatMemoryLabel(value: number): string {
   return formatMachineBytes(value, 'memory');
 }
 
-function lastMeasured(timeline: MachineVitalsTimeline, key: 'cpu' | 'usedBytes'): number | null {
-  for (let index = timeline.points.length - 1; index >= 0; index--) {
-    const value = timeline.points[index]![key];
-    if (value !== null) return value;
-  }
-  return null;
-}
-
 /** The two charts' series and scales: each the range's mean with its maximum overlaid, as the Machine's own. */
 function serviceCharts(timeline: MachineVitalsTimeline, accent: string, dark: boolean) {
   const scales = resolveMachineServiceUsageScales(timeline);
@@ -104,9 +103,9 @@ function serviceCharts(timeline: MachineVitalsTimeline, accent: string, dark: bo
       points: timeline.points.map((point) => ({ id: String(point.t), x: point.t, y: point[maxKey] })) },
   ];
   return {
-    cpu: { series: series('cpu', 'cpuMax'), domain: scales.cpu.domain, latest: lastMeasured(timeline, 'cpu'),
+    cpu: { series: series('cpu', 'cpuMax'), domain: scales.cpu.domain,
       ticks: scales.cpu.ticks.map((value) => ({ value, label: value === 0 ? '' : formatPercentLabel(value) })) },
-    memory: { series: series('usedBytes', 'usedBytesMax'), domain: scales.memory.domain, latest: lastMeasured(timeline, 'usedBytes'),
+    memory: { series: series('usedBytes', 'usedBytesMax'), domain: scales.memory.domain,
       ticks: scales.memory.ticks.map((value) => ({ value, label: value === 0 ? '' : formatMemoryLabel(value) })) },
   };
 }
