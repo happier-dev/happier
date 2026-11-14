@@ -83,7 +83,8 @@ vi.mock('@/sync/domains/settings/debugSettings', () => ({
     isSettingsSyncDebugEnabled: () => false,
 }));
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
+vi.mock('@/sync/domains/server/serverRuntime', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
     getActiveServerSnapshot: () => ({
         serverId: 'server-a',
         serverUrl: 'http://127.0.0.1:3009',
@@ -103,13 +104,16 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return createPartialServerProfilesModuleMock(importOriginal, { overrides: {
     getServerProfileById: () => null,
     getServerProfileLegacyServerIds: () => ['localhost-52753'],
     resolveServerProfileScopeId: () => '',
-    listServerProfiles: () => [{ id: 'server-a', serverUrl: 'http://127.0.0.1:3009', name: 'A' }],
+    listServerProfiles: () => [{ id: 'server-a', serverUrl: 'http://127.0.0.1:3009', name: 'A', createdAt: 1, updatedAt: 1, lastUsedAt: 1 }],
     loadHomeViewState: () => null,
-}));
+    } });
+});
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -179,7 +183,8 @@ vi.mock('@/sync/domains/state/persistenceStorage', async importOriginal => ({
     }),
 }));
 
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
     serverFetch: mocks.serverFetch,
     createServerFetchAtEndpoint: mocks.createServerFetchAtEndpoint,
 }));
@@ -417,6 +422,70 @@ describe('classification-aware account settings history restore', () => {
         expect(body.expectedContent).toEqual(recorded);
         expect(openAccountScopedBlobCiphertext({ kind: 'account_settings', material, ciphertext: body.operation.content.c })?.value)
             .toEqual({ futureSetting: { keep: true } });
+    });
+
+    // P03-HOME-NATIVE round 2: catalog maintenance triggers coalesce single-flight with one trailing pass. A trigger
+    // never reuses a pass that started before it (freshness of the transferred-secret purge); triggers arriving while
+    // a pass runs share one trailing pass instead of each running their own.
+    it('gives triggers that arrive during a pass one shared trailing pass, never the earlier pass', async () => {
+        let listReads = 0;
+        let releaseFirst!: () => void;
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return currentnessResponse('e2ee');
+            if (path === '/v2/account/settings/history') {
+                if (++listReads === 1) await firstHeld;
+                return jsonResponse({ snapshots: [] });
+            }
+            throw new Error(`Unexpected request ${path}`);
+        });
+        const trigger = () => normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: ENCRYPTION_STUB,
+            settingsScope: SETTINGS_SCOPE, destinationAuthority: { activeTransferredRoots: [] } });
+        const first = trigger();
+        await vi.waitFor(() => expect(listReads).toBe(1));
+        const during = [trigger(), trigger(), trigger()];
+        // Each trigger first captures its Account request (async); let them all reach the owner before releasing.
+        for (let turn = 0; turn < 20; turn += 1) await new Promise(resolve => setTimeout(resolve, 0));
+        releaseFirst();
+        await expect(Promise.all([first, ...during])).resolves.toEqual(Array(4).fill({ status: 'complete' }));
+        // One pass for the first trigger, one trailing pass for the three that arrived while it ran.
+        expect(listReads).toBe(2);
+    });
+
+    // Orchestrator ruling (P03-HOME-NATIVE round 3): a pass whose inputs are a superset of a trigger's, started after
+    // that trigger, covers it; a pass with fewer inputs never covers a trigger that needs more.
+    it('lets a later superset pass cover a waiting smaller trigger, never the reverse', async () => {
+        let listReads = 0;
+        let detailReads = 0;
+        let releaseFirst!: () => void;
+        const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return currentnessResponse('e2ee');
+            if (path === '/v2/account/settings/history') {
+                if (++listReads === 1) await firstHeld;
+                return jsonResponse({ snapshots: [{ version: 6, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 10 }] });
+            }
+            if (path === '/v2/account/settings/history/6') {
+                detailReads += 1;
+                return jsonResponse({ content: { t: 'plain', v: { preferredLanguage: 'de' } }, version: 6, createdAt: '2026-01-01T00:00:00.000Z' });
+            }
+            throw new Error(`Unexpected request ${path}`);
+        });
+        const trigger = (legacyRoleArtifactTransfers?: []) => normalizeAccountSettingsHistoryAfterTransfer({ credentials,
+            encryption: ENCRYPTION_STUB, settingsScope: SETTINGS_SCOPE,
+            destinationAuthority: { activeTransferredRoots: [], ...(legacyRoleArtifactTransfers ? { legacyRoleArtifactTransfers } : {}) } });
+        const running = trigger();
+        await vi.waitFor(() => expect(listReads).toBe(1));
+        // While it runs: a smaller trigger (an MCP-like catalog), then a superset one (prompt-library's legacy Role transfers).
+        const smaller = trigger();
+        const superset = trigger([]);
+        for (let turn = 0; turn < 20; turn += 1) await new Promise(resolve => setTimeout(resolve, 0));
+        releaseFirst();
+        await expect(Promise.all([running, smaller, superset])).resolves.toEqual(Array(3).fill({ status: 'complete' }));
+        // One trailing pass serves both waiting triggers, not one each (a pass over a non-empty inventory lists twice)...
+        expect(listReads).toBe(4);
+        // ...and it is the superset's: its legacy Role verdict inputs re-verify the row the first pass cleared.
+        expect(detailReads).toBe(2);
     });
 
     it('reports a concurrently retained new version cleanup-pending without sweeping it', async () => {

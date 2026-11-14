@@ -144,13 +144,23 @@ function captureDestinationAuthority(params: Readonly<{
 
 export type AccountSettingsHistoryCleanupResult = AccountSettingsHistoryCleanupResultV1;
 
-// Catalogs share live Account-wide maintenance. Completed evidence below can skip
-// history scans only after Protocol freshly recaptures currentness and destination rows.
-const pendingHistoryNormalizations = new Set<Readonly<{
-    params: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0];
-    isCurrent: () => boolean;
-    result: Promise<AccountSettingsHistoryCleanupResult>;
-}>>();
+type HistoryNormalizationParams = Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0];
+
+// Catalogs share live Account-wide maintenance, one pass per Account at a time. A trigger reuses a pass only when
+// that pass covers its inputs (a superset) and starts after the trigger and every trigger already sharing it, so a
+// shared pass is never older than what any of its triggers observed (freshness of the transferred-secret purge).
+// Completed evidence below can skip history scans only after Protocol freshly recaptures currentness and destination rows.
+type HistoryNormalizationPass = {
+    readonly params: HistoryNormalizationParams;
+    readonly isCurrent: () => boolean;
+    readonly result: Promise<AccountSettingsHistoryCleanupResult>;
+    /** Latest trigger sharing this pass; the pass may serve it only by starting after it. */
+    latestTrigger: number;
+    /** Set when the pass starts; null while it is still a trailing pass. */
+    startedAt: number | null;
+};
+const historyNormalizationPasses = new Set<HistoryNormalizationPass>();
+let historyNormalizationClock = 0;
 
 // One checkpoint per Account, scoped to the same credentials and cipher. Protocol
 // re-reads head/transfer/destinations and compares proofs before using it.
@@ -168,17 +178,34 @@ function sameHistoryNormalizationAccount(a: Parameters<typeof normalizeAccountSe
             && tweetnacl.verify(a.encryption.getContentPrivateKey(), b.encryption.getContentPrivateKey())));
 }
 
-function sameHistoryNormalizationContext(a: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0],
-    b: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0]): boolean {
-    return sameHistoryNormalizationAccount(a, b)
-        && a.expectedProfileTransferRevision === b.expectedProfileTransferRevision
-        && areAccountSettingsHistoryRecoveryInputsEqualV1(a.savedSecretRecovery, b.savedSecretRecovery)
-        && sameStrictJsonValue(a.destinationAuthority.savedSecretTransfers, b.destinationAuthority.savedSecretTransfers)
-        && sameStrictJsonValue(a.destinationAuthority.legacyRoleArtifactTransfers, b.destinationAuthority.legacyRoleArtifactTransfers);
+function includesEvery<T>(pass: readonly T[] | undefined, trigger: readonly T[] | undefined): boolean {
+    return (trigger ?? []).every(entry => (pass ?? []).some(candidate => sameStrictJsonValue(candidate, entry)));
 }
 
-function pendingAccountPass(params: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0]) {
-    return [...pendingHistoryNormalizations].find(entry => entry.isCurrent() && sameHistoryNormalizationAccount(entry.params, params));
+/**
+ * Whether a pass with `pass` inputs does every read and normalization a pass with `trigger` inputs would. Only the
+ * caller-supplied transfers feed the pass (Protocol recaptures roots, currentness and catalog rows itself); legacy Role
+ * guidance transfers add their history roots when present, so a pass without them never covers a trigger with them.
+ */
+function coversHistoryNormalization(pass: HistoryNormalizationParams, trigger: HistoryNormalizationParams): boolean {
+    return sameHistoryNormalizationAccount(pass, trigger)
+        && pass.expectedProfileTransferRevision === trigger.expectedProfileTransferRevision
+        && areAccountSettingsHistoryRecoveryInputsEqualV1(pass.savedSecretRecovery, trigger.savedSecretRecovery)
+        && includesEvery(pass.destinationAuthority.savedSecretTransfers, trigger.destinationAuthority.savedSecretTransfers)
+        && (trigger.destinationAuthority.legacyRoleArtifactTransfers === undefined
+            || (pass.destinationAuthority.legacyRoleArtifactTransfers !== undefined
+                && includesEvery(pass.destinationAuthority.legacyRoleArtifactTransfers, trigger.destinationAuthority.legacyRoleArtifactTransfers)));
+}
+
+/** A pass that serves `params` triggered at `trigger`: covering, current, and not started before that trigger. */
+function coveringHistoryNormalization(params: HistoryNormalizationParams, trigger: number, except?: HistoryNormalizationPass) {
+    return [...historyNormalizationPasses].find(pass => pass !== except && pass.isCurrent()
+        && (pass.startedAt === null || pass.startedAt > trigger) && coversHistoryNormalization(pass.params, params));
+}
+
+function runningAccountPass(params: HistoryNormalizationParams) {
+    return [...historyNormalizationPasses].find(pass => pass.startedAt !== null && pass.isCurrent()
+        && sameHistoryNormalizationAccount(pass.params, params));
 }
 
 // A history row is immutable except for normalize/purge, which only remove transferred content,
@@ -265,47 +292,74 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
         for (const [key, entry] of completedHistoryNormalizations) {
             if (!entry.isCurrent()) completedHistoryNormalizations.delete(key);
         }
-        const incumbent = [...pendingHistoryNormalizations].find(entry => entry.isCurrent()
-            && sameHistoryNormalizationContext(entry.params, params));
-        if (incumbent) {
-            const result = await incumbent.result;
+        const trigger = ++historyNormalizationClock;
+        const shared = coveringHistoryNormalization(params, trigger);
+        if (shared) {
+            shared.latestTrigger = Math.max(shared.latestTrigger, trigger);
+            const result = await shared.result;
             if (!captured.isCurrent()) throwStaleRestoreScope();
             return result;
         }
-        // Catalog triggers differ only in proofs Protocol recaptures, so one Account
-        // runs one pass at a time and the next trigger starts from its checkpoint.
-        for (let running = pendingAccountPass(params); running; running = pendingAccountPass(params)) {
+        let settle!: { resolve(result: AccountSettingsHistoryCleanupResult): void; reject(error: unknown): void };
+        const own: HistoryNormalizationPass = { params, isCurrent: captured.isCurrent, latestTrigger: trigger, startedAt: null,
+            result: new Promise((resolve, reject) => { settle = { resolve, reject }; }) };
+        own.result.catch(() => undefined);
+        historyNormalizationPasses.add(own);
+        try {
+            settle.resolve(await runTrailingHistoryNormalization(own, captured));
+        } catch (error) {
+            settle.reject(error);
+        } finally {
+            historyNormalizationPasses.delete(own);
+        }
+        return await own.result;
+    } finally { captured.dispose?.(); }
+}
+
+/** Waits for the Account's running pass, then defers to a covering later pass or runs its own. */
+async function runTrailingHistoryNormalization(own: HistoryNormalizationPass,
+    captured: Readonly<{ request: ServerFetch; isCurrent(): boolean }>): Promise<AccountSettingsHistoryCleanupResult> {
+    const params = own.params;
+    while (true) {
+        const running = runningAccountPass(params);
+        if (running) {
             await running.result.catch(() => undefined);
             if (!captured.isCurrent()) throwStaleRestoreScope();
+            continue;
         }
-        const key = accountSettingsScopeKeySuffix(params.settingsScope);
-        const previous = completedHistoryNormalizations.get(key);
-        const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = previous
-            && sameHistoryNormalizationAccount(previous.params, params) ? { ...previous.checkpoint }
-            : { verifiedUnchanged: readVerifiedHistoryRows(key) };
-        const result = normalizeAccountSettingsHistoryClientV1({ destinationAuthority: params.destinationAuthority, checkpoint,
-            ...(params.savedSecretRecovery ? { savedSecretRecovery: params.savedSecretRecovery } : {}),
-            ...(params.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: params.expectedProfileTransferRevision }), ports: {
-            ...createHistoryCapturePorts({ ...params, ...captured }),
-            openSnapshot: content => openAccountSettingsStoredContent({ content, encryption: params.encryption }).raw,
-            resealSnapshot: (raw, recorded) => recorded.t === 'plain' ? { t: 'plain', v: raw }
-                : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
-                    material: { type: 'dataKey', machineKey: params.encryption!.getContentPrivateKey() },
-                    payload: raw, randomBytes: getRandomBytes }) },
-        } });
-        const entry = { params, isCurrent: captured.isCurrent, result };
-        pendingHistoryNormalizations.add(entry);
-        try {
-            const completed = await result;
-            if (!captured.isCurrent()) throwStaleRestoreScope();
-            // Verified-unchanged rows are evidence too: a later head move re-reads only new rows.
-            if (checkpoint.completed || checkpoint.settledPending || checkpoint.verifiedUnchanged?.size) {
-                completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
-            }
-            writeVerifiedHistoryRows(key, checkpoint.verifiedUnchanged);
-            return completed;
-        } finally { pendingHistoryNormalizations.delete(entry); }
-    } finally { captured.dispose?.(); }
+        // Another trailing pass that covers this one (and starts after all its triggers) serves them all.
+        const covering = coveringHistoryNormalization(params, own.latestTrigger, own);
+        if (!covering) break;
+        historyNormalizationPasses.delete(own);
+        covering.latestTrigger = Math.max(covering.latestTrigger, own.latestTrigger);
+        const result = await covering.result;
+        if (!captured.isCurrent()) throwStaleRestoreScope();
+        return result;
+    }
+    own.startedAt = ++historyNormalizationClock;
+    const key = accountSettingsScopeKeySuffix(params.settingsScope);
+    const previous = completedHistoryNormalizations.get(key);
+    const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = previous
+        && sameHistoryNormalizationAccount(previous.params, params) ? { ...previous.checkpoint }
+        : { verifiedUnchanged: readVerifiedHistoryRows(key) };
+    const result = normalizeAccountSettingsHistoryClientV1({ destinationAuthority: params.destinationAuthority, checkpoint,
+        ...(params.savedSecretRecovery ? { savedSecretRecovery: params.savedSecretRecovery } : {}),
+        ...(params.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: params.expectedProfileTransferRevision }), ports: {
+        ...createHistoryCapturePorts({ ...params, ...captured }),
+        openSnapshot: content => openAccountSettingsStoredContent({ content, encryption: params.encryption }).raw,
+        resealSnapshot: (raw, recorded) => recorded.t === 'plain' ? { t: 'plain', v: raw }
+            : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+                material: { type: 'dataKey', machineKey: params.encryption!.getContentPrivateKey() },
+                payload: raw, randomBytes: getRandomBytes }) },
+    } });
+    const completed = await result;
+    if (!captured.isCurrent()) throwStaleRestoreScope();
+    // Verified-unchanged rows are evidence too: a later head move re-reads only new rows.
+    if (checkpoint.completed || checkpoint.settledPending || checkpoint.verifiedUnchanged?.size) {
+        completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
+    }
+    writeVerifiedHistoryRows(key, checkpoint.verifiedUnchanged);
+    return completed;
 }
 
 export type RestoreAccountSettingsFromHistorySnapshotParams = Readonly<{
