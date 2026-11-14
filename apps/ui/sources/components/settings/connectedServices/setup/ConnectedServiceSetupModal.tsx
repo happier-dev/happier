@@ -17,6 +17,7 @@ import type { DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/r
 import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { ConnectSheetContent } from './ConnectSheetContent';
+import { resolveConnectSheetBodyScroll } from './connectSheetOpening';
 import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 
 export type ConnectSheetAccountResult = Exclude<PluginUiOpenConnectedAccountsResultV1, undefined> & ConnectedAccountSetupFacts;
@@ -97,8 +98,9 @@ export function presentConnectSheet(request: ConnectSheetRequest): Promise<Conne
             onRequestClose: () => finish({ kind: 'dismissed' }),
             onHostUnmount: () => finish({ kind: 'dismissed' }),
             props: { request: capturedRequest, onResult: finish },
-            chrome: createAnchoredSheetChrome({ title: t('settings.connectedServices'),
-                testID: 'connect-sheet', anchor: request.anchor }),
+            // The body scroll its content publishes with its heading: a native card picks its body once, here.
+            chrome: { ...createAnchoredSheetChrome({ title: t('settings.connectedServices'),
+                testID: 'connect-sheet', anchor: request.anchor }), bodyScroll: resolveConnectSheetBodyScroll(request) },
             closeOnBackdrop: true,
         });
         if (!modalId) finish({ kind: 'dismissed' });

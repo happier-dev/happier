@@ -29,6 +29,15 @@ export function isConnectSheetNpmRegistryRequest(request: ConnectSheetRequest): 
     return request.service !== undefined && 'kind' in request.service && request.service.kind === 'npm-registry-profile';
 }
 
+/**
+ * How the sheet's body scrolls, fixed for its life: the key sheet keeps its mode switch in place and scrolls its own
+ * list; an account or registry sheet scrolls its body under the band. Native cards pick their body (still View or
+ * ScrollView) once, at presentation, so the presenter and the heading both read it here.
+ */
+export function resolveConnectSheetBodyScroll(request: ConnectSheetRequest): 'auto' | 'none' {
+    return isConnectSheetKeyRequest(request) ? 'none' : 'auto';
+}
+
 export function resolveConnectSheetOpening<Key extends SavedKey>(request: ConnectSheetAccountRequest | ConnectSheetKeyRequest, inventory: ConnectSheetInventory<Key>): ConnectSheetOpening<Key> {
     if (isConnectSheetKeyRequest(request)) {
         const sameTargetRefs = new Set(inventory.sameTargetRefs ?? []);

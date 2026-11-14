@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { ConnectSheetContentProps } from './ConnectedServiceSetupModal';
+import { resolveConnectSheetBodyScroll } from './connectSheetOpening';
 
 /**
  * The Connect sheet's band: one mark, the title and one line of purpose, in the shared anchored chrome
@@ -15,12 +16,10 @@ export function useConnectSheetHeading(
     leadingKey: string;
     /** The band's end: the machine a sign-in runs on, only when the chosen method needs one. */
     actions?: React.ReactNode;
-    /** `none`: the body keeps its controls in place and scrolls its own list (the key sheet). */
-    bodyScroll?: 'auto' | 'none';
   }>,
 ) {
   const { setChrome } = props;
-  const bodyScroll = heading.bodyScroll ?? 'auto';
+  const bodyScroll = resolveConnectSheetBodyScroll(props.request);
   const anchor = props.request.anchor;
   const leadingRef = React.useRef(heading.leading);
   leadingRef.current = heading.leading;

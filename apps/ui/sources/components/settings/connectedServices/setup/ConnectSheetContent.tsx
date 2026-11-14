@@ -109,7 +109,6 @@ function ConnectKeySheetLeaf(
       ? <ConnectedServiceMark legacyServiceId={null} pluginId={presentation.pluginId} size="title" />
       : <Icon name="key" size={18} color={theme.colors.text.secondary} />,
     leadingKey: presentation?.pluginId ?? 'key',
-    bodyScroll: 'none',
   });
   return (
     <View style={[styles.frame, styles.bounded]}>
