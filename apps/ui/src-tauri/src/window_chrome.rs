@@ -15,6 +15,10 @@ use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window
 #[path = "macos_window_frame.rs"]
 mod macos_window_frame;
 
+#[cfg(all(desktop, not(target_os = "macos")))]
+#[path = "window_frame.rs"]
+mod window_frame;
+
 #[cfg(desktop)]
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -379,6 +383,14 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .decorations(policy.use_window_decorations)
         .build()?;
+    // macOS autosaves its own frame in `configure_main_window`; elsewhere restore it while the
+    // window is still hidden so it never flashes at the default size first.
+    #[cfg(not(target_os = "macos"))]
+    if let Ok(dir) = app.path().app_config_dir() {
+        let frame_path = dir.join("window-state/main-window-frame.json");
+        window_frame::restore(&window, &frame_path);
+        window_frame::track(&window, frame_path);
+    }
     configure_main_window(app, &window);
     Ok(window)
 }
