@@ -23,6 +23,48 @@ async function apply(step: MachineRecipeStepV1, run: (input: MachineSetupNativeC
 }
 
 describe('native package effects through the public recipe interpreter', () => {
+    it.each(['2.78+ubuntu26.04', '2.79+ubuntu26.04'])('preserves exact apt version availability with phased policy entries (%s)', async version => {
+        const step = declaration({ id: 'snapd-update', kind: 'package', manager: 'apt', packages: [{ name: 'snapd', version }] });
+        let installedVersion = '2.76.3+ubuntu26.04';
+        const effects: string[] = [];
+        const backend = createMachineSetupNativeBackend({ run: async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get' && input.args[0] === '--version') return ok('apt 3.2\n');
+            if (input.executable === 'dpkg-query') return ok(`snapd\tinstall ok installed\t${installedVersion}\tamd64\n`);
+            if (input.executable === 'lslocks') return ok('{"locks":[]}');
+            // Captured from the native Ubuntu update candidate in MACH-QA-NATIVE-1114.
+            if (input.executable === 'apt-cache' && input.args[0] === 'policy') return ok(
+                'snapd:\n  Installed: 2.76.3+ubuntu26.04\n  Candidate: 2.78+ubuntu26.04\n  Version table:\n'
+                + '     2.78+ubuntu26.04 500 (phased 20%)\n'
+                + '        500 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages\n'
+                + ' *** 2.76.3+ubuntu26.04 100\n        100 /var/lib/dpkg/status\n');
+            if (input.executable === 'apt-cache') return ok('Package: snapd\nVersion: 2.78+ubuntu26.04\nArchitecture: amd64\n');
+            expect(input.executable).toBe('apt-get');
+            effects.push(input.args[0]!);
+            if (input.args[0] === 'install') {
+                expect(input.args).toContain('snapd=2.78+ubuntu26.04');
+                installedVersion = '2.78+ubuntu26.04';
+            }
+            return ok();
+        } });
+        const available = version === '2.78+ubuntu26.04';
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+        expect(effects).toEqual([]);
+        expect(plan.nativeFacts).toMatchObject([{ status: 'drifted', facts: { unresolvedPackages: available ? [] : ['snapd'] } }]);
+        const result = await applyMachineSetupEffectPlan({ plan, backend });
+        if (available) {
+            expect(result).toMatchObject({ status: 'applied', completedStepIds: ['snapd-update'] });
+            expect(installedVersion).toBe(version);
+            expect(effects).toEqual(['install']);
+        } else {
+            expect(result).toMatchObject({ status: 'failed', reason: 'required_fact_unavailable', failure: {
+                kind: 'native_check_unsupported', requiredFact: 'packageVersion',
+            } });
+            expect(installedVersion).toBe('2.76.3+ubuntu26.04');
+            expect(effects).toEqual(['update']);
+        }
+    });
+
     it.each([undefined, '1'])('refreshes missing apt candidates during Apply, keeping CHECK read-only (version %s)', async version => {
         const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io', ...(version ? { version } : {}) }] });
         let refreshed = false, installed = false;

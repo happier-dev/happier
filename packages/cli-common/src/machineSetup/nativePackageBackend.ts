@@ -143,7 +143,7 @@ async function apt(run: NativeRun, step: PackageStep) {
         const policy = await run('apt-cache', ['policy', '--', pkg.name], locale);
         if (policy.code !== 0) return unavailable(step, facts);
         const candidate = /^\s*Candidate:\s*(\S+)$/m.exec(policy.stdout)?.[1];
-        const versions = [...policy.stdout.matchAll(/^\s+(?:\*\*\*\s+)?(\S+)\s+\d+\s*$/gm)].map(match => match[1]);
+        const versions = [...policy.stdout.matchAll(/^\s+(?:\*\*\*\s+)?(\S+)\s+\d+(?:\s+\(phased \d+%\))?\s*$/gm)].map(match => match[1]);
         if (!candidate && policy.stdout.trim()) return unavailable(step, facts);
         // CHECK is read-only: an incomplete index is not evidence of an unsupported
         // package. Apply refreshes unresolved candidates before deciding availability.
