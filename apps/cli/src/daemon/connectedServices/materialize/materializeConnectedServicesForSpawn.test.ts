@@ -563,7 +563,7 @@ it.each([
 });
 
 beforeAll(async () => {
-  const agentIds = ['claude', 'codex', 'gemini', 'opencode', 'pi', 'antigravity'] as const;
+  const agentIds = ['claude', 'codex', 'gemini', 'opencode', 'pi', 'antigravity', 'fx'] as const;
   const pluginIds = [...agentIds.map(localId => `happier.agent.${localId}`), 'happier.voice.openai'];
   const bundled = loadEnabledBundledPluginLocatorResult({ pluginIds });
   const projected = projectLoadedPluginContributes({
@@ -657,6 +657,51 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
+  it.each(['shared', 'isolated'] as const)('retains FX native v2 writes through %s home rematerialization', async stateMode => {
+    // Read-only nl1 observation: .fx/sessions/v2/<id>/{log.jsonl,blobs},
+    // while the native source ~/.fx/sessions is empty after the replay.
+    const root = await mkdtemp(join(tmpdir(), 'happier-fx-retained-native-'));
+    const results: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];
+    try {
+      const native = join(root, 'native');
+      await mkdir(native);
+      const record = buildConnectedServiceCredentialRecord({
+        now: Date.now(), serviceId: 'openai-codex', profileId: 'fx-connected', kind: 'oauth', expiresAt: Date.now() + 3600_000,
+        oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', idToken: null,
+          scope: null, tokenType: null, providerAccountId: 'fixture-account', providerEmail: null },
+      });
+      const params: MaterializeParams = {
+        agentId: 'fx', materializationKey: 'fx-connected-session', activeServerDir: join(root, 'server'),
+        baseDir: join(root, 'materialized'), recordsByServiceId: new Map([['openai-codex', record]]),
+        processEnv: { HOME: native }, accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'isolated', stateMode }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      };
+      const first = await materializeConnectedServicesForSpawn(params);
+      results.push(first);
+      const home = first!.env.HOME!;
+      const session = join(home, '.fx/sessions/v2/VlwVgOggC_xR');
+      await mkdir(join(session, 'blobs'), { recursive: true });
+      await writeFile(join(session, 'log.jsonl'), 'native journal after first turn');
+      await writeFile(join(session, 'blobs', 'snapshot'), 'native blob');
+      await writeFile(join(home, '.fx/sessions/v2/index.jsonl'), 'native index');
+      await first!.cleanupOnExit?.();
+      const second = await materializeConnectedServicesForSpawn({ ...params, vendorResumeId: 'VlwVgOggC_xR' });
+      results.push(second);
+      expect(second!.env.HOME).toBe(home);
+      expect(await readFile(join(session, 'log.jsonl'), 'utf8')).toBe('native journal after first turn');
+      expect(await readFile(join(session, 'blobs', 'snapshot'), 'utf8')).toBe('native blob');
+      expect(await readFile(join(home, '.fx/sessions/v2/index.jsonl'), 'utf8')).toBe('native index');
+      expect((await lstat(join(home, '.fx/sessions'))).isSymbolicLink()).toBe(false);
+      expect(await verifyResumeReachableThroughCatalog('fx', { targetMaterializedRoot: home, vendorResumeId: 'VlwVgOggC_xR' }))
+        .toMatchObject({ ok: true });
+      expect(existsSync(join(native, '.fx/sessions/v2/VlwVgOggC_xR'))).toBe(false);
+    } finally {
+      for (const result of results.reverse()) await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('retains Antigravity companion state while detaching a shared account home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-antigravity-retained-companions-'));
     const results: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];

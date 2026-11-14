@@ -600,9 +600,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             signalController.signal.throwIfAborted();
             await observeConnectedServiceMaterializationPhase(params, 'native_home_import', async () => {
               for (const entry of stateSharingDescriptor.state.entries) {
-                // The descriptor result owns which entries are managed in the new home.
-                // A linked entry with no native source remains local, just like isolated state.
-                if (stateSharing.manifest.stateEntries.includes(entry.path)) continue;
+                // Real directories are private copies even in shared mode: the
+                // predecessor, rather than the native source, holds later writes.
+                // Actual shared links remain owned by their native source.
+                if (stateSharing.manifest.stateEntries.includes(entry.path) && !entry.requiresRealDirectory) continue;
                 const source = join(params.previousMaterializedRoot!, entry.path);
                 const sourceStat = await lstat(source).catch((error: unknown) => {
                   if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
