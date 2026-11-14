@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,13 @@ import {
     PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST,
 } from '@happier-dev/plugins-opencode/manifest';
 
+import { decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
+import {
+    createRunnerDaemonPluginServicesHost,
+    projectRunnerDaemonPluginServicesFailure,
+} from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
     AGENT_RUNTIME_DAEMON_SERVICES_PATH,
     AgentRuntimeDaemonServiceRequestV1Schema,
@@ -47,6 +54,8 @@ import {
     resolveRunnerManagedServiceDeclaredSecret,
 } from './runnerManagedServiceDeclaredSecretAuthority';
 import type { PluginInvocationServicesSeed } from './types';
+import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/spawnSpec';
+import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../../../../../packages/plugins/opencode/src/agent/systemTool';
 
 const EXTERNAL_OPENCODE_PLUGIN_MANIFEST = {
     ...OPENCODE_PLUGIN_MANIFEST,
@@ -106,6 +115,10 @@ function createStubDaemon(input: Readonly<{
         typeof createRunnerManagedServiceInvocationOwner
     >[0]['retainedAgent'];
     capability: string;
+    /** A case-specific daemon owner answer; undefined falls through. */
+    respond?(
+        operation: ReturnType<typeof AgentRuntimeDaemonServiceRequestV1Schema.parse>['operation'],
+    ): Promise<unknown>;
 }>) {
     const secretRequests: string[] = [];
     /**
@@ -136,6 +149,17 @@ function createStubDaemon(input: Readonly<{
                 return;
             }
             const operation = parsed.data.operation;
+            const owned = await input.respond?.(operation);
+            if (owned !== undefined) {
+                if (owned === null) {
+                    response.writeHead(501).end();
+                    return;
+                }
+                response
+                    .writeHead(200, { 'content-type': 'application/json' })
+                    .end(JSON.stringify(owned));
+                return;
+            }
             const result = await (async () => {
                 if (operation.kind === 'managed_server.endpoint.publish') {
                     return {
@@ -384,6 +408,7 @@ function bindAttachedManagedServices(
         agent: {
             exec: local.exec,
             connectedAccounts,
+            invocationId: 'declared-secret-invocation',
             // Attach needs no native launch. Keep the canonical finalizer so
             // this declaration-only fixture cannot authorize one accidentally.
             authorizePreparedLaunch: (launch, signal) =>
@@ -647,5 +672,121 @@ describe('runner managed-service declared-secret authority', () => {
             canonicalOrigin: origin,
             expectedRevision: revision,
         })).resolves.toEqual({ status: 'stale' });
+    });
+});
+
+describe('runner managed-service Agent supervision authority', () => {
+    it('authorizes an Agent managed-server launch against the daemon invocation that prepared its services', async () => {
+        const fixture = await prepareRetainedAgentFixture();
+        const unavailable = createUnavailablePluginServices();
+        const host = createRunnerDaemonPluginServicesHost({
+            async createInvocation() {
+                return {
+                    services: unavailable,
+                    resourceDescriptors: {},
+                    subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [],
+                        resourceWatches: [], notificationPreferencesWatch: false },
+                    // Isolation custody without a Machine policy port: no snapshot.
+                    agentIsolation: { read: () => undefined, requesterIdentity: { kind: 'owner_person', requester: {
+                        serverId: 'srv_home', accountId: 'owner', machineId: 'machine', installationId: 'installation',
+                    } } },
+                    dispose() {},
+                    authorizeOperation: () => true,
+                    executeCurrentGlobalAction: unavailable.actions.execute,
+                    currentGlobalMcp: unavailable.mcp,
+                    currentGlobalExternalSessions: unavailable.sessions.external,
+                };
+            },
+        });
+        cleanups.push(async () => { await host.dispose(); });
+        const supervision = new AbortController();
+        const authorizedInvocations: string[] = [];
+        const daemonRefusals: string[] = [];
+        const capability = 'S'.repeat(43);
+        const daemon = createStubDaemon({
+            paths: fixture.paths,
+            binding: fixture.retainedAgent,
+            capability,
+            async respond(operation) {
+                if (operation.kind !== 'managed_server.supervision.authorize') return undefined;
+                // The daemon's Agent-scope rule (startDaemonSessionControlRuntime):
+                // the operation claim names the admitted PluginServices invocation.
+                try {
+                    await host.authorizeManagedAgentServiceSupervision({
+                        sessionId: SESSION_ID, runner: RUNNER, retainedAgent: fixture.retainedAgent,
+                        invocationId: operation.operationClaimId ?? '',
+                    });
+                } catch (error) {
+                    const refusal = projectRunnerDaemonPluginServicesFailure(error, 'dispatch');
+                    daemonRefusals.push(refusal.code);
+                    return { ok: false, error: refusal };
+                }
+                authorizedInvocations.push(operation.operationClaimId ?? '');
+                // This case decides admission only; stop before the native launch.
+                supervision.abort();
+                return null;
+            },
+        });
+        const port = await listen(daemon.server);
+        const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({
+            happyHomeDir: fixture.happyHomeDir, publicReleaseRing: 'stable',
+        });
+        await publishAgentRuntimeDaemonServiceAuthority({
+            happyHomeDir: fixture.happyHomeDir, publicReleaseRing: 'stable', path: authorityPath,
+            sessionId: SESSION_ID, runner: RUNNER, retainedAgent: fixture.retainedAgent,
+            httpPort: port, capability, readPluginHardRevocationRevision: async () => 0,
+        });
+        const owner = await createRunnerManagedServiceInvocationOwner({
+            paths: fixture.paths,
+            authority: {
+                happyHomeDir: fixture.happyHomeDir, publicReleaseRing: 'stable', path: authorityPath,
+                sessionId: SESSION_ID, runner: RUNNER, retainedAgent: fixture.retainedAgent,
+            },
+            retainedAgent: fixture.retainedAgent,
+        });
+        cleanups.push(async () => { await owner.owners.dispose(); });
+        // Production Session seeds correlate by Session id; the daemon
+        // invocation id is allocated per preparation.
+        const seed = Object.freeze({ ...invocationSeed(fixture), correlationId: SESSION_ID });
+        const local = owner.owners.createOperationServices(seed, {
+            filesystemRoots: {
+                pluginData: join(fixture.happyHomeDir, 'plugin-data'),
+                workspace: fixture.happyHomeDir,
+                projects: new Map(),
+            },
+            hostAccessRequests: owner.hostAccessRequests,
+        });
+        const invocationId = randomUUID();
+        const lifetime = new AbortController();
+        cleanups.push(async () => { lifetime.abort(); });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId,
+            signal: lifetime.signal,
+            dispatch: async operation => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                sessionId: SESSION_ID, runner: RUNNER, retainedAgent: fixture.retainedAgent, operation,
+            })).value),
+            // Mirrors the runner Agent source adapter.
+            bindManagedServices: bindingInput => owner.bindManagedServices({
+                seed,
+                agent: {
+                    authorizePreparedLaunch: bindingInput.authorizePreparedLaunch,
+                    connectedAccounts: bindingInput.connectedAccounts,
+                    exec: bindingInput.exec,
+                    invocationId: bindingInput.invocationId,
+                },
+                managedProvider: bindingInput.managedProvider,
+            }),
+            local,
+        });
+
+        const spec = buildOpenCodeManagedServerSpawnSpec({
+            id: 'opencode-server', dialect: 'v1', systemToolId: OPEN_CODE_SYSTEM_TOOL_ID,
+        });
+        const outcome = await services.managedServices.supervise(spec, { signal: supervision.signal })
+            .then(() => null, (error: unknown) => error);
+        // A daemon refusal here is the live plugin_managed_server_authorization_unavailable.
+        expect(daemonRefusals).toEqual([]);
+        expect(authorizedInvocations).toEqual([invocationId]);
+        expect(outcome).toMatchObject({ code: 'plugin_operation_aborted' });
     });
 });

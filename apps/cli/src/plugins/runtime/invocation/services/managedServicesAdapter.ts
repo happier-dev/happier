@@ -148,6 +148,8 @@ export type ManagedServicesInvocationBindingContext = Readonly<{
     workloads?: PluginServices['managedServices']['observeWorkload'];
     /** Original daemon invocation finalizes locally validated managed Agent tuples. */
     authorizePreparedLaunch?: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
+    /** That daemon invocation's id; the daemon authorizes Agent supervision claims by it. */
+    invocationId?: string;
     connectedAccounts: ConnectedAccountsService | null;
     credentialFiles: ManagedServiceCredentialFileOwner | null;
     /** Exact caller-occurrenceId secret declaration/custody, if one was admitted. */

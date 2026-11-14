@@ -3665,6 +3665,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 requestAuth:
                     suppliedContext.requestAuth ?? null,
                 ...(suppliedContext.authorizePreparedLaunch ? { authorizePreparedLaunch: suppliedContext.authorizePreparedLaunch } : {}),
+                ...(suppliedContext.invocationId ? { invocationId: suppliedContext.invocationId } : {}),
             });
         const services: ManagedServices = Object.freeze({
             dependencies,
@@ -3738,12 +3739,17 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         managedProvider: { ...context.managedProvider!, isCurrent: scope.isOccurrenceCurrent } };
                     requestAuth = null;
                 }
+                // Provider claims are their operation id. An Agent claim names the
+                // daemon invocation that admitted this binding; scope.operationId
+                // stays the correlation that redaction and logs key on.
+                const supervisionClaimId = context.managedProvider
+                    ? scope.operationId : context.invocationId ?? scope.operationId;
                 const processSupervisor = input.processSupervisorHost.bind({
                     occurrenceId: scope.occurrenceId,
                     ...(scope.sourceCustody ? { sourceCustody: scope.sourceCustody } : {}),
                     pluginId: scope.pluginId, contributionId: scope.contributionQualifiedId,
                     ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
-                    ...(scope.operationId ? { operationId: scope.operationId } : {}),
+                    ...(supervisionClaimId ? { operationId: supervisionClaimId } : {}),
                     ...(scope.independentInvocation ? { independentInvocation: true as const } : {}),
                     ...(scope.independentInvocation && input.resolveManagedExecutable ? {
                         resolveManagedExecutable: (executable: ManagedExecutableRef, isCurrent: () => boolean) => input.resolveManagedExecutable!(scope, executable, isCurrent),

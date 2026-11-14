@@ -1586,6 +1586,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                 connectedAccounts:
                                     bindingInput.connectedAccounts,
                                 exec: bindingInput.exec,
+                                invocationId: bindingInput.invocationId,
                             },
                             managedProvider:
                                 bindingInput.managedProvider,
@@ -1844,6 +1845,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                             connectedAccounts:
                                 bindingInput.connectedAccounts,
                             exec: bindingInput.exec,
+                            invocationId: bindingInput.invocationId,
                         },
                         managedProvider:
                             bindingInput.managedProvider,

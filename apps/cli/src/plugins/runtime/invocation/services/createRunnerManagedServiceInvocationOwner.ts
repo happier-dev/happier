@@ -855,6 +855,8 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
             authorizePreparedLaunch: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
             exec: ExecService;
             connectedAccounts: ConnectedAccountsService;
+            /** Daemon-admitted PluginServices invocation; names Agent supervision claims. */
+            invocationId: string;
         }>;
         managedProvider: Readonly<{
             bootstrap: RunnerDaemonManagedProviderBootstrapV1;
@@ -1485,6 +1487,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                 authorizePreparedLaunch: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
                 exec: ExecService;
                 connectedAccounts: ConnectedAccountsService;
+                invocationId: string;
             }>;
             managedProvider: Readonly<{
                 bootstrap: RunnerDaemonManagedProviderBootstrapV1;
@@ -1512,6 +1515,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                     managedProvider: null,
                     requestAuth: null,
                     authorizePreparedLaunch: bindingInput.agent.authorizePreparedLaunch,
+                    invocationId: bindingInput.agent.invocationId,
                 }),
             ) ?? managedServicesOwner.bind(bindingInput.seed);
             const managedProvider = bindingInput.managedProvider;

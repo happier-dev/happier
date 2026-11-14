@@ -474,6 +474,8 @@ export async function prepareRunnerDaemonPluginServices(
                 RunnerDaemonManagedProviderRetentionV1 | null
             >;
         bindManagedServices?(input: Readonly<{
+            /** Daemon-admitted invocation that owns this binding's Agent supervision claims. */
+            invocationId: string;
             authorizePreparedLaunch: import('@/plugins/runtime/invocation/services/exec').HostPreparedPluginExecLaunchAuthorizer;
             connectedAccounts:
                 PluginServices['connectedAccounts'];
@@ -2875,6 +2877,7 @@ export async function prepareRunnerDaemonPluginServices(
             const bindingRevision = prepareRevision;
             const bootstrap = prepared.managedProvider;
             const rebound = input.bindManagedServices!({
+                invocationId: input.invocationId,
                 authorizePreparedLaunch: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(
                     exec, launch, signal, undefined, 'managedService'),
                 connectedAccounts,
