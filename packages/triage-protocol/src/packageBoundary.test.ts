@@ -149,6 +149,7 @@ describe('Triage protocol public barrel', () => {
             'MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1',
             'MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1',
             'MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1',
+            'MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1',
             'MAX_TRIAGE_TEXT_UTF8_BYTES_V1',
         ]);
         for (const [name, value] of bounds) {
