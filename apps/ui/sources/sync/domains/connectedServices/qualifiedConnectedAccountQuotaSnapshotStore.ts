@@ -317,7 +317,9 @@ async function runLoad(
             // A failure answers this client's own refresh request, or explains missing usage. A background
             // failure keeps last-known meters on screen without an error: the producer only re-fetches once a
             // snapshot is past its freshness bound, so staleness stays the consumer's signal.
-            if (read?.status === 'error' && snapshot?.state !== 'not_loaded'
+            // Pending reads still describe the preceding acquisition. Keep the
+            // current intent until its producer settles and supplies its cause.
+            if (read?.status === 'error' && !entry.producerRefreshPending && snapshot?.state !== 'not_loaded'
                 && (entry.refreshSinceFetchedAt !== null || !snapshot?.meters.length)) {
                 // Provider messages, headers and status codes stay diagnostic-only, never user-facing copy.
                 const error = diagnostic?.code

@@ -350,11 +350,11 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         try {
             await vi.advanceTimersByTimeAsync(0);
-            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: snapshot.fetchedAt + 1 } });
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { status: 'error', refreshRequestedAt: snapshot.fetchedAt + 1 } });
             await store.refreshQualifiedQuotaSnapshot(key, context);
             await vi.advanceTimersByTimeAsync(60_000);
             expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
-            snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: 2 });
+            snapshotFixture.mockReturnValue({ ...snapshot, fetchedAt: 2, diagnostics: outcome === 'error' ? [{ kind: 'provider_http', code: '-32081', observedAtMs: 2 }] : [] });
             getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { status: outcome === 'error' ? 'error' : 'ok' } });
             publishHomeAccountChange(context.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
             await vi.advanceTimersByTimeAsync(0);
@@ -362,7 +362,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
                 loading: false,
                 refreshing: false,
                 snapshot: { fetchedAt: 2 },
-                error: outcome === 'error' ? t('connectedServices.errors.quotaRefreshFailed') : null,
+                error: outcome === 'error' ? t('connectedServices.errors.quotaRefreshNoLogin') : null,
             }));
         } finally {
             release();
@@ -371,7 +371,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         }
     });
 
-    it('retains the last native snapshot when an accepted refresh read temporarily has no data', async () => {
+    it('retains the last native snapshot while an accepted refresh awaits its producer', async () => {
         const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         const context = buildContext('server-a', 1);
         const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
@@ -381,7 +381,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         try {
             await flushAsyncTurns();
-            getQuotaMock.mockResolvedValue(null);
+            getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: 2 } });
             await store.refreshQualifiedQuotaSnapshot(key, context);
             expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ snapshot, refreshing: true, error: null });
         } finally {
@@ -394,14 +394,17 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         const context = buildContext('server-a', 1);
         const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        getQuotaMock.mockResolvedValue(null);
+        const snapshot = { v: 1, ref, activeAccountId: 'provider-work', fetchedAt: 1,
+            staleAfterMs: 60_000, planLabel: null, accountLabel: null, meters: [] };
+        snapshotFixture.mockReturnValue(snapshot);
+        getQuotaMock.mockResolvedValue({ ref, sourceResolution, metadata: { refreshRequestedAt: 2 } });
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         try {
             await vi.advanceTimersByTimeAsync(0);
             await store.refreshQualifiedQuotaSnapshot(key, context);
-            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ snapshot: null, refreshing: true, error: null });
+            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ snapshot, refreshing: true, error: null });
             release();
-            expect(store.getQualifiedQuotaSnapshotEntry(key).refreshing).toBe(false);
+            expect(store.getQualifiedQuotaSnapshotEntry(key).refreshing).toBe(true);
             const reads = getQuotaMock.mock.calls.length;
             await vi.advanceTimersByTimeAsync(120_000);
             expect(getQuotaMock.mock.calls.length).toBe(reads);
@@ -552,8 +555,8 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         try {
             await flushAsyncTurns();
             expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
-                snapshot: null,
-                supported: null,
+                snapshot: { state: 'not_loaded', meters: [] },
+                supported: true,
                 read: true,
                 loading: false,
             });
@@ -583,6 +586,39 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
                 supported: true,
                 loading: false,
                 error: t('connectedServices.errors.quotaRefreshFailed'),
+            });
+        } finally {
+            release();
+        }
+    });
+
+    it('keeps last-known meters without an error after a background failure and reports a requested refresh failure', async () => {
+        const retryAtMs = Date.now() + 60 * 60_000;
+        const snapshot = {
+            v: 1, ref, activeAccountId: 'provider-work', fetchedAt: 1,
+            staleAfterMs: 60_000, planLabel: 'Existing plan', accountLabel: null,
+            meters: [{ meterId: 'five_hour', label: '5-hour', used: 5, limit: 10, unit: 'requests',
+                utilizationPct: 50, resetsAt: null, status: 'ok', details: {} }],
+            diagnostics: [{ kind: 'provider_http', code: 'provider_backoff', status: 429, observedAtMs: 1, retryAtMs }],
+        };
+        snapshotFixture.mockReturnValue(snapshot);
+        getQuotaMock.mockResolvedValue({ metadata: { status: 'error' } });
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
+        try {
+            await flushAsyncTurns();
+            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ snapshot, loading: false, error: null });
+
+            await store.refreshQualifiedQuotaSnapshot(key, context);
+            expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+                snapshot,
+                refreshing: false,
+                error: t('connectedServices.errors.quotaRefreshRetryAt', {
+                    error: t('connectedServices.errors.quotaRefreshRateLimited'),
+                    time: new Date(retryAtMs).toLocaleString(),
+                }),
             });
         } finally {
             release();
@@ -619,7 +655,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
         try {
             await flushAsyncTurns();
-            expect(store.getQualifiedQuotaSnapshotEntry(key).error).toBe(t('connectedServices.errors.quotaRefreshFailed'));
+            expect(store.getQualifiedQuotaSnapshotEntry(key).error).toBe(t('connectedServices.errors.quotaRefreshRateLimited'));
         } finally {
             release();
         }
@@ -647,7 +683,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             const entry = store.getQualifiedQuotaSnapshotEntry(key);
             expect(entry.snapshot).toEqual(snapshot);
             expect(entry.error).toBe(t('connectedServices.errors.quotaRefreshRetryAt', {
-                error: t('connectedServices.errors.quotaRefreshFailed'),
+                error: t('connectedServices.errors.quotaRefreshRateLimited'),
                 time: new Date(retryAtMs).toLocaleString(),
             }));
             // The status code stays diagnostic-only, like the provider's own message and headers.
