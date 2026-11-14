@@ -356,14 +356,14 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(deferred)).toEqual({ kind: 'daemon', machineId: 'machine' });
   });
 
-  it('keeps native deployment replay on its recorded controller and unplaced UI replay on its app adapter', () => {
+  it('keeps native deployment replay on its recorded controller and refuses an unplaced automated proposal', () => {
     const request = requestFor('deployments.deploy', { serverId: 'stable-home', environmentId: 'environment',
       expectedRevision: 9, requestKey: 'native-deploy', targetLinkId: 'target-link', expectedTargetLinkRevision: 1,
       contentArtifactId: 'candidate', contentHeaderVersion: 3, contentBodyVersion: 3 }, 'ui');
     expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
     const { machineId: _machineId, sessionId: _sessionId, ...unplacedOrigin } = request.executionOriginV1;
     const unplaced = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: unplacedOrigin });
-    expect(resolveApprovalExecutor(unplaced)).toEqual({ kind: 'app', placement: 'machine' });
+    expect(resolveApprovalExecutor(unplaced)).toEqual({ kind: 'unavailable', reason: 'missing_machine' });
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
       serverIdentityId: 'stable-home', target, externalActionInputSignature: 'a'.repeat(86),
