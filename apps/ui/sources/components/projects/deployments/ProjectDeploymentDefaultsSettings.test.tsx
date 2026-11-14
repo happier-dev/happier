@@ -35,7 +35,8 @@ describe('Project deployment defaults', () => {
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         const controller = createDeploymentReadControllerV1({ scope: { ...account.scope, projectSourceId: 'source-app' }, transport: createDeploymentReadTransport(context.accountLifetime) });
         try {
-            const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.scope.serverId }) });
+            const detail = { ...createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.scope.serverId }) }),
+                runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
             const screen = await renderScreen(<DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
                 definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
                 demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null} />);

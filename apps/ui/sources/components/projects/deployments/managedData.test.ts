@@ -43,3 +43,12 @@ it('retains only produced opaque connection refs across partial saves and a prov
   expect(managedDataConnections({ connectionSave: { ...partial, connections: { ...partial.connections,
     DIRECT_URL: { ref: 'secret:migrations', resourceRevision: 4 } } } })).toHaveLength(2);
 });
+
+// P45 §3.2: native engine and provider-console facts survive association.
+it('captures produced database presentation on the existing protected link without inventing missing facts', () => {
+  const produced = { state: 'provisioned', providerIdentity: identity, providerEnvironment: { kind: 'custom', id: 'main' },
+    engine: 'postgres', engineVersion: 17, providerConsole: { url: 'https://console.example.test/project', label: 'Open console' } };
+  expect(managedDataLinkContent(principal, produced)).toMatchObject({ data: { engine: 'postgres', version: '17', providerConsole: produced.providerConsole } });
+  expect(managedDataLinkContent(principal, { ...produced, engineVersion: undefined, providerConsole: undefined })).toMatchObject({ data: { engine: 'postgres' } });
+  expect(managedDataLinkContent(principal, { ...produced, engine: undefined })).not.toHaveProperty('data');
+});

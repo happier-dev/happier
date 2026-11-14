@@ -259,7 +259,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
             {...(retryInput ? { action: { label: t('common.retry'), onPress: () => { void run(retryInput); } } } : {})} /> : null}
         {failure?.kind === 'approval' ? <SurfaceStateCard testID={`${ID}.approval`} size="line" kind="warning"
             title={t(`${COPY}.approval`)} reason={t(`${COPY}.approvalBody`)}
-            action={{ label: t(`${COPY}.review`), onPress: () => props.review.open(failure.artifactId) }} />
+            action={{ label: t(`${COPY}.review`), onPress: () => props.review.open() }} />
             : failure?.kind === 'refused' ? <SurfaceStateCard size="line" kind="error" title={t(`${COPY}.refused`)} diagnosticCode={failure.code} /> : null}
     </>;
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,11 +10,14 @@ import { t } from '@/text';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { databaseEngineTitle } from './databasePresentation';
+import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
 
 /** One presentation of the template's data and linked data targets, without inventing connection or health facts. */
 export function DeploymentDataCard(props: Readonly<{
   scope: Readonly<{ serverId: string; accountId: string }>;
   detail: DeploymentEnvironmentReadDetailV1;
+  lifetime?: ServerAccountScopeLifetime | null;
+  presented?: boolean;
   onAdd: () => void;
   onBackups: () => void;
   /** Where the template's database runs (its Machine), named after its service; null when not known. */
@@ -23,7 +27,10 @@ export function DeploymentDataCard(props: Readonly<{
 }>) {
   const databases = props.detail.content.template?.data;
   const hasData = (databases?.length ?? 0) > 0;
-  const targets = props.detail.targetLinks.filter(link => link.targetLink.role === 'data');
+  const targets = React.useMemo(() => props.detail.targetLinks.filter(link => link.targetLink.role === 'data'), [props.detail.targetLinks]);
+  const { choices, retry } = useDeploymentTargetLinkChoices({ lifetime: props.lifetime ?? null,
+    environmentId: props.detail.environment.id, targets, presented: props.presented !== false });
+  const openedById = new Map(choices.rows.map(row => [row.targetLink.id, row]));
   const id = 'project-deployments.environment.data';
   return (
     <ItemGroup testID={id} title={t('projects.deployments.dataTitle')}
@@ -37,14 +44,21 @@ export function DeploymentDataCard(props: Readonly<{
           ...(props.place ? [props.place] : [])].join(' · ')}
         {...(props.onOpen ? { testID: `${id}.database.${data.service}`, onPress: () => props.onOpen?.(data.service) } : { mode: 'info' as const })} />)}
       {targets.map(link => {
-        const providerConsole = link.content.data?.providerConsole;
+        const opened = openedById.get(link.targetLink.id);
+        const data = opened?.content.data;
+        const providerConsole = data?.providerConsole;
         return <React.Fragment key={link.targetLink.id}>
-          <Item title={link.content.data ? databaseEngineTitle(link.content.data) : link.targetLink.targetKind}
+          <Item title={data ? databaseEngineTitle(data) : link.targetLink.targetKind}
             {...(props.onOpen ? { testID: `${id}.database.${link.targetLink.id}`, onPress: () => props.onOpen?.(link.targetLink.id) } : { mode: 'info' as const })} />
           {providerConsole ? <Item testID={`${id}.providerConsole.${link.targetLink.id}`} title={providerConsole.label}
             onPress={() => requestOpenExternalUrl(providerConsole.url, { serverId: props.scope.serverId, expectedAccountId: props.scope.accountId })} /> : null}
         </React.Fragment>;
       })}
+      {targets.length > 0 && choices.kind === 'loading' ? <SurfaceStateCard testID={`${id}.loading`} size="line" kind="loading"
+        title={t('projects.deployments.loading')} /> : null}
+      {choices.kind === 'failed' ? <SurfaceStateCard testID={`${id}.failed`} size="line" kind="error"
+        title={t('projects.deployments.environmentErrorTitle')} diagnosticCode={choices.code}
+        action={{ label: t('common.retry'), onPress: retry }} /> : null}
       {!hasData && targets.length === 0 ? <SurfaceStateCard testID={`${id}.empty`} size="line" kind="empty"
         title={t('projects.deployments.dataEmptyShort')}
         action={{ label: t('projects.deployments.dataAdd'), onPress: props.onAdd }} /> : null}

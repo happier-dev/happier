@@ -54,7 +54,7 @@ import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/bu
 import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { MachineSetupV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
@@ -531,7 +531,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     anotherMachine ? destinationSetup?.receiverInputs.repositoryPath : fields.path, props.lifetime, !intent);
   const [sourceIds, setSourceIds] = React.useState(() => intent?.initialIntent?.configuration.sources.map(choice => choice.sourceId) ?? props.sourceChoices.map(choice => choice.sourceId));
   const [keep, setKeep] = React.useState(() => draftFrom(intent?.initialIntent?.configuration.retention ?? props.defaults?.values.backupRetention ?? { kind: 'keepEverything' }));
-  const [bindings, setBindings] = React.useState<NonNullable<BackupConfigurePreparation['backupBindings']>>(() => intent?.initialIntent?.bindings ?? []);
+  const [bindings, setBindings] = React.useState<PreviewDestinationIntent['bindings']>(() => intent?.initialIntent?.bindings ?? []);
   const [prefix, setPrefix] = React.useState(() => intent?.initialIntent?.prefix ?? '');
   const serverId = props.lifetime?.scope.serverId ?? props.detail.environment.serverId;
   const machines = useMachineListForServer(serverId);
@@ -539,8 +539,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const receiverMachines = React.useMemo(() => (machines ?? []).filter(machine => Boolean(machine.installationId)), [machines]);
   const receiverProjection = usePluginUiProjectionCurrentness({ serverId, machineId: destinationSetup?.machineId,
     enabled: anotherMachine && !!destinationSetup, sections: BACKUP_RECEIVER_SECTIONS });
-  const receiverSetup = React.useMemo(() => ({ items: [{ kind: 'setupRecipe' as const,
-    selection: { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: destinationSetup?.receiverInputs ?? {} } }] }) satisfies MachineSetupV1,
+  const receiverSetup = React.useMemo(() => MachineSetupV1Schema.parse({ items: [{ kind: 'setupRecipe',
+    selection: { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: destinationSetup?.receiverInputs ?? {} } }] }),
   [destinationSetup?.receiverInputs]);
   const receiverInputState = React.useMemo(() => readMachineSetupRecipeInputState(receiverSetup,
     receiverProjection.pluginUiProjection, { suppliedInputKeys: BACKUP_RECEIVER_SUPPLIED_INPUTS }),

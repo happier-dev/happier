@@ -9,7 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentTargetDeclarations } from './DeploymentPlatformTargetSheet';
-import { createDeploymentReadTransport, type DeploymentTargetLinkChoiceV1 } from './deploymentReadTransport';
+import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
 import { buildPreviewBranchReadInput, previewBranchTargets, readPreviewBranchParents,
   type PreviewBranchTarget, type PreviewBranchParent } from './previewDatabaseBranches';
 
@@ -17,8 +17,6 @@ type Template = NonNullable<DeploymentEnvironmentReadDetailV1['content']['previe
 type ReadState = Readonly<{ kind: 'loading'; targetLinkId: string }>
   | Readonly<{ kind: 'failed'; targetLinkId: string; code: string }>
   | Readonly<{ kind: 'ready'; targetLinkId: string; parent: PreviewBranchParent }>;
-type TargetChoices = Readonly<{ scope: object; rows: readonly DeploymentTargetLinkChoiceV1[] }>
-  & (Readonly<{ kind: 'loading' | 'ready' }> | Readonly<{ kind: 'failed'; code: string }>);
 
 /** Choosing a linked parent records intent only. PR creation owns the later branch mutation. */
 export function DeploymentPreviewBranchChoice(props: Readonly<{
@@ -32,31 +30,15 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
   const { state, retry } = useDeploymentTargetDeclarations(props.lifetime);
   const candidates = React.useMemo(() => state.status === 'ready'
     ? previewBranchTargets(state.declarations, props.detail) : [], [state, props.detail]);
-  const transport = React.useMemo(() => createDeploymentReadTransport(props.lifetime), [props.lifetime]);
   const [open, setOpen] = React.useState(false);
   const selected = props.detail.content.previewTemplate?.data.find(entry => entry.kind === 'managed');
   const selectedLinkId = selected?.kind === 'managed' ? selected.dataTargetLinkId : null;
-  const choiceScope = React.useMemo(() => ({}), [props.lifetime, props.detail.environment.id]);
-  const [choiceState, setChoices] = React.useState<TargetChoices | null>(null);
-  const choices = choiceState?.scope === choiceScope ? choiceState : null;
-  const wanted = React.useMemo(() => open ? candidates : candidates.filter(row => row.targetLink.id === selectedLinkId),
+  // This chooser names each link by its Artifact title, which declarations do not carry.
+  const wanted = React.useMemo(() => (open ? candidates : candidates.filter(row => row.targetLink.id === selectedLinkId))
+    .map(row => ({ targetLink: row.targetLink })),
     [open, candidates, selectedLinkId]);
-  const [attempt, setAttempt] = React.useState(0);
-  React.useEffect(() => {
-    if (state.status !== 'ready') return;
-    const controller = new AbortController();
-    setChoices(previous => ({ scope: choiceScope, kind: wanted.length === 0 ? 'ready' : 'loading',
-      rows: previous?.scope === choiceScope ? previous.rows : [] }));
-    if (wanted.length === 0) return () => controller.abort();
-    void transport.readTargetLinks(props.lifetime.scope, wanted.map(row => row.targetLink), { signal: controller.signal })
-      .then(result => {
-        if (controller.signal.aborted) return;
-        setChoices(previous => result.ok ? { scope: choiceScope, kind: 'ready', rows: result.value }
-          : { scope: choiceScope, kind: 'failed', code: result.failure.code,
-            rows: previous?.scope === choiceScope ? previous.rows : [] });
-      });
-    return () => controller.abort();
-  }, [state.status, wanted, transport, props.lifetime, choiceScope, attempt]);
+  const { choices, retry: retryChoices } = useDeploymentTargetLinkChoices({ lifetime: props.lifetime,
+    environmentId: props.detail.environment.id, targets: wanted, presented: state.status === 'ready' });
   const openedById = new Map(choices?.rows.map(row => [row.targetLink.id, row]));
   const targets = candidates.map(candidate => {
     const opened = openedById.get(candidate.targetLink.id);
@@ -123,7 +105,7 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
         diagnosticCode={failureCode}
         action={{ label: t('common.retry'), onPress: () => {
           if (state.status === 'failed') retry();
-          else if (choices?.kind === 'failed') setAttempt(value => value + 1);
+          else if (choices.kind === 'failed') retryChoices();
           else if (target) void readBranches(target);
         } }} />
     ) : state.status === 'ready' && choices?.kind === 'ready' && targets.length === 0 ? (

@@ -1218,6 +1218,10 @@ describe('Environment → Data → Database page (P9)', () => {
         detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
+      // The facts row under the header leads with the same Last backup; a size the read hasn't reported says "—".
+      const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
+      expect((strip?.props.facts as readonly { key: string; value: string }[]).map(fact => [fact.key, fact.value])).toEqual([
+        ['lastBackup', formatAsOfTime(Date.parse('2026-11-07T10:01:00Z'))], ['size', '—']]);
     } finally { await view.dispose(); }
   });
 
@@ -1573,22 +1577,27 @@ describe('Environment → Data → Database page (P9)', () => {
 });
 
 // P45 one database presentation: identity and the native console come from protected link facts.
-it.each([true, false])('shows the managed engine and only a produced console (console=%s)', async (hasConsole) => {
+it.each([true, false])('opens a header-only managed database through the Artifact owner and shows only a produced console (console=%s)', async (hasConsole) => {
   const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
   const { Item } = await import('@/components/ui/lists/Item');
   const { PageHeader } = await import('@/components/ui/layout/PageHeader');
   const serverId = await homes.addHome({ name: 'Managed identity', serverUrl: 'https://managed-identity.test', serverIdentityId: 'srv_managed_identity', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
   const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-identity', role: 'data', targetKind: 'example-provider', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
-  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
+  const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
     targetLinks: [{ targetLink, content: { data: { engine: 'postgres', version: '17',
       ...(hasConsole ? { providerConsole: { url: 'https://console.example.test/project', label: 'Provider console' } } : {}) } } }] });
+  await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+    header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
+  await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+    header: { kind: 'deployment-target-link.v1', title: 'Customer database' }, body: JSON.stringify(detail.targetLinks[0]!.content) });
+  homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+    environment: detail.environment, targetLinks: [targetLink] } });
   const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
-    transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-      readEnvironment: async () => ({ ok: true, value: detail }),
-      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
-      readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }) } });
+    transport: createDeploymentReadTransport(account.accountLifetime) });
   const screen = await renderScreen(<DeploymentDatabasePage controller={controller} environmentId={detail.environment.id} database={targetLink.id}
-    demand={shown} phone={false} lifetime={null} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} />);
+    demand={shown} phone={false} lifetime={account.accountLifetime} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} />);
   try {
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.findAllByType(PageHeader).some(header => header.props.title === 'PostgreSQL 17')).toBe(true); });
     const console = screen.findAllByType(Item).find(row => row.props.testID === page + '.providerConsole');
@@ -1605,5 +1614,5 @@ it.each([true, false])('shows the managed engine and only a produced console (co
         expect(open.mock.calls.map(call => call[0])).toEqual(['https://console.example.test/project']);
       } finally { vi.unstubAllGlobals(); }
     }
-  } finally { await screen.unmount(); controller.retire(); }
+  } finally { await screen.unmount(); controller.retire(); account.dispose(); }
 });

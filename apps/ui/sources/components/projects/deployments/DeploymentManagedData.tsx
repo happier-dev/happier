@@ -6,7 +6,7 @@ import { DeploymentEnvironmentCopyProvisionV1Schema, type DeploymentEnvironmentC
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { environmentSecretBindingIdentityV1, type EnvironmentVariableBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { environmentSecretBindingIdentityV1, type EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentBindingReplacementChoices } from './DeploymentBindingReplacementChoices';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -77,7 +77,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const partial = isRecord(saved) && saved.status === 'partial';
   const complete = isRecord(saved) && saved.status === 'complete';
   const connections = managedDataConnections(value);
-  const connectionBindings: EnvironmentVariableBindingV1[] = connections.map(connection => ({ purpose: 'variable',
+  const connectionBindings: EnvironmentVariableBindingInputV1[] = connections.map(connection => ({ purpose: 'variable',
     phase: 'runtime', name: connection.name, source: { kind: 'secret', ref: connection.ref, resourceRevision: connection.resourceRevision } }));
   const existingBindings = new Map((props.detail.content.bindings ?? []).map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
   const replaceKeys = connectionBindings.filter(binding => {

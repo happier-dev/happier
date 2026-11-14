@@ -12,8 +12,11 @@ export type DatabaseMoveCutoverSelection = Readonly<{
 type Unavailable = Readonly<{ kind: 'unavailable';
     reason: 'copy_not_verified' | 'repository_definition' | 'non_machine_rewritable_dsn'; variable?: string }>;
 type EnvironmentPatch = NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>;
+type CutoverBindings = NonNullable<EnvironmentPatch['bindings']>;
 type CutoverPatch = Readonly<{ definition: NonNullable<EnvironmentPatch['definition']>;
-    bindings: NonNullable<EnvironmentPatch['bindings']> }>;
+    bindings: Omit<CutoverBindings, 'set'> & {
+        set: Array<Extract<NonNullable<CutoverBindings['set']>[number], { purpose: 'variable' }>>;
+    } }>;
 export type DatabaseMoveCutoverPreparation = Unavailable | Readonly<{ kind: 'ready'; patch: CutoverPatch }>;
 
 /** The review changes desired configuration only; the retained source volume is never deleted. */

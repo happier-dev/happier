@@ -122,7 +122,7 @@ describe('deployment preparation entry', () => {
       retryable: false, agentId: 'claude', launchError: { kind: 'launch_error', code: 'agent_signed_out',
         message: 'Private native authentication diagnostic',
         failureCause: { phase: 'authentication', failureReason: 'authentication_required' } } });
-    if (child.type !== 'error') throw new Error('Expected a Session refusal');
+    if (child.type !== 'error' || !('launchError' in child) || !child.launchError) throw new Error('Expected a Session launch refusal');
     let requestId: string | undefined;
     await answerExternalActionAccountForHome(homes, serverId, { machineId: 'workspace-machine',
       actionId: 'deployments.prepare', tokenEpoch: 0,
@@ -145,7 +145,7 @@ describe('deployment preparation entry', () => {
       await screen.pressByTestIdAsync('project-deployments.prepare.refused-details-toggle');
       expect(screen.getTextContent()).toContain(child.code);
       expect(screen.getTextContent()).toContain(requestId);
-      expect(screen.getTextContent()).not.toContain(child.launchError?.message);
+      expect(screen.getTextContent()).not.toContain(child.launchError.message);
       expect(router.spies.push).not.toHaveBeenCalled();
     } finally { await screen.unmount(); account.dispose(); }
   });

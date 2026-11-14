@@ -14,7 +14,7 @@ import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
-import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1, type EnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ProjectRefSelect } from '@/components/projects/ProjectRefSelect';
@@ -529,7 +529,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
               nameOf={machineName} disabled={hostApply.pending} />
           </> : !onPlatform && host.prepared?.ok === false ? (
-            <AttentionBanner tone="warning" title={t('machinePresets.setup.title')}
+            <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
           ) : !onPlatform && chosen && host.readiness === 'unknown' ? (
             <ItemGroup>
@@ -591,8 +591,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               onChange={setRef}
             />
             {!onPlatform && props.lifetime && source?.repository ? <>
-              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
-              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
+              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="prepare" />
+              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" />
             </> : null}
             </>}
           </ItemGroup>
@@ -745,14 +745,6 @@ const hostSetupExecute = createFrontDoorActionExecute();
 
 const NO_PLATFORM_TARGETS: ReturnType<typeof readDeploymentPlatformTargets> = [];
 
-function copyBindingIdentity({ source: _source, ...identity }: EnvironmentSecretBindingV1): EnvironmentSecretBindingIdentityV1 {
-  if (identity.purpose === 'registry') {
-    const { access: _access, ...registry } = identity;
-    return registry;
-  }
-  return identity;
-}
-
 /** The source's runtime Machine, else its controller: where the copy is most likely meant to run. */
 function copySourceMachineId(source: DeploymentEnvironmentDetailV1): string {
   return source.targetLinks.find((row) => row.targetLink.role === 'runtime')?.targetLink.machines[0] ?? source.environment.controllerMachineId;
@@ -762,10 +754,10 @@ function copySourceMachineId(source: DeploymentEnvironmentDetailV1): string {
 function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DraftCopyChoices {
   return {
     secrets: source.content.bindings.filter(row => row.source.kind === 'secret').map((row): DeploymentEnvironmentCopyChoicesV1['secrets'][number] => ({
-      binding: copyBindingIdentity(row), kind: row.purpose === 'variable' || row.purpose === 'registry' ? 'useSameReference' : 'omit',
+      binding: projectEnvironmentSecretBindingIdentityV1(row), kind: row.purpose === 'variable' || row.purpose === 'registry' ? 'useSameReference' : 'omit',
     })),
     values: source.content.bindings.filter(row => row.source.kind !== 'secret').map((row): DeploymentEnvironmentCopyChoicesV1['values'][number] => ({
-      binding: copyBindingIdentity(row), kind: 'include',
+      binding: projectEnvironmentSecretBindingIdentityV1(row), kind: 'include',
     })),
     data: source.targetLinks.filter(row => row.targetLink.role === 'data').map(row => ({ targetLinkId: row.targetLink.id, kind: 'omit' })),
     retainPreviousDeployments: 'copy',

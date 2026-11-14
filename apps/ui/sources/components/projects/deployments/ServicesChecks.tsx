@@ -165,9 +165,9 @@ export function ServicesChecksView(
                     selected={props.selectedKey === row.key}
                     onPress={() => props.onSelect(row)}
                     subtitleStyle={!row.native.enabled ? undefined : facts.status === 'down'
-                        ? { color: theme.colors.state.danger }
+                        ? { color: theme.colors.state.danger.textForeground }
                         : facts.status === 'degraded'
-                          ? { color: theme.colors.state.warning }
+                          ? { color: theme.colors.state.warning.textForeground }
                           : undefined
                     }
                   />
@@ -208,9 +208,9 @@ export function ServiceCheckDetail(
   const nowMs = props.nowMs ?? Date.now();
   const pluginTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
   const colors = {
-    up: theme.colors.state.success,
-    down: theme.colors.state.danger,
-    degraded: theme.colors.state.warning,
+    up: theme.colors.state.success.foreground,
+    down: theme.colors.state.danger.foreground,
+    degraded: theme.colors.state.warning.foreground,
     empty: theme.colors.surface.inset,
   };
   return (

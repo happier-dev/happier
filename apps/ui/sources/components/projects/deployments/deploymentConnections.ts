@@ -23,7 +23,7 @@ export function projectDeploymentConnections(detail: DeploymentEnvironmentDetail
   for (const data of detail.content.template?.data ?? []) items.push({ kind: 'database', id: data.service,
     service: data.service, resource: data.engine, source, configure: deploymentEnvironmentRoute({ ...address, database: data.service }) });
   for (const link of detail.targetLinks) if (link.targetLink.role === 'data') items.push({ kind: 'database', id: link.targetLink.id,
-    service: null, resource: link.content.data?.engine ?? link.targetLink.targetKind, source,
+    service: null, resource: link.content?.data?.engine ?? link.targetLink.targetKind, source,
     configure: deploymentEnvironmentRoute({ ...address, database: link.targetLink.id }) });
   for (const volume of detail.content.template?.volumes ?? []) items.push({ kind: 'volume', id: volume.id,
     service: volume.service, resource: volume.target, source: { kind: 'service', id: volume.service },

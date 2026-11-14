@@ -307,7 +307,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       : undefined;
     const sourceMethod = platform?.sourceMethods.includes('upload')
       ? resolveDeploymentSourceMethodV1({
-        explicit: selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
+        explicit: selectedMethod !== null && selectedMethod.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
           ? selectedMethod.value : undefined,
         recorded: detail?.targetLinks.find(row => row.targetLink.id === runtime?.id)?.content?.sourceMethod,
       })
@@ -1141,6 +1141,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroup>
               ) : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
+                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />

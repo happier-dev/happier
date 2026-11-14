@@ -8,6 +8,8 @@ import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugin
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readPluginActionCredentialPurpose } from './platformTargetLink';
 
+const roleInputSchemas = new Map(Object.entries(DeploymentTargetRoleInputProtocolSchemasV1));
+
 /** Data operations come from the same role traversal that admits their execution. */
 export function managedDataTargets(declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[]) {
   return declarations.flatMap(({ manifest }) => (manifest.contributes.deploymentTargets ?? []).flatMap(target => {
@@ -17,6 +19,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
       const action = manifest.contributes.actions?.find(value => value.id === binding.action);
       if (!action) return [];
       const hints = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);
+      const protocolFields = roleInputSchemas.get(binding.role)?.jsonSchema.properties ?? {};
       return [{ ...binding, declaration: action, credential: readPluginActionCredentialPurpose(manifest, action.id), title: resolvePluginLocalizedStringV2Text(action.title),
         actionId: formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
         inputHints: { ...hints, fields: (hints?.fields ?? []).filter(field => {
@@ -24,7 +27,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
           // Custody, paging and request identity come from the host operation, never editable form operands.
           return field.path === 'providerAccountId' || (root !== 'requestKey'
             && !Object.hasOwn(DeploymentTargetPreparationBaseV1Schema.shape, root)
-            && !Object.hasOwn(DeploymentTargetRoleInputProtocolSchemasV1[binding.role].jsonSchema.properties ?? {}, root));
+            && !Object.hasOwn(protocolFields, root));
         }) } }];
     });
     return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, target,
@@ -39,7 +42,11 @@ export type ManagedDataOperation = ManagedDataTarget['operations'][number];
 export function managedDataLinkContent(credentialPrincipal: unknown, value: unknown) {
   if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable') return null;
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse({ credentialPrincipal,
-    providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment });
+    providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment,
+    ...(typeof value.engine === 'string' ? { data: { engine: value.engine,
+      ...(typeof value.engineVersion === 'number' || typeof value.engineVersion === 'string' ? { version: String(value.engineVersion) }
+        : typeof value.version === 'string' ? { version: value.version } : {}),
+      ...(value.providerConsole === undefined ? {} : { providerConsole: value.providerConsole }) } } : {}) });
   return parsed.success ? parsed.data : null;
 }
 

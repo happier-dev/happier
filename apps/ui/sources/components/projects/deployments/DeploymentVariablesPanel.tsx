@@ -6,7 +6,6 @@ import {
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
-import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentVariableFactOptionsV1, type DeploymentVariableFactV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { DeploymentEnvironmentReadDetailV1, EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
 
@@ -59,7 +58,7 @@ import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deploy
 const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
 type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
-type VariableBinding = EnvironmentVariableBindingV1;
+type VariableBinding = Extract<EnvironmentSecretBindingProjectionV1['binding'], { purpose: 'variable' }>;
 type Phase = 'build' | 'runtime' | 'both';
 type VariableRow = Readonly<{
   key: string;
@@ -390,7 +389,7 @@ export const DeploymentVariablesPanel = React.memo(
       if (source.kind === 'reference') {
         return `${source.export} from ${environmentName(source.environmentId) ?? t('projects.deployments.sourceAnotherEnvironment')}`;
       }
-      return sourceTitle({ purpose: 'variable', name: '', phase: 'runtime', source }, environmentName).toLowerCase();
+      return sourceTitle({ source }, environmentName).toLowerCase();
     }, [catalog, environmentName]);
     const savedName = (source: SecretSource) =>
       catalog.find((entry) => entry.ref === source.ref)?.name ?? t('projects.deployments.sourceSavedSecret');
@@ -1456,7 +1455,7 @@ function sourceIcon(kind: VariableBinding['source']['kind']) {
 }
 
 function sourceTitle(
-  binding: VariableBinding,
+  binding: Pick<VariableBinding, 'source'>,
   environmentName: (id: string) => string | null,
   secretName?: (ref: string) => string | null,
 ): string {

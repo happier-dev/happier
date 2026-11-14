@@ -49,12 +49,12 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
     const busy = starting || move.pending;
     const confirm = async () => {
         if (busy || !stateless || !sourceId || !destination || sourceLink.source.kind !== 'host'
-            || sourceIntent?.kind !== 'repository' || !primaryService || !controllerMachineId) return;
+            || sourceIntent?.kind !== 'repository' || !sourceIntent.compose || !primaryService || !controllerMachineId) return;
         setStarting(true);
         try {
             const accepted = await move.run({ serverId: lifetime.scope.serverId, environment: detail,
                 sourceLink: { ...sourceLink, source: sourceLink.source }, sourceDeploymentId: receipt.deployment.id,
-                sourceIntent, primaryService, sourceMachineId: sourceId,
+                sourceIntent: { ...sourceIntent, compose: sourceIntent.compose }, primaryService, sourceMachineId: sourceId,
                 destination: { machineId: destination.id, installationId: destination.installationId },
             }, `${detail.content.name} · ${t('projects.deployments.move.title')}`, controllerMachineId);
             if (accepted) {

@@ -31,6 +31,7 @@ const { SessionMachineField } = await import('@/components/sessions/new/placemen
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { PageHeader } = await import('@/components/ui/layout/PageHeader');
 const { Item } = await import('@/components/ui/lists/Item');
+const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { DeploymentPlatformInspectState } = await import('./DeploymentPlatformInspectState');
 const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, answerDeploymentTargetInspectForHome } = await import('./deploymentPlatformTargetPlugin.testFixture');
@@ -397,9 +398,14 @@ describe('Environment draft Machine Home', () => {
         expect(header().props.primaryAction.disabled).toBe(true);
         await act(async () => screen.findAllByType(Switch).find(node => node.props.testID === 'project-deployments.draft.copy.data:0:binding:runtime:KEEP')!.props.onValueChange(true));
       }
-      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(header().props.primaryAction.disabled, 'copy choices allow review').toBe(false);
+      });
       await act(async () => header().props.primaryAction.onPress());
-      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
+      await waitForHomeGovernance(() => expect(authored,
+        `controller received copy preparation; refusal=${JSON.stringify(screen.findAllByType(AttentionBanner)
+          .find(row => row.props.testID === 'project-deployments.draft.refused')?.props.details)}`).toBeDefined());
       expect(authored).toMatchObject({ name: 'Staging copy', copyFrom: {
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         choices: { secrets: [
@@ -412,7 +418,8 @@ describe('Environment draft Machine Home', () => {
       } });
       expect(authored).not.toHaveProperty('definition');
       expect(authored).toMatchObject({ firstTargetLink: { machines: [{ machineId: 'runtime' }] } });
-      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.draft.refused'), 'controller refusal is visible').not.toBeNull(); });
       await screen.pressByTestIdAsync('project-deployments.draft.refused.details');
       expect(screen.getTextContent()).toContain('deployment_conflict');
       // The typed recovery owner's remedy for this refusal, not a draft-local copy.
@@ -475,13 +482,18 @@ describe('Environment draft Machine Home', () => {
       const header = () => screen.findAllByType(PageHeader)[0]!;
       expect(header().props.titleEditor.value).toBe('Staging copy');
       await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:1:omit');
-      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(header().props.primaryAction.disabled, 'copy choices allow review').toBe(false); });
       await act(async () => header().props.primaryAction.onPress());
-      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
-      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
+      await waitForHomeGovernance(() => expect(authored,
+        `controller received copy preparation; refusal=${JSON.stringify(screen.findAllByType(AttentionBanner)
+          .find(row => row.props.testID === 'project-deployments.draft.refused')?.props.details)}`).toBeDefined());
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(header().props.primaryAction.disabled, 'prepared copy can be created').toBe(false); });
       await act(async () => header().props.primaryAction.onPress());
-      await waitForTestEvent(homes.subscribe, () => creates, value => value === 1);
-      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
+      await waitForHomeGovernance(() => expect(creates, 'controller created exactly one copy').toBe(1));
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(header().props.primaryAction.loading, 'copy settled with recovery').toBe(false); });
       expect(screen.findByTestId('project-deployments.draft.progress')).not.toBeNull();
       expect(screen.getTextContent()).toContain('copied-environment');
       expect(header().props.cancelAction.testID).not.toBe('project-deployments.draft.back');
@@ -1031,7 +1043,7 @@ describe('Environment draft Machine Home', () => {
         }, { surface: 'cli', serverId, expectedAccountId: 'alice' });
         const { PluginProjectionV2Schema, PluginProjectedActionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-          actionsById: Object.fromEntries(authoredPlugin.manifest.contributes.actions.map(action =>
+          actionsById: Object.fromEntries((authoredPlugin.manifest.contributes.actions ?? []).map(action =>
             [`${pluginId}/${action.id}`, {
               ...Object.fromEntries(Object.entries(action).filter(([key]) => Object.hasOwn(PluginProjectedActionV2Schema.shape, key))),
               pluginId, occurrenceId: 'runtime-plugin:1', available: true,

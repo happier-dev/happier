@@ -113,7 +113,10 @@ function readStepLog(input: Readonly<{ ref?: string; tail?: true; cursor?: { sou
  * The own-server facts a native receipt records (DEPLOY-SURFACES 2026-10-31): the approved input basis, the
  * incumbent it replaced, and the masked log tail. `previous` is the receipt that served before this one.
  */
-function ownServerFacts(state: ReceiptState, previous: string | null, base: ReturnType<typeof createDeploymentReceiptDetailV1>) {
+function ownServerFacts(state: ReceiptState, previous: string | null,
+  base: Pick<ReturnType<typeof createDeploymentReceiptDetailV1>, 'deployment'> & Readonly<{
+    content: Readonly<{ sourceIntent: NonNullable<ReturnType<typeof createDeploymentReceiptDetailV1>['content']['sourceIntent']> }>;
+  }>) {
   const tail = LOG_TAIL[state];
   return {
     approvedInputBasis: {
@@ -571,8 +574,20 @@ function specimenRestore(restore: string) {
  */
 function specimenActions(deploy: string, restore: string | undefined) {
   const refusal = (error: string) => ({ ok: false as const, error } as never);
+  const unsupported = async () => {
+    await pause();
+    throw new HappyError('unsupported', false, { code: 'unsupported' });
+  };
   return {
-    ...(restore ? { restore: specimenRestore(restore) } : {}),
+    restore: restore ? specimenRestore(restore) : unsupported,
+    restart: unsupported,
+    link: unsupported,
+    inspectPlatformTarget: unsupported,
+    addDomain: unsupported,
+    removeDomain: unsupported,
+    verifyDomain: unsupported,
+    setController: unsupported,
+    updateEnvironment: unsupported,
     rollback: async () => {
       await pause();
       return refusal('deployment_conflict');

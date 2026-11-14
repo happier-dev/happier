@@ -46,7 +46,7 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import { DeploymentBackupControls, DeploymentRestoreDrillRow, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
-import { databaseEngineTitle } from './databasePresentation';
+import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import {
   DeployOutcomeBanner,
   type DeploymentReviewHandle,
@@ -87,9 +87,12 @@ import {
   type DeploymentRestoreSheetInput,
 } from './DeploymentRestoreSheet';
 import {
+  useDeploymentDataServicePage,
   useDeploymentEnvironmentRecord,
   useEnvironmentBackupSummary,
 } from './useDeploymentReads';
+import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
+import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
 
 type Detail = DeploymentEnvironmentReadDetailV1;
 type TemplateData = NonNullable<
@@ -152,13 +155,22 @@ export function DeploymentDatabasePage(
   );
   const detail = record.snapshot.value;
   const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
+  // The size DB-SIZE-1113's read reports for this database, for the facts row; read with the page.
+  const sizes = useDeploymentDataServicePage(props.controller, props.demand);
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,
     activeId,
     props.demand,
   );
-  const database = detail ? resolveDatabase(detail, props.database) : null;
+  const selection = React.useMemo(() => detail ? resolveDatabase(detail, props.database) : null, [detail, props.database]);
+  const presented = props.demand.mounted && props.demand.visible && props.demand.focused;
+  const targets = React.useMemo(() => selection?.kind === 'managed' ? [selection.link] : [], [selection]);
+  const { choices, retry: retryTargetLink } = useDeploymentTargetLinkChoices({ lifetime: props.lifetime,
+    environmentId: props.environmentId, targets, presented });
+  const openedLink = choices.rows.find(row => row.targetLink.id === props.database);
+  const database = selection?.kind === 'managed'
+    ? openedLink ? { ...selection, link: openedLink } : null : selection;
   const backupConfiguration =
     detail?.content.backup && 'configRevision' in detail.content.backup
       ? detail.content.backup
@@ -184,8 +196,6 @@ export function DeploymentDatabasePage(
           configRevision: backupConfiguration.configRevision,
         }
       : null;
-  const presented =
-    props.demand.mounted && props.demand.visible && props.demand.focused;
   const backup = useDeploymentBackupFacts(actions, factsInput, presented);
   const backupNow = useDeploymentChangePress(props.review, backup.reload);
   const machineIds = React.useMemo(
@@ -234,7 +244,7 @@ export function DeploymentDatabasePage(
       </ItemList>
     );
   }
-  if (!database) {
+  if (!selection) {
     return (
       <NavigationBackChromeProvider control={backControl}>
         <ItemList testID={`${id}.gone`}>
@@ -249,6 +259,18 @@ export function DeploymentDatabasePage(
         </ItemList>
       </NavigationBackChromeProvider>
     );
+  }
+
+  if (!database) {
+    return <NavigationBackChromeProvider control={backControl}>
+      <ItemList testID={`${id}.state`}>
+        <PageHeader title={selection.kind === 'managed' ? selection.link.targetLink.targetKind : databaseEngineTitle(selection.data)} />
+        {choices.kind === 'failed' ? <SurfaceStateCard testID={`${id}.failed`} kind="error"
+          title={t('projects.deployments.environmentErrorTitle')} diagnosticCode={choices.code}
+          action={{ label: t('common.retry'), onPress: retryTargetLink }} />
+          : <SurfaceStateCard testID={`${id}.loading`} kind="loading" title={t('projects.deployments.loading')} />}
+      </ItemList>
+    </NavigationBackChromeProvider>;
   }
 
   const facts = backup.facts;
@@ -403,6 +425,19 @@ export function DeploymentDatabasePage(
   }) : null;
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
+  // The facts row under the header (pfc-redesign dDb), led by Last backup; each fact only as its owner reports it.
+  const measured = database.kind === 'selfHosted'
+    ? sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
+      ?.databaseSizes?.find((entry) => entry.service === database.data.service) ?? null
+    : null;
+  const headerFacts: FactStripFact[] = database.kind === 'selfHosted' ? [
+    { key: 'lastBackup', label: t('projects.deployments.databaseLastBackup'),
+      value: facts?.status === 'loading' ? t('common.loading')
+        : lastGood ? formatAsOfTime(lastGood.completedAt) : t('projects.deployments.databaseNoBackupYet'),
+      ...(missed || (!lastGood && facts?.status !== 'loading') ? { tone: 'attention' as const } : {}) },
+    { key: 'size', label: t('projects.deployments.services.sizeLabel'),
+      value: measured ? describeDatabaseSize(measured.size) : '—' },
+  ] : [];
   // The variables that carry this database to its Environment's apps, by the names its template declares.
   const databaseVariableNames = database.kind === 'selfHosted'
     ? Object.values(database.data.variables ?? {}).filter((name): name is string => !!name)
@@ -463,6 +498,11 @@ export function DeploymentDatabasePage(
             {...(openConnect && connectExports.length === 0 ? { actions: <SectionActionButton testID={`${id}.connect`}
               title={t('projects.deployments.databaseConnectTitle')} onPress={openConnect} /> } : {})}
           />
+          {headerFacts.length > 0 ? (
+            <ItemGroup header="none" surface="none" testID={`${id}.facts`}>
+              <FactStrip facts={headerFacts} testID={`${id}.facts.strip`} />
+            </ItemGroup>
+          ) : null}
           <ItemGroup header="none">
             <Item testID={`${id}.query`} title={t('projects.deployments.databaseQuery.title')}
               {...(database.kind === 'managed' && queryDeclarations.state.status === 'loading'

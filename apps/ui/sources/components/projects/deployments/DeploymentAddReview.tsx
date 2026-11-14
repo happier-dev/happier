@@ -119,7 +119,7 @@ export function DeploymentAddReview(props: Readonly<{
         title={t(partial && props.onNavigate ? 'projects.deployments.openEnvironment' : outcomeUnknown ? 'common.close' : 'common.done')}
         onPress={() => {
           props.onClose();
-          if (partial) props.onNavigate?.({ tab: deploymentPartialRecoveryTab(partial) });
+          if (partial) props.onNavigate?.({ tab: deploymentPartialRecoveryTab(partial), section: null });
         }} />
     </ModalCardFooterActions>
   ) : (

@@ -5,7 +5,7 @@ import { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-de
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ScmHostingRepositoryIdentityV1ProtocolSchema } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import type { HomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -25,6 +25,9 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
     execute: async (raw, context) => {
       const input = getActionSpec('action.invoke').inputSchema.parse(raw);
       if (input.action.pluginId !== params.plugin.manifest.id) throw new Error('Unexpected remote plugin');
+      if (context.invocation.surface !== 'ui' && context.invocation.surface !== 'cli') {
+        throw new Error('Expected a declared UI or CLI deployment target inspection');
+      }
       try {
         return await kit.invokeAction(input.action.localId, StrictJsonValueSchema.parse(input.input ?? null), {
           surface: context.invocation.surface,
@@ -63,8 +66,8 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
       { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true }] },
     run: async (input: JsonValue) => {
-      if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected admitted object');
-      const admitted = input as Readonly<Record<string, JsonValue>>;
+      if (!isJsonObject(input)) throw new Error('Expected admitted object');
+      const admitted = input;
       const credentialPrincipal = admitted.credentialPrincipal;
       if (credentialPrincipal === undefined) throw new Error('Expected admitted credential principal');
       await runInspect(name, input);
@@ -94,7 +97,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
           { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload', options: [{ value: 'upload', label: 'Upload' }] },
         ] },
         run: async (input: JsonValue) => {
-          if (input === null || typeof input !== 'object' || Array.isArray(input) || input.credentialPrincipal === undefined)
+          if (!isJsonObject(input) || input.credentialPrincipal === undefined)
             throw new Error('Expected admitted create input');
           return { credentialPrincipal: input.credentialPrincipal,
             providerIdentity: { providerAccountId: String(input.providerAccountId), providerResourceId: 'created-beta', providerEnvironment: 'production' },

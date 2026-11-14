@@ -4,12 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { renderDeploymentGithubActionsStep } from '@happier-dev/deployments';
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, API_TOKEN_FULL_GRANT_V1, isApiTokenDeploymentGrantV1,
   resolveApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ApiTokenCreateModal } from '@/components/settings/apiTokens/ApiTokenCreateModal';
 import { ApiTokenRow } from '@/components/settings/apiTokens/ApiTokenRow';
 import { apiTokenRowHref } from '@/components/settings/apiTokens/collection/apiTokensCollection';
-import { createApiTokenSettingsController, type ApiTokenSettingsController } from '@/components/settings/apiTokens/apiTokenSettingsController';
+import { createApiTokenSettingsController, type ApiTokenSettingsController, type ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { resolveApiTokenOperationErrorMessageKey } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
 import { createApiTokenModalLifecycle } from '@/components/settings/apiTokens/showApiTokenCreateModal';
 import { useApiTokenGrantNames } from '@/components/settings/apiTokens/grant/useApiTokenGrantCatalogs';
@@ -87,12 +86,12 @@ function DeploymentCiStep(props: Readonly<{ input: DeploymentCiInput; controller
 }
 
 function DeploymentCiSummary(props: Readonly<{ input: DeploymentCiInput; controller: ApiTokenSettingsController;
-  tokens: readonly AccountApiTokenSummaryV1[]; onCreate(): void }> & CustomModalInjectedProps) {
+  tokens: readonly ApiTokenSettingsToken[]; onCreate(): void }> & CustomModalInjectedProps) {
   const state = useApiTokenSettingsControllerState(props.controller);
   const names = useApiTokenGrantNames();
   const nowMs = useApiTokenSettingsClock(props.tokens, true);
   const router = useRouter();
-  const onOpen = React.useCallback((token: AccountApiTokenSummaryV1) => {
+  const onOpen = React.useCallback((token: ApiTokenSettingsToken) => {
     props.onClose(); router.push(apiTokenRowHref(token));
   }, [props.onClose, router]);
   const footer = React.useMemo(() => <RoundButton size="normal" title={t('settingsApiTokens.create.submit')}

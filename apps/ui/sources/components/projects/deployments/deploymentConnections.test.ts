@@ -6,11 +6,11 @@ describe('declared Environment connections', () => {
   const detail = createDeploymentEnvironmentDetailV1();
   const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-db', role: 'data', targetKind: 'managed-postgres', machines: [], members: [],
     source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
-  const result = projectDeploymentConnections({ ...detail, targetLinks: [{ targetLink, content: {} }] },
+  const result = projectDeploymentConnections({ ...detail, targetLinks: [{ targetLink }] },
     { status: 'unavailable', items: [], reason: 'machine_offline' });
   expect(result.status).toBe('partial');
   expect(result.items).toHaveLength(1);
-  expect(result.items[0]).toMatchObject({ kind: 'database', id: 'managed-db', service: null,
+  expect(result.items[0]).toMatchObject({ kind: 'database', id: 'managed-db', service: null, resource: 'managed-postgres',
     source: { kind: 'environment', id: detail.environment.id }, configure: { params: { deploymentService: 'managed-db' } } });
  });
  it('projects database, volume and native domain routes without exposing credential bindings', () => {

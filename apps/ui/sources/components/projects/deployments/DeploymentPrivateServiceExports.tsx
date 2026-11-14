@@ -159,7 +159,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     onChange={next => { if (next) { setReachId(next); setAddress(null); } }} />;
   const field = (name: 'key' | 'containerPort' | 'scheme' | 'hostPort', label: string, value: string, onChangeText: (value: string) => void) =>
     <FieldItem label={label}><FieldTextInput testID={`${id}.${name}`} accessibilityLabel={label} value={value}
-      onChangeText={onChangeText} autoCapitalize="none" autoCorrect={false}
+      onChangeText={onChangeText} autoCapitalize="none"
       {...(name === 'containerPort' || name === 'hostPort' ? { keyboardType: 'number-pad' as const } : {})} /></FieldItem>;
   return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
     {reviewed ? <ItemGroup title={t('projects.deployments.settingsSections.privateSharingReview')}

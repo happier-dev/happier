@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { createDeploymentDumpBackupSourceV1, deploymentDataTargetOperands,
   type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { StoreRegistryItemPicker } from '@/components/store/StoreKindPage';
 import { useStoreAppListing, type StoreAppListingSelection } from '@/components/store/useStoreAppListing';
@@ -68,7 +69,7 @@ function NativeListing(props: Props & CustomModalInjectedProps & Readonly<{
     : <SurfaceStateCard testID={`${id}.mapping`} size="line" kind="error" title={t('projects.deployments.addRefused')} />;
   const data = listing.app.data;
   return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
-    <Item title={t('projects.deployments.settingsSections.previewEditor.nativeTemplate')} detail={listing.app.title} mode="info"
+    <Item title={t('projects.deployments.settingsSections.previewEditor.nativeTemplate')} detail={resolvePluginLocalizedStringV2Text(listing.app.title)} mode="info"
       rightElement={<SectionActionButton testID={`${id}.template.change`} title={t('common.change')} onPress={props.onChooseTemplate} />} />
     {data?.engine === 'postgres' && data.logicalBackup?.adapter === 'postgres-v1'
       ? <>

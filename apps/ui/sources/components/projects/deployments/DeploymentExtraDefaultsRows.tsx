@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { DeploymentCreationDefaultsV1, DeploymentCreationDefaultSourceV1,
   ResolvedDeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { HealthCheckAlertChannelV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -65,9 +66,12 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
         ...(index === undefined ? {} : { channelId: preferences.alertChannels?.[index]?.channelId }),
         isCurrent: () => accountLifetime?.isCurrent() === true,
       });
-      if (selected.kind === 'notificationDestination') change('alertChannels', index === undefined
-        ? [...(preferences.alertChannels ?? []), selected.channel]
-        : preferences.alertChannels?.map((channel, position) => position === index ? selected.channel : channel));
+      if (selected.kind === 'notificationDestination') {
+        const authoredChannel = HealthCheckAlertChannelV1Schema.parse(selected.channel);
+        change('alertChannels', index === undefined
+          ? [...(preferences.alertChannels ?? []), authoredChannel]
+          : preferences.alertChannels?.map((channel, position) => position === index ? authoredChannel : channel));
+      }
       else if (selected.kind === 'unavailable') setAlertUnavailable(true);
     } catch { setAlertUnavailable(true); }
     finally { setSelectingAlert(false); }
