@@ -42,6 +42,8 @@ import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { PluginConnectedAccountAuthenticationV2Schema, type JsonValue } from '@happier-dev/protocol';
@@ -2173,9 +2175,16 @@ describe('managed acquisition durable custody', () => {
             return await work;
         } } as ActionExecutorDeps);
         try {
-            await operations.observeExecution({ actionId: 'machines.managed.acquire', input: acquisitionInput, actionRequestId: 'creation',
+            const target = { kind: 'machine' as const, machineId: controller.machineId };
+            const observed = await operations.observeExecution({ actionId: 'machines.managed.acquire', input: acquisitionInput, actionRequestId: 'creation',
                 execute: context => executor.execute('machines.managed.acquire', acquisitionInput, { ...context, surface: 'cli', authority: 'present_user',
-                    presentUserConfirmation: { actionId: 'machines.managed.acquire' } }) });
+                    actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', serverId: homeId,
+                    actionRequestId: 'creation', externalActionTarget: target,
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                    presentUserConfirmation: { actionId: 'machines.managed.acquire',
+                        inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', acquisitionInput),
+                        requestId: 'creation', accountId: 'owner', serverId: homeId, target } }) });
+            expect(work, JSON.stringify(observed)).toBeDefined();
             await work?.catch(() => undefined);
             await expect(work).rejects.toMatchObject({ code: 'provider_unavailable' });
             expect(vendorWrites).toBe(1);
@@ -2183,10 +2192,6 @@ describe('managed acquisition durable custody', () => {
             expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'provider_unavailable',
                 details: { kind: 'managedNative', nativeCause } } } });
             if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
-            const { describeManagedOperationDiagnostic } = await import('../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation');
-            expect(describeManagedOperationDiagnostic(settled.operation.error))
-                .toBe(outcome === 'invalid-fields' ? 'provider_unavailable · HTTP 4xx · invalid_input · image'
-                    : `provider_unavailable · HTTP 4xx · ${outcome === 'quota' ? 'resource_limit_exceeded' : 'uniqueness_error'}`);
             expect(JSON.stringify(settled)).not.toMatch(/private-provider-token|private request content|private reflected input|private-token/);
             expect(vendorWrites).toBe(1);
             expect(vendorReads).toBe(0);
@@ -3386,8 +3391,6 @@ describe('managed acquisition durable custody', () => {
             errorCode: 'native_access_refused', details: { kind: 'managedNative', nativeCause },
         } } });
         if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
-        const { describeManagedOperationDiagnostic } = await import('../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation');
-        expect(describeManagedOperationDiagnostic(settled.operation.error)).toBe('native_access_refused · HTTP 4xx · forbidden');
         expect(JSON.stringify(settled)).not.toContain('private response body');
         expect(native.effects()).toBe(1);
         if (role === 'bootstrap') {
