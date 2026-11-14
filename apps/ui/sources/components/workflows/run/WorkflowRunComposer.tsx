@@ -1316,7 +1316,7 @@ export function WorkflowRunInputs(
   } = useInputFieldOptions({
     requests,
     machineId: props.machineId,
-    sessionId: props.optionsConsumer?.kind === 'widget' ? undefined : null,
+    sessionId: null,
     serverId: props.serverId,
     accountLifetime,
     enabled: fields.some(

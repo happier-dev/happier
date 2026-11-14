@@ -488,7 +488,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         const admittedManifest = ingestPluginManifestV2(declared);
         if (!admittedManifest.ok) throw new Error('Expected the admitted source manifest');
         const manifest = admittedManifest.manifest;
-        const declaration = manifest.contributes.events?.find(row => row.kind === 'event' && row.automation?.eligible);
+        const declaration = manifest.contributes.events?.filter(row => row.kind === 'event').find(row => row.automation?.eligible);
         if (!declaration?.automation) throw new Error('Expected the real source Event declaration');
         const pluginId = manifest.id;
         const sourceCustody = { kind: 'development' as const, registeredRootId: `${pluginId}-root` };
@@ -511,7 +511,8 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             const setupLocalId = typeof setupRef === 'string' ? setupRef : qualifiedSetupRef.success ? qualifiedSetupRef.data.localId : null;
             if (!setupLocalId) throw new Error('Expected declared setup Action');
             const setupAction = manifest.contributes.actions?.find(row => row.id === setupLocalId);
-            if (!setupAction) throw new Error('Expected the real source setup Action');
+            if (!setupAction?.inputSchema) throw new Error('Expected the real source setup Action input schema');
+            const { normalizePluginActionInputHintsV2 } = await import('@happier-dev/protocol/plugins/actions/v2');
             const source = declaration.automation.source;
             const fixture = eligibleEvent();
             const event = { ...fixture,
@@ -524,7 +525,8 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
                         setupActionRef: { pluginId, localId: setupLocalId },
                     } } },
                 setupAction: { ...fixture.setupAction, id: `${pluginId}/${setupLocalId}`, identity: { pluginId, localId: setupLocalId },
-                    occurrenceId: 'source-occurrence-a', inputSchema: setupAction.inputSchema, inputHints: setupAction.inputHints ?? null },
+                    occurrenceId: 'source-occurrence-a', inputSchema: setupAction.inputSchema,
+                    inputHints: normalizePluginActionInputHintsV2(setupAction.inputHints, setupAction.inputSchema) ?? null },
                 observationBinding: { executionOrigin, materializationRef },
             } satisfies DaemonContributionRegistryProjectionAutomationEligibleEventV1 & { observationBinding: unknown };
             const inputs = { ...sourceProjection, automationEligibleEvents: [event] };

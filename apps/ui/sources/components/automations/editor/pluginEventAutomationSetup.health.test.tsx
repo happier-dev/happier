@@ -7,10 +7,12 @@ import { TextInput } from 'react-native';
 import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
+import { PluginAvailabilityActionHttpPathsV1, type PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { HealthCheckSetupPreviewInputV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AutomationPluginEventTriggerProjectionSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -42,9 +44,10 @@ type SetupForm = ActionInputForm<ActionInputFormSubmissionResult, string, string
 
 // The native host transport answers the readonly Configure preview; all form logic stays real.
 const previewHealthSetup: NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['executeAction']> = async request => {
-    const { mode, ...sourceConfig } = HealthCheckSetupPreviewInputV1ProtocolSchema.parse(request.input);
+    // The Zod owner's output keeps the input union discriminable (the Protocol projection intersects it with JSON).
+    const { mode, ...sourceConfig } = HealthCheckSetupPreviewInputV1Schema.parse(request.input);
     return HealthCheckSetupPreviewResultV1ProtocolSchema.parse({ mode, sourceConfig: { ...sourceConfig,
-        alerts: sourceConfig.alerts ?? { channels: [], phases: ['open', 'recovered'] } } });
+        alerts: ('alerts' in sourceConfig ? sourceConfig.alerts : undefined) ?? { channels: [], phases: ['open', 'recovered'] } } });
 };
 
 vi.mock('react-native', async () => await import('react-native-web'));
@@ -170,9 +173,14 @@ it.each([
     const accountId = 'deployment-guided-preset';
     const serverIdentityId = 'srv_deployment_guided';
     const http = createHomeHubArtifactHttpBoundary(accountId);
+    // The guided editor demands its Machine declaration body by digest (exact read).
+    let exactIntentRead: unknown = null;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://deployment-guided.test',
         serverIdentityId, accountId, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'] && exactIntentRead) {
+                return Response.json(exactIntentRead);
+            }
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (path === '/v3/automations' || path === '/v3/automations/query') return Response.json({ automations: [], nextCursor: null });
             return http.request(input, init);
@@ -187,17 +195,19 @@ it.each([
     const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
     if (!admitted.ok) throw new Error('Expected the admitted Machine services declaration');
+    const declarationDigestSha256: `sha256:${string}` = `sha256:${'d'.repeat(64)}`;
+    const guidedIntentRead: PluginAccountAvailabilityIntentReadResponseV1 = {
+        availabilityCursor: 1, hostingCapability: { enabled: false },
+        intent: { pluginId, enabled: true, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [], revision: 'guided-declaration' },
+        release: null, uiArtifacts: [], packageAssets: [],
+        currentDeclaration: null,
+        machineDeclarations: [{ machineId, machineInstallationId: 'guided-installation', declaration: { declarationDigestSha256 } }],
+    };
+    exactIntentRead = { ...guidedIntentRead, declarationBodies: [{ declarationDigestSha256,
+        manifest: { ...admitted.manifest, contributes: { ...admitted.manifest.contributes,
+            events: declared ? admitted.manifest.contributes.events : [] } } }] };
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
-        availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
-            availabilityCursor: 1, hostingCapability: { enabled: false },
-            intent: { pluginId, enabled: true, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [], revision: 'guided-declaration' },
-            release: null, uiArtifacts: [], packageAssets: [],
-            currentDeclaration: null,
-            machineDeclarations: [{ machineId, machineInstallationId: 'guided-installation', declaration: {
-                declarationDigestSha256: `sha256:${'d'.repeat(64)}`,
-                manifest: { ...admitted.manifest, contributes: { ...admitted.manifest.contributes,
-                    events: declared ? admitted.manifest.contributes.events : [] } } } }],
-        } }],
+        availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: guidedIntentRead }],
     } });
     const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
@@ -460,6 +470,7 @@ it.each([
             }) });
             const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [] };
             screen = await renderScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+                definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change: () => {} }}
                 lifetime={accountLifetime} demand={{ mounted: false, visible: false, focused: false }}
                 machineName={id => id} environmentTitle={() => null}
                 editing={{ actions: createDeploymentActions(accountLifetime, 'source-production'), serverId: connection.serverId,

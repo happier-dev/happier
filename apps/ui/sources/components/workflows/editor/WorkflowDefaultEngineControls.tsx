@@ -3,8 +3,8 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { setWorkflowDefaultField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
   SessionAuthoringControls,
-  type SessionAuthoringControlFacts,
 } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import {
   withWorkflowAuthoringEngine,
   withWorkflowAuthoringEngineFields,

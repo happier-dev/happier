@@ -287,13 +287,13 @@ export function WorkflowSaveStatus(props: Readonly<{
         onRequestClose: () => setComparing(false),
     });
 
-    if (conflict !== null) {
+    if (state.kind === 'conflict') {
         return (
             <View testID={`${testIDPrefix}-save-status`} style={styles.conflict} accessibilityRole="alert">
                 <StatusLine>
                     <Text style={styles.status}>{t('workflows.save.conflictTitle')}</Text>
                     <Text style={styles.status}>{t('workflows.save.conflictBody')}</Text>
-                    {conflict.currentDraft === null ? null : (
+                    {state.conflict.currentDraft === null ? null : (
                         <StatusAction
                             testID={`${testIDPrefix}-compare`}
                             label={t('workflows.save.compare')}

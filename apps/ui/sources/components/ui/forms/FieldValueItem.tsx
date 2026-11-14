@@ -2,6 +2,7 @@ import * as React from 'react';
 import {
     resolveHappierFieldKeyboardType,
     useHappierFieldValueDraft,
+    type HappierFieldValueDraftInput,
     type HappierFieldValueKind,
     HappierFieldStepper,
     type HappierFieldStepperBounds,
@@ -36,8 +37,9 @@ export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | '
      * Saves the typed value. Called when focus leaves the field or on submit, and only when the draft
      * differs from `value`. Return the text the field should show afterwards (a number moved to its
      * bound, the saved value when the draft was refused); return nothing to keep the draft.
+     * Asynchronous saves return their acceptance; `value` supplies the acknowledged saved text.
      */
-    onCommit: (draft: string) => string | void;
+    onCommit: HappierFieldValueDraftInput['onCommit'];
     /** Called with each draft as the field keeps it (e.g. to clear a refusal the user is correcting). */
     onDraftChange?: (draft: string) => void;
     /** `integer` and `decimal` keep the draft to digits and return an empty draft to the saved value. */

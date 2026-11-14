@@ -77,6 +77,8 @@ export function useHappierFieldValueDraft(input: HappierFieldValueDraftInput): R
   const committedValue = acknowledgedValue ?? value;
   const [draft, setDraft] = useState(value);
   const currentDraft = useRef(value);
+  const savedValue = useRef(value);
+  savedValue.current = value;
   const dirty = useRef(false);
   const submitted = useRef<Readonly<{ text: string }> | null>(null);
   const show = useCallback((text: string) => { currentDraft.current = text; setDraft(text); }, []);
@@ -114,7 +116,10 @@ export function useHappierFieldValueDraft(input: HappierFieldValueDraftInput): R
       void shown.then(accepted => {
         if (submitted.current !== submission) return;
         submitted.current = null;
-        if (accepted) dirty.current = false;
+        if (accepted) {
+          dirty.current = false;
+          show(savedValue.current);
+        }
       }, retry);
     }
   }, [committedValue, onCommit, show]);

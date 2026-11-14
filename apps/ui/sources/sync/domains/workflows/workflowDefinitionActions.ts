@@ -22,10 +22,10 @@ export async function captureWorkflowDefinition(params: WorkflowDefinitionCaptur
 }
 
 /** Export reads the saved Artifact once at the canonical document owner. The platform owns delivery. */
-export async function exportSavedWorkflowDocument(params: Readonly<{ definitionId: string; signal?: AbortSignal }>): Promise<WorkflowDefinitionExportResultV1> {
+export async function exportSavedWorkflowDocument(params: Readonly<{ definitionId: string; signal?: AbortSignal }>): Promise<Extract<WorkflowDefinitionExportResultV1, { definitionId: string }>> {
     return callDefinitionAction({ actionId: 'workflow.definition.export',
         input: WorkflowDefinitionGetRequestV1Schema.parse({ definitionId: params.definitionId }),
-        parseResult: (value) => WorkflowDefinitionExportResultV1Schema.parse(value), ...signalOption(params.signal) });
+        parseResult: (value) => WorkflowDefinitionExportResultV1Schema.def.options[0].parse(value), ...signalOption(params.signal) });
 }
 
 /**

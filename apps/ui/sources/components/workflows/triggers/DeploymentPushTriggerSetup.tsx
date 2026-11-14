@@ -23,7 +23,7 @@ export function DeploymentPushTriggerSetup(props: Readonly<{
 }>) {
   const [approval, setApproval] = React.useState<'automatic' | 'ask' | undefined>();
   const [branch, setBranch] = React.useState('');
-  const eventSeed = props.eventSeed ?? { eventRef: PUSH_EVENT };
+  const eventSeed = props.eventSeed ?? { eventRef: PUSH_EVENT, setupInput: {} };
   const displayedApproval = approval ?? (props.config.protection === 'production' ? 'ask' : 'automatic');
   return <TriggerPopover
     testID="deployment-push-trigger-setup"

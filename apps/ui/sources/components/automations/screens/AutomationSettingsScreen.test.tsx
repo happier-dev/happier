@@ -47,6 +47,9 @@ vi.mock('@/components/ui/surfaces/SurfaceStateCard', () => ({
     SurfaceStateCard: createPassThroughComponent('SurfaceStateCard'),
 }));
 
+await loadSyncSingletonForTests();
+const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
+
 /** The limit's field: the `rightElement` the `FieldValueItem` row hands to `Item` (a pass-through here). */
 function maxActiveRunsField(screen: Pick<Awaited<ReturnType<typeof renderScreen>>, 'root'>): React.ReactElement<{
     value: string;
@@ -104,7 +107,6 @@ describe('AutomationSettingsScreen', () => {
     });
 
     it('loads the settings projection and applies both controls through the real Action and server writer', async () => {
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
 
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await flushHookEffects();
@@ -163,7 +165,6 @@ describe('AutomationSettingsScreen', () => {
             harness.answer(serverId, '/v3/automations/settings', { status: 503, body: { error: 'unavailable' } });
             return { body: record };
         } });
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
 
@@ -184,7 +185,6 @@ describe('AutomationSettingsScreen', () => {
     });
 
     it('refuses a limit the settings contract rejects, says why in place, and keeps the saved value', async () => {
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
 
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await flushHookEffects();
@@ -212,7 +212,6 @@ describe('AutomationSettingsScreen', () => {
 
     it('recovers an initial load failure through the explicit retry without writing settings', async () => {
         harness.answer(serverId, '/v3/automations/settings', { status: 503, body: { error: 'unavailable' } });
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await waitForHomeGovernance(() => expect(screen.root.findAllByProps({ testID: 'automation-settings-load-error' }).length).toBeGreaterThan(0));
 
@@ -229,7 +228,6 @@ describe('AutomationSettingsScreen', () => {
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
         const { isActionEnabledInState } = await import('@/sync/domains/settings/actionsSettings');
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
         const settings = settingsParse({ actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } });
@@ -251,7 +249,6 @@ describe('AutomationSettingsScreen', () => {
         await harness.requireUiApproval(serverId, 'settings.set');
         const confirmation = createDeferred<boolean>();
         modalConfirmSpy.mockReturnValue(confirmation.promise);
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
         await act(async () => { maxActiveRunsField(screen).props.onChangeText('2'); });
@@ -281,7 +278,6 @@ describe('AutomationSettingsScreen', () => {
             firstRead = false;
             return { body: { maxActiveRunsPerMachine: 9, runRetention: 'thirtyDays' }, respondAfter: accountASettings.promise };
         } });
-        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
 
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await flushHookEffects();

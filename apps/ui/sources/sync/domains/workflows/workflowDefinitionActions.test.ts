@@ -17,7 +17,7 @@ installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
 beforeAll(loadSyncSingletonForTests);
 const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions,
-    updateWorkflowDefinition, deleteWorkflowDefinition, isWorkflowDefinitionConflictError } = await import('./workflowDefinitionActions');
+    updateWorkflowDefinition, deleteWorkflowDefinition, exportSavedWorkflowDocument, isWorkflowDefinitionConflictError } = await import('./workflowDefinitionActions');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -59,6 +59,14 @@ describe('workflow definition Action client through Account Artifact storage', (
         const created = await createWorkflowDefinition({ definitionId, definition, metadata });
         const read = await getWorkflowDefinition({ definitionId });
         expect(read).toMatchObject({ definitionId, definition, metadata, access: 'owner', revision: created.revision });
+    });
+
+    it('exports the saved definition with its title, exact revision and portable document', async () => {
+        const created = await createWorkflowDefinition({ definitionId, definition, metadata });
+        const exported = await exportSavedWorkflowDocument({ definitionId });
+        expect(exported).toMatchObject({ definitionId, metadata, revision: created.revision,
+            document: { kind: 'happier.workflow', version: 1, definition: created.definition } });
+        expect(JSON.parse(exported.json)).toEqual(exported.document);
     });
 
     it('creates canonical stored content that the saved definition reader can open', async () => {

@@ -122,6 +122,7 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
                     // cannot clear source attention.
                     setRecoveryFailed(true);
                     setFailurePresentation(outcome.failure ? presentActionExecutionFailure({
+                        ok: false,
                         errorCode: outcome.failure.code,
                         failureCause: outcome.failure.failureCause,
                         requestId: outcome.failure.requestId,

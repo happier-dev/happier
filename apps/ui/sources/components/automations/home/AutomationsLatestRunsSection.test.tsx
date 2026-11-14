@@ -320,7 +320,7 @@ describe('Automations · Latest runs on Home', () => {
             const style = StyleSheet.flatten(screen.findByTestId(`${id}.viewport`)?.props.style);
             return style?.height ?? style?.minHeight ?? null;
         };
-        const widget = await renderScreen(<WidgetFrame testID="small-widget" placement="home" fill title="Local services"
+        const widget = await renderScreen(<WidgetFrame testID="small-widget" frameStyle="card" placement="home" fill title="Local services"
             widgetPresentation={presentation} body={{ kind: 'empty', title: 'Nothing running', reason: 'Local services show here.' }} />);
         await flushHookEffects({ cycles: 2 });
         const widgetRoom = room(widget, 'small-widget');

@@ -16,6 +16,9 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+const { useHappierFieldValueDraft } = await import('@happier-dev/plugin-ui/presentation');
+const { FieldTextInput } = await import('./FieldTextInput');
+
 afterEach(() => {
     standardCleanup();
 });
@@ -52,6 +55,29 @@ function field(screen: Awaited<ReturnType<typeof renderField>>) {
 }
 
 describe('FieldValueItem', () => {
+    it('shows the acknowledged saved value when asynchronous acceptance follows the server update', async () => {
+        let finish!: (accepted: boolean) => void;
+        function Host({ value }: Readonly<{ value: string }>) {
+            const field = useHappierFieldValueDraft({ value, onCommit: () => new Promise<boolean>(resolve => { finish = resolve; }) });
+            return <FieldTextInput testID="acknowledged" accessibilityLabel="Limit" value={field.draft}
+                onChangeText={field.change} onBlur={field.commit} />;
+        }
+        const screen = await renderScreen(<Host value="4" />);
+        await act(async () => { screen.findByTestId('acknowledged')!.props.onChangeText('2'); });
+        await act(async () => { screen.findByTestId('acknowledged')!.props.onBlur(); });
+        await screen.update(<Host value="3" />);
+        expect(screen.findByTestId('acknowledged')!.props.value).toBe('2');
+        await act(async () => { finish(true); });
+        expect(screen.findByTestId('acknowledged')!.props.value).toBe('3');
+
+        await act(async () => { screen.findByTestId('acknowledged')!.props.onChangeText('5'); });
+        await act(async () => { screen.findByTestId('acknowledged')!.props.onBlur(); });
+        await act(async () => { screen.findByTestId('acknowledged')!.props.onChangeText('6'); });
+        await act(async () => { finish(true); });
+        expect(screen.findByTestId('acknowledged')!.props.value).toBe('6');
+        await screen.update(<Host value="5" />);
+        expect(screen.findByTestId('acknowledged')!.props.value).toBe('6');
+    });
     it('lets a refused asynchronous settings Action retry the retained draft without duplicate submission', async () => {
         const { useHappierFieldValueDraft } = await import('@happier-dev/plugin-ui/presentation');
         const { FieldTextInput } = await import('./FieldTextInput');
