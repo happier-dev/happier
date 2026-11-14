@@ -1,5 +1,5 @@
 import { networkInterfaces } from 'node:os';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { executeRetainedSshTransition, type RetainedSshTransitionInput } from './retainedSshTransition';
 import { prepareMachineRecipeProgramV1 } from '@/machines/setup/prepareMachineRecipeProgram';
@@ -670,13 +670,14 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     let observation: MachineReachabilityObservationV1;
     try { observation = await deps.publish(verifiedPublicSsh
       ? { ...observed, management: { ...observed.management, publicSsh: verifiedPublicSsh } } : observed); }
-    catch {
+    catch (error) {
       // Publication is not native outcome authority. Keep an already known
       // refusal or uncertainty, and never discard confirmed setup evidence.
       if (knownFailure) return knownFailure;
       const code = status === 'outcome_unknown' ? failureCode ?? 'outcome_unknown'
         : 'machine_reachability_publication_unavailable';
       return { ok: false as const, errorCode: code, error: code,
+        failureCause: projectActionFailureCauseV1(error, 'machines.reachability.publication'),
         effectAttempted: anyNativeEffectPossible || roleMayHaveChangedMembership || metadataOutcomeUnknown
           || currentState.metadataVersion !== prepared.state.metadataVersion,
         ...(setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };

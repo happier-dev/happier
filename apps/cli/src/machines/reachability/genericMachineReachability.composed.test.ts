@@ -25,6 +25,38 @@ import { inspectMachineReachability } from './machineReachabilityHost';
 // Generic physical plugin authoring drives the same production factory,
 // custody, parent Action, native admission and retained approval owners.
 describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('public generic Machine reachability journey', () => {
+describe('publication failure diagnostics', () => {
+  let fixture: Awaited<ReturnType<typeof journey>>;
+  let api: Awaited<ReturnType<typeof createGenericDefaultFactoryJourney>>;
+  beforeEach(async () => {
+    const authoredProvider = createDockerNetworkAuthoredProvider(false, true);
+    const selected = { ...selection, provider: { pluginId: authoredProvider.pluginId, localId: 'docker-network' } };
+    fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+    api = await createGenericDefaultFactoryJourney(fixture);
+  }, 120_000);
+
+  it('retains the socket failure cause after saving the reviewed posture without exposing exception prose', async () => {
+    try {
+      const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+        serverId: 'generic-home', machineId, change: { kind: 'posture', posture: {
+          revision: 1, management: { providers: [], publicSsh: { kind: 'open', port: 22,
+            sourceCidrs: ['0.0.0.0/0'] }, independentRecovery: { kind: 'providerConsole', evidence: 'verified' } },
+          defaultServiceIngress: { kind: 'none' },
+        } },
+      }));
+      api.setStatePublicationRejected(true);
+      const { result } = await executeReviewedReachabilityConfigure(fixture, api, review);
+      expect(result).toMatchObject({ ok: false, errorCode: 'machine_reachability_publication_unavailable',
+        effectAttempted: true, failureCause: { phase: 'machines.reachability.publication',
+          errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } });
+      expect(JSON.stringify(result)).not.toContain('Synthetic Machine state Socket transport refusal');
+      expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: {
+        reachabilityPosture: review.plan?.basis.change.kind === 'posture' ? review.plan.basis.change.posture : undefined,
+      } });
+    } finally { api.setStatePublicationRejected(false); await api.dispose(); }
+  });
+});
+
 it('keeps provider configuration out of the Home connector subject while retaining its canonical identity', () => {
   const subject = reachabilityConnectorSubject(selection, { machineId, installationId });
   expect(subject.connectorId).toMatch(/^[a-f0-9]{64}$/u);
