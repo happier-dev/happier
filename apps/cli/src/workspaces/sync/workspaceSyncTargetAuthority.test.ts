@@ -65,6 +65,7 @@ import {
   computeWorkspaceSyncPolicyDigest,
   deriveWorkspaceSyncConflictOperationId,
   HandoffTargetReplacementPreflightResultV1Schema,
+  WorkspaceSyncTargetBootstrapPrepareV1Schema,
   type WorkspaceSyncTargetBootstrapPrepareV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -3138,9 +3139,10 @@ describe('workspace sync target bootstrap authority', () => {
         created: true,
         rootFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
         policyDigest: contentPolicy.policyDigest,
+        targetWorkspace: snapshot(alphaRoot, betaRoot).workspaceRefs.find(ref => ref.id === 'workspace-beta'),
       });
       expect(Object.keys(result).sort()).toEqual([
-        'bootstrapOperationId', 'created', 'policyDigest', 'rootFingerprint', 'state', 'targetWorkspaceRefId', 'v',
+        'bootstrapOperationId', 'created', 'policyDigest', 'rootFingerprint', 'state', 'targetWorkspace', 'targetWorkspaceRefId', 'v',
       ]);
       await expect(stat(betaRoot)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
       expect(await readdir(betaRoot)).toEqual([]);
@@ -5006,6 +5008,39 @@ describe('workspace sync target bootstrap authority', () => {
       expect(callMachineRpc).toHaveBeenCalledTimes(3);
     } finally {
       await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['unchanged', 'changed', 'missing proof'] as const)('binds an admitted remote root to TARGET physical custody (%s)', async change => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-admitted-remote-root-'));
+    const alphaRoot = join(fixture, 'alpha');
+    const oldBetaRoot = join(fixture, 'old-beta');
+    const admittedBetaRoot = change === 'changed' ? join(fixture, 'new-beta') : oldBetaRoot;
+    await Promise.all([mkdir(alphaRoot), mkdir(oldBetaRoot)]);
+    const target = createAuthorityHarness({ getProjectSnapshot: () => snapshot(alphaRoot, oldBetaRoot) });
+    const source = createAuthorityHarness({ localMachineId: 'machine-a',
+      getProjectSnapshot: () => snapshot(alphaRoot, admittedBetaRoot),
+      // The network boundary joins two real authorities with independent Account projections.
+      callMachineRpc: async request => {
+        const result = await target.authority.prepareBootstrapHere(WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(request.request));
+        if (change !== 'missing proof') return result;
+        const { targetWorkspace: _targetWorkspace, ...legacy } = result;
+        return legacy;
+      },
+    });
+    try {
+      await target.authority.prepareBootstrapHere(prepareRequest());
+      const prepared = source.authority.prepareBootstrapAtTarget({
+        ...prepareRequest(), targetMachineId: 'machine-b',
+        admittedTarget: { machineId: 'machine-b', rootPath: admittedBetaRoot },
+      });
+      if (change === 'unchanged') await expect(prepared).resolves.toMatchObject({ state: 'ready' });
+      else await expect(prepared).rejects.toMatchObject({ code: change === 'changed'
+        ? 'relationship_definition_conflict' : 'workspace_sync_update_required' });
+    } finally {
+      await target.authority.releaseAllRetainedBootstraps();
+      await source.cleanup(); await target.cleanup();
       await rm(fixture, { recursive: true, force: true });
     }
   });

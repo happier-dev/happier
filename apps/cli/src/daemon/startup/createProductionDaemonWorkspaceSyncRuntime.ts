@@ -283,7 +283,7 @@ function resolveRelationshipBootstrapTarget(
   snapshot: Pick<ActiveProjectAccountRowsSnapshot, 'workspaceRefs'> | null,
   relationship: WorkspaceSyncRelationshipV1,
   serverId: string,
-): Readonly<{ workspaceRefId: string; machineId: string; endpointRole: 'alpha' | 'beta' }> {
+): Readonly<{ workspaceRefId: string; machineId: string; rootPath: string; endpointRole: 'alpha' | 'beta' }> {
   const refs = snapshot?.workspaceRefs ?? [];
   const alpha = resolveWorkspaceRefById(refs, relationship.alphaWorkspaceRefId, serverId);
   const beta = resolveWorkspaceRefById(refs, relationship.betaWorkspaceRefId, serverId);
@@ -305,7 +305,7 @@ function resolveRelationshipBootstrapTarget(
     );
   }
   const target = roles.targetEndpointRole === 'alpha' ? alpha : beta;
-  return { workspaceRefId: target.id, machineId: target.machineId, endpointRole: roles.targetEndpointRole };
+  return { workspaceRefId: target.id, machineId: target.machineId, rootPath: target.rootPath, endpointRole: roles.targetEndpointRole };
 }
 
 function resolveBootstrapPrepareRequest(
@@ -1398,10 +1398,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       v: 1,
       bootstrapOperationId: relationship.relationshipId,
       owner: { kind: 'relationship', relationshipId: relationship.relationshipId },
-      ...(preparation?.transient || retained && target.machineId !== input.localMachineId
+      ...(preparation?.transient || admitted || retained && target.machineId !== input.localMachineId
         ? { transientRelationship: relationship } : {}),
       targetWorkspaceRefId: target.workspaceRefId,
       targetMachineId: target.machineId,
+      ...(admitted && !retained ? { admittedTarget: { machineId: target.machineId, rootPath: target.rootPath } } : {}),
       endpointRole: target.endpointRole,
       policyDigest: relationship.contentPolicy.policyDigest,
       createIfMissing: true,

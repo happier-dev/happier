@@ -1353,7 +1353,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     try {
       await this.admitTransfer(id, signal);
       if (this.ownershipLost.has(id)) throw Object.assign(new Error('Workspace root ownership was lost'), { code: 'workspace_root_ownership_lost' });
-      if (!this.definitions.has(id)) {
+      if (expected || !this.definitions.has(id)) {
         const definition = expected?.relationship ?? await this.resolveDefinition(id);
         if (!definition) throw Object.assign(new Error('Workspace sync relationship is not ready'), { code: 'relationship_not_ready' });
         await this.ensureWithinQueue(validateWorkspaceSyncRelationship(definition), signal);

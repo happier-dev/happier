@@ -3,6 +3,7 @@ import axios from 'axios';
 import { cp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { AccountApiTokensCreateActionOutputV1Schema, API_TOKEN_FULL_GRANT_V1,
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
   decodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol';
@@ -14,6 +15,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1 } fro
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createActionApprovalContinuation } from '../../../../../apps/ui/sources/components/approvals/actionApprovalContinuation';
 import { ActionOperationGetV1ResponseSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -35,7 +37,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 
 import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeExternalAction.filesystemApprovals.testkit';
-import { SIGNED_ROOT_ACTION_EXECUTE_PATH, SignedRootActionExecuteRequestSchema } from './signedRootActionControl';
+import { SignedRootActionExecuteRequestSchema } from './signedRootActionControl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { projectServiceMoveStartInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -49,6 +51,16 @@ const filesystemIds = ['daemon.filesystem.readFile', 'daemon.filesystem.writeFil
 const bytes = Buffer.from([0, 255, 128, 10]);
 const repository = { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' },
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
+
+function nativeReviewDigest(result: unknown): string {
+  const failure = ActionExecuteFailureSchema.parse(result);
+  expect(failure).toMatchObject({ errorCode: 'action_interactive_review_required',
+    details: { reviewDigest: expect.any(String) } });
+  const details = failure.details;
+  if (!details || typeof details !== 'object' || !('reviewDigest' in details)
+    || typeof details.reviewDigest !== 'string') throw new Error('Missing native review digest');
+  return details.reviewDigest;
+}
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
   it.each(['daemon.filesystem.listDirectory', 'daemon.filesystem.readFile', 'daemon.filesystem.getDirectoryTree'] as const)
@@ -78,16 +90,22 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(await readFile(join(h.directory, 'outside'), 'utf8')).toBe('outside unchanged');
     } finally { await h.close(); }
   });
-  it('copies binary bytes through the credential-bound original CLI root without wire requester identity', async () => {
+  it('copies binary bytes through credential-bound root control without wire requester identity', async () => {
     const actionId = 'daemon.filesystem.copy';
     const h = await createHarness(actionId, 'allowed');
+    const rootCalls: Array<{ method: string | undefined; body: string }> = [];
+    stubUndiciFetch(async (url: string | URL | Request, options?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/actions/root/execute') rootCalls.push({
+        method: options?.method, body: String(options?.body),
+      });
+      return await fetch(url, options);
+    });
     try {
       const input = { rootPath: h.rootPath, from: 'original', to: 'terminal-copy.bin', overwrite: false, recursive: false };
-      expect(await h.runOriginalCli(input, actionId)).toEqual({ ok: true, result: { success: true } });
-      const rootCalls = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) =>
-        String(url).startsWith('http://127.0.0.1:') && new URL(String(url)).pathname === SIGNED_ROOT_ACTION_EXECUTE_PATH);
+      expect(await h.runRootControl(input, actionId))
+        .toEqual({ ok: true, result: { success: true } });
       expect(rootCalls).toHaveLength(1);
-      const options = rootCalls[0]?.[1];
+      const options = rootCalls[0];
       expect(options?.method).toBe('POST');
       if (typeof options?.body !== 'string') throw new Error('Missing original CLI root request body');
       const wire: unknown = JSON.parse(options.body);
@@ -96,7 +114,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       const { actionRequestId: _requestId, ...request } = SignedRootActionExecuteRequestSchema.parse(wire);
       expect(request).toEqual({ actionId, input, target: { kind: 'machine', machineId: h.ref.machineId } });
       expect(h.hasApproval()).toBe(false);
-      expect(h.networkPaths.filter(path => path.startsWith('POST '))).toEqual([]);
+      expect(h.networkPaths).not.toContain(`POST /v1/actions/${actionId}`);
       expect(await readFile(join(h.rootPath, 'terminal-copy.bin'))).toEqual(bytes);
       expect(await readFile(join(h.rootPath, 'original'))).toEqual(bytes);
       expect(await readFile(join(h.directory, 'outside'), 'utf8')).toBe('outside unchanged');
@@ -130,20 +148,17 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await h.close(); }
   });
-  it('opens a Machine-custody terminal through Home-admitted public CLI proposal and approval decide', async () => {
+  it('opens a Machine-custody terminal through the public CLI explicit approval and live result', async () => {
     const h = await createHarness('machines.terminal.open', 'ask', false, 'srv_portable_home');
     try {
       const proposed = await h.runPublicCli({ serverId: 'srv_n2', machineId: 'machine',
-        terminalKey: 'mach-live-2-owner-r19' }, 'machines.terminal.open');
-      expect(proposed).toMatchObject({ ok: true, data: { kind: 'approval_request_created' } });
-      // Parse the public JSON boundary before using its artifact identifier.
-      const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse((proposed as { data: unknown }).data);
-      expect(h.spawned).toHaveLength(0);
-      const decided = await h.runPublicCli({ artifactId, decision: 'approve' }, 'approval.request.decide');
-      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, data: {
-        status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
+        terminalKey: 'mach-live-2-owner-r19' }, 'machines.terminal.open', {
+        yes: true, beforeApproval: () => { expect(h.spawned).toHaveLength(0); },
+      });
+      expect(proposed, JSON.stringify(proposed)).toMatchObject({ ok: true,
+        data: { ok: true, terminalId: expect.any(String) } });
       expect(h.spawned).toHaveLength(1);
-      expect((await h.approval()).executionOriginV1.authority).toBe('present_user');
+      expect((await h.approval()).executionOriginV1.authority).toBe('account_automation');
     } finally { await h.close(); }
   });
   it('binds a requester-local terminal target to its portable Home before approval and daemon replay', async () => {
@@ -174,7 +189,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(h.spawned).toHaveLength(0);
       expect(await h.approval()).toMatchObject({ status: 'open', actionArgs: { launch },
-        executionOriginV1: { authority: 'present_user', surface: 'cli', caller: { kind: 'host' } } });
+        executionOriginV1: { authority: 'account_automation', surface: 'cli', caller: { kind: 'host' } } });
       const decided = await h.decide('approve');
       expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
         status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
@@ -192,7 +207,10 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         'machines.terminal.open', { serverId: profileId, authority: 'present_user' }))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(h.spawned).toHaveLength(0);
-      const decided = await h.decideFromCli();
+      expect(await h.decideFromCli()).toMatchObject({ ok: false, errorCode: 'present_user_required',
+        details: { reason: 'approval_reviewer_required' } });
+      expect(await h.approval()).toMatchObject({ status: 'open' });
+      const decided = await h.decide('approve');
       expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
         status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
       expect(h.spawned).toHaveLength(1);
@@ -208,7 +226,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         .toMatchObject({ ok: false, code: 'terminal_forbidden' });
     } finally { await h.close(); }
   });
-  it('refuses a Use grantee terminal through approval and installed daemon RPC without spawning', async () => {
+  it('retains Use grantee terminal custody after approval when Machine isolation is disabled', async () => {
     const h = await createHarness('machines.terminal.open', 'ask', false, 'srv_n2', undefined, false, false,
       { authentication: 'terminal', machineCustodianAccountId: 'another-account', machineRole: 'use' });
     try {
@@ -216,9 +234,25 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         workspace: { serverId: 'srv_n2', workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath } },
         'machines.terminal.open', { serverId: 'srv_n2', authority: 'present_user' }))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      expect(await h.decideFromCli()).toMatchObject({ ok: true, result: {
-        status: 'failed', execution: { ok: false, effectAttempted: true, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable' } } });
-      expect(h.spawned).toHaveLength(0);
+      expect(await h.decideFromCli()).toMatchObject({ ok: false, errorCode: 'present_user_required',
+        details: { reason: 'approval_reviewer_required' } });
+      expect(await h.approval()).toMatchObject({ status: 'open' });
+      const decided = await h.decide('approve');
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
+        status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
+      expect(h.spawned).toHaveLength(1);
+      const approval = await h.approval();
+      expect(approval.executionOriginV1.externalActionExecutionAuthorization?.binding)
+        .toMatchObject({ accountId: 'account', custodianAccountId: 'another-account', admittedMachineRole: 'use' });
+      if (!approval.execution?.ok) throw new Error('Missing admitted terminal');
+      const terminal = approval.execution.result;
+      if (!terminal || typeof terminal !== 'object' || !('terminalId' in terminal) || typeof terminal.terminalId !== 'string')
+        throw new Error('Missing terminal identity');
+      expect(await h.readTerminalAs(terminal.terminalId, 'account')).toMatchObject({ ok: true });
+      expect(await h.readTerminalAs(terminal.terminalId, 'another-account'))
+        .toMatchObject({ ok: false, code: 'terminal_forbidden' });
+      expect(await h.readTerminalAs(terminal.terminalId, 'foreign-account'))
+        .toMatchObject({ ok: false, code: 'terminal_forbidden' });
     } finally { await h.close(); }
   });
   it('refuses a terminal target at a different Home through original CLI approval replay', async () => {
@@ -245,8 +279,9 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.spawned).toHaveLength(0);
       expect((await h.approval()).executionOriginV1.authority).toBe('account_automation');
       expect(await h.decideFromCli()).toMatchObject({ ok: true, result: {
-        status: 'failed', execution: { ok: false, errorCode: 'RPC_FORBIDDEN' } } });
-      expect(h.spawned).toHaveLength(0);
+        status: 'executed', execution: { ok: true } } });
+      expect((await h.approval()).executionOriginV1.authority).toBe('account_automation');
+      expect(h.spawned).toHaveLength(1);
     } finally { await h.close(); }
   });
   it.each([false, true])('admits the custodian terminal open after CLI approval without opening before approval (issuer=%s)', async proposalAtIssuer => {
@@ -271,8 +306,12 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         cwd: h.rootPath, sessionId: 'owner-session' }, 'cli', true, 'present_user', 'machines.terminal.open'))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(h.spawned).toHaveLength(0);
-      expect(await h.decideFromCli()).toMatchObject({ ok: false,
-        errorCode: 'requester_account_material_unavailable', effectAttempted: false });
+      const decided = await h.decideFromCli();
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false,
+        errorCode: 'approval_not_found' });
+      expect(await h.decideFromMachineAs('foreign-approver')).toMatchObject({ ok: false,
+        errorCode: 'account_mismatch' });
+      expect(await h.approval()).toMatchObject({ status: 'open' });
       expect(h.spawned).toHaveLength(0);
     } finally { await h.close(); }
   });
@@ -287,7 +326,10 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect((await h.approval()).executionOriginV1.externalActionExecutionAuthorization?.binding)
         .toMatchObject({ accountId: 'account', custodianAccountId: 'another-account' });
       await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
-      const decided = await h.decideFromCli();
+      expect(await h.decideFromCli()).toMatchObject({ ok: false, errorCode: 'present_user_required',
+        details: { reason: 'approval_reviewer_required' } });
+      expect(await h.approval()).toMatchObject({ status: 'open' });
+      const decided = await h.decide('approve');
       expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true,
         result: { status: 'executed', execution: { ok: true, result: { success: true } } } });
       expect((await stat(path)).isDirectory()).toBe(true);
@@ -304,12 +346,13 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(original).toMatchObject({ accountId: 'account', authority: 'present_user', caller: { kind: 'host' },
         machineId: 'machine', target: { kind: 'machine', machineId: 'machine' } });
       expect(original).not.toHaveProperty('externalActionInputSignature');
-      expect(await h.decideFromCli()).toMatchObject({
-        ok: false, errorCode: 'requester_account_material_unavailable', effectAttempted: false,
+      const decided = await h.decideFromCli();
+      expect(decided, JSON.stringify(decided)).toMatchObject({
+        ok: false, errorCode: 'approval_not_found',
       });
-      expect(h.rpcOutcomes, JSON.stringify({ approvalTransport: h.rpcOutcomes.filter(outcome => outcome !== null
-        && typeof outcome === 'object' && 'phase' in outcome && outcome.phase === 'approval.transport') }))
-        .toContainEqual({ phase: 'approval.replay.ingress', originalAccountMatches: false });
+      expect(await h.decideFromMachineAs('foreign-approver')).toMatchObject({ ok: false,
+        errorCode: 'account_mismatch' });
+      expect(await h.approval()).toMatchObject({ status: 'open' });
       expect((await h.approval()).executionOriginV1).toEqual(original);
       await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await h.close(); }
@@ -337,9 +380,12 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     'admits original owner %s through verified Home custody before native discovery', async actionId => {
     const h = await createHarness(actionId, 'allowed');
     try {
-      const result = await h.runOriginalCli({ agentId: 'codex', machineId: 'machine' }, actionId);
+      const result = await h.runOriginalCli({ agentId: 'acme.discovery/assistant', machineId: 'machine' }, actionId);
       expect(result.ok ? null : result.errorCode).toBeNull();
       expect(result).toMatchObject({ ok: true, result: { items: expect.any(Array) } });
+      expect(result).toMatchObject({ result: { items: expect.arrayContaining([
+        expect.objectContaining({ id: actionId === 'agents.models.list' ? 'reviewed-model' : 'format' }),
+      ]) } });
       expect(h.rpcOutcomes).toContainEqual(expect.objectContaining({ phase: 'original.hostChild', actionId }));
     } finally { await h.close(); }
   });
@@ -407,8 +453,9 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       manifest.services.checked.source.command = 'echo changed';
       await writeFile(file, JSON.stringify(manifest));
       expect(await h.decide('approve')).toMatchObject({ ok: true });
-      expect((await h.approval()).execution).toMatchObject({ ok: true,
-        result: { status: 'denied', reasonCode: 'project_service_effect_changed' } });
+      const execution = (await h.approval()).execution;
+      expect(execution, JSON.stringify(execution)).toMatchObject({ ok: false,
+        errorCode: 'project_service_effect_changed' });
       expect(h.copies()).toBe(0);
       expect(h.serviceInstances()).toHaveLength(0);
     } finally { await h.close(); }
@@ -514,7 +561,8 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
           project: { serverId: h.ref.serverId, projectId: h.ref.projectKey }, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest, approvedAtMs: 1,
         } } } } : await post(url, body, options));
       service.finishStop();
-      const moving = h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request });
+      const moving = h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request,
+        originalCli: 'source', approveRequiredChild: true });
       const outcome = await Promise.race([h.waitForSpawn(0).then(pty => ({ kind: 'spawned' as const, pty })),
         moving.then(result => ({ kind: 'settled' as const, result }))]);
       if (outcome.kind !== 'spawned') throw new Error('Move settled before setup launch: ' + JSON.stringify(outcome.result));
@@ -652,7 +700,6 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     }
   });
   it('spends one Home root verification per worker status invocation', async () => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     const post = vi.mocked(axios.post).getMockImplementation()!;
     let verifications = 0;
@@ -674,12 +721,13 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.copies()).toBe(0);
     } finally { await h.close(); }
   });
-  it('records the typed preparation outage when reopening an approved Move requester', async () => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
+  it('records the typed preparation outage when reopening a paired-terminal approved Move requester', async () => {
     const h = await createHarness('projects.service.relocate', 'ask', false, 'srv_portableHome', undefined, true);
     const service = await h.seedMoveService();
     try {
-      expect(await h.run(service.request, 'ui', false, 'present_user')).toMatchObject({ ok: true,
+      const proposal = await h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request,
+        originalCli: 'source', proposalOnly: true });
+      expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true,
         result: { kind: 'approval_request_created' } });
       const get = vi.mocked(axios.get).getMockImplementation()!;
       let profiles = 0;
@@ -693,7 +741,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       });
       const decided = await h.decide('approve');
       expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-        ok: false, effectAttempted: false, errorCode: 'project_requester_home_unavailable',
+        ok: false, errorCode: 'project_requester_home_unavailable',
       } } });
       const approval = await h.approval();
       expect(approval).toMatchObject({ status: 'failed', execution: { errorCode: 'project_requester_home_unavailable' } });
@@ -702,18 +750,22 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.copies()).toBe(0);
     } finally { service.finishStop(); await h.close(); }
   });
-  it('leaves an approved Move recoverable when Home cannot recheck its origin', async () => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
+  it('leaves a paired-terminal approved Move recoverable when Home cannot recheck its origin', async () => {
     const h = await createHarness('projects.service.relocate', 'ask', false, 'srv_portableHome', undefined, true);
     const service = await h.seedMoveService();
     try {
-      expect(await h.run(service.request, 'ui', false, 'present_user')).toMatchObject({ ok: true,
+      const proposal = await h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request,
+        originalCli: 'source', proposalOnly: true });
+      expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true,
         result: { kind: 'approval_request_created' } });
       const post = vi.mocked(axios.post).getMockImplementation()!;
       vi.mocked(axios.post).mockImplementation(async (url, body, config) =>
         new URL(String(url)).pathname === '/v1/actions/projects.service.relocate/execution-authorization/verify'
           ? { status: 503, data: { error: 'database_connection_unavailable' } } : post(url, body, config));
-      expect(await h.decide('approve')).toMatchObject({ ok: false, errorCode: 'project_requester_home_unavailable' });
+      const decided = await h.decide('approve');
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown',
+        details: { reasonCode: 'project_requester_home_unavailable' },
+        failureCause: { errorCode: 'project_requester_home_unavailable' } });
       expect(await h.approval()).toMatchObject({ status: 'approved' });
       expect((await h.approval()).execution).toBeUndefined();
       expect(service.snapshot().state).toBe('running');
@@ -730,7 +782,6 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally { service.finishStop(); await h.close(); }
   });
   it('carries standalone MCP worker status through admitted requester custody to the installed daemon', async () => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     const post = vi.mocked(axios.post).getMockImplementation()!;
     let privateReads = 0;
@@ -774,7 +825,6 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally { unsubscribe(); await client.close(); await mcp.close(); await h.close(); }
   });
   it('resolves original worker status through private requester row custody at the installed worker', async () => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     const post = vi.mocked(axios.post).getMockImplementation()!;
     let privateReads = 0;
@@ -802,12 +852,13 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(getActiveProjectAccountRowsSnapshot()).toBe(retained);
     } finally { unsubscribe(); await h.close(); }
   });
-  it.each(['moved', 'revoked', 'cancelled'] as const)('retains the reviewed Move executor after approval cleanup through post-Stop copy and native start (%s)', async outcome => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
+  it.each(['moved', 'revoked', 'cancelled'] as const)('retains the paired-terminal reviewed Move executor after approval cleanup through post-Stop copy and native start (%s)', async outcome => {
     const h = await createHarness('projects.service.relocate', 'ask', false, 'srv_portableHome', undefined, true);
     const service = await h.seedMoveService();
     try {
-      expect(await h.run(service.request, 'ui', false, 'present_user')).toMatchObject({ ok: true,
+      const proposal = await h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request,
+        originalCli: 'source', proposalOnly: true });
+      expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true,
         result: { kind: 'approval_request_created' } });
       expect(await h.decide('approve')).toMatchObject({ ok: true });
       // This read occurs after executeExternalAction's approval-decision finally.
@@ -831,7 +882,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         return;
       }
       if (outcome === 'revoked') {
-        expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', progress: { phase: 'stopped' } } });
+        expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', progress: { phase: 'copying' } } });
         expect(h.copies()).toBe(0);
         return;
       }
@@ -936,7 +987,8 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
               originalActionEnvelope: envelope, authority: 'present_user' }, effectActionId: 'localServices.launcher.start',
             installationId: h.sourceInstallation.installationId, privateKey: Buffer.from(h.sourceInstallation.privateKey, 'base64url'),
           } })).rejects.toMatchObject({ code: 'machine_target_not_current' });
-        expect(h.networkPaths).toHaveLength(networkRequests);
+        expect(h.networkPaths.slice(networkRequests)).toEqual([`GET /v1/machines/${h.workerRef.machineId}`]);
+        expect(h.spawned).toHaveLength(0);
         const received = await start();
         expect(received).toMatchObject({ status: 'succeeded',
           currentTarget: { machineId: h.workerRef.machineId, workspaceId: h.workerRef.id } });
@@ -997,9 +1049,6 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     const traceEnv = createEnvKeyScope(['HAPPIER_WEB_LATENCY_TRACE']);
     traceEnv.patch({ HAPPIER_WEB_LATENCY_TRACE: '1' });
     const trace = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
-    // The optional controller freshness read is a network boundary; eligibility
-    // does not require it and this fixture has no public controller socket.
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     try {
       await h.prepareSignedMove({ sourceCoordinator: true, requesterToken: h.installedToken + '-independent-requester',
@@ -1007,7 +1056,9 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         const retained = getActiveProjectAccountRowsSnapshot();
         expect(retained).not.toBeNull();
         const relationships = await h.syncRelationships();
-        expect(relationships.flatMap(result => result.relationships)).toContainEqual(h.workerRelationship);
+        expect(relationships.flatMap(result => result.relationships)).toContainEqual(expect.objectContaining({
+          ...h.workerRelationship, updatedAtMs: expect.any(Number),
+        }));
         let publications = 0;
         const unsubscribe = subscribeActiveProjectAccountRowsSnapshot(() => { publications++; });
         let result: unknown;
@@ -1033,14 +1084,15 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally { await h.close(); traceEnv.restore(); }
   });
   it.each([false, true])('refuses SOURCE-bound Service Move status at the next request after requester custody retires (protected=%s)', async protectedInput => {
-    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     try {
       await h.prepareSignedMove({ sourceCoordinator: true, requesterToken: h.installedToken + '-retiring-requester',
         ...(protectedInput ? { protectedInput: 'requester material' as const } : {}), inspectRequester: async ({ status }) => {
         const retained = getActiveProjectAccountRowsSnapshot();
         const relationships = await h.syncRelationships();
-        expect(relationships.flatMap(result => result.relationships)).toContainEqual(h.workerRelationship);
+        expect(relationships.flatMap(result => result.relationships)).toContainEqual(expect.objectContaining({
+          ...h.workerRelationship, updatedAtMs: expect.any(Number),
+        }));
         expect(await status()).toMatchObject({ eligible: true });
         const deliveredBeforeRetirement = h.rpcOutcomes.length;
         await h.retireRequester();
@@ -1088,47 +1140,38 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally { await h.close(); }
   });
 
-  it('retains the deciding human only for the installed token requester continuation', async () => {
+  it('returns a newly created token only to the confirmed installed human requester', async () => {
     const h = await createHarness('account.apiTokens.create');
-    const cancellation = new AbortController();
     const request = vi.mocked(axios.request).getMockImplementation()!;
     const tokenId = randomUUID();
-    const input = { tokenId, label: 'Reviewed token', grant: API_TOKEN_FULL_GRANT_V1 };
+    const input = { tokenId, label: { content: { t: 'plain', v: 'Reviewed token' }, recipients: [] }, grant: API_TOKEN_FULL_GRANT_V1 };
     const output = AccountApiTokensCreateActionOutputV1Schema.parse({ token: `hap_v1_${tokenId}_${'a'.repeat(43)}`,
-      apiToken: { tokenId, label: input.label, displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`,
+      apiToken: { tokenId, label: { content: input.label.content, recipientEnvelope: null }, displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`,
         createdAt: new Date().toISOString(), lastUsedAt: null, expiresAt: null,
         hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: input.grant,
         parentTokenId: null, activeChildCount: 0, embedConfig: null } });
     let minted = 0;
     vi.mocked(axios.request).mockImplementation(async config => {
       if (new URL(String(config.url)).pathname !== '/v1/auth/api-tokens/create') return request(config);
-      // Home transport boundary: the original signed requester root cannot
-      // create credentials. Only the admitted human's native effect can.
-      if (config.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) return { status: 401, data: { error: 'invalid_token' } };
+      // Home transport boundary: only the confirmed human's native effect
+      // creates credentials; the new secret never enters an approval Artifact.
       expect(h.humanToken).not.toBe(h.installedToken);
-      expect(config.headers?.Authorization).toBe(`Bearer ${h.humanToken}`);
+      expect(config.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toEqual(expect.any(String));
+      expect(config.headers?.Authorization).toBeUndefined();
       expect(config.data).toEqual(input); minted++;
       return { status: 200, data: output };
     });
-    const invocation = h.run(input, 'ui', false, 'present_user', 'account.apiTokens.create',
-      'original-token-request', cancellation.signal);
-    let stopped: Awaited<typeof invocation> | undefined;
-    void invocation.then(result => { stopped = result; });
     try {
-      await vi.waitFor(() => {
-        if (stopped && !stopped.ok) throw new Error(`token_request_stopped:${stopped.errorCode}`);
-        expect(h.hasApproval()).toBe(true);
-      });
+      const review = await h.run(input, 'ui', false, 'present_user', 'account.apiTokens.create', 'original-token-review');
+      const digest = nativeReviewDigest(review);
       expect(minted).toBe(0);
-      const decided = await h.decide('approve');
-      expect(decided).toMatchObject({ ok: true });
-      expect(await invocation).toEqual({ ok: true, result: output });
+      expect(h.hasApproval()).toBe(false);
+      expect(JSON.stringify(review)).not.toContain(output.token);
+      expect(await h.run(input, 'ui', false, 'present_user', 'account.apiTokens.create',
+        'original-token-confirmed', undefined, digest)).toEqual({ ok: true, result: output });
       expect(minted).toBe(1);
-      expect(JSON.stringify(decided)).not.toContain(output.token);
-      expect(JSON.stringify(await h.approval())).not.toContain(output.token);
-      expect(await h.decide('approve')).toMatchObject({ ok: true });
-      expect(minted).toBe(1);
-    } finally { cancellation.abort(); await invocation; await h.close(); }
+      expect(h.hasApproval()).toBe(false);
+    } finally { await h.close(); }
   });
   it.each(['reviewed child', 'other material', 'changed envelope', 'other destination'] as const)(
     'admits only the reviewed child of a V2 Move through the real requester opener: %s', async variant => {
@@ -1215,12 +1258,15 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     });
     try {
       const workspace = { serverId: h.ref.serverId, workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath };
-      const requested = await h.run({ workspace, selection: { kind: 'named', name: 'lint' }, choice: { kind: 'primary' } }, 'ui', false, 'present_user');
-      expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      const input = { workspace, selection: { kind: 'named', name: 'lint' }, choice: { kind: 'primary' } };
+      const requested = await h.run(input, 'ui', false, 'present_user');
+      const reviewDigest = nativeReviewDigest(requested);
+      expect(h.spawned).toHaveLength(0);
+      expect(h.hasApproval()).toBe(false);
       phase = 'approval';
-      expect(await h.decide('approve')).toMatchObject({ ok: true });
+      const accepted = await h.run(input, 'ui', false, 'present_user', 'projects.script.run',
+        'confirmed-root-run', undefined, reviewDigest);
       phase = 'native';
-      const accepted = (await h.approval()).execution;
       expect(accepted).toMatchObject({ ok: true });
       const output = ProjectCommandActionOutputV1Schema.parse(accepted && 'result' in accepted ? accepted.result : undefined);
       const native = await Promise.race([
@@ -1251,17 +1297,13 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         ...(actionId === 'projects.script.run' ? { selection: { kind: 'named', name: 'lint' } }
           : { executable: '/managed/make', argv: ['check'], cwd: h.rootPath }) };
       PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
-      const result = await h.run(input, 'ui', false, 'present_user');
+      let accepted = await h.run(input, 'ui', false, 'present_user');
       if (replay) {
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-        expect(await h.decide('approve')).toMatchObject({ ok: true });
+        const reviewDigest = nativeReviewDigest(accepted);
+        expect(h.spawned).toHaveLength(0);
+        accepted = await h.run(input, 'ui', false, 'present_user', actionId, 'confirmed-worker-run', undefined, reviewDigest);
       }
-      const settled = replay ? await h.approval() : null;
-      if (settled) {
-        expect(settled.status, `execution error: ${settled.execution?.errorCode ?? 'none'}`).toBe('executed');
-        expect(settled.executionOriginV1).not.toHaveProperty('originalActionEnvelope');
-      }
-      const accepted = replay ? settled?.execution : result;
+      expect(h.hasApproval()).toBe(false);
       expect(accepted, JSON.stringify({ accepted, networkPaths: [...new Set(h.networkPaths)], rpcOutcomes: h.rpcOutcomes,
         finiteIngress: h.finiteIngress })).toMatchObject({ ok: true });
       if (!accepted || !('result' in accepted)) throw new Error('Expected an accepted Project command result');
@@ -1299,7 +1341,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
           ...(exitCode === 0 ? {} : { error: { errorCode: 'project_command_step_failed' } }),
         } });
       if (terminal.kind === 'found' && exitCode === 0) {
-        const result = getActionSpec(actionId).outputSchema!.parse(terminal.operation.result);
+        const result = getActionSpec(actionId).outputSchema!.parse({ operation: terminal.operation });
         expect(ProjectCommandActionOutputV1Schema.parse(result).operation).toMatchObject({
           operationId: output.operation.operationId, actionId, domainRef: { terminalId: terminal.operation.domainRef?.kind === 'projectCommand'
             ? terminal.operation.domainRef.terminalId : undefined, exitCode: 0 },
@@ -1415,28 +1457,23 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
   it.each(['uncoded', 'rpc', 'malformed', 'oversized', 'secret'] as const)('preserves a %s worker preparation failure in the recorded operation', async kind => {
     const h = await createHarness('projects.script.run', 'ask', false, 'srv_portableHome', undefined, true);
     try {
-      const message = 'SOURCE metadata refresh is unavailable';
+      const message = 'SOURCE preparation delivery is unavailable';
       const error = kind === 'rpc' ? new RpcError(message, RPC_ERROR_CODES.FORBIDDEN)
         : kind === 'malformed' ? { message: 'Untrusted error object', request: { headers: { Authorization: 'private-fixture-value' } } }
           : new Error(kind === 'oversized' ? message.repeat(1_000)
             : kind === 'secret' ? `${message}; Authorization: Bearer private-fixture-value` : message);
-      const get = vi.mocked(axios.get).getMockImplementation()!;
-      vi.mocked(axios.get).mockImplementation(async (...args) => {
-        // Fail the real Home boundary only after the installed finite owner
-        // hands preparation to Sync; initial SOURCE inspection still succeeds.
-        if (String(args[0]).endsWith('/v1/machines/source-machine')
-          && h.rpcOutcomes.some(outcome => typeof outcome === 'object' && outcome !== null
-            && 'phase' in outcome && outcome.phase === 'installed.prepareBetween')) throw error;
-        return await get(...args);
-      });
-      expect(await h.run({ workspace: { serverId: h.ref.serverId, workspaceId: h.ref.id,
+      const preparationFailures = h.failSourcePreparationDelivery(error);
+      const input = { workspace: { serverId: h.ref.serverId, workspaceId: h.ref.id,
         machineId: h.ref.machineId, rootPath: h.rootPath }, selection: { kind: 'named', name: 'lint' },
-      choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } },
-      'ui', false, 'present_user')).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      expect(await h.decide('approve')).toMatchObject({ ok: true });
-      const receipt = await h.approval();
-      expect(receipt).toMatchObject({ status: 'executed', execution: { ok: true } });
-      const output = ProjectCommandActionOutputV1Schema.parse(receipt.execution?.result);
+        choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } };
+      const reviewDigest = nativeReviewDigest(await h.run(input, 'ui', false, 'present_user'));
+      expect(h.hasApproval()).toBe(false);
+      expect(h.copies()).toBe(0);
+      expect(preparationFailures()).toBe(0);
+      const executed = await h.run(input, 'ui', false, 'present_user', 'projects.script.run',
+        'confirmed-preparation-failure', undefined, reviewDigest);
+      expect(executed, JSON.stringify(executed)).toMatchObject({ ok: true });
+      const output = ProjectCommandActionOutputV1Schema.parse(executed.ok ? executed.result : null);
       const terminal = ActionOperationGetV1ResponseSchema.parse(await h.waitForTerminal(output.operation.operationId));
       expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', progress: { phase: 'copying' },
         error: { errorCode: kind === 'rpc' ? RPC_ERROR_CODES.FORBIDDEN : 'workspace_sync_prepare_failed',
@@ -1444,6 +1481,8 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
             : kind === 'oversized' ? 'Workspace preparation failed; the diagnostic exceeds the operation error format'
               : kind === 'secret' ? expect.stringContaining(message) : message } } });
       expect(JSON.stringify(terminal)).not.toContain('private-fixture-value');
+      expect(preparationFailures()).toBe(1);
+      expect(h.copies()).toBe(0);
       expect(h.spawned).toHaveLength(0);
     } finally { await h.close(); }
   });
@@ -1468,27 +1507,31 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.spawned).toEqual([]);
     } finally { await h.close(); }
   });
-  it('does not lend the installed Account relationship when the requester target root changes before preparation', async () => {
+  it('does not lend the installed Account relationship when the requester target root changes before admission', async () => {
     const h = await createHarness('projects.script.run', 'allowed', false, 'srv_portableHome', undefined, true);
     try {
-      await h.changeRequesterWorkerRoot('beforePreparation');
+      h.useNativeStreamCopy();
+      await h.changeRequesterWorkerRoot();
       const result = await h.run({ workspace: { serverId: h.ref.serverId, workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath },
         selection: { kind: 'named', name: 'lint' }, choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } },
         'ui', false, 'present_user');
       expect(result, JSON.stringify({ result, rpcOutcomes: h.rpcOutcomes })).toMatchObject({ ok: true });
       const output = ProjectCommandActionOutputV1Schema.parse(result.ok ? result.result : null);
-      expect(await h.waitForTerminal(output.operation.operationId)).toMatchObject({ kind: 'found', operation: { state: 'failed' } });
+      expect(await h.waitForTerminal(output.operation.operationId)).toMatchObject({ kind: 'found', operation: {
+        state: 'failed', error: { errorCode: 'relationship_definition_conflict' },
+      } });
       expect(h.copies(), JSON.stringify({ operation: await h.readOperation(output.operation.operationId), rpcOutcomes: h.rpcOutcomes,
-        networkPaths: [...new Set(h.networkPaths)] })).toBe(0);
+        networkPaths: [...new Set(h.networkPaths)], nativeAgentRoots: h.nativeAgentRoots })).toBe(0);
+      expect(h.nativeAgentRoots).toEqual([]);
       expect(h.spawned).toEqual([]);
     } finally { await h.close(); }
   });
-  it.each([false, true])('runs reviewed This time setup and resumes the held script without remembered trust through the installed executor (unsigned UI: %s)', async unsignedUi => {
-    const h = await createHarness('projects.script.run', 'allowed', true, unsignedUi ? 'srv_portableHome' : 'srv_n2');
+  it.each(['srv_n2', 'srv_portableHome'])('runs reviewed This time setup and resumes the held script without remembered trust through installed UI admission (Home: %s)', async homeId => {
+    const h = await createHarness('projects.script.run', 'allowed', true, homeId);
     let operationId: string | undefined;
     try {
       const workspace = { serverId: h.ref.serverId, workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath };
-      const inspected = await h.run({ workspace }, 'ui', false, 'present_user', 'projects.inspect', 'setup-inspection');
+      const inspected = await h.run({ workspace, reviewSetupConsent: true }, 'ui', false, 'present_user', 'projects.inspect', 'setup-inspection');
       expect(inspected, JSON.stringify(inspected)).toMatchObject({ ok: true });
       const before = ProjectDefinitionInspectOutputSchema.parse(inspected.ok ? inspected.result : null);
       expect(before).toMatchObject({ setupReadiness: { kind: 'unprepared' }, setupReview: {
@@ -1504,17 +1547,17 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       const held = ActionOperationGetV1ResponseSchema.parse(await h.readOperation(operationId));
       if (held.kind !== 'found' || !held.operation.setupReview) throw new Error('Missing actual held review');
       const changed = await h.run({ workspace, phase: 'setup', expectedEffectDigest: 'stale-review', consentScope: 'thisTime' },
-        'ui', unsignedUi ? 'unsigned-ui' : false, 'present_user', 'projects.prepare', 'changed-setup-review');
+        'ui', false, 'present_user', 'projects.prepare', 'changed-setup-review');
       expect(changed).toMatchObject({ ok: false, errorCode: 'project_setup_effect_changed' });
       expect(h.hasApproval()).toBe(false);
-      const setup = await h.run({ workspace, phase: 'setup', expectedEffectDigest: held.operation.setupReview.reviewedEffectDigest,
-        consentScope: 'thisTime' }, 'ui', unsignedUi ? 'unsigned-ui' : false, 'present_user', 'projects.prepare', 'this-time-setup');
-      expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'projects.prepare' } });
-      expect(ActionApprovalRequestCreatedResultSchema.parse(setup.ok ? setup.result : null).actionId).toBe('projects.prepare');
-      expect((await h.approval()).preview).toMatchObject({ setupReview: before.setupReview });
-      const decision = await h.decide('approve');
-      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-      const prepared = (await h.approval()).execution;
+      const setupInput = { workspace, phase: 'setup', expectedEffectDigest: held.operation.setupReview.reviewedEffectDigest,
+        consentScope: 'thisTime' };
+      const review = await h.run(setupInput, 'ui', false, 'present_user', 'projects.prepare', 'this-time-setup-review');
+      const reviewDigest = nativeReviewDigest(review);
+      expect(h.hasApproval()).toBe(false);
+      expect(h.spawned).toEqual([]);
+      const prepared = await h.run(setupInput,
+        'ui', false, 'present_user', 'projects.prepare', 'this-time-setup', undefined, reviewDigest);
       expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true, result: { operation: { actionId: 'projects.prepare' } } });
       if (!prepared?.ok) throw new Error('Missing approved setup execution');
       const setupOperation = ProjectCommandActionOutputV1Schema.parse(prepared.result).operation;
@@ -1593,16 +1636,19 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     try {
       await ready;
       expect(await h.run({ serverId: h.ref.serverId, machineId: h.ref.machineId, operationId },
-        'ui', false, 'present_user', 'action.operations.cancel', 'retained-stop-request'))
+        'ui', false, 'account_automation', 'action.operations.cancel', 'retained-stop-request'))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(await h.decide('approve')).toMatchObject({ ok: true });
       const execution = (await h.approval()).execution;
-      expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true,
-        result: { kind: operationAccountId === 'account' ? 'requested' : 'not_found' } });
+      expect(execution, JSON.stringify(execution)).toMatchObject(operationAccountId === 'account'
+        ? { ok: true, result: { kind: 'requested' } }
+        : { ok: false, errorCode: 'not_found' });
       if (operationAccountId === 'account') {
         await pending;
-        expect(await h.readOperation(operationId)).toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
-      } else expect(await h.readOperation(operationId)).toEqual({ kind: 'not_found' });
+        expect(await h.deliverMachineRpc(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId }))
+          .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+      } else expect(await h.deliverMachineRpc(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId }))
+        .toEqual({ kind: 'not_found' });
       expect(await h.decide('approve')).toMatchObject({ ok: true });
       expect(cancellations).toBe(operationAccountId === 'account' ? 1 : 0);
     } finally {
@@ -1634,7 +1680,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(await h.readOperation(operationId)).toMatchObject({ kind: 'found', operation: { setupReview: {
         code: 'project_setup_consent_required' } } });
       const stop = await h.run({ serverId: h.ref.serverId, machineId: h.ref.machineId, operationId }, 'ui', 'unsigned-ui',
-        'present_user', 'action.operations.cancel', 'stop-request');
+        'account_automation', 'action.operations.cancel', 'stop-request');
       expect(stop).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(ActionApprovalRequestCreatedResultSchema.parse(stop.ok ? stop.result : null).actionId).toBe('action.operations.cancel');
       const stopped = await h.decide('approve');
@@ -1696,22 +1742,28 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     }
   });
 
-  it.each([false, true])('reviews declared Machine Service before Artifact publication and replays the approved effect (setup=%s)', async setup => {
+  it.each([false, true])('reviews declared Machine Service in place before the confirmed effect (setup=%s)', async setup => {
     const h = await createHarness('localServices.launcher.start', 'ask', setup);
     try {
       const input = await h.serviceInput();
       const proposal = await h.run(input, 'ui', 'unsigned-ui', 'present_user');
-      expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      const approval = await h.approval();
-      expect(approval).toMatchObject({ actionArgs: input, preview: { serviceStartReview: {
+      const reviewDigest = nativeReviewDigest(proposal);
+      expect(proposal).toMatchObject({ details: { review: { actionArgs: input, preview: { serviceStartReview: {
         request: input, target: { machineId: input.machineId, rootPath: h.rootPath }, reviewedEffectDigest: expect.any(String),
-      } } });
+      } } } } });
+      expect(h.hasApproval()).toBe(false);
       expect(h.spawned).toEqual([]);
       expect(h.serviceInstances()).toEqual([]);
-      const decided = h.decide('approve');
-      if (setup) (await h.waitForSpawn(0)).exit(0);
-      expect(await decided).toMatchObject({ ok: true });
-      expect((await h.approval()).execution).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+      const decided = h.run(input, 'ui', false, 'present_user', 'localServices.launcher.start',
+        'confirmed-service-start', undefined, reviewDigest);
+      if (setup) {
+        const launched = await Promise.race([h.waitForSpawn(0), decided.then(result => {
+          throw new Error('Service settled before reviewed setup launch: ' + JSON.stringify(result));
+        })]);
+        launched.exit(0);
+      }
+      expect(await decided).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+      expect(h.hasApproval()).toBe(false);
       expect(h.serviceInstances()).toHaveLength(1);
     } finally {
       await Promise.all(h.serviceInstances().map(service => service.stop()));
@@ -1729,8 +1781,8 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       manifest.services.checked.source.command = 'echo changed';
       await writeFile(file, JSON.stringify(manifest));
       expect(await h.decide('approve')).toMatchObject({ ok: true });
-      expect((await h.approval()).execution).toMatchObject({ ok: true,
-        result: { status: 'denied', reasonCode: 'project_service_effect_changed' } });
+      expect((await h.approval()).execution).toMatchObject({ ok: false,
+        errorCode: 'project_service_effect_changed' });
       expect(h.spawned).toEqual([]);
       expect(h.serviceInstances()).toEqual([]);
     } finally { await h.close(); }
@@ -1881,7 +1933,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     try {
       const input = { workspace: { serverId: h.ref.serverId, workspaceId: h.ref.id,
         machineId: h.ref.machineId, rootPath: h.rootPath }, selection: { kind: 'named', name: 'lint' }, choice: { kind: 'primary' } };
-      expect(await h.run(input, 'cli', true)).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+      expect(await h.run(input, 'cli', true)).toMatchObject({ ok: false, errorCode: 'machine_inventory_unavailable' });
       expect(h.hasApproval()).toBe(false);
       expect(h.spawned).toEqual([]);
       expect(h.networkPaths).not.toContain('POST /v1/actions/projects.script.run');
@@ -1974,19 +2026,28 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally { await h.close(); }
   });
 
-  it.each(['ui', 'cli'] as const)('opens an issuer-approved folder from %s through authenticated Machine ingress', async surface => {
+  it.each(['ui', 'cli'] as const)('opens an issuer-reviewed folder from %s through authenticated Machine ingress', async surface => {
     const h = await createHarness('projects.open', 'ask');
     const input = { serverId: 'srv_n2', machineId: 'machine', source: { kind: 'folder', path: h.rootPath }, materialization: { kind: 'attach' } };
     try {
       const initialRows = JSON.stringify(h.rows);
-      expect(await h.run(input, surface, surface === 'ui' ? 'unsigned-ui' : true, 'present_user'))
-        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      const proposal = await h.run(input, surface, surface === 'ui' ? 'unsigned-ui' : true, 'present_user');
       expect(JSON.stringify(h.rows)).toBe(initialRows);
-      const result = await h.decide('approve');
-      expect(result, JSON.stringify({ result, rpcOutcomes: h.rpcOutcomes })).toMatchObject({ ok: true, result: {
-        status: 'executed', execution: { ok: true, result: { kind: 'opened', directory: h.rootPath,
-          workspace: { serverId: 'srv_n2', machineId: 'machine', rootPath: h.rootPath } } },
-      } });
+      const opened = { kind: 'opened', directory: h.rootPath,
+        workspace: { serverId: 'srv_n2', machineId: 'machine', rootPath: h.rootPath } };
+      if (surface === 'ui') {
+        const digest = nativeReviewDigest(proposal);
+        expect(h.hasApproval()).toBe(false);
+        const result = await h.run(input, 'ui', 'unsigned-ui', 'present_user', 'projects.open',
+          'confirmed-folder-open', undefined, digest);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: opened });
+      } else {
+        expect(proposal).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        const result = await h.decide('approve');
+        expect(result, JSON.stringify({ result, rpcOutcomes: h.rpcOutcomes })).toMatchObject({ ok: true, result: {
+          status: 'executed', execution: { ok: true, result: opened },
+        } });
+      }
       expect(await readFile(join(h.rootPath, 'original'))).toEqual(bytes);
     } finally { await h.close(); }
   });
@@ -2086,8 +2147,8 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     const asked = await createHarness('daemon.filesystem.writeFile', 'ask');
     try {
       const input = { rootPath: asked.rootPath, path: 'saved.txt', content: saved.toString('base64'), expectedHash: null };
-      expect(await asked.run(input, 'ui', false, 'present_user'))
-        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      nativeReviewDigest(await asked.run(input, 'ui', false, 'present_user'));
+      expect(asked.hasApproval()).toBe(false);
       await expect(stat(join(asked.rootPath, 'saved.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await asked.close(); }
   });

@@ -735,7 +735,7 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
 })));
 export type WorkspaceSyncTargetBootstrapPrepareV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareV1Schema>;
 
-/** Strict, root-free prepare result: authority fingerprints, never a local handle. */
+/** Strict prepare result: physical owner facts, never a local handle. */
 export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   bootstrapOperationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
@@ -745,7 +745,7 @@ export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = lazyZodSchema((
   rootFingerprint: WorkspaceSyncHexDigestV1Schema,
   policyDigest: WorkspaceSyncHexDigestV1Schema,
   physicalEndpoint: z.optional(MachineInstallationPublicIdentityV1Schema),
-  /** Existing physical owner row, carried only for an admitted finite copy. */
+  /** Existing physical owner row for binding an admitted finite effect. */
   targetWorkspace: z.optional(WorkspaceRefV1Schema),
 }));
 export type WorkspaceSyncTargetBootstrapPrepareResultV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareResultV1Schema>;

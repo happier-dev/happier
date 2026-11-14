@@ -1,7 +1,7 @@
 import { areWorkspaceSyncRelationshipDefinitionsEqual, deriveWorkspaceSyncConflictOperationId, HandoffTargetReplacementPreflightResultV1Schema, HandoffTargetReplacementPreflightV1Schema, ReadWorkspaceSyncFileResultV1Schema, WorkspaceSyncEntryExpectationV1Schema, WorkspaceSyncTargetEntryObserveV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapReleaseResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema, WorkspaceSyncTargetConflictStageV1Schema, WorkspaceSyncConflictCaptureReleaseV1Schema, WorkspaceSyncTargetConflictApplyV1Schema, WorkspaceSyncTargetConflictApplyResultV1Schema, WorkspaceSyncTargetConflictRecoverV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema, WorkspaceSyncTargetFileReadV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncRelationshipEndpointRoles, resolveWorkspaceSyncRelationshipTransferDirection } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { normalizeWorkspaceRootPathV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -3362,7 +3362,7 @@ export function createWorkspaceSyncTargetAuthority(
               retained.set(authorityKey, { ...retainedEntry, definition });
             }
             await settleNormalTargetRecovery();
-            return retainedEntry.result;
+            return { ...retainedEntry.result, targetWorkspace: owner.targetWorkspace };
           }
           const currentRoot = await realpath(owner.targetRootPath).catch(() => null);
           const currentFingerprint = currentRoot
@@ -3375,6 +3375,7 @@ export function createWorkspaceSyncTargetAuthority(
           }
           const reboundResult = WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse({
             ...retainedEntry.result,
+            targetWorkspace: owner.targetWorkspace,
             bootstrapOperationId: request.bootstrapOperationId,
             created: false,
           });
@@ -3498,7 +3499,7 @@ export function createWorkspaceSyncTargetAuthority(
           created: prepared.created,
           rootFingerprint: prepared.rootFingerprint,
           policyDigest: prepared.policyDigest,
-          ...(sourceInvocation || installedWriterTarget ? { targetWorkspace: owner.targetWorkspace } : {}),
+          targetWorkspace: owner.targetWorkspace,
         });
         const entry: RetainedBootstrap = {
           bootstrapOperationId: request.bootstrapOperationId,
@@ -3629,20 +3630,32 @@ export function createWorkspaceSyncTargetAuthority(
       }
       const workspace = resolveWorkspaceRef(await readInvocationSnapshot(request.signal, context, request.bootstrapOperationId), wireRequest.targetWorkspaceRefId, localServerId);
       assertTargetMachine(workspace, request.targetMachineId);
+      const bindPreparedTarget = (result: WorkspaceSyncTargetBootstrapAtTargetResult): WorkspaceSyncTargetBootstrapAtTargetResult => {
+        if (request.admittedTarget) {
+          const target = result.targetWorkspace;
+          if (!target) throw authorityError('workspace_sync_update_required', 'The prepared target endpoint proof is unavailable');
+          if (target.serverId !== localServerId || target.id !== wireRequest.targetWorkspaceRefId
+            || target.machineId !== request.admittedTarget.machineId
+            || normalizeWorkspaceRootPathV1(target.rootPath) !== normalizeWorkspaceRootPathV1(request.admittedTarget.rootPath)) {
+            throw authorityError('relationship_definition_conflict', 'The prepared Sync endpoint conflicts with the admitted effect');
+          }
+        }
+        return result;
+      };
       const admittedMachineId = request.admittedTarget?.machineId ?? workspace.machineId.trim();
       if (admittedMachineId === localMachineId) {
         const result = await authority.prepareBootstrapHere(wireRequest, request.signal, context);
-        return { ...result, ownershipHandles: [await authority.getPreparedBootstrapOwnership(wireRequest)] };
+        return bindPreparedTarget({ ...result, ownershipHandles: [await authority.getPreparedBootstrapOwnership(wireRequest)] });
       }
       if (context?.callerInputAuthorization) {
         throw authorityError('workspace_sync_update_required', 'The original requester target transport is unavailable');
       }
-      return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(await callMachineRpc({
+      return bindPreparedTarget(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(await callMachineRpc({
         machineId: admittedMachineId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
         request: wireRequest,
         ...(request.signal ? { signal: request.signal } : {}),
-      }));
+      })));
     },
 
     releaseBootstrapAtTarget: async (request, context) => {

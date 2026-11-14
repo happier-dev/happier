@@ -96,7 +96,7 @@ export function createWorkspaceSyncNativeProcessTestBoundary(options: Readonly<{
             commands.push(command);
             await options.onCommand?.(command);
             if (command.t === 'shutdown') return null;
-            if (command.t === 'list') return { sessions: [...sessions.values()], nextCursor: null };
+            if (command.t === 'list') return { sessions: [...sessions.values()].sort((a, b) => a.identifier < b.identifier ? -1 : a.identifier > b.identifier ? 1 : 0), nextCursor: null };
             if (command.t === 'create') {
               const endpoint = (value: string) => ({ protocol: 'external' as const,
                 host: value.replace('external://', ''), path: '' as const,
@@ -526,7 +526,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
         return { stateIndex: await nativeChanges.waitForChange(input.previousStateIndex, signal) };
       }
       if (input.t === 'shutdown') { if (!options.nativeCarrierRefusal && !options.nativeCarrierHome) endSidecar?.(); return null; }
-      if (input.t === 'list') return { sessions: [...sessions.values()].map(nativeSummary), nextCursor: null };
+      if (input.t === 'list') return { sessions: [...sessions.values()].sort((a, b) => a.identifier < b.identifier ? -1 : a.identifier > b.identifier ? 1 : 0).map(nativeSummary), nextCursor: null };
       if (input.t === 'create') {
         await options.onNativeCreate?.();
         if (options.nativeCreateFailure) throw options.nativeCreateFailure;

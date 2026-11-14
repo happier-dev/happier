@@ -55,8 +55,12 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
     });
     const deliver = async (body: unknown, cursor = 2) => {
         await Promise.all([...server.sockets.sockets.values()].map(socket => new Promise<void>(resolve => {
+            // Revocation can close the real subscriber while it consumes this update.
+            // That terminal transport signal also completes this delivery probe.
+            const complete = () => { socket.off('disconnect', complete); resolve(); };
+            socket.once('disconnect', complete);
             socket.emit('update', { id: 'encryption-change', seq: cursor, createdAt: 2, body });
-            socket.emit('fx56-delivered', resolve);
+            socket.emit('fx56-delivered', complete);
         })));
     };
     return {
