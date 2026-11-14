@@ -6,6 +6,7 @@ import { shallow } from 'zustand/vanilla/shallow';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref } from './deployments/deploymentNavigation';
 
 /**
  * The Projects tree's rows (plan 10 §2/§8, lab p-projects TREE/RULES): one Project's accepted
@@ -64,6 +65,11 @@ export type ProjectsTreeProject = Readonly<{
     lead?: number;
     /** The Environments this Project's Source deploys (pfc-redesign dProject tree), drawn after its checkouts. */
     environments?: readonly ProjectsTreeEnvironment[];
+    /**
+     * A Project that only deploys (no checkout on this Home; lab rdProj: plausible, status): its row opens its
+     * deployments page and its Environments open on the Environment route.
+     */
+    deploymentSource?: Readonly<{ serverId: string; projectSourceId: string }>;
 }>;
 
 /** Where an Environment row opens: the Environment page, the same route Services and the Machine open. */
@@ -207,6 +213,8 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
         const address = { serverId: environment.serverId, projectSourceId: environment.projectSourceId, environmentId: environment.environmentId };
         const expandable = Boolean(environment.machineId);
         const expanded = expandable && context.isOpen(key);
+        // With no checkout to open the Project on, the Environment and its databases open on the Environment route.
+        const routed = opens === null;
         const row: ProjectsTreeRow = {
             key,
             level: 1,
@@ -223,6 +231,7 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
             needsYouStatus: environment.needsYouStatus ?? null,
             selected: environment.environmentId === context.openEnvironmentId,
             environment: address,
+            ...(routed ? { child: { kind: 'href' as const, href: buildDeploymentEnvironmentHref(address) } } : {}),
         };
         if (!expanded) return [row];
         const children = context.children?.get(environment.environmentId) ?? [];
@@ -241,9 +250,33 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
             attention: null,
             selected: false,
             environment: address,
-            child: child.opens,
+            child: routed && child.opens.kind === 'database'
+                ? { kind: 'href', href: buildDeploymentEnvironmentHref({ ...address, database: child.opens.database }) } : child.opens,
         }))];
     });
+}
+
+/** A Project that only deploys: one row that opens its deployments page and discloses its Environments. */
+function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, context: EnvironmentRowsContext): ProjectsTreeRow[] {
+    const environments = project.environments ?? [];
+    if (!project.deploymentSource || environments.length === 0) return [];
+    const row: ProjectsTreeRow = {
+        key: project.key,
+        level: 0,
+        kind: 'project',
+        title: project.name,
+        titleQualifier: project.teamLabel ?? null,
+        subtitle: null,
+        glyph: 'project',
+        expandable: true,
+        expanded: open,
+        refId: null,
+        opens: null,
+        attention: open ? null : mostUrgent(environments),
+        selected: false,
+        child: { kind: 'href', href: buildDeploymentProjectHref(project.deploymentSource) },
+    };
+    return open ? [row, ...environmentRows(project, context)] : [row];
 }
 
 function holdsEnvironment(project: ProjectsTreeProject, openEnvironmentId: string | null | undefined): boolean {
@@ -333,9 +366,12 @@ export function buildProjectsTreeRows(input: Readonly<{
 
     for (const project of input.projects) {
         const checkouts = project.checkouts;
-        if (checkouts.length === 0) continue;
-        const environments = project.environments ?? [];
         onEnvironment = holdsEnvironment(project, input.openEnvironmentId);
+        if (checkouts.length === 0) {
+            rows.push(...deploymentProjectRows(project, isOpen(project.key, onEnvironment), environmentContext));
+            continue;
+        }
+        const environments = project.environments ?? [];
         const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || onEnvironment;
         const machines = groupByMachine(checkouts);
 
@@ -614,7 +650,12 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
         isOpen: (key) => input.collapsedKeys?.has(key) !== true && input.expandedKeys.has(key), children: input.environmentChildren };
     for (const project of input.projects) {
         const checkouts = project.checkouts;
-        if (checkouts.length === 0) continue;
+        if (checkouts.length === 0) {
+            const open = input.collapsedKeys?.has(project.key) === true ? false
+                : input.expandedKeys.has(project.key) || holdsEnvironment(project, input.openEnvironmentId);
+            rows.push(...deploymentProjectRows(project, open, environmentContext));
+            continue;
+        }
         const machines = groupByMachine(checkouts);
         const environments = project.environments ?? [];
         const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || holdsEnvironment(project, input.openEnvironmentId);

@@ -68,6 +68,11 @@ export function buildDeploymentRepositoryDraftHref(input: Readonly<{ serverId: s
         + (input.machineId ? `&deployMachine=${encodeURIComponent(input.machineId)}` : '');
 }
 
+/** A Project's own deployments page (its Environments), by its Source: the Services column's and the Projects tree's Project row. */
+export function buildDeploymentProjectHref(input: Readonly<{ serverId: string; projectSourceId: string }>): string {
+    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}`;
+}
+
 /** The same address as a link path, for consumers that hold a path rather than a typed route. */
 export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddress): string {
     const { params } = deploymentEnvironmentRoute(input);

@@ -25,7 +25,7 @@ import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
-import { useProjectsTreeEnvironments, useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
+import { useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
 import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
@@ -110,7 +110,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     // The title row's magnifier narrows the tree with the phone page's own filter (F4, owner 1538 #01).
     const [query, setQuery] = React.useState('');
     // Each Project's Environments join its row (pfc-redesign dProject tree): the Project → Environment link.
-    const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
+    const { treeProjects } = model;
     const openEnvironmentId = useProjectsTreeOpenEnvironmentId();
     // What each opened Environment runs (services, databases), read only while it is open.
     const [environmentChildren, publishEnvironmentChildren] = useProjectsTreeEnvironmentChildren();

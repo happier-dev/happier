@@ -281,6 +281,31 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             .toEqual(['billing-api v', '  Production v', '    api', '    billing-db', '  Staging']);
     });
 
+    it('lists a Project that only deploys (no checkout on this Home) with its Environments, each opening its own page (lab rdProj: plausible, status)', () => {
+        const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'src-q', environmentId: 'e1', title: 'Production',
+            titleQualifier: null, subtitle: 'NLDW6', attention: 'needs-you', machineId: 'm1' };
+        const demo: ProjectsTreeProject = { key: 'deployments:src-q', name: 'Billing demo', checkouts: [], environments: [production],
+            deploymentSource: { serverId: 'home', projectSourceId: 'src-q' } };
+        const collapsed = buildProjectsTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set() });
+        expect(shape(collapsed)).toEqual(['Billing demo >']);
+        expect(collapsed[0]).toMatchObject({ kind: 'project', refId: null, attention: 'needs-you' });
+        expect(projectsTreeRowOpenTarget(collapsed[0]!)).toBeNull();
+        expect(projectsTreeRowChild(collapsed[0]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home' });
+        const children = new Map<string, readonly ProjectsTreeEnvironmentChild[]>([['e1', [
+            { key: 'database:db', title: 'db', kind: 'database', subtitle: 'PostgreSQL 16', opens: { kind: 'database', database: 'db' } },
+        ]]]);
+        const open = buildProjectsTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set(['deployments:src-q', 'deployments:src-q/environment/e1']),
+            environmentChildren: children });
+        expect(shape(open)).toEqual(['Billing demo v', '  Production v', '    db']);
+        // With no checkout to open the Project on, an Environment and its database open on the Environment route.
+        expect(projectsTreeRowChild(open[1]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home&deploymentEnvironment=e1' });
+        expect(projectsTreeRowChild(open[2]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home&deploymentEnvironment=e1&deploymentService=db' });
+        // A deploy-only Project with nothing deployed has nothing to list.
+        expect(buildProjectsTreeRows({ projects: [{ ...demo, environments: [] }], openRefId: null, expandedKeys: new Set() })).toEqual([]);
+        expect(shape(buildProjectsPhoneTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set(['deployments:src-q']),
+            describe: { checkoutCount: String, machineCount: String, offlineCount: String } }))).toEqual(['Billing demo v', '  Production >']);
+    });
+
     it('names what an Environment runs from its Machine\'s services and its declared databases, services first', () => {
         const children = buildProjectsTreeEnvironmentChildren({
             services: [

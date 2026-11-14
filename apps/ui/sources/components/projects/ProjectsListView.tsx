@@ -22,7 +22,6 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
 import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
-import { useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
 import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
@@ -65,7 +64,7 @@ export const ProjectsListView = React.memo(() => {
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);
     const [query, setQuery] = React.useState('');
     // The same Environments the column lists under each Project (pfc-redesign dProject tree).
-    const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
+    const { treeProjects } = model;
     const [environmentChildren, publishEnvironmentChildren] = useProjectsTreeEnvironmentChildren();
     const router = useRouter();
     const openHref = React.useCallback((href: string) => { router.push(href as never); }, [router]);

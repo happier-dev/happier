@@ -28,6 +28,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { buildProjectsTreeHiddenItems, buildProjectsTreeProjects, type ProjectsTreeProject } from './projectsTreeRows';
+import { useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
 import { storage } from '@/sync/domains/state/storage';
 import { listSessionFolders } from '@/utils/sessions/recentPaths';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
@@ -465,18 +466,25 @@ export function useProjectsListModel() {
     const staleRows = React.useMemo((): Readonly<{ asOf: number | null }> | null => (
         hasAnyProjects && !rowsUnconfirmed && censusStatus === 'error' ? { asOf: lastReadyAtMs } : null
     ), [censusStatus, hasAnyProjects, lastReadyAtMs, rowsUnconfirmed]);
-    const projectCount = groups.projectGroups.length;
+    // Each Project's Environments, and the Projects that only deploy (no checkout here), join the list once, here:
+    // the tree, the count and "no Projects yet" all read this one list (pfc-redesign dProject tree).
+    const listedProjects = useProjectsTreeEnvironments(treeProjection.treeProjects);
+    const deployOnlyCount = React.useMemo(() => listedProjects.filter(project => project.checkouts.length === 0).length, [listedProjects]);
+    const projectCount = groups.projectGroups.length + deployOnlyCount;
     // "Saved, not open" is only true once the census is complete and its Machines are known; until then every
     // Source would look unopened, so the group waits with the tree.
     const saved = censusComplete && machinesReady ? composition.saved : null;
     // The one "no Projects yet" fact both hosts say: nothing open, nothing hidden, no saved Source to offer.
-    const noProjects = !hasAnyProjects && !rowsUnconfirmed && !saved?.items.length;
+    const noProjects = !hasAnyProjects && !rowsUnconfirmed && !saved?.items.length && deployOnlyCount === 0;
 
     return {
         ...composition,
         saved,
         noProjects,
         ...treeProjection,
+        treeProjects: listedProjects,
+        /** Projects that only deploy (no checkout on this Home), listed with their Environments. */
+        deployOnlyCount,
         /** The refs behind `treeProjects`: what a reader of live checkout facts subscribes for. */
         checkoutRefs: treeRefs,
         newSessionHere,

@@ -45,8 +45,8 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
     const openNewApp = useOpenNewApp(cloneRepository);
     // A saved Source leads only while it is all there is; once Projects exist the page says what its
     // copy says ("choose one from the list, or add one") and its one action is the same "+".
-    const firstSaved = model.hasAnyProjects ? null : model.saved?.items[0] ?? null;
-    const hasContent = model.hasAnyProjects || Boolean(model.saved?.items.length);
+    const firstSaved = model.hasAnyProjects || model.deployOnlyCount > 0 ? null : model.saved?.items[0] ?? null;
+    const hasContent = model.hasAnyProjects || model.deployOnlyCount > 0 || Boolean(model.saved?.items.length);
     const rowsRetry = useProjectRowsRetry();
     if (model.rowsUnconfirmed) {
         return (
