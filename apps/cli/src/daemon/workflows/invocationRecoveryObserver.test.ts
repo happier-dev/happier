@@ -491,7 +491,7 @@ describe('exact Workflow recovery observation', () => {
           cancel: async () => { throw new Error('Recovery must not stop healthy startup'); },
           wait: async () => { throw new Error('Startup is terminal'); } },
       });
-      const observed = await observe({ run: { id: runId }, index: { id: invocationId },
+      const observed = await observe({ run: { id: runId }, index: { id: invocationId, lifecycle: 'running' },
         progress: { ...progress, execution: { kind: 'action', actionId: operation.actionId,
           actionRequestId: creationKey, localInputId: creationKey, input: { creationKey }, output: { operation },
           awaitedOperations: [{ key: 'startup', serverId: 'home', machineId: 'worker', operationId: operation.operationId }] } },

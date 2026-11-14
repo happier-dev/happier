@@ -1,4 +1,5 @@
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol';
+import assert from 'node:assert/strict';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -10,6 +11,7 @@ import { buildWorkflowActionContext } from './workflowActionContext';
 import { createProductionFreshWorkflowSessionConversation, type WorkflowSessionStartup } from './sessionStepExecutor';
 import type { WorkflowActionExecutor } from './coordinator';
 import { runObservedWorkflowSessionStartup } from './workflowSessionStartup';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 
 /** Real installed Action/operation owners; callers replace only Home and Machine boundaries. */
 export function createAdmittedWorkflowSessionHost(
@@ -37,10 +39,10 @@ export function createAdmittedWorkflowSessionHost(
       serverId: deps.serverId, machineId: deps.machineId, observeExecution: operations.observeExecution, rpcContext: {},
       transport: () => ({ spawn: (request, options) => callExactMachineRpc({ credentials: deps.credentials,
         machineId: deps.machineId, method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
-        resolveSpawnSessionByNonce: (spawnNonce, options) => callExactMachineRpc({ credentials: deps.credentials,
+        resolveSpawnSessionByNonce: async (spawnNonce, options) => normalizeSpawnSessionNonceResolution(await callExactMachineRpc({ credentials: deps.credentials,
           machineId: deps.machineId, method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
           request: { spawnNonce, ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) },
-          ...(options?.signal ? { signal: options.signal } : {}) }) }),
+          ...(options?.signal ? { signal: options.signal } : {}) })) }),
       observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
         ...(options.waitForTerminal ? { waitForTerminal: true } : {}),
         ...(options.includeSetupReview ? { includeSetupReview: true } : {}) }, options.signal ? { signal: options.signal } : undefined),
@@ -68,18 +70,20 @@ export function runAdmittedObservedWorkflowSessionStartup(
 ): ReturnType<typeof runObservedWorkflowSessionStartup> {
   const agentTarget = input.request.agentTarget ?? { kind: 'agent' as const,
     identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+  const directory = input.request.directory;
+  assert(directory !== undefined, 'Workflow startup fixtures require an explicit directory');
   return runObservedWorkflowSessionStartup({ ...input,
     actionAdmission: input.actionAdmission ?? (input.retainedOperation ? undefined : {
       input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
         creationKey: input.creationKey, agentTarget,
         executionTarget: { serverId: host.serverId, machineId: host.machineId },
-        directory: { kind: 'path', path: input.request.directory },
+        directory: { kind: 'path', path: directory },
       })),
       context: { surface: 'agent', authority: 'account_automation', approvalProfileId: 'builtin:full-trust',
         callerPermissionMode: 'yolo',
         sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
         agentStartContext: { caller: { kind: 'originless', runId: 'workflow-test', runDepth: 0 },
-          baseline: { machineId: host.machineId, directory: input.request.directory }, roles: {},
+          baseline: { machineId: host.machineId, directory }, roles: {},
           ledSubtreeSessionIds: [], callerPermissionCeiling: 'yolo', workDepthLimit: 1 },
         actionCaller: { kind: 'workflowRun', runId: 'workflow-test', authorization: {
           principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } },
