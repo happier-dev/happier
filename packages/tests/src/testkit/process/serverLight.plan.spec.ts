@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -6,7 +7,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   hasServerSharedDepsOutputs,
-  hasServerGeneratedProviderOutputs,
   ensureServerGeneratedProviderOutputs,
   renderServerLightSqliteDatabaseUrl,
   resolveServerLightDatabaseUrlEnv,
@@ -102,7 +102,7 @@ describe("startServerLight planning helpers", () => {
     ["postgres", "start"],
     ["mysql", "start"],
   ])("uses the expected start command for %s", (provider, expectedScript) => {
-    expect(resolveStartCommandArgs(provider)).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), expectedScript]);
+    expect(resolveStartCommandArgs(provider)).toEqual(["--filter", resolveServerAppWorkspaceName(), "run", "--silent", expectedScript]);
   });
 
   it("pins TSX_TSCONFIG_PATH for workspace-driven server launches", () => {
@@ -111,15 +111,15 @@ describe("startServerLight planning helpers", () => {
       env: {},
     });
 
-    expect(launch.command).toMatch(/yarn(?:\.cmd)?$/);
-    expect(launch.args).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), "start:light"]);
+    expect(launch.command).toMatch(/pnpm(?:\.cmd)?$/);
+    expect(launch.args).toEqual(["--filter", resolveServerAppWorkspaceName(), "run", "--silent", "start:light"]);
     expect(launch.cwd.length).toBeGreaterThan(0);
     expect(launch.env).toMatchObject({
-      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.json"),
+      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.exec.json"),
     });
     const tsconfigPath = launch.env?.TSX_TSCONFIG_PATH;
     expect(tsconfigPath).toBeDefined();
-    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.json");
+    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.exec.json");
   });
 
   it.each<[TestDbProvider, string]>([
@@ -133,7 +133,7 @@ describe("startServerLight planning helpers", () => {
   });
 
   it("builds shared server dependencies before startup", () => {
-    expect(resolveSharedDepsBuildArgs()).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), "build:shared"]);
+    expect(resolveSharedDepsBuildArgs()).toEqual(["--filter", resolveServerAppWorkspaceName(), "run", "--silent", "build:shared"]);
   });
 
   it("serializes shared deps builds across concurrent callers", async () => {
@@ -256,179 +256,9 @@ describe("startServerLight planning helpers", () => {
 	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
 	  });
 
-  it("detects when generated provider outputs are current", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-"));
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(false);
-
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "mysql"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "generated", "mysql-client"), { recursive: true });
-    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
-
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(
-      resolve(rootDir, "apps", "server", "prisma", "mysql", "schema.prisma"),
-      [
-        "datasource db { provider = \"mysql\" }",
-        "model PublicSessionShare {",
-        "  id String @id",
-        "  tokenHash Bytes @db.VarBinary(32) @unique",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "index.js"), "export {};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
-
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(
-      resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"),
-      [
-        "datasource db { provider = \"mysql\" }",
-        "model PublicSessionShare {",
-        "  id String @id",
-        "  tokenHash Bytes @unique @db.VarBinary(32)",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
-
-    expect(hasServerGeneratedProviderOutputs(rootDir, "pglite")).toBe(true);
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
-    expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(true);
-
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"), "stale mysql\n", "utf8");
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
-    expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(false);
-
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "changed\n", "utf8");
-    expect(hasServerGeneratedProviderOutputs(rootDir, "pglite")).toBe(true);
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(false);
-  });
-
-  it("accepts generated provider schemas with reordered Prisma model attributes", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-reordered-model-attributes-"));
-    const sourceSchema = [
-      "datasource db { provider = \"postgresql\" }",
-      "model PluginPermissionGrant {",
-      "  id String @id",
-      "  accountId String",
-      "  activeIdentityKey String",
-      "  pluginId String",
-      "  @@index([accountId, pluginId], map: \"plugin_permission_grants_scope_idx\")",
-      "  @@unique([accountId, activeIdentityKey], map: \"plugin_permission_grants_active_identity_key\")",
-      "}",
-      "",
-    ].join("\n");
-    const generatedSchema = [
-      "datasource db { provider = \"postgresql\" }",
-      "model PluginPermissionGrant {",
-      "  id String @id",
-      "  accountId String",
-      "  activeIdentityKey String",
-      "  pluginId String",
-      "  @@unique([accountId, activeIdentityKey], map: \"plugin_permission_grants_active_identity_key\")",
-      "  @@index([accountId, pluginId], map: \"plugin_permission_grants_scope_idx\")",
-      "}",
-      "",
-    ].join("\n");
-
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "mysql"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
-    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
-
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), generatedSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
-
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
-  });
-
-  it("accepts generated provider schemas when Prisma removes blank lines between model attributes", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-model-attribute-spacing-"));
-    const sourceSchema = [
-      "datasource db { provider = \"postgresql\" }",
-      "model ProviderUsageRecord {",
-      "  id String @id",
-      "  accountId String",
-      "  providerId String",
-      "  @@unique([accountId, id])",
-      "",
-      "  @@index([accountId, providerId])",
-      "}",
-      "",
-    ].join("\n");
-    const generatedSchema = sourceSchema.replace(
-      "  @@unique([accountId, id])\n\n  @@index([accountId, providerId])",
-      "  @@unique([accountId, id])\n  @@index([accountId, providerId])",
-    );
-
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
-    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
-
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), generatedSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
-
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
-  });
-
-  it("accepts generated provider schemas when Prisma moves a documented model attribute with the attribute block", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-documented-model-attribute-"));
-    const sourceSchema = [
-      "datasource db { provider = \"postgresql\" }",
-      "model AutomationRun {",
-      "  id String @id",
-      "  accountId String",
-      "  occurrenceKey String?",
-      "  @@index([accountId])",
-      "  /// The nullable occurrence key owns idempotent rejoin.",
-      "  @@unique([accountId, occurrenceKey])",
-      "}",
-      "",
-    ].join("\n");
-    const generatedSchema = [
-      "datasource db { provider = \"postgresql\" }",
-      "model AutomationRun {",
-      "  id String @id",
-      "  accountId String",
-      "  occurrenceKey String?",
-      "  /// The nullable occurrence key owns idempotent rejoin.",
-      "  @@unique([accountId, occurrenceKey])",
-      "  @@index([accountId])",
-      "}",
-      "",
-    ].join("\n");
-
-    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
-    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
-    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
-
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), sourceSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
-    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), generatedSchema, "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
-
-    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
-  });
-
+  // Freshness and Prisma formatting belong to apps/server/scripts/generateClients.spec.ts.
+  // This harness tests provider preparation/serialization below; the composed
+  // Session journey consumes real producer-generated clients.
   it("serializes generation and rechecks each requested provider", async () => {
     const generated = new Set<TestDbProvider>();
     const calls: TestDbProvider[] = [];
@@ -441,12 +271,12 @@ describe("startServerLight planning helpers", () => {
     await Promise.all([
       ensureServerGeneratedProviderOutputs({
         dbProvider: "sqlite",
-        hasOutputs: (provider) => generated.has(provider),
+        hasOutputs: async (provider) => generated.has(provider),
         generate,
       }),
       ensureServerGeneratedProviderOutputs({
         dbProvider: "postgres",
-        hasOutputs: (provider) => generated.has(provider),
+        hasOutputs: async (provider) => generated.has(provider),
         generate,
       }),
     ]);
@@ -550,10 +380,22 @@ describe("startServerLight planning helpers", () => {
       ]),
     );
     expect(launch.env).toMatchObject({
-      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.json"),
+      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.exec.json"),
     });
     const tsconfigPath = launch.env?.TSX_TSCONFIG_PATH;
     expect(tsconfigPath).toBeDefined();
-    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.json");
+    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.exec.json");
+  });
+
+  it("loads server runtime package exports instead of declaration-only modules", () => {
+    const launch = resolveServerStartLaunchSpec({
+      provider: "sqlite",
+      env: { HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: "1" },
+    });
+    const output = execFileSync(launch.command, [
+      ...launch.args.slice(0, -1), "--input-type=module", "--eval",
+      'import { PUBLIC_PROFILE_TYPOGRAPHY } from "./sources/app/account/profile/render/publicProfileEnvironment.ts"; console.log(typeof PUBLIC_PROFILE_TYPOGRAPHY.body.fontSize);',
+    ], { cwd: launch.cwd, env: { ...process.env, ...launch.env }, encoding: "utf8" });
+    expect(output.trim()).toBe("number");
   });
 });

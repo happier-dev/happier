@@ -10,6 +10,7 @@ import {
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 
+import { areRequestedPrismaOutputsCurrent, type BuildDbProvider } from '../../../../../apps/server/scripts/generateClients';
 import { repoRootDir } from '../paths';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
 import { terminateProcessTreeByPid } from './processTree';
@@ -348,7 +349,7 @@ function resolveServerWorkspaceDir(rootDir: string): string {
 }
 
 function resolveServerTsconfigPath(rootDir: string): string {
-  return resolve(resolveServerWorkspaceDir(rootDir), 'tsconfig.json');
+  return resolve(resolveServerWorkspaceDir(rootDir), 'tsconfig.exec.json');
 }
 
 function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
@@ -383,202 +384,13 @@ export async function withServerSharedDepsBuildLock<T>(
   });
 }
 
-function resolveServerGenerateProvidersSourcePaths(rootDir: string): Readonly<{
-  postgresSchema: string;
-  sqliteSchema: string;
-  mysqlSchema: string;
-}> {
-  const serverDir = resolveServerWorkspaceDir(rootDir);
-  return {
-    postgresSchema: resolve(serverDir, 'prisma', 'schema.prisma'),
-    sqliteSchema: resolve(serverDir, 'prisma', 'sqlite', 'schema.prisma'),
-    mysqlSchema: resolve(serverDir, 'prisma', 'mysql', 'schema.prisma'),
-  };
-}
-
-function resolveServerGenerateProvidersOutputPaths(rootDir: string): Readonly<{
-  postgresDefault: string;
-  postgresSchema: string;
-  sqliteIndex: string;
-  sqliteSchema: string;
-  mysqlIndex: string;
-  mysqlSchema: string;
-}> {
-  const serverDir = resolveServerWorkspaceDir(rootDir);
-  return {
-    postgresDefault: resolve(rootDir, 'node_modules', '.prisma', 'client', 'default.js'),
-    postgresSchema: resolve(rootDir, 'node_modules', '.prisma', 'client', 'schema.prisma'),
-    sqliteIndex: resolve(serverDir, 'generated', 'sqlite-client', 'index.js'),
-    sqliteSchema: resolve(serverDir, 'generated', 'sqlite-client', 'schema.prisma'),
-    mysqlIndex: resolve(serverDir, 'generated', 'mysql-client', 'index.js'),
-    mysqlSchema: resolve(serverDir, 'generated', 'mysql-client', 'schema.prisma'),
-  };
-}
-
-function readFileIfExists(filePath: string): string | null {
-  try {
-    return readFileSync(filePath, 'utf8');
-  } catch {
-    return null;
-  }
-}
-
-function splitPrismaSchemaLineTokens(line: string): string[] {
-  const tokens: string[] = [];
-  let current = "";
-  let depth = 0;
-  let quote: string | null = null;
-  let escaped = false;
-
-  const pushCurrent = () => {
-    if (current.length > 0) {
-      tokens.push(current);
-      current = "";
-    }
-  };
-
-  for (const char of line) {
-    if (quote) {
-      current += char;
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) quote = null;
-      continue;
-    }
-
-    if (char === "\"" || char === "'") {
-      quote = char;
-      current += char;
-      continue;
-    }
-
-    if (char === "(" || char === "[" || char === "{") {
-      depth += 1;
-      current += char;
-      continue;
-    }
-
-    if (char === ")" || char === "]" || char === "}") {
-      depth = Math.max(0, depth - 1);
-      current += char;
-      continue;
-    }
-
-    if (/\s/.test(char) && depth === 0) {
-      pushCurrent();
-      continue;
-    }
-
-    current += char;
-  }
-
-  pushCurrent();
-  return tokens;
-}
-
-function normalizePrismaFieldAttributeOrder(line: string): string {
-  const tokens = splitPrismaSchemaLineTokens(line);
-  if (tokens.length < 4) return line;
-  const attributes = tokens.slice(2);
-  if (!attributes.every((token) => token.startsWith("@") && !token.startsWith("@@"))) {
-    return line;
-  }
-  return [...tokens.slice(0, 2), ...[...attributes].sort()].join(" ");
-}
-
-function normalizePrismaModelAttributeOrder(lines: string[]): string[] {
-  const result: string[] = [];
-  let pendingModelAttributes: string[][] = [];
-  const flush = () => {
-    if (pendingModelAttributes.length === 0) return;
-    pendingModelAttributes.sort((left, right) => left.at(-1)!.localeCompare(right.at(-1)!));
-    result.push(...pendingModelAttributes.flat());
-    pendingModelAttributes = [];
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (line === "" && pendingModelAttributes.length > 0) {
-      continue;
-    }
-    if (line.startsWith("@@")) {
-      pendingModelAttributes.push([line]);
-      continue;
-    }
-    if (line.startsWith("///")) {
-      const documentedAttribute = [line];
-      let nextIndex = index + 1;
-      while (nextIndex < lines.length && lines[nextIndex]!.startsWith("///")) {
-        documentedAttribute.push(lines[nextIndex]!);
-        nextIndex += 1;
-      }
-      if (nextIndex < lines.length && lines[nextIndex]!.startsWith("@@")) {
-        documentedAttribute.push(lines[nextIndex]!);
-        pendingModelAttributes.push(documentedAttribute);
-        index = nextIndex;
-        continue;
-      }
-    }
-    flush();
-    result.push(line);
-  }
-  flush();
-  return result;
-}
-
-function normalizeGeneratedSchemaForFreshnessCheck(input: string): string {
-  const normalizedLines = input
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => normalizePrismaFieldAttributeOrder(line.trim().replace(/\s+/g, ' ')));
-
-  return normalizePrismaModelAttributeOrder(normalizedLines)
-    .join('\n')
-    .trim();
-}
-
-export function hasServerGeneratedProviderOutputs(rootDir: string, provider: TestDbProvider): boolean {
-  const sourcePaths = resolveServerGenerateProvidersSourcePaths(rootDir);
-  const outputPaths = resolveServerGenerateProvidersOutputPaths(rootDir);
-  if (
-    !existsSync(outputPaths.postgresDefault)
-  ) {
-    return false;
-  }
-  if (provider === 'sqlite' && !existsSync(outputPaths.sqliteIndex)) {
-    return false;
-  }
-  if (provider === 'mysql' && !existsSync(outputPaths.mysqlIndex)) {
-    return false;
-  }
-
-  const postgresSource = readFileIfExists(sourcePaths.postgresSchema);
-  const postgresGenerated = readFileIfExists(outputPaths.postgresSchema);
-  if (!postgresSource || !postgresGenerated) {
-    return false;
-  }
-  const sqliteRequired = provider === 'sqlite';
-  const mysqlRequired = provider === 'mysql';
-  const sqliteSource = sqliteRequired ? readFileIfExists(sourcePaths.sqliteSchema) : null;
-  const mysqlSource = mysqlRequired ? readFileIfExists(sourcePaths.mysqlSchema) : null;
-  const sqliteGenerated = sqliteRequired ? readFileIfExists(outputPaths.sqliteSchema) : null;
-  const mysqlGenerated = mysqlRequired ? readFileIfExists(outputPaths.mysqlSchema) : null;
-  if (sqliteRequired && (!sqliteSource || !sqliteGenerated)) {
-    return false;
-  }
-  if (mysqlRequired && (!mysqlSource || !mysqlGenerated)) {
-    return false;
-  }
-
-  return normalizeGeneratedSchemaForFreshnessCheck(postgresSource) === normalizeGeneratedSchemaForFreshnessCheck(postgresGenerated)
-    && (!sqliteRequired || normalizeGeneratedSchemaForFreshnessCheck(sqliteSource!) === normalizeGeneratedSchemaForFreshnessCheck(sqliteGenerated!))
-    && (!mysqlRequired || normalizeGeneratedSchemaForFreshnessCheck(mysqlSource!) === normalizeGeneratedSchemaForFreshnessCheck(mysqlGenerated!));
+export async function hasServerGeneratedProviderOutputs(rootDir: string, provider: TestDbProvider): Promise<boolean> {
+  // The generator owns freshness, including Prisma's formatting and source stamps.
+  return areRequestedPrismaOutputsCurrent({
+    serverRoot: resolveServerWorkspaceDir(rootDir),
+    providers: new Set<BuildDbProvider>(provider === 'sqlite' ? ['postgres', 'sqlite']
+      : provider === 'mysql' ? ['postgres', 'mysql'] : ['postgres']),
+  });
 }
 
 function resolveServerSourceEntrypoint(params: { rootDir: string; provider: TestDbProvider }): string {
@@ -825,17 +637,17 @@ export function shouldSkipServerGenerateProviders(env: NodeJS.ProcessEnv): boole
 
 export async function ensureServerGeneratedProviderOutputs(params: Readonly<{
   dbProvider: TestDbProvider;
-  hasOutputs: (provider: TestDbProvider) => boolean;
+  hasOutputs: (provider: TestDbProvider) => boolean | Promise<boolean>;
   generate: (provider: TestDbProvider) => Promise<void>;
 }>): Promise<void> {
-  while (!params.hasOutputs(params.dbProvider)) {
+  while (!await params.hasOutputs(params.dbProvider)) {
     if (sharedGenerateProvidersPromise) {
       await sharedGenerateProvidersPromise;
       continue;
     }
 
-    const generation = params.generate(params.dbProvider).then(() => {
-      if (!params.hasOutputs(params.dbProvider)) {
+    const generation = params.generate(params.dbProvider).then(async () => {
+      if (!await params.hasOutputs(params.dbProvider)) {
         throw new Error(`Generated server provider outputs missing or stale after generate:providers: ${repoRootDir()}`);
       }
     });
