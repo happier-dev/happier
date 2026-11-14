@@ -164,7 +164,8 @@ describe('EmbeddedSessionProvider', () => {
             ...createToolCallMessageFixture().tool, id: 'call-approval', name: 'mcp__happier__action_execute',
             input: { actionId: approval.actionId, input: approval.actionArgs },
         } });
-        storage.setState({ settings: { ...storage.getState().settings, transcriptGroupingMode: 'linear',
+        // This fixture publishes a hydrated Account; approval projections wait for that readiness.
+        storage.setState({ isDataReady: true, settings: { ...storage.getState().settings, transcriptGroupingMode: 'linear',
                 transcriptGroupToolCalls: false, toolViewTimelineChromeMode: 'cards' },
             sessions: { s1: { ...session, active: false } }, sessionMessages: {
             s1: createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message } }),
