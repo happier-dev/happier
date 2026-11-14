@@ -257,3 +257,28 @@ describe('the Check detail names what it checks from the inventory’s definitio
     expect(serviceCheckShownDefinition(facts([]), 'a')).toEqual({ kind: 'unavailable' });
   });
 });
+
+describe('Services → Checks rows (lab svcChk: named by what they check, Every, Last result)', () => {
+  it('names a row by the target its definition checks, with its kind, cadence and latest result', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const facts = serviceCheckListFacts({
+      native: { name: 'Workflow triggers' },
+      definitionFacts: { kind: 'available', checks: [{ checkId: 'c1', name: 'HTTP check', targetLabel: 'shop.example/ready', periodMs: 300_000, domainId: null }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: { status: 'down', observedAt: today, latencyMs: 1200, evidence: { kind: 'none' } } as never }] },
+    } as never);
+    expect(facts.title).toBe('shop.example/ready');
+    expect(facts.kind).toBe('HTTP check');
+    expect(facts.every).toMatch(/5/);
+    expect(facts.lastResult).toMatch(/1[.,]2/);
+    expect(facts.lastTone).toBe('danger');
+  });
+
+  it('keeps the saved name and says nothing it cannot read while the definition is loading or unavailable', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    for (const kind of ['loading', 'unavailable'] as const) {
+      const facts = serviceCheckListFacts({ native: { name: 'Workflow triggers' }, definitionFacts: { kind },
+        lastResults: { kind: 'neverObserved' } } as never);
+      expect(facts).toMatchObject({ title: 'Workflow triggers', kind: null, every: null, lastResult: null, lastTone: null });
+    }
+  });
+});

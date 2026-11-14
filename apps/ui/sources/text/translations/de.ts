@@ -18710,6 +18710,8 @@ settingsSession: {
               noChecksBody: "Ein Check meldet, wenn eine App oder Adresse nicht mehr antwortet. Füge einen bei den Domains einer Umgebung oder einem beobachteten Dienst hinzu.",
               noWatched: "Noch nichts beobachtet",
               noWatchedBody: "Dienste, die schon auf einer Maschine laufen, erscheinen hier, sobald du sie in ihrem Dienste-Tab beobachtest.",
+              columnEvery: "Alle",
+              columnAddress: "Adresse",
               needYou: ({ count }: { count: number }) => (count === 1 ? '1 braucht dich' : `${count} brauchen dich`),
               columnEnvironment: "Umgebung",
               columnLastDeploy: "Letztes Deployment",

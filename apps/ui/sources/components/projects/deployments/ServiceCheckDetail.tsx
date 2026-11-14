@@ -41,29 +41,17 @@ import {
   serviceCheckStatusWord,
   type ServiceCheckDay,
   type ServiceCheckSettings,
+  formatServiceCheckLatency,
+  formatServiceCheckPeriod,
+  formatServiceCheckUnit,
 } from './serviceCheckPresentation';
 
 const k = 'projects.deployments.services' as const;
 const STRIP_ROWS = [{ id: 'days', label: '' }] as const;
 
-const unit = (
-  value: number,
-  name: 'millisecond' | 'second' | 'minute' | 'hour',
-) =>
-  new Intl.NumberFormat(getPreferredLanguage(), {
-    style: 'unit',
-    unit: name,
-    unitDisplay: 'short',
-    maximumFractionDigits: 1,
-  }).format(value);
-const formatLatency = (ms: number) =>
-  ms < 1000 ? unit(Math.round(ms), 'millisecond') : unit(ms / 1000, 'second');
-const formatPeriod = (ms: number) =>
-  ms % 3_600_000 === 0
-    ? unit(ms / 3_600_000, 'hour')
-    : ms % 60_000 === 0
-      ? unit(ms / 60_000, 'minute')
-      : unit(ms / 1000, 'second');
+const unit = formatServiceCheckUnit;
+const formatLatency = formatServiceCheckLatency;
+const formatPeriod = formatServiceCheckPeriod;
 const formatClock = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), {
     hour: 'numeric',

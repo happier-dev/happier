@@ -18708,6 +18708,8 @@ settingsSession: {
           noChecksBody: "Uma verificação avisa quando um app ou endereço para de responder. Adicione uma nos Domínios de um ambiente ou em um serviço observado.",
           noWatched: "Nada observado ainda",
           noWatchedBody: "Serviços que já rodam em uma Máquina aparecem aqui quando você os observa na aba Serviços dela.",
+          columnEvery: "A cada",
+          columnAddress: "Endereço",
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 precisa de você' : `${count} precisam de você`),
           columnEnvironment: "Ambiente",
           columnLastDeploy: "Último deploy",

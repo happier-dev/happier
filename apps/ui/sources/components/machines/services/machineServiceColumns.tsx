@@ -89,7 +89,12 @@ export function machineServiceColumnFields<Item>(
 const NO_RUN_FACTS = Object.freeze({ memoryBytes: null, upMs: null });
 
 /** The list row's second line: the state only when it needs the person, then what the service is. */
-export function MachineServiceByline(props: Readonly<{ row: MachineServiceRowV1; runFactsInColumns: boolean }>) {
+export function MachineServiceByline(props: Readonly<{
+  row: MachineServiceRowV1;
+  runFactsInColumns: boolean;
+  /** A State column says the state (Services → Watched): the line keeps only what the service is. */
+  stateInColumn?: boolean;
+}>) {
   const { row } = props;
   const { theme } = useUnistyles();
   const identity = machineServiceIdentityLine(row);
@@ -105,7 +110,7 @@ export function MachineServiceByline(props: Readonly<{ row: MachineServiceRowV1;
   const native = [identity, health, memory, up].filter(Boolean).join(' · ') || null;
   // A stop the person asked for reads as that stop, quiet (lab `services/states` "Stopped by you"), never as a failure.
   const expectedStop = machineServiceExpectedStop(row);
-  const speaks = expectedStop !== null || machineServiceStateSpeaks(row.state);
+  const speaks = props.stateInColumn !== true && (expectedStop !== null || machineServiceStateSpeaks(row.state));
   if (!speaks && !native) return null;
   return (
     // Bounded to the row's text column so a long line ends in an ellipsis at the card edge on a phone, never past it;
@@ -123,4 +128,31 @@ export function MachineServiceByline(props: Readonly<{ row: MachineServiceRowV1;
       </Text> : null}
     </View>
   );
+}
+
+/**
+ * A service's state word (lab svcWatch State): a stop the person asked for reads as that stop, a state that needs the
+ * person speaks in its tone, and a quiet one ("Running") stays quiet.
+ */
+export function MachineServiceStateWord(props: Readonly<{ row: MachineServiceRowV1 }>) {
+  const expectedStop = machineServiceExpectedStop(props.row);
+  const speaks = expectedStop === null && machineServiceStateSpeaks(props.row.state);
+  return (
+    <Status
+      tone={speaks ? machineServiceStateTone(props.row.state) : 'secondary'}
+      label={expectedStop ? t(`machineServices.expectedDown.${expectedStop}`) : t(`machineServices.state.${props.row.state}`)}
+      presentation="inline"
+    />
+  );
+}
+
+/** The State column beside Ports, Memory and Up; an item without its service read draws the column's quiet dash. */
+export function machineServiceStateField<Item>(serviceOf: (item: Item) => MachineServiceRowV1 | null): CollectionField<Item> {
+  return {
+    key: 'state', title: t('projects.deployments.services.columnState'), minWidth: 120, priority: 4, align: 'end', listColumn: true,
+    render: (item) => {
+      const row = serviceOf(item);
+      return row ? <MachineServiceStateWord row={row} /> : null;
+    },
+  };
 }

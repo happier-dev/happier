@@ -18604,6 +18604,8 @@ settingsSession: {
           noChecksBody: "Un controllo ti avvisa quando un’app o un indirizzo smette di rispondere. Aggiungine uno dai Domini di un ambiente o da un servizio osservato.",
           noWatched: "Ancora nulla di osservato",
           noWatchedBody: "I servizi già in esecuzione su una Macchina appaiono qui quando li osservi dalla sua scheda Servizi.",
+          columnEvery: "Ogni",
+          columnAddress: "Indirizzo",
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 ha bisogno di te' : `${count} hanno bisogno di te`),
           columnEnvironment: "Ambiente",
           columnLastDeploy: "Ultimo deploy",

@@ -18516,6 +18516,8 @@ settingsSession: {
           noChecksBody: "チェックはアプリやアドレスが応答しなくなったときに知らせます。環境のドメインや監視中のサービスから追加できます。",
           noWatched: "監視しているものはまだありません",
           noWatchedBody: "マシンですでに動いているサービスは、そのサービスタブから監視するとここに表示されます。",
+          columnEvery: "間隔",
+          columnAddress: "アドレス",
           needYou: ({ count }: { count: number }) => `${count} 件の対応が必要`,
           columnEnvironment: "環境",
           columnLastDeploy: "最終デプロイ",

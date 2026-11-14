@@ -22039,6 +22039,8 @@ const enProjects = {
         noChecksBody: "A check tells you when an app or address stops answering. Add one from an environment’s Domains or a watched service.",
         noWatched: "Nothing watched yet",
         noWatchedBody: "Services already running on a Machine show here once you watch them from its Services tab.",
+        columnEvery: "Every",
+        columnAddress: "Address",
         countChecks: ({ count }: { count: number }) => (count === 1 ? '1 check' : `${count} checks`),
         countFailing: ({ count }: { count: number }) => `${count} failing`,
         countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 service' : `${services} services`} on ${machines === 1 ? '1 Machine' : `${machines} Machines`}`,

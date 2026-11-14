@@ -16,7 +16,7 @@ import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 type Checks = Extract<
@@ -306,4 +306,49 @@ export function serviceCheckShownDefinition(
   if (facts.kind !== 'available') return { kind: facts.kind };
   const definition = facts.checks.find((check) => check.checkId === checkId) ?? facts.checks[0];
   return definition ? { kind: 'available', definition } : { kind: 'unavailable' };
+}
+
+/** A Check figure in the reader's units ("5 min", "1.2 s"), shared by the Check detail and the Checks list. */
+export function formatServiceCheckUnit(value: number, name: 'millisecond' | 'second' | 'minute' | 'hour'): string {
+  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: name, unitDisplay: 'short', maximumFractionDigits: 1 })
+    .format(value);
+}
+export function formatServiceCheckLatency(ms: number): string {
+  return ms < 1000 ? formatServiceCheckUnit(Math.round(ms), 'millisecond') : formatServiceCheckUnit(ms / 1000, 'second');
+}
+export function formatServiceCheckPeriod(ms: number): string {
+  return ms % 3_600_000 === 0 ? formatServiceCheckUnit(ms / 3_600_000, 'hour')
+    : ms % 60_000 === 0 ? formatServiceCheckUnit(ms / 60_000, 'minute') : formatServiceCheckUnit(ms / 1000, 'second');
+}
+
+type ListedCheck = Readonly<{
+  native: Readonly<{ name: string }>;
+  definitionFacts: ConfiguredCheckDefinitionFacts;
+  lastResults: ConfiguredHealthResultsState;
+}>;
+
+/**
+ * One Checks list row (lab svcChk): named by what it checks (its definition's target, else the saved name), its kind,
+ * how often it runs and its latest result with the result's tone. Loading and unavailable definitions say nothing.
+ */
+export function serviceCheckListFacts(row: ListedCheck): Readonly<{
+  title: string;
+  kind: string | null;
+  every: string | null;
+  lastResult: string | null;
+  lastTone: 'danger' | 'warning' | null;
+}> {
+  const head = serviceCheckShownDefinition(row.definitionFacts, null);
+  const definition = head.kind === 'available' ? head.definition : null;
+  const checks = readServiceCheckFacts(row.lastResults).checks;
+  const shown = checks.find((check) => check.checkId === definition?.checkId) ?? checks[0] ?? null;
+  const word = shown ? serviceCheckResultWord(shown.result.status) : null;
+  return {
+    title: definition?.targetLabel ?? row.native.name,
+    kind: definition?.name ?? null,
+    every: definition ? formatServiceCheckPeriod(definition.periodMs) : null,
+    lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]
+      .filter(Boolean).join(' · ') : null,
+    lastTone: shown ? serviceCheckStatusTone(shown.result.status) : null,
+  };
 }

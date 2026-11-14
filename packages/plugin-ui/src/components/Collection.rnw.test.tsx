@@ -3253,21 +3253,16 @@ describe('render scope', () => {
       expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
     } finally { view.unmount(); }
   });
-  it('leads a shared sheet with an untitled group under no sub-heading of its own', () => {
+  it('draws an empty list column cell as the table does: a quiet dash, never a blank', () => {
     const view = mount({
       presentation: 'list', scroll: 'page',
-      // The untitled group's rows lead the sheet; the titled group keeps its sub-heading.
-      grouping: { ...groups, axis: [{ key: 'needs', title: '' }, { key: 'rest', title: 'Everything else' }]
-        .map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
+      anatomy: { ...anatomy, fields: [{ key: 'memory', title: 'Memory', minWidth: 64, priority: 1, align: 'end', listColumn: true,
+        render: (entry) => entry.id === 'a' ? '64 MB' : null }] },
     });
     try {
       view.measure(1200);
-      // The sheet both groups share: the nearest ancestor of a row of each.
-      let sheet = view.query('row:a')!.parentElement!;
-      while (!sheet.contains(view.query('row:c'))) sheet = sheet.parentElement!;
-      const subHeadings = [...sheet.querySelectorAll('[role="group"][aria-label]')].map((group) => group.getAttribute('aria-label'));
-      expect(subHeadings).toContain('Everything else');
-      expect(subHeadings).not.toContain('');
+      expect(view.query('row:a:column:memory')?.textContent).toBe('64 MB');
+      expect(view.query('row:b:column:memory')?.textContent).toBe('—');
     } finally { view.unmount(); }
   });
   it('leads a shared sheet with an untitled group under no sub-heading of its own', () => {

@@ -18427,6 +18427,8 @@ settingsSession: {
           noChecksBody: "Sprawdzenie powiadomi cię, gdy aplikacja lub adres przestanie odpowiadać. Dodaj je w Domenach środowiska lub przy obserwowanej usłudze.",
           noWatched: "Nic nie jest obserwowane",
           noWatchedBody: "Usługi działające już na Maszynie pojawią się tutaj, gdy zaczniesz je obserwować na jej karcie Usługi.",
+          columnEvery: "Co",
+          columnAddress: "Adres",
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 wymaga uwagi' : `${count} wymaga uwagi`),
           columnEnvironment: "Środowisko",
           columnLastDeploy: "Ostatnie wdrożenie",

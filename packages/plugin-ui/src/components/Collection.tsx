@@ -1249,6 +1249,15 @@ function TableCellValue(props: Readonly<{ value: ReactNode; tabular: boolean }>)
 
 const EMPTY_CELL_MARK = '—';
 
+/** A list row's end column says nothing the way a table cell does: the same quiet dash (TableCellValue), one rule. */
+function ListColumnValue(props: Readonly<{ value: ReactNode; textStyle: HappierPortableStyle | undefined }>): ReactElement | null {
+  const value = props.value;
+  if (value === null || value === undefined || value === false || value === '') {
+    return <HappierText accessible={false} variant="meta" tone="muted" numberOfLines={1} style={props.textStyle ?? cellTextStyle}>{EMPTY_CELL_MARK}</HappierText>;
+  }
+  return <SlotContent value={value} tabular {...(props.textStyle === undefined ? {} : { textStyle: props.textStyle })} />;
+}
+
 /** The table's Entry cell: the title, then its designation quietly after it (lab `.tt` + `.nb`). */
 function TableTitle<Item>(props: Readonly<{
   item: Item;
@@ -1581,7 +1590,7 @@ function ListCells<Item>(props: Readonly<{
       {props.listColumns.map((field) => (
         <View key={field.key} pointerEvents={layer?.leaf} style={listColumnCellStyle(field, textScale)}
           {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:column:${field.key}` })}>
-          <SlotContent value={field.render(item)} tabular textStyle={secondLine} />
+          <ListColumnValue value={field.render(item)} textStyle={secondLine} />
         </View>
       ))}
     </View>
