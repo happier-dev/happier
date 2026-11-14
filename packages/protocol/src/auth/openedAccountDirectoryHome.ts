@@ -11,7 +11,7 @@ import {
  * until the authenticated client has opened its private label.
  */
 export const OpenedAccountDirectoryHomeEntryV1Schema = lazyZodSchema(() => z.pipe(
-  z.transform((value, context) => {
+  z.transform((value, context): unknown => {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       context.issues.push({ code: 'custom', message: 'Expected an opened Account Directory Home entry', input: context.value });
       return z.NEVER;

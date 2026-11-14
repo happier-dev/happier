@@ -115,6 +115,20 @@ describe('managed acquire review', () => {
     expect(spec.approvalPresentation?.summary(input)).not.toContain('billed directly');
   });
 
+  it('keeps omitted preset lifetime unresolved in pending and retained approvals', () => {
+    const spec = getActionSpec('machines.managed.acquire');
+    const input = spec.inputSchema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 } });
+    const review = projectApprovalReviewInput(spec, input);
+    expect(review).toMatchObject({ lifetime: 'Default lifetime pending native admission' });
+    for (const [status, actionArgs] of [['pending', input], ['executed', review]] as const) {
+      const projection = describeApprovalActionFields({ actionId: spec.id, actionArgs, status });
+      expect(projection.unrepresentable).toBeNull();
+      expect(projection.rows).toContainEqual(expect.objectContaining({ path: 'lifetime',
+        value: 'Default lifetime pending native admission' }));
+    }
+    expect(spec.approvalPresentation?.summary(input)).toContain('Default lifetime');
+  });
+
   it.each([
     [{ kind: 'unused', afterMs: 7200000 }, ['Native expiry', '2 h']],
     [{ kind: 'deadline', at: 1793500000000 }, ['Native expiry', 'running work may be interrupted']],

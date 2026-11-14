@@ -7,6 +7,7 @@ import { listAutomationDefinitions } from '@/sync/api/automations/apiAutomations
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
 import { createMachinePoolActionClient } from '@/sync/api/machines/machinePoolActions';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '../machinePoolPrivateLabelProjection';
 
 /** Exact requester-owned deployment roles; no managed allocation or broader census reads. */
 export function createUiMachineDeploymentReferenceReader(account: LazyActionAccountContext) {
@@ -40,6 +41,7 @@ export function createUiManagedMachineReferenceReader(account: LazyActionAccount
         account.assertCurrent();
         const machine = unwrapManagedMachineReadV1(read);
         if (machine.homeId !== input.homeId || machine.id !== input.managedId) return unavailable('target');
+        const poolLabels = createMachinePoolPrivateLabelClientForAccount(account);
         const census = await readMachineReferenceCensusV1({ homeId: input.homeId,
             machineId: machine.enrolledMachineId ?? null, homeAliases: [account.serverId], signal }, {
             artifacts: { ...account.workflowArtifacts,
@@ -47,9 +49,14 @@ export function createUiManagedMachineReferenceReader(account: LazyActionAccount
                     .map(result => result.status === 'fulfilled' ? result.value : null) },
             readSettings: account.readRawSettings,
             readProfileCatalog: () => readProfileCatalogInContext(account, signal, { readSourceBaseline: true }),
-            readPools: () => createMachinePoolActionClient({ request: account.request }).execute('machines.pools.list', {}, {
-                serverId: account.serverId, signal,
-            }),
+            readPools: async () => {
+                const page = await createMachinePoolActionClient({ request: account.request }).execute('machines.pools.list', {}, {
+                    serverId: account.serverId, signal,
+                });
+                return { ...page, pools: await Promise.all(page.pools.map(view => openMachinePoolPrivateViewV1({
+                    view, labels: poolLabels, signal,
+                }))) };
+            },
             readAssignments: cursor => listAutomationDefinitions(account.credentials, cursor ? { cursor } : {}, account),
             readDeployments: selection => readDeploymentReferences(selection, signal),
         });

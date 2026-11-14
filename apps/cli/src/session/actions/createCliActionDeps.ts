@@ -1,3 +1,4 @@
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
@@ -1043,7 +1044,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
 
 
+  const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
   const actionDeps: CliActionDeps = {
+    privateLabelOpen: async (request, context) => {
+      if (context.serverId && !await isSameActionHomeId(context.serverId)) return null;
+      if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
+        throw Object.assign(new Error('The Account credential is no longer current.'), { code: 'action_account_scope_changed' });
+      }
+      return await openPrivateLabel(request, context);
+    },
     readActionApprovalProfileId: async context => {
       const callerSessionId = context.actionCaller?.kind === 'session'
         ? context.actionCaller.sessionId : context.defaultSessionId;

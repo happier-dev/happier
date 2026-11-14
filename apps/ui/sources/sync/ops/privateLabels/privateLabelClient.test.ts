@@ -8,6 +8,7 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 
 const {
+    createPrivateLabelActionOpener,
     createPrivateLabelClientForAccountContext,
     isPrivateLabelLifecycleFailureV1,
 } = await import('./privateLabelClient');
@@ -272,5 +273,35 @@ describe('private label client', () => {
             ? { content: label.content, recipientEnvelope: label.recipients[0]?.envelope ?? null }
             : null;
         await expect(client.open({ binding, label: readerProjection, readPolicy: { kind: 'team-resource' } })).resolves.toBe('Production deploy');
+    });
+});
+
+
+describe('captured Action private-label opener', () => {
+    it('opens an encrypted credential through its captured Account key and preserves retirement', async () => {
+        const encryption = await createEncryptionFromAuthCredentials({
+            token: createAccountTokenForTests('owner'), secret: encodeBase64(new Uint8Array(32).fill(66), 'base64url'),
+        });
+        const binding = { entity: 'team_credential_resource', field: 'displayName', id: 'resource-1' } as const;
+        const author = createPrivateLabelClientForAccountContext({ accountId: 'owner', isCurrent: () => true,
+            resolveContentEncryptionMode: async () => 'e2ee', request: async () => ({ ok: true,
+                body: { contentEncryptionMode: 'e2ee', recipients: [recipient('owner', encryption.contentDataKey)] } }),
+        });
+        const sealed = await author.seal({ owner: { kind: 'team', teamId: 'team-1' }, binding, value: 'Work credential' });
+        if (!sealed) throw new Error('test author must seal');
+        const label = { content: sealed.content, recipientEnvelope: sealed.recipients[0]?.envelope ?? null };
+        let current = true;
+        const open = createPrivateLabelActionOpener({ accountId: 'owner', serverId: 'captured-home',
+            assertCurrent: () => { if (!current) throw Object.assign(new Error('retired'), { code: 'action_account_scope_changed' }); },
+            request: async () => { throw new Error('opening must not request another Home'); },
+            resolveAccountEncryption: async () => ({ accountMode: 'e2ee', encryption }),
+        });
+        await expect(open({ binding, label, readPolicy: { kind: 'team-resource' } }, { surface: 'ui', serverId: 'captured-home' }))
+            .resolves.toBe('Work credential');
+        await expect(open({ binding: { ...binding, id: 'wrong' }, label, readPolicy: { kind: 'team-resource' } }, {}))
+            .resolves.toBeNull();
+        current = false;
+        await expect(open({ binding, label, readPolicy: { kind: 'team-resource' } }, {}))
+            .rejects.toMatchObject({ code: 'action_account_scope_changed' });
     });
 });

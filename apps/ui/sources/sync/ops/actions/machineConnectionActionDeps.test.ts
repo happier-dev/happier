@@ -132,10 +132,18 @@ describe('UI machine connection Actions', () => {
         }
     });
 
-    it('includes exact deployment roles in the managed removal census through the captured Home HTTP boundary', async () => {
-        const homeId = 'srv_deployment_census';
+    it.each(['plain', 'e2ee'] as const)('opens %s Pool labels and retains exact deployment roles in the managed removal census', async (mode) => {
+        const homeId = `srv_deployment_census_${mode}`;
+        const nacl = (await import('tweetnacl')).default;
+        const machineKey = new Uint8Array(32).fill(3);
+        const publicKey = nacl.box.keyPair.fromSecretKey(machineKey).publicKey;
         const serverId = await harness.addHome({ name: 'References', serverUrl: 'https://deployment-census.example',
-            serverIdentityId: homeId, accountId: 'alice' });
+            serverIdentityId: homeId, accountId: 'alice', accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token: createAccountTokenForTests('alice'),
+                encryption: { publicKey: encodeBase64(publicKey), machineKey: encodeBase64(machineKey) } } } : {}) });
+        if (mode === 'e2ee') harness.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode, version: 1, signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(publicKey), updatedAt: 0 } });
         const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
         const { MachineDeploymentReferencesPageV1Schema } = await import('@happier-dev/protocol/machines/machineReferenceCensusV1');
         const { createUiManagedMachineReferenceReader } = await import('./managedMachineReferenceDeps');
@@ -147,6 +155,27 @@ describe('UI machine connection Actions', () => {
             enrolledMachineId: 'runtime', desired: 'start', desiredWhen: 'now', allocation: 'bound', creationState: 'active',
             intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         harness.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        const { sealPrivateLabelV1 } = await import('@happier-dev/protocol/crypto/privateLabelV1');
+        const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
+        const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+        const poolId = '00000000-0000-4000-8000-000000000001';
+        const dataKey = new Uint8Array(32).fill(13);
+        const binding = { entity: 'machine_pool', field: 'name', id: poolId } as const;
+        const label = mode === 'plain' ? sealPrivateLabelV1({ mode, binding, value: 'Private builders' })
+            : sealPrivateLabelV1({ mode, binding, value: 'Private builders', dataKey,
+                recipients: [{ accountId: 'alice', envelope: {
+                    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: publicKey,
+                        randomBytes: length => new Uint8Array(length).fill(17) })),
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey),
+                } }], randomBytes: length => new Uint8Array(length).fill(19) });
+        const { machinePoolActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/pools/actionsV1');
+        harness.answer(serverId, machinePoolActionEndpointPathV1('machines.pools.list'), { body: { pools: [{
+            pool: { id: poolId, name: { kind: 'available', label: { content: label.content,
+                recipientEnvelope: mode === 'e2ee' && 'recipients' in label ? label.recipients[0]!.envelope : null } },
+                description: { kind: 'unavailable' }, revision: 1, createdAt: 1, updatedAt: 1,
+                members: [{ machineId: 'runtime', priorityTier: 0, enabled: true, state: 'connected' }] },
+            availability: { state: 'known', connectedCount: 1, enabledCount: 1 },
+        }] } });
         const selected: string[] = [];
         harness.answer(serverId, 'GET /v1/deployments/machine-references', { select: (_input, request) => {
             const url = new URL(request.url);
@@ -158,6 +187,9 @@ describe('UI machine connection Actions', () => {
         try {
             const result = await createUiManagedMachineReferenceReader(account)({ input: { homeId, managedId: machine.id }, context: {} });
             expect(result.references).toContainEqual({ kind: 'deployment_environment', id: 'environment', name: '', deploymentRoles: ['build', 'edge'] });
+            expect(result.references).toContainEqual({ kind: 'machine_pool', id: poolId, name: 'Private builders' });
+            expect(result.unavailable).not.toContain('pools');
+            expect(result.coverage).toBe('partial');
             expect(result.unavailable).not.toContain('deployments');
             expect(selected).toEqual([`${homeId}:runtime`]);
         } finally { account.dispose(); }

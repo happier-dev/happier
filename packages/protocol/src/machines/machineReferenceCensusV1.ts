@@ -5,7 +5,7 @@ import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection, readAiLaun
 import type { ProfileCatalogSnapshotV1 } from '../profiles/profileCatalogV1.js';
 import type { WorkflowDefinitionArtifactOperations } from '../actions/executor/workflowDefinitions.js';
 import type { AutomationDefinitionListResponse } from '../automations/automationApiV3.js';
-import type { MachinePoolListOutputV1 } from './pools/v1.js';
+import type { MachinePoolViewV1 } from './pools/v1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
 export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
 export const MachineReferenceV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
@@ -32,6 +32,8 @@ export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.s
 })));
 export type MachineReferenceV1 = z.infer<typeof MachineReferenceV1Schema>;
 export type MachineReferenceCensusV1 = z.infer<typeof MachineReferenceCensusV1Schema>;
+/** The keyholding host opens Pool labels before they enter the display-only census. */
+export type MachineReferencePoolListV1 = Readonly<{ pools: readonly MachinePoolViewV1[] }>;
 export type MachineReferenceCensusPortsV1 = Readonly<{
   artifacts: Pick<WorkflowDefinitionArtifactOperations, 'read' | 'list'> & Readonly<{
     readMany(artifactIds: readonly string[], options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
@@ -39,7 +41,7 @@ export type MachineReferenceCensusPortsV1 = Readonly<{
   }>;
   readSettings(): Promise<Readonly<Record<string, unknown>>>;
   readProfileCatalog?(settings: Readonly<Record<string, unknown>>): Promise<ProfileCatalogSnapshotV1>;
-  readPools(): Promise<MachinePoolListOutputV1>;
+  readPools(): Promise<MachineReferencePoolListV1>;
   readAssignments(cursor?: string): Promise<AutomationDefinitionListResponse>;
   readDeployments?(input: MachineDeploymentReferencesInputV1): Promise<MachineDeploymentReferencesPageV1>;
 }>;

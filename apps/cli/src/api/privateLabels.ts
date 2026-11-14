@@ -1,3 +1,4 @@
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import tweetnacl from 'tweetnacl';
 
 import { prepareSavedSecretResourceRecipientEnvelopesV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -238,4 +239,23 @@ export function openCliMachinePoolPrivateViews(input: Readonly<{
     pools.push(opened);
   }
   return { pools };
+}
+
+
+/** Uses only the host's captured credentials and retires its independent key copy. */
+export function createCliPrivateLabelActionOpener(
+  encryption: AccountEncryptionCredentials | null | undefined,
+): NonNullable<ActionExecutorDeps['privateLabelOpen']> {
+  return async (request, context) => {
+    const signal = request.signal ?? context.signal;
+    signal?.throwIfAborted();
+    const accountKey = deriveCliPrivateLabelAccountKey(encryption);
+    try {
+      return openCliPrivateLabel({ binding: request.binding, label: request.label, readPolicy: request.readPolicy,
+        ...(accountKey ? { accountKey } : {}),
+      });
+    } finally {
+      accountKey?.fill(0);
+    }
+  };
 }

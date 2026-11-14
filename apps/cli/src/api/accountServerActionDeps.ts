@@ -1,4 +1,4 @@
-import { deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView } from '@/api/privateLabels';
+import { createCliPrivateLabelActionOpener, deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView } from '@/api/privateLabels';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -117,6 +117,7 @@ export type AccountServerActionDeps = Pick<
   | 'machinePresetAction'
   | 'managedMachineAction'
   | 'homeDomainAction'
+  | 'privateLabelOpen'
   | 'sessionAccessAction'
   | 'machineAccessAction'
   | 'projectWorkerAction'
@@ -524,7 +525,15 @@ export function createAccountServerActionDeps(input: Readonly<{
         return requireExternalActionHeaders(authorization);
       } }),
   });
+  const openPrivateLabel = createCliPrivateLabelActionOpener(credentials.encryption);
   const deps: AccountServerActionDeps = {
+    privateLabelOpen: async (request, context) => {
+      if (await accountServerTargetMismatch(context)) return null;
+      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        throw Object.assign(new Error('The Account credential is no longer current.'), { code: 'action_account_scope_changed' });
+      }
+      return await openPrivateLabel(request, context);
+    },
     usageActions: {
       coachSuppressions,
       readQuota,

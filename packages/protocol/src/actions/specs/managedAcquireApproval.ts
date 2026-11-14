@@ -46,8 +46,9 @@ function projectReview(value: unknown) {
   const retention = effect.retention;
   const parking = facts && resolveMachineRetentionNativeIntentV1('stop', facts.retentionCapabilities.supportedIntents) === 'suspend'
     ? 'suspend' : 'stop';
-  const keep = describeRetention(retention, { parking })
-    + (retention.kind === 'deadline' ? '; running work may be interrupted' : '');
+  const keep = retention === undefined ? 'Default lifetime pending native admission'
+    : describeRetention(retention, { parking })
+      + (retention.kind === 'deadline' ? '; running work may be interrupted' : '');
   const expiry = facts?.retentionCapabilities.nativeExpiry;
   const nativeLifetime = expiry?.kind === 'unused' ? `Native expiry after ${formatRetentionDuration(expiry.afterMs)} without provider activity`
     : expiry?.kind === 'deadline' ? `Native expiry at ${new Date(expiry.at).toLocaleString()}; running work may be interrupted`

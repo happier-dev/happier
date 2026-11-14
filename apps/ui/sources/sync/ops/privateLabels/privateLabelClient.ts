@@ -1,3 +1,4 @@
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import tweetnacl from 'tweetnacl';
 
 import {
@@ -275,5 +276,16 @@ export function createPrivateLabelClient(scope: ServerAccountScope) {
                 account.dispose();
             }
         },
+    });
+}
+
+
+/** Semantic Action consumers borrow the enclosing Action's Account; no ambient recapture. */
+export function createPrivateLabelActionOpener(
+    account: PrivateLabelActionAccountContextV1,
+): NonNullable<ActionExecutorDeps['privateLabelOpen']> {
+    const labels = createPrivateLabelClientForActionAccountContext(account);
+    return async (request, context) => await labels.open({ ...request,
+        ...((request.signal ?? context.signal) ? { signal: request.signal ?? context.signal } : {}),
     });
 }

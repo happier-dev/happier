@@ -45,7 +45,7 @@ export type AutomationDefinitionDisplayReadResultV1 =
       source: 'workflowDefinition' | 'actionDefinition' | 'eventDefinition' | 'legacy';
       display: AutomationDefinitionDisplayV1;
     }>
-  | Readonly<{ kind: 'contentInvalid' | 'modeMismatch' }>;
+  | Readonly<{ kind: 'contentInvalid' | 'modeMismatch' | 'bindingMismatch' }>;
 
 function legacyDisplay(definition: AutomationDefinitionDisplayCarrierV1): AutomationDefinitionDisplayReadResultV1 {
   return {

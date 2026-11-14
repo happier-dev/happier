@@ -5,7 +5,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 
-import { openCliMachinePoolPrivateViews, openCliMachinePoolPrivateView, openCliPrivateLabel, prepareCliPrivateLabel } from './privateLabels';
+import { createCliPrivateLabelActionOpener, openCliMachinePoolPrivateViews, openCliMachinePoolPrivateView, openCliPrivateLabel, prepareCliPrivateLabel } from './privateLabels';
 
 const binding = { entity: 'account_api_token', field: 'label', id: 'token-1' } as const;
 const accountId = 'account-1';
@@ -40,6 +40,18 @@ describe('CLI private label Account boundary', () => {
     const read = projectPrivateLabelForRecipientV1({ stored: label, recipientAccountId: accountId });
     expect(openCliPrivateLabel({ label: read, binding, accountKey,
       readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' } })).toBe('Production deploy');
+    const actionOpen = createCliPrivateLabelActionOpener({ type: 'dataKey', machineKey: accountKey,
+      publicKey });
+    await expect(actionOpen({ binding, label: read, readPolicy: { kind: 'team-resource' } }, { surface: 'cli' }))
+      .resolves.toBe('Production deploy');
+    // Retiring the opener's independent key copy must not corrupt retained Account credentials.
+    expect(accountKey).toEqual(new Uint8Array(32).fill(8));
+    await expect(actionOpen({ binding: { ...binding, id: 'wrong-resource' }, label: read,
+      readPolicy: { kind: 'team-resource' } }, { surface: 'cli' })).resolves.toBeNull();
+    const signal = AbortSignal.abort(new Error('cancelled'));
+    await expect(actionOpen({ binding, label: read, readPolicy: { kind: 'team-resource' } }, { signal }))
+      .rejects.toThrow('cancelled');
+
     expect(openCliPrivateLabel({ label: read, binding: { ...binding, id: 'different-token' }, accountKey,
       readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' } })).toBeNull();
     expect(openCliPrivateLabel({ label: read, binding,

@@ -1,3 +1,4 @@
+import { createPrivateLabelActionOpener } from '@/sync/ops/privateLabels/privateLabelClient';
 import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
@@ -3699,6 +3700,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? { discussionAction: opts?.discussionAction ?? capturedFamilyPorts!.discussionAction }
       : {}),
     ...(homeDomainAction ? { homeDomainAction } : {}),
+    ...(accountContext ? { privateLabelOpen: createPrivateLabelActionOpener(accountContext) } : {}),
     ...(accountContext && homeDomainAction ? {
       teamCredentialUsageExport: createUiTeamCredentialUsageExportAction(accountContext, homeDomainAction),
     } : {}),

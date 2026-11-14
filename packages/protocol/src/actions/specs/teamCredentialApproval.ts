@@ -1,5 +1,5 @@
 import { TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1, type TeamCredentialHomeActionIdV1 } from '../../teams/credentials/actionsV1.js';
-import { TeamCredentialResourceEntitledPageV1Schema, type TeamCredentialResourceAudienceInputV1 } from '../../teams/credentials/resourceV1.js';
+import { TeamCredentialResourceEntitledPageV1Schema, type TeamCredentialResourceCatalogEntryV1, type TeamCredentialResourceAudienceInputV1 } from '../../teams/credentials/resourceV1.js';
 import { TeamSummaryV1Schema, TeamsPageV1Schema } from '../../teams/projections.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../executor/types.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -67,7 +67,7 @@ export function resolveCapturedTeamCredentialApprovalSources(params: Readonly<{
 }
 
 /** Read public source labels before admission. This never selects delivery or acquires material. */
-export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick<ActionExecutorDeps, 'homeDomainAction'>;
+export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick<ActionExecutorDeps, 'homeDomainAction' | 'privateLabelOpen'>;
   selection: TeamCredentialSourceSelection | undefined; context: ActionExecutorContext }>): Promise<readonly TeamCredentialApprovalSource[]> {
   const selection = params.selection;
   const refs = selection?.resources ?? [];
@@ -86,6 +86,7 @@ export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick
       selection: { ...selection, resources: [ref] } })[0];
     if (captured) { sources.push(captured); continue; }
     if (!params.deps.homeDomainAction) continue;
+    let selectedResource: TeamCredentialResourceCatalogEntryV1 | undefined;
     try {
       if (ref.teamId && !teamNames.has(ref.teamId)) {
         const team = TeamSummaryV1Schema.safeParse(await read('teams.get', { teamId: ref.teamId }));
@@ -110,14 +111,24 @@ export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick
           }));
           if (!page.success) break;
           const resource = page.data.resources.find(resource => resource.id === ref.resourceId && resource.teamId === teamId);
-          if (resource) { sources.push({ teamId, resourceId: resource.id, teamName, accountName: resource.displayName }); break; }
+          if (resource) { selectedResource = resource; break; }
           cursor = page.data.nextCursor;
         } while (cursor);
-        if (sources.some(source => source.resourceId === ref.resourceId)) break;
+        if (selectedResource) break;
       }
     } catch {
       // Optional display context cannot add a credential authority or another admission failure.
       params.context.signal?.throwIfAborted();
+    }
+    // Scope retirement from the captured keyholder is not an optional HTTP display failure.
+    if (selectedResource) {
+      const accountName = await params.deps.privateLabelOpen?.({
+        binding: { entity: 'team_credential_resource', field: 'displayName', id: selectedResource.id },
+        label: selectedResource.displayName, readPolicy: { kind: 'team-resource' },
+        ...(params.context.signal ? { signal: params.context.signal } : {}),
+      }, { ...params.context, ...(serverId ? { serverId } : {}) });
+      if (accountName !== null && accountName !== undefined) sources.push({ teamId: selectedResource.teamId,
+        resourceId: selectedResource.id, teamName: teamNames.get(selectedResource.teamId)!, accountName });
     }
   }
   return sources;

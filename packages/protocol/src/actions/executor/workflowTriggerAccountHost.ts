@@ -41,6 +41,7 @@ import {
 import {
   AutomationStoredWorkflowDefinitionRecipeV2Schema,
   AutomationStoredWorkflowDefinitionV2Schema,
+  AutomationStoredWorkflowDefinitionV2ReadSchema,
   openAutomationStoredWorkflowDefinitionV2,
   type AutomationDefinitionDisplayV1,
   type AutomationStoredWorkflowDefinitionV2,
@@ -283,12 +284,12 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     if (input.observationOnly) {
       return { ...input, name: AUTOMATION_PRIVATE_DISPLAY_PLACEHOLDER_V1, description: null };
     }
-    if (input.executionRecipe?.v === 1) {
+    if (input.executionRecipe?.v === 1 && input.executionRecipe.target.kind === 'contributedAction') {
       return {
         ...input,
         name: AUTOMATION_PRIVATE_DISPLAY_PLACEHOLDER_V1,
         description: null,
-        executionRecipe: await sealActionPrivateDisplay(input.executionRecipe, input.executionRecipe.templateVersion, {
+        executionRecipe: await sealActionPrivateDisplay({ ...input.executionRecipe, target: input.executionRecipe.target }, input.executionRecipe.templateVersion, {
           name: input.name, description: input.description ?? null,
         }),
       };
@@ -313,9 +314,11 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       }
       return { ...input, name: AUTOMATION_PRIVATE_DISPLAY_PLACEHOLDER_V1, description: null };
     }
-    const actionRecipe = input.executionRecipe?.v === 1 ? input.executionRecipe
+    const candidate = input.executionRecipe?.v === 1 ? input.executionRecipe
       : row.executionRecipe?.v === 1 && row.executionRecipe.target.kind === 'contributedAction'
         ? row.executionRecipe : null;
+    const actionRecipe = candidate?.target.kind === 'contributedAction'
+      ? { ...candidate, target: candidate.target } : null;
     if (actionRecipe) {
       const opened = await openActionDefinition(actionRecipe);
       const display = { name: input.name, description: input.description };

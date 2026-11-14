@@ -1417,6 +1417,13 @@ export type ActionApprovedOperationAdmissionV1 = WorkflowApprovedOperationV1 & R
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  /** Captured keyholding host opens recipient-projected content for semantic display consumers. */
+  privateLabelOpen?: (request: Readonly<{
+    binding: import('../../crypto/privateLabelV1.js').PrivateLabelBindingV1;
+    label: import('../../crypto/privateLabelV1.js').PrivateLabelReadV1;
+    readPolicy: import('../../crypto/privateLabelV1.js').PrivateLabelReadPolicyV1;
+    signal?: AbortSignal;
+  }>, context: ActionExecutorContext) => Promise<string | null>;
   /** Calling Session metadata reference, captured once before Action admission. */
   readActionApprovalProfileId?: (context: ActionExecutorContext) => Promise<string | null | undefined | ActionExecuteFailure>;
   /**
