@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
+
+export function resolveDefaultKnownHostsPath(happyHomeDir = resolveHappyHomeDirFromEnvironment()): string {
+  return join(happyHomeDir, 'ssh', 'known_hosts');
+}
 
 type SshKnownHostEntry = Readonly<{
   host: string;

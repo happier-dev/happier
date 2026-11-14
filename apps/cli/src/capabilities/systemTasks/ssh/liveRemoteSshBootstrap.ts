@@ -47,6 +47,7 @@ import {
 import {
   buildSshKeyscanInvocation,
   readKnownHostsTextSyncWithFs,
+  resolveDefaultKnownHostsPath,
   runOpenSshRemoteCommand,
   transferOpenSshFile as transferOpenSshFileBoundary,
   withOpenSshLocalPortForward,
@@ -65,10 +66,6 @@ async function transferOpenSshFile(params: Parameters<typeof transferOpenSshFile
   }
 }
 
-function resolveAppKnownHostsPath(): string {
-  return join(configuration.happyHomeDir, 'ssh', 'known_hosts');
-}
-
 function resolveKnownHostsPath(
   ssh: SystemTaskSshConnectionConfig,
   knownHostsMode: 'app' | 'system',
@@ -76,7 +73,7 @@ function resolveKnownHostsPath(
   if (knownHostsMode === 'system') {
     return undefined;
   }
-  return String(ssh.knownHostsPath ?? '').trim() || resolveAppKnownHostsPath();
+  return String(ssh.knownHostsPath ?? '').trim() || resolveDefaultKnownHostsPath(configuration.happyHomeDir);
 }
 
 function readKnownHostsText(knownHostsPath: string | undefined): string {

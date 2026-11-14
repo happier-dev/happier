@@ -111,9 +111,7 @@ export function parseFirstJsonObject(text: string): unknown {
   return null;
 }
 
-export function resolveDefaultKnownHostsPath(): string {
-  return `${process.env.HOME ?? process.env.USERPROFILE ?? '/tmp'}/.happier/ssh/known_hosts`;
-}
+export { resolveDefaultKnownHostsPath } from '@happier-dev/cli-common/ssh';
 
 export function extractSshHost(target: string): string {
   const trimmed = String(target ?? '').trim();

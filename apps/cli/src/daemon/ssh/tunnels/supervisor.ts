@@ -9,6 +9,7 @@ import {
 import {
   closeOpenSshLocalPortForward,
   openSshLocalPortForward,
+  resolveDefaultKnownHostsPath,
   type OpenSshAuth,
 } from '@happier-dev/cli-common/ssh';
 
@@ -280,7 +281,7 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
 
     const localPort = await allocateLocalPortForRequest(request, deps);
     const openForward = deps.openForward ?? openSshLocalPortForward;
-    const knownHostsMode = request.ssh.knownHostsPath ? 'app' : 'system';
+    const knownHostsPath = request.ssh.knownHostsPath || resolveDefaultKnownHostsPath(configuration.happyHomeDir);
     let handle: SshTunnelForwardHandle;
     try {
       handle = await openForward({
@@ -288,8 +289,8 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
         target: request.ssh.target,
         port: request.ssh.port,
         sshConfigFile: request.ssh.sshConfigFile,
-        knownHostsPath: request.ssh.knownHostsPath,
-        knownHostsMode,
+        knownHostsPath,
+        knownHostsMode: 'app',
         auth: resolveOpenSshAuth(request),
         localPort,
         remoteHost: request.remoteHost,
@@ -323,7 +324,7 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
       sshTarget: request.ssh.target,
       ...(request.ssh.port ? { sshPort: request.ssh.port } : {}),
       ...(request.ssh.sshConfigFile ? { sshConfigFile: request.ssh.sshConfigFile } : {}),
-      ...(request.ssh.knownHostsPath ? { knownHostsPath: request.ssh.knownHostsPath } : {}),
+      knownHostsPath,
       createdAt,
       lastProbeAt: health.checkedAt,
       leases: new Map(),

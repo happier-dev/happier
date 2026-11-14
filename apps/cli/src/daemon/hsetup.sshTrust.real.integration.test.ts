@@ -20,11 +20,11 @@ import { findAvailableLoopbackPort } from '@/cloud/loopbackPort';
 
 // Real OpenSSH is the platform boundary. Run explicitly on a host with sshd/ssh-keygen.
 const nativeBinary = process.env.HAPPIER_TEST_HSETUP_BINARY;
-it.skipIf(process.platform !== 'linux' || !existsSync('/usr/sbin/sshd'))(`keeps first-use trust answerable, saves the key, then Connect serves HTTP through the daemon SSH lease (${nativeBinary ? 'Electron/native' : 'source'})`, async () => {
+it.skipIf(process.platform !== 'linux' || !existsSync('/usr/sbin/sshd')).each([false, true])(`keeps first-use trust answerable, saves the key, then Connect serves HTTP through the daemon SSH lease (custom store: %s, ${nativeBinary ? 'native transport' : 'source'})`, async (customStore) => {
   const home = await createTempDir('ssh-trust-');
-  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_BOOTSTRAP_CLI_PATH', 'HAPPIER_STACK_REPO_DIR']);
+  const env = createEnvKeyScope(['HOME', 'HAPPIER_HOME_DIR', 'HAPPIER_BOOTSTRAP_CLI_PATH', 'HAPPIER_STACK_REPO_DIR']);
   const repo = resolve(import.meta.dirname, '../../../..');
-  env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_BOOTSTRAP_CLI_PATH: join(repo, 'apps/cli/bin/happier.mjs'), HAPPIER_STACK_REPO_DIR: repo });
+  env.patch({ HOME: home, HAPPIER_HOME_DIR: home, HAPPIER_BOOTSTRAP_CLI_PATH: join(repo, 'apps/cli/bin/happier.mjs'), HAPPIER_STACK_REPO_DIR: repo });
   reloadConfiguration();
   const key = join(home, 'identity');
   const hostKey = join(home, 'host');
@@ -51,8 +51,9 @@ it.skipIf(process.platform !== 'linux' || !existsSync('/usr/sbin/sshd'))(`keeps 
     const daemonAddress = daemon.server.address();
     if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Missing daemon listener');
     writeDaemonState({ pid: process.pid, httpPort: daemonAddress.port, startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: 'trust-token' });
-    const knownHostsPath = join(home, 'known_hosts');
-    const ssh = { target: `${userInfo().username}@127.0.0.1`, port: sshPort, auth: 'keyfile', identityFile: key, knownHostsPath };
+    const knownHostsPath = customStore ? join(home, 'custom_known_hosts') : join(home, 'ssh', 'known_hosts');
+    // Saved remote hosts omit knownHostsPath: trust and Connect must agree on the default store.
+    const ssh = { target: `${userInfo().username}@127.0.0.1`, port: sshPort, auth: 'keyfile', identityFile: key, ...(customStore ? { knownHostsPath } : {}) };
     const runTask = async (kind: string, params: unknown, accept = true) => {
       if (nativeBinary) {
         let promptSeen = false;

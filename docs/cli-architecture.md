@@ -2395,6 +2395,13 @@ event leaves the task pending while hsetup reads its JSON answer from stdin,
 including first-use SSH host trust. Hosts without an answer transport retain the
 typed `prompt_required` refusal. Task cancellation interrupts the stdin wait.
 
+Bootstrap host trust, CLI host trust and daemon SSH tunnels resolve their default
+app-managed trust store through `cli-common/ssh`'s `resolveDefaultKnownHostsPath`:
+`ssh/known_hosts` beneath the configured Happier home. Thus a remembered key is
+available to Connect even when its request omits `knownHostsPath`. An explicit
+store path remains authoritative; system trust remains an explicit mode for the
+SSH operations that support it. Host-key checking stays strict.
+
 ### Standalone SSH identity (0.3 development)
 
 `machine enroll --ssh` accepts an explicit personal, adopted, sandbox, server or

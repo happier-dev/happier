@@ -9,6 +9,7 @@ export { safeBashSingleQuote } from './shellQuote.js';
 export { SSH_PASSWORD_ENV, ensureSshAskpassScriptPath, buildSshAskpassEnv } from './sshAskpass.js';
 export {
   SshKnownHostsStore,
+  resolveDefaultKnownHostsPath,
   normalizeKnownHostsText,
   readKnownHostsText,
   readKnownHostsTextSync,
