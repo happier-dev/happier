@@ -130,9 +130,9 @@ it('tracks foreground identity before report and removes its Session and Runs th
         restoreInterval = () => { vi.useRealTimers(); };
         startDaemonHeartbeatLoop({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
             sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, onChildExited: exited,
-            controlPort: 8765, fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
+            fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
                 startedWithCliVersion: configuration.currentCliVersion, daemonLogPath: join(happyHomeDir, 'daemon.log') },
-            currentCliVersion: configuration.currentCliVersion, requestShutdown: () => {}, writeDaemonStateForCurrentOwner: () => true });
+            currentCliVersion: configuration.currentCliVersion });
         child.kill(); await childExit;
         await vi.advanceTimersToNextTimerAsync();
         await vi.waitFor(() => expect(sessions.size).toBe(0));

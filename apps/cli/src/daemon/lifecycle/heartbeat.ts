@@ -39,6 +39,22 @@ function parseNonNegativeInt(rawValue: string | undefined, fallback: number): nu
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+/**
+ * Removes execution-run markers whose runner is gone or whose terminal visibility window passed.
+ * Part of the ended-runner retirement the daemon runs at startup and on each runner exit edge.
+ */
+export async function collectEndedExecutionRunMarkers(trackedSessionsByKey: TrackedSessionMap): Promise<void> {
+  await gcExecutionRunMarkers({
+    nowMs: Date.now(),
+    terminalTtlMs: parseNonNegativeInt(process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS, 6 * 60 * 60 * 1000),
+    isPidAlive: isPidPresent,
+    isPidSafeHappyProcess: async (pid) => {
+      if (trackedSessionsForProcess(trackedSessionsByKey, pid).length > 0) return true;
+      return Boolean(await findHappyProcessByPid(pid));
+    },
+  });
+}
+
 export function startDaemonHeartbeatLoop(params: Readonly<{
   trackedSessionsByKey: TrackedSessionMap;
   spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
@@ -49,7 +65,12 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     exit: Readonly<{ reason: string; code: number | null; signal: string | null }>,
   ) => void | Promise<void>;
   onTrackedSessionHealthy?: (tracked: TrackedSession) => Promise<void>;
-  retryOrphanedManagedServices?: () => Promise<void>;
+  /**
+   * Retires state owned by runners that ended (managed-service projections, execution-run markers).
+   * The daemon runs it on every runner exit edge; the heartbeat runs it once at startup for runners
+   * that ended while no daemon was watching.
+   */
+  retireEndedRunnerOwnedState?: () => Promise<void>;
   allocatorMaintenance?: Readonly<{
     activity: Pick<ManagedActivityInventory, 'readDecision'>;
     trim: () => Promise<boolean>;
@@ -58,13 +79,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
     readProcessRunStateFn?: typeof readProcessRunState;
   }>;
-  controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
-  requestShutdown: (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
   isShuttingDown?: () => boolean;
   requestSelfRestart?: RequestDaemonSelfRestart;
-  writeDaemonStateForCurrentOwner: (state: DaemonLocallyPersistedState) => boolean;
 }>): NodeJS.Timeout {
   const {
     trackedSessionsByKey,
@@ -73,13 +91,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     getApiMachineForSessions,
     onChildExited,
     pidSafetyDependencies,
-    controlPort,
     fileState,
     currentCliVersion,
-    requestShutdown,
     isShuttingDown,
     requestSelfRestart = requestDaemonSelfRestart,
-    writeDaemonStateForCurrentOwner,
   } = params;
 
   const onChildExitedForPrune =
@@ -100,18 +115,11 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     }
   };
 
-  // Periodically:
-  // 1. Prune stale sessions
-  // 2. Check if daemon needs update
-  // 3. If outdated, restart with latest version
-  // 4. Write heartbeat
+  // Periodically: observe runners whose exit the daemon cannot see, and restart onto a newer installed
+  // CLI. Daemon state is published on real changes by its owners, never re-written per tick.
   const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 30_000);
   const restartVerifyTimeoutMs = readDaemonRestartVerifyTimeoutMs();
   const restartVerifyPollMs = readDaemonRestartVerifyPollMs();
-  const executionRunTerminalTtlMs = parseNonNegativeInt(
-    process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS,
-    6 * 60 * 60 * 1000,
-  );
   let heartbeatRunning = false;
   let lastAllocatorTrimAt: number | null = null;
   let sessionHandoffPrepareTargetRecoveryPromise: Promise<void> | null = null;
@@ -148,6 +156,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   // and fails its entry points closed with the typed legacy-state code.
   // Do not put this maintenance back into the generic heartbeat.
   void ensureSessionHandoffPrepareTargetRecovery();
+  // Startup edge: runners that ended while no daemon was watching. Later exits retire their own state.
+  void params.retireEndedRunnerOwnedState?.().catch(error => {
+    logger.warn('[DAEMON RUN] Ended-runner state retirement at startup failed; the next runner exit retries it', { error });
+  });
 
   const intervalHandle = setInterval(async () => {
     // During shutdown we must not mutate local daemon state (especially daemon.state.json),
@@ -261,28 +273,6 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         });
       }
 
-      if (isShuttingDown?.() === true) return;
-      try {
-        await params.retryOrphanedManagedServices?.();
-      } catch (error) {
-        logger.warn('[DAEMON RUN] Retained managed-service cleanup unavailable; retrying on a later heartbeat', { error });
-      }
-
-      try {
-        await gcExecutionRunMarkers({
-          nowMs: Date.now(),
-          terminalTtlMs: executionRunTerminalTtlMs,
-          isPidAlive: isPidPresent,
-          isPidSafeHappyProcess: async (pid) => {
-            if (trackedSessionsForProcess(trackedSessionsByKey, pid).length > 0) return true;
-            const proc = await findHappyProcessByPid(pid);
-            return Boolean(proc);
-          },
-        });
-      } catch (error) {
-        logger.debug('[DAEMON RUN] Failed to gc execution run markers', error);
-      }
-
       // Cleanup any spawn resources for Sessions no longer tracked.
       const cleanupKeyMapIfUntracked = async (map: ReadonlyMap<SessionTrackingKey, unknown>) => {
         for (const trackingKey of [...map.keys()]) {
@@ -321,47 +311,6 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           pollMs: restartVerifyPollMs,
           takeover: true,
         });
-      }
-
-      // Heartbeat
-      try {
-        if (isShuttingDown?.() === true) {
-          return;
-        }
-        // Republish the record this daemon started from, changing only what a heartbeat owns.
-        // Enumerating the carried-over fields silently erased every field added to the state
-        // since the enumeration was written — the running-runtime identity `happier doctor`
-        // reports survived exactly one heartbeat before this was a spread.
-        //
-        // Registration transitions also publish readiness immediately. The heartbeat samples
-        // the same owner alongside `lastHeartbeatAt`. While no machine
-        // client exists yet the fact is genuinely unavailable, so the field is omitted and
-        // readers report unknown rather than inventing a negative.
-        const machineControlClient = getApiMachineForSessions();
-        const updatedState: DaemonLocallyPersistedState = {
-          ...fileState,
-          pid: process.pid,
-          httpPort: controlPort,
-          lastHeartbeatAt: Date.now(),
-          ...(machineControlClient
-            ? { machineControlReady: machineControlClient.isMachineControlRegistrationReady() }
-            : {}),
-        };
-        const published = writeDaemonStateForCurrentOwner(updatedState);
-        if (!published) {
-          requestShutdown(
-            'exception',
-            'daemon_state_publication_ownership_lost',
-          );
-          return;
-        }
-        if (process.env.DEBUG) {
-          logger.debug(
-            `[DAEMON RUN] Health check completed at ${new Date(updatedState.lastHeartbeatAt ?? Date.now()).toISOString()}`,
-          );
-        }
-      } catch (error) {
-        logger.debug('[DAEMON RUN] Failed to write heartbeat', error);
       }
 
       // The idle glibc probe retained ~455 MB of its 513 MB release at +10m;

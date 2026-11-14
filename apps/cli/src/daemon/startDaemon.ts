@@ -2563,7 +2563,7 @@ export async function startDaemon(
       externalActionIngressOwner,
       managedMachinePolicyAdapter,
       readManagedServiceCurrentLogPaths,
-      retryOrphanedManagedServices,
+      retireEndedRunnerOwnedState,
       requestManagedServiceRecovery: requestManagedServiceRecoveryFromSessionControl,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       processLeftBehindPass: sessionControlLeftBehindPass,
@@ -4696,11 +4696,7 @@ export async function startDaemon(
     // Reattached Sessions may still hold the previous daemon's catalog.
     publishSessionPluginCatalogInvalidation(pluginRegistryProjectionInvalidation.readRevision());
 
-    // Every 60 seconds:
-    // 1. Prune stale sessions
-    // 2. Check if daemon needs update
-    // 3. If outdated, restart with latest version
-    // 4. Write heartbeat
+    // Observes runners whose exit the daemon cannot see and restarts onto a newer installed CLI.
     const restartOnStaleVersionAndHeartbeat = startDaemonHeartbeatLoop({
       trackedSessionsByKey,
       ...(process.platform === 'linux' ? {
@@ -4711,13 +4707,10 @@ export async function startDaemon(
       getApiMachineForSessions: () => apiMachineForSessions,
       onChildExited,
       onTrackedSessionHealthy,
-      retryOrphanedManagedServices,
-      controlPort,
+      retireEndedRunnerOwnedState,
       fileState,
       currentCliVersion: configuration.currentCliVersion,
-      requestShutdown,
       isShuttingDown: admissionDrain.isPublicationQuiescing,
-      writeDaemonStateForCurrentOwner: publishDaemonStateForCurrentOwner,
       requestSelfRestart: async (selfRestartParams) =>
         await requestDaemonSelfRestartWithLockHandoff({
           getCurrentDaemonLockHandle: () => daemonLockHandle,

@@ -83,11 +83,10 @@ describe.skipIf(process.platform !== 'linux')('one process observation per ident
     const version = (JSON.parse(readFileSync(join(projectPath(), 'package.json'), 'utf8')) as { version: string }).version;
     startDaemonHeartbeatLoop({
       trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
-      getApiMachineForSessions: () => null, controlPort: 8765,
+      getApiMachineForSessions: () => null,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: version, daemonLogPath: '/tmp/audit-daemon.log' },
-      currentCliVersion: version, requestShutdown: () => { throw new Error('Unexpected shutdown'); },
+      currentCliVersion: version,
       requestSelfRestart: async () => { throw new Error('Unexpected restart'); },
-      writeDaemonStateForCurrentOwner: () => true,
     });
     if (!tick) throw new Error('Heartbeat timer missing');
     observed.paths.length = 0;

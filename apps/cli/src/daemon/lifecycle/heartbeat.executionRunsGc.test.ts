@@ -19,7 +19,7 @@ vi.mock('@/persistence', () => ({
 import { readDaemonState } from '@/persistence';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-describe('startDaemonHeartbeatLoop execution run marker gc', () => {
+describe('ended-runner execution run marker gc', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
   let happyHomeDir: string;
 
@@ -47,7 +47,7 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
     vi.restoreAllMocks();
   });
 
-  it('removes stale terminal execution run markers during heartbeat', async () => {
+  it('removes stale terminal execution run markers in the ended-runner retirement pass', async () => {
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
       httpPort: 4001,
@@ -56,10 +56,6 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
       lastHeartbeatAt: Date.now(),
     });
 
-    const setIntervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(((handler: (...args: any[]) => any) => {
-      (globalThis as any).__tick = handler;
-      return 1 as any;
-    }) as any);
 
     const { writeExecutionRunMarker, listExecutionRunMarkers } = await import('@/daemon/executionRunRegistry');
     await writeExecutionRunMarker({
@@ -79,31 +75,9 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
     // Ensure marker exists before heartbeat runs.
     expect((await listExecutionRunMarkers()).some((m) => m.runId === 'run_terminal_old')).toBe(true);
 
-    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
-
-    startDaemonHeartbeatLoop({
-      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'sess-1', machineId: 'm1' } as any]]),
-      spawnResourceCleanupByKey: new Map(),
-      sessionAttachCleanupByKey: new Map(),
-      getApiMachineForSessions: () => null,
-      controlPort: 8765,
-      fileState: {
-        pid: process.pid,
-        httpPort: 8765,
-        startedAt: Date.now(),
-        startedWithCliVersion: '1.0.0',
-        daemonLogPath: '/tmp/daemon.log',
-      },
-      currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
-    });
-
-    expect(setIntervalSpy).toHaveBeenCalled();
-    const tick: (() => Promise<void>) | undefined = (globalThis as any).__tick;
-    expect(tick).toBeTypeOf('function');
-
-    await tick!();
+    const { collectEndedExecutionRunMarkers } = await import('./heartbeat');
+    // One ended-runner retirement pass (startup or a runner exit edge).
+    await collectEndedExecutionRunMarkers(new Map([[legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'sess-1', machineId: 'm1' } as any]]));
 
     const after = await listExecutionRunMarkers();
     expect(after.some((m) => m.runId === 'run_terminal_old')).toBe(false);

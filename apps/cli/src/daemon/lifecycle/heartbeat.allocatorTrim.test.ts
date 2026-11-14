@@ -36,26 +36,21 @@ describe('daemon heartbeat allocator maintenance', () => {
       producers: [{ read: () => ({ items: items(), coverage: coverage() }), subscribe: () => () => {} }],
     });
     inventories.push(activity);
-    let publications = 0;
     const intervals = vi.spyOn(globalThis, 'setInterval');
     timer = startDaemonHeartbeatLoop({
       trackedSessionsByKey: new Map(),
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      controlPort: 8765,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
         startedWithCliVersion: configuration.currentCliVersion, daemonLogPath: join(home, 'daemon.log') },
       currentCliVersion: configuration.currentCliVersion,
-      requestShutdown: () => {},
-      writeDaemonStateForCurrentOwner: () => { publications++; return true; },
       allocatorMaintenance: { activity, trim },
     });
     const callback = intervals.mock.calls.at(-1)?.[0];
     if (typeof callback !== 'function') throw new Error('heartbeat timer missing');
     clearInterval(timer);
     tick = async () => { await callback(); };
-    return () => publications;
   }
 
   async function advance(ms: number) {
@@ -94,12 +89,11 @@ describe('daemon heartbeat allocator maintenance', () => {
     expect(releases).toBe(1);
   });
 
-  it('keeps publishing heartbeats after native failure and rate-limits the next attempt', async () => {
+  it('keeps the heartbeat running after native failure and rate-limits the next attempt', async () => {
     let attempts = 0;
-    const publications = await start(async () => { attempts++; throw new Error('native boundary failed'); });
+    await start(async () => { attempts++; throw new Error('native boundary failed'); });
     await advance(60_000);
     expect(attempts).toBe(1);
-    expect(publications()).toBeGreaterThan(0);
     await advance(570_000);
     expect(attempts).toBe(2);
   });

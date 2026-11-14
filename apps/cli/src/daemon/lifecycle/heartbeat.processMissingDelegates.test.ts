@@ -102,9 +102,8 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     if (observer === 'heartbeat') startDaemonHeartbeatLoop({
       trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, onChildExited,
-      controlPort: 8765,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: '1.0.0', daemonLogPath: '/tmp/daemon.log' },
-      currentCliVersion: '1.0.0', requestShutdown: vi.fn(), writeDaemonStateForCurrentOwner: () => true,
+      currentCliVersion: '1.0.0',
     });
     try {
       if (!tick) throw new Error('Heartbeat timer missing');
@@ -189,7 +188,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -198,8 +196,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -239,7 +235,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       getApiMachineForSessions: () => null,
       onChildExited,
       pidSafetyDependencies: { readProcessRunStateFn },
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -248,8 +243,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(tick).toBeTypeOf('function');
@@ -357,7 +350,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       pidSafetyDependencies: {
         readProcessIdentityByPidFn,
       },
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -366,8 +358,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -461,7 +451,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
           return await identityReadResult;
         }),
       },
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -470,8 +459,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '0.9.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
       requestSelfRestart,
       isShuttingDown: () => shuttingDown,
     });
@@ -517,7 +504,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -526,8 +512,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
@@ -569,7 +553,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -578,8 +561,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -635,7 +616,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -644,8 +624,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -656,57 +634,5 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     expect(onChildExitedMock).not.toHaveBeenCalled();
     expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
-  });
-
-  it('requests shutdown when exact lock ownership is lost before heartbeat publication', async () => {
-    vi.mocked(readDaemonState).mockResolvedValue({
-      pid: process.pid + 1234,
-      httpPort: 4001,
-      startedAt: Date.now(),
-      startedWithCliVersion: '1.0.0',
-      lastHeartbeatAt: Date.now(),
-    });
-
-    const setIntervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(((handler: (...args: any[]) => any) => {
-      (globalThis as any).__tick = handler;
-      return 1 as any;
-    }) as any);
-
-    const requestShutdown = vi.fn();
-    const writeDaemonStateForCurrentOwner = vi.fn(() => false);
-
-    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
-    startDaemonHeartbeatLoop({
-      trackedSessionsByKey: new Map(),
-      spawnResourceCleanupByKey: new Map(),
-      sessionAttachCleanupByKey: new Map(),
-      getApiMachineForSessions: () => null,
-      controlPort: 8765,
-      fileState: {
-        pid: process.pid,
-        httpPort: 8765,
-        startedAt: Date.now(),
-        startedWithCliVersion: '1.0.0',
-        daemonLogPath: '/tmp/daemon.log',
-      },
-      currentCliVersion: '1.0.0',
-      requestShutdown,
-      writeDaemonStateForCurrentOwner,
-    });
-
-    expect(setIntervalSpy).toHaveBeenCalled();
-    const tick: (() => Promise<void>) | undefined = (globalThis as any).__tick;
-    expect(tick).toBeTypeOf('function');
-
-    await tick!();
-
-    expect(writeDaemonStateForCurrentOwner).toHaveBeenCalledWith(expect.objectContaining({
-      pid: process.pid,
-    }));
-    expect(requestShutdown).toHaveBeenCalledWith(
-      'exception',
-      'daemon_state_publication_ownership_lost',
-    );
-    expect(writeDaemonState).not.toHaveBeenCalled();
   });
 });

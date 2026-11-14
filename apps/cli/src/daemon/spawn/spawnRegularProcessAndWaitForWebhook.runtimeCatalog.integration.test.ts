@@ -61,7 +61,7 @@ import { resolveDisconnectedTerminalHostResumeGate, resolveTrackedSessionTermina
 import { startDaemonHeartbeatLoop } from '../lifecycle/heartbeat';
 import { retireExactTerminalControlServiceability } from '../sessions/retireTerminalControlServiceability';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { acquireDaemonLock, readDaemonState, releaseDaemonLock, writeDaemonStateForLockOwner } from '@/persistence';
+import { acquireDaemonLock, releaseDaemonLock } from '@/persistence';
 import { resolveComparableCliVersion } from '../resolveComparableCliVersion';
 import { projectPath } from '@/projectPath';
 import { createStopSession } from '../sessions/stopSession';
@@ -575,12 +575,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   const heartbeatParams = {
                     trackedSessionsByKey, spawnResourceCleanupByKey, sessionAttachCleanupByKey,
                     getApiMachineForSessions: () => null, onChildExited,
-                    controlPort: address.port, fileState: { pid: process.pid, httpPort: address.port,
+                    fileState: { pid: process.pid, httpPort: address.port,
                       startedAt: Date.now(), startedWithCliVersion: currentCliVersion,
                       daemonLogPath: join(homeDir, 'heartbeat.log') },
                     currentCliVersion,
-                    requestShutdown: () => { throw new Error('The owned current heartbeat cannot require shutdown'); },
-                    writeDaemonStateForCurrentOwner: (state: Parameters<typeof writeDaemonStateForLockOwner>[1]) => writeDaemonStateForLockOwner(lock, state),
                     onTrackedSessionHealthy: (current: TrackedSession) => superviseTrackedOptionalTerminalPresentation({
                       tracked: current, isCurrent: () => trackedSessionsByKey.get(tracked.trackingKey) === current, happyHomeDir: homeDir,
                       loadTerminalHostAdapters: async () => ({ herdr: hostAdapter }),
@@ -597,7 +595,6 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   enterPhase('heartbeat retirement');
                   await tick();
                   enterPhase('Stop safety guards');
-                  expect(await readDaemonState()).toMatchObject({ pid: process.pid, httpPort: address.port, lastHeartbeatAt: expect.any(Number) });
                   expect(await readTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1' })).toBeNull();
                   const retirement = SessionMetadataTuplePatchV1Schema.parse(retirementRequests.at(-1));
                   if (retirement.mode !== 'owner_migration' || retirement.target.ownerMetadata.t !== 'plain') throw new Error('The real plain owner did not publish retirement');

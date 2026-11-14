@@ -88,7 +88,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             spawnResourceCleanupByKey: new Map(),
             sessionAttachCleanupByKey: new Map(),
             getApiMachineForSessions: () => null,
-            controlPort: 8765,
             fileState: {
                 pid: process.pid,
                 httpPort: 8765,
@@ -97,8 +96,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
                 daemonLogPath: '/tmp/daemon.log',
             },
             currentCliVersion: configuration.currentCliVersion,
-            requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         expect(setIntervalSpy).toHaveBeenCalled();
@@ -187,7 +184,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             spawnResourceCleanupByKey: new Map(),
             sessionAttachCleanupByKey: new Map(),
             getApiMachineForSessions: () => null,
-            controlPort: 8765,
             fileState: {
                 pid: process.pid,
                 httpPort: 8765,
@@ -196,8 +192,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
                 daemonLogPath: '/tmp/daemon.log',
             },
             currentCliVersion: configuration.currentCliVersion,
-            requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         const tick: (() => Promise<void>) | undefined = (globalThis as any).__tick;

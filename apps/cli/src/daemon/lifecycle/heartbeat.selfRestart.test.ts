@@ -104,7 +104,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -114,8 +113,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -168,7 +165,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      controlPort: 8765,
       fileState: {
         pid: process.pid,
         httpPort: 8765,
@@ -178,8 +174,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         daemonLogPath: '/tmp/daemon.log',
       },
       currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -259,7 +253,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         spawnResourceCleanupByKey: new Map(),
         sessionAttachCleanupByKey: new Map(),
         getApiMachineForSessions: () => null,
-        controlPort: 5555,
         fileState: {
           pid: process.pid,
           httpPort: 5555,
@@ -268,8 +261,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
           runtimeId: 'runtime-heartbeat-confirmed',
         },
         currentCliVersion: '1.0.0',
-        requestShutdown: vi.fn(),
-      writeDaemonStateForCurrentOwner: vi.fn(() => true),
       });
 
       expect(setIntervalSpy).toHaveBeenCalled();

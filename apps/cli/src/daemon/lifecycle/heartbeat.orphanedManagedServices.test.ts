@@ -2,11 +2,10 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { configuration, reloadConfiguration } from '@/configuration';
+import { reloadConfiguration } from '@/configuration';
 import { createManagedServiceDurabilityOwner } from '@/plugins/runtime/invocation/services/managedServiceDurability';
 import { readManagedServiceEndpointProjectionCandidates } from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import { createProcessOwnershipRuntime } from '../processes/ownership/processOwnershipRuntime';
-import { startDaemonHeartbeatLoop } from './heartbeat';
 
 import type { ProcessCensusDependencies } from '@/processes/census/processCensus';
 import type { HappierProcessRoot } from '../processes/ownership/types';
@@ -20,7 +19,7 @@ afterEach(() => {
 
 it.each(['identity unavailable', 'termination failed', 'replacement during retry', 'root exited with owned group survivor',
   'root exited with other owner in group', 'root exited with reowned group member', 'root exited with unknown group member', 'all owners live or unknown'] as const)(
-  'retries retained managed custody on a later heartbeat after %s while protecting live and unknown owners', async (failure) => {
+  'retries retained managed custody on a later retirement pass after %s while protecting live and unknown owners', async (failure) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-heartbeat-managed-retry-'));
     vi.stubEnv('HAPPIER_HOME_DIR', home);
     reloadConfiguration();
@@ -95,7 +94,6 @@ it.each(['identity unavailable', 'termination failed', 'replacement during retry
       endpoint: { baseUrl: `http://127.0.0.1:${pid}`, host: '127.0.0.1', port: pid },
       process: { pid, startIdentity: `${pid}:${rows.get(pid)!.ticks * 10}` }, createdAtMs: 1,
     });
-    let timer: NodeJS.Timeout | undefined;
     try {
       for (const [pid, sessionId] of [[5100, 'ended-session'], [5101, 'live-idle-session'],
         [5102, 'unknown-session'], [5103, 'replaced-session']] as const) {
@@ -131,18 +129,8 @@ it.each(['identity unavailable', 'termination failed', 'replacement during retry
       expect(ownership.rows.find(row => row.pid === (failure.startsWith('root exited') ? 5200 : 5100)))
         .toMatchObject(failure === 'all owners live or unknown' ? { ownerEnded: false, level: 'proven' }
           : { ownerEnded: true, level: 'left_behind' });
-      const intervals = vi.spyOn(globalThis, 'setInterval');
-      timer = startDaemonHeartbeatLoop({
-        trackedSessionsByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
-        getApiMachineForSessions: () => null, controlPort: 8765,
-        fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
-          startedWithCliVersion: configuration.currentCliVersion, daemonLogPath: join(home, 'daemon.log') },
-        currentCliVersion: configuration.currentCliVersion, requestShutdown: () => {}, writeDaemonStateForCurrentOwner: () => true,
-        retryOrphanedManagedServices: async () => { await owner.retireEndedSessionRunnerOwnedProjections({ processOwnership }); },
-      });
-      const tick = intervals.mock.calls.at(-1)?.[0];
-      if (typeof tick !== 'function') throw new Error('heartbeat timer missing');
-      clearInterval(timer);
+      // The daemon runs this retirement at startup and at every runner exit edge (I5); each call is one pass.
+      const tick = async () => { await owner.retireEndedSessionRunnerOwnedProjections({ processOwnership }); };
       const readsBeforeTick = censusReads;
       await tick();
       if (failure === 'all owners live or unknown') expect(censusReads - readsBeforeTick).toBe(1);
@@ -167,7 +155,6 @@ it.each(['identity unavailable', 'termination failed', 'replacement during retry
         expect(censusReads - readsBeforeEmptyTick).toBe(1);
       }
     } finally {
-      if (timer) clearInterval(timer);
       await rm(home, { recursive: true, force: true });
     }
   },
