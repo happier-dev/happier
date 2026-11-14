@@ -574,6 +574,26 @@ describe('useSavedSecretCatalog resource authority', () => {
         expect(unused.read()).toEqual({ renders: 0, commits: 0 });
     });
 
+    it('reads the catalog only for a reader that resolves a shared reference, not on every mount of an idle reader', async () => {
+        home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
+        const { entry } = await home.addOwnerResource();
+        const { useSavedSecretReferenceResolver } = await import('./useSavedSecretCatalog');
+        const scope = home.scope;
+        const catalogReads = () => home!.request.mock.calls.filter(([url]) =>
+            new URL(String(url)).pathname.startsWith('/v1/account/saved-secrets/resources')).length;
+        const before = catalogReads();
+        // A revealed transcript row mounts a readiness reader that binds no Saved Secret; each reveal remounts it.
+        for (let reveal = 0; reveal < 5; reveal++) {
+            const idle = await renderHook(() => useSavedSecretReferenceResolver({ scope }));
+            await idle.unmount();
+        }
+        expect(catalogReads() - before).toBe(0);
+        // A reader that resolves a shared reference still demands and follows it.
+        const reader = await renderHook(() => useSavedSecretReferenceResolver({ scope }).resolve(entry.ref));
+        await vi.waitFor(() => expect(reader.getCurrent()).toMatchObject({ status: 'ready', secret: { id: entry.ref } }));
+        expect(catalogReads() - before).toBeGreaterThan(0);
+    });
+
     it('keeps healthy material selectable beside a corrupt row and reconciles its owner repair', async () => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,

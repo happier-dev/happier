@@ -128,6 +128,8 @@ function useSavedSecretCatalogSource(
   options?: Readonly<{
     scope?: AccountSettingsScope | null;
     includeMaterial?: boolean;
+    /** A reader that has not consumed the catalog yet reads snapshots without creating load demand. */
+    demanded?: boolean;
   }>,
 ) {
   const activeScope = useAccountSettingsScope();
@@ -145,15 +147,16 @@ function useSavedSecretCatalogSource(
   const serverId = scope?.serverId;
   const accountId = scope?.accountId;
   const includeMaterial = options?.includeMaterial !== false;
+  const demanded = options?.demanded !== false;
   React.useEffect(() => {
-    if (!serverId || !accountId || !catalogEnabled) return;
+    if (!serverId || !accountId || !catalogEnabled || !demanded) return;
     // The loader owns credential/currentness transitions. Equivalent
     // Settings scope objects must not retire its admitted material read.
     return observeSavedSecretCatalog(
       { serverId, accountId },
       { includeMaterial },
     );
-  }, [serverId, accountId, catalogEnabled, includeMaterial]);
+  }, [serverId, accountId, catalogEnabled, includeMaterial, demanded]);
 
   return { scope, scopeIsActive, catalogEnabled, serverId, accountId };
 }
@@ -232,7 +235,12 @@ function sameReferenceResolution(
 export function useSavedSecretReferenceResolver(
   options?: Readonly<{ scope?: AccountSettingsScope | null; includeMaterial?: boolean }>,
 ): SavedSecretReferenceReader {
-  const { scope, catalogEnabled, serverId, accountId } = useSavedSecretCatalogSource(options);
+  // Demand follows consumption: only a resolved shared reference needs the Account catalog. A reader that
+  // binds no Saved Secret (for example a revealed transcript row's Voice readiness) never loads it.
+  const [demanded, setDemanded] = React.useState(false);
+  const demandRef = React.useRef(false);
+  const { scope, catalogEnabled, serverId, accountId } = useSavedSecretCatalogSource({ ...options, demanded });
+  React.useEffect(() => { if (demandRef.current && !demanded) setDemanded(true); });
   const includeMaterial = options?.includeMaterial !== false;
   const source = catalogEnabled ? scope : null;
   const sourceRef = React.useRef(source);
@@ -243,8 +251,11 @@ export function useSavedSecretReferenceResolver(
     resolved: Map<string, SavedSecretReferenceResolution>;
   }> | null>(null);
   const key = JSON.stringify([catalogEnabled ? serverId : null, catalogEnabled ? accountId : null, includeMaterial]);
-  const resolveNow = React.useCallback((ref: string) => resolveSavedSecretReference(
-    sourceRef.current, EMPTY_MATERIALIZED_SECRETS, ref, { includeMaterial }), [includeMaterial]);
+  const resolveNow = React.useCallback((ref: string) => {
+    const resolution = resolveSavedSecretReference(sourceRef.current, EMPTY_MATERIALIZED_SECRETS, ref, { includeMaterial });
+    if (resolution.kind === 'shared_resource' && sourceRef.current) demandRef.current = true;
+    return resolution;
+  }, [includeMaterial]);
   const createReader = React.useCallback((revision: number) => {
     const resolved = new Map<string, SavedSecretReferenceResolution>();
     const reader = Object.freeze({
