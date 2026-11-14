@@ -131,6 +131,7 @@ import {
 import { syncSessionSnapshotFromServer } from './client/transport/syncSessionSnapshotFromServer';
 import { createSessionClientUsageObservationPublisher } from './client/createSessionClientUsageObservationPublisher';
 import type {
+    AccountUpdatesSocket,
     SessionClientServerBinding,
     SessionClientTransport,
 } from './client/transport/sessionClientTransport';
@@ -602,7 +603,7 @@ export class ApiSessionClient extends EventEmitter {
     }> | null = null;
     private ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>;
-    private userSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
+    private userSocket: AccountUpdatesSocket | null;
     private providerInputBacklog: UserMessage[] = [];
     private providerInputConsumer: SessionProviderInputConsumer | null = null;
     private providerInputConsumerAttachedAtMs: number | null = null;
@@ -2120,7 +2121,7 @@ export class ApiSessionClient extends EventEmitter {
 
     private handleUserScopedUpdate(
         data: Update,
-        socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+        socket: AccountUpdatesSocket,
     ): void {
         if (this.closed || socket !== this.userSocket) return;
 

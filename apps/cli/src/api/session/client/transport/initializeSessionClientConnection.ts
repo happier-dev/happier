@@ -9,7 +9,7 @@ import {
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
-import type { SessionClientTransport } from './sessionClientTransport';
+import type { AccountUpdatesSocket, SessionClientTransport } from './sessionClientTransport';
 import type { ClientToServerEvents, ServerToClientEvents, Update } from '../../../types';
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
@@ -53,7 +53,7 @@ export function initializeSessionClientConnection(
         };
         handleUserScopedUpdate: (
             data: Update,
-            socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+            socket: AccountUpdatesSocket,
         ) => void;
         installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
         classifyTransportErrorToProbeResult: Parameters<typeof createManagedConnectionSupervisor>[0]['classifyTransportErrorToProbeResult'];
@@ -82,7 +82,7 @@ export function initializeSessionClientConnection(
         onAccountCatalogInvalidated?: () => Promise<void>;
     }>,
 ): Readonly<{
-    userSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
+    userSocket: AccountUpdatesSocket | null;
     sessionConnectionSupervisor: ManagedConnectionSupervisor;
     getServerFeaturesSnapshot: ReturnType<typeof createSessionSyncPendingInputServerContractController>['getServerFeaturesSnapshot'];
 }> {

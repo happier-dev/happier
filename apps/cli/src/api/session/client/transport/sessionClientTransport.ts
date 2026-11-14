@@ -8,6 +8,19 @@ export type SessionClientServerBinding = Readonly<{
     serverUrl: string;
 }>;
 
+/**
+ * The Account update stream surface a Session client uses. A socket.io socket satisfies it; a
+ * session host gives each Session a view of one shared connection (`sharedAccountUpdatesSocket`).
+ */
+export type AccountUpdatesSocket = Readonly<{
+    readonly connected: boolean;
+    on(event: string, listener: (...args: never[]) => void): unknown;
+    off(event: string, listener: (...args: never[]) => void): unknown;
+    connect(): unknown;
+    disconnect(): unknown;
+    close(): unknown;
+}>;
+
 /** Transport custody belongs to the composition that admitted this Session. */
 export type SessionClientTransport = SessionClientServerBinding & Readonly<{
     createSessionSocketTransport: (binding: Readonly<{
@@ -17,6 +30,6 @@ export type SessionClientTransport = SessionClientServerBinding & Readonly<{
         socket: Socket<ServerToClientEvents, ClientToServerEvents>;
         transport: ManagedConnectionTransport;
     }>;
-    createAccountUpdatesSocket?: () => Socket<ServerToClientEvents, ClientToServerEvents>;
+    createAccountUpdatesSocket?: () => AccountUpdatesSocket;
     resolveToken?: () => Promise<string | null>;
 }>;

@@ -9,6 +9,7 @@ import {
   type LocalSessionHostEndResult,
 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { handOverSessionHolderClients, pauseSessionHolderDelivery } from '@/subprocess/supervision/sessionHolder';
+import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpdatesSocket';
 
 import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
 import { registerRunnerTerminationHandlers, requestHostedSessionTermination } from './runnerTerminationHandlers';
@@ -44,6 +45,8 @@ export async function startSessionHost(params: Readonly<{
   exit?: (code: number) => void;
 }>): Promise<SessionHost> {
   const sessions = new Map<string, { scope: HostedSessionScope | null; ended: Promise<Readonly<{ exitCode: number }>> }>();
+  // Every hosted Session of one Account shares one Account update connection.
+  shareAccountUpdatesInThisProcess();
   let closing = false;
   let retireEndpoint: (() => Promise<void>) | null = null;
   const exit = params.exit ?? ((code: number) => process.exit(code));

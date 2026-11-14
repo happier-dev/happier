@@ -2,6 +2,7 @@ import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { readStoredCredentials } from '@/persistence';
 import { createSessionSocketTransport } from '@/api/session/connection/createSessionSocketTransport';
 import { createUserScopedSocket } from '@/api/session/sockets';
+import { openAccountUpdatesSocket } from '@/api/session/sharedAccountUpdatesSocket';
 import type { SessionClientTransport } from '@/api/session/client/transport/sessionClientTransport';
 import { configuration } from '@/configuration';
 
@@ -13,7 +14,9 @@ export function createAccountSessionClientTransport(token: string): SessionClien
         serverId,
         serverUrl,
         createSessionSocketTransport: (binding) => createSessionSocketTransport({ token, serverUrl, ...binding }),
-        createAccountUpdatesSocket: () => createUserScopedSocket({ token, serverUrl }),
+        // One Account update connection per process and credential (a session host holds many Sessions).
+        createAccountUpdatesSocket: () => openAccountUpdatesSocket(`${serverUrl}\n${token}`,
+            () => createUserScopedSocket({ token, serverUrl })),
         resolveToken: async () => (await readStoredCredentials())?.token ?? null,
     });
 }

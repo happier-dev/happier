@@ -3,6 +3,7 @@ import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import { Socket } from 'socket.io-client';
+import type { AccountUpdatesSocket } from './sessionClientTransport';
 import { configuration } from '@/configuration';
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 
@@ -532,7 +533,7 @@ export function createSessionClientInteractionApi(
         getSocket: () => Socket<ServerToClientEvents, ClientToServerEvents>;
         getSessionConnectionEpoch: () => number;
         getSessionSyncPendingInputServerContractResult: () => SessionSyncPendingInputServerContractResult | null;
-        getUserSocket: () => Socket<ServerToClientEvents, ClientToServerEvents> | null;
+        getUserSocket: () => AccountUpdatesSocket | null;
         getSessionConnectionSupervisor: () => import('@happier-dev/connection-supervisor').ManagedConnectionSupervisor | null;
         getRpcHandlerManager: () => Pick<RpcHandlerManager, 'handleRequest'>;
         getMetadata: () => Metadata | null;
