@@ -8097,6 +8097,8 @@ settingsSession: {
             inputBehavior: {
                 keepFocusTitle: "Mantén el redactor enfocat després d’enviar",
                 keepFocusSubtitle: "Queda’t al camp del missatge per escriure el següent de seguida.",
+                typeToFocusTitle: "Escriu des de qualsevol lloc",
+                typeToFocusSubtitle: "Comença a escriure fora d’un camp de text per anar al camp del missatge.",
                 title: 'Comportament de l’entrada',
                 footer: 'Configura Enviar amb Retorn i el comportament de l’historial de missatges.',
                 enterToSendEnabledNativeSubtitle: 'Prem Retorn per enviar',

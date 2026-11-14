@@ -8087,6 +8087,8 @@ settingsSession: {
           inputBehavior: {
               keepFocusTitle: "Garder l’éditeur actif après l’envoi",
               keepFocusSubtitle: "Rester dans le champ de message pour écrire le suivant tout de suite.",
+              typeToFocusTitle: "Écrire depuis n’importe où",
+              typeToFocusSubtitle: "Commencez à taper hors d’un champ de texte pour passer au champ de message.",
               title: 'Comportement de la saisie',
               footer: 'Configure l’envoi avec Entrée et le comportement de l’historique des messages.',
               enterToSendEnabledNativeSubtitle: 'Appuie sur Entrée pour envoyer',

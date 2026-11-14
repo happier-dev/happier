@@ -8100,6 +8100,8 @@ settingsSession: {
           inputBehavior: {
               keepFocusTitle: "Eingabefeld nach dem Senden fokussiert lassen",
               keepFocusSubtitle: "Im Nachrichtenfeld bleiben, um gleich die nächste Nachricht zu schreiben.",
+              typeToFocusTitle: "Überall lostippen",
+              typeToFocusSubtitle: "Tippen außerhalb eines Textfelds springt direkt ins Nachrichtenfeld.",
               title: 'Eingabeverhalten',
               footer: 'Enter-zum-Senden und das Verhalten des Nachrichtenverlaufs einstellen.',
               enterToSendEnabledNativeSubtitle: 'Enter zum Senden drücken',

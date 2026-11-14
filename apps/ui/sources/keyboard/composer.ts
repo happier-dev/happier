@@ -63,6 +63,18 @@ export function shouldIgnoreComposerKeyboardEvent(event: ComposerKeyEvent): bool
     return event.isComposing === true || event.repeat === true;
 }
 
+/**
+ * A key that types visible text: one character, no command modifier, and not Space, which keeps
+ * scrolling the focused transcript. AltGr reports Ctrl+Alt on Windows but still types a character.
+ */
+export function isComposerTypeToFocusKey(event: ComposerKeyEvent & Readonly<{ altGraph?: boolean }>): boolean {
+    if (event.isComposing === true) return false;
+    const commandModifier = event.metaKey === true
+        || (event.altGraph !== true && (event.ctrlKey === true || event.altKey === true));
+    if (commandModifier) return false;
+    return Array.from(event.key).length === 1 && event.key.trim() !== '';
+}
+
 export function shouldRunComposerModeCycleShortcut(
     event: ComposerKeyEvent,
     input: ComposerShortcutSettings & Readonly<{

@@ -8132,6 +8132,8 @@ settingsSession: {
           inputBehavior: {
               keepFocusTitle: "Keep composer focused after sending",
               keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
+              typeToFocusTitle: "Type anywhere to write",
+              typeToFocusSubtitle: "Start typing outside a text field to jump into the message field.",
               title: 'Input behavior',
               footer: 'Configure Enter-to-send and message history behavior.',
               enterToSendEnabledNativeSubtitle: 'Press Enter to send',

@@ -8512,6 +8512,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "Сохранять фокус в редакторе после отправки",
         keepFocusSubtitle: "Оставаться в поле сообщения, чтобы сразу написать следующее.",
+        typeToFocusTitle: "Печатать откуда угодно",
+        typeToFocusSubtitle: "Начните печатать вне текстового поля, чтобы перейти в поле сообщения.",
         title: 'Поведение ввода',
         footer: 'Настройте отправку по Enter и поведение истории сообщений.',
         enterToSendEnabledNativeSubtitle: 'Нажмите Enter, чтобы отправить',

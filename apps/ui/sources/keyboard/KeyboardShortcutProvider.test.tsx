@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 const testState = vi.hoisted(() => ({
@@ -13,6 +14,7 @@ const testState = vi.hoisted(() => ({
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],
     } as Partial<Settings>,
+    localSettings: {} as Partial<LocalSettings>,
 }));
 
 vi.mock('react-native', async () => {
@@ -39,7 +41,7 @@ vi.mock('@/modal', async () => {
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
     const readSnapshot = () => ({
         settings: {
             ...settingsDefaults,
@@ -59,7 +61,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
             destroy: () => undefined,
         },
     );
-    return createStorageModuleStub({ storage });
+    const useLocalSetting = createUseLocalSettingMock({
+        fallback: (key) => (testState.localSettings as Record<string, unknown>)[key] as never,
+    });
+    return createStorageModuleStub({ storage, useLocalSetting });
 });
 
 const nativeKeyboardState = vi.hoisted(() => ({
@@ -79,11 +84,11 @@ vi.mock('@/components/sessions/agentInput/subscribeToIosHardwareShiftEnter', () 
 }));
 
 describe('KeyboardShortcutProvider', () => {
-    afterEach(() => vi.unstubAllGlobals());
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
         testState.platformOS = 'web';
+        testState.localSettings = {};
         testState.settings = {
             commandPaletteEnabled: true,
             keyboardShortcutsV2Enabled: true,
@@ -95,9 +100,7 @@ describe('KeyboardShortcutProvider', () => {
         installKeyboardWindowMock();
     });
 
-    it('focuses the current Windows composer for unhandled typing without cancelling the first character', async () => {
-        vi.stubGlobal('navigator', { platform: 'Win32' });
-        vi.stubGlobal('document', { querySelector: () => null });
+    it('moves unhandled printable typing into the current composer on every web platform without cancelling the key', async () => {
         testState.settings = { ...testState.settings, keyboardShortcutsV2Enabled: false };
         const { renderScreen } = await import('@/dev/testkit');
         const module = await import('./KeyboardShortcutProvider');
@@ -112,44 +115,53 @@ describe('KeyboardShortcutProvider', () => {
         expect(focused).toBe('first');
         expect(firstKey.preventDefault).not.toHaveBeenCalled();
         expect(firstKey.stopPropagation).not.toHaveBeenCalled();
+
         await screen.update(<module.KeyboardShortcutProvider handlers={{}}><Composer name="second" /></module.KeyboardShortcutProvider>);
-        window.dispatchEvent(createKeyboardEvent({ key: '!' }));
-        expect(focused).toBe('second');
         focused = '';
-        window.dispatchEvent(createKeyboardEvent({ key: 'a', target: {
-            tagName: 'BUTTON',
-            closest: (selector: string) => selector.includes('button') ? {} : null,
-        } as unknown as EventTarget }));
+        // AltGr reports Ctrl+Alt on Windows but still types a character such as "@".
+        window.dispatchEvent(createKeyboardEvent({
+            key: '@',
+            ctrlKey: true,
+            altKey: true,
+            getModifierState: (modifier: string) => modifier === 'AltGraph',
+        }));
         expect(focused).toBe('second');
     });
 
-    it('preserves input ownership, overlays, composition, shortcuts and other platforms when typing', async () => {
-        vi.stubGlobal('navigator', { platform: 'Win32' });
-        const querySelector = vi.fn((): object | null => null);
-        vi.stubGlobal('document', { querySelector });
+    it('leaves typing alone in editors, open overlays, IME, shortcuts, Space scrolling and when turned off', async () => {
         const focus = vi.fn();
         const { renderScreen } = await import('@/dev/testkit');
         const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
-        await renderScreen(<KeyboardShortcutProvider handlers={{ 'composer.focus': focus }}><Child /></KeyboardShortcutProvider>);
+        const { ESCAPE_LAYER_PRIORITIES, registerEscapeLayer } = await import('./escape');
+        const handlers = { 'composer.focus': focus };
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={handlers}><Child /></KeyboardShortcutProvider>);
+        const transcript = { tagName: 'DIV', closest: () => null };
         for (const event of [
             { key: 'a', ctrlKey: true }, { key: 'a', metaKey: true }, { key: 'a', altKey: true },
-            { key: 'a', isComposing: true }, { key: 'Dead' }, { key: 'Enter' },
-            { key: 'ArrowDown' }, { key: ' ', target: { closest: () => ({}) } },
-            { key: '?', shiftKey: true },
+            { key: 'a', isComposing: true }, { key: 'Dead' }, { key: 'Enter' }, { key: 'ArrowDown' },
+            { key: ' ', target: transcript }, { key: ' ', shiftKey: true, target: transcript },
             { key: 'a', target: { tagName: 'INPUT' } },
             { key: 'a', target: { tagName: 'TEXTAREA' } },
             { key: 'a', target: { isContentEditable: true } },
-            { key: 'a', target: { closest: () => ({}) } },
+            { key: 'a', target: { tagName: 'DIV', closest: (selector: string) => selector.includes('dialog') ? {} : null } },
             { key: 'a', defaultPrevented: true },
         ]) {
             window.dispatchEvent(createKeyboardEvent(event as Partial<KeyboardEvent>));
         }
-        querySelector.mockReturnValue({});
-        window.dispatchEvent(createKeyboardEvent({ key: 'a' }));
-        querySelector.mockReturnValue(null);
-        vi.stubGlobal('navigator', { platform: 'MacIntel' });
-        window.dispatchEvent(createKeyboardEvent({ key: 'a' }));
+
+        const closePopover = registerEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.popover, onEscape: () => true });
+        window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript as unknown as EventTarget }));
+        closePopover();
+
+        testState.localSettings = { composerTypeToFocusEnabled: false };
+        await screen.update(<KeyboardShortcutProvider handlers={handlers}><Child /></KeyboardShortcutProvider>);
+        window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript as unknown as EventTarget }));
         expect(focus).not.toHaveBeenCalled();
+
+        testState.localSettings = {};
+        await screen.update(<KeyboardShortcutProvider handlers={handlers}><Child /></KeyboardShortcutProvider>);
+        window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript as unknown as EventTarget }));
+        expect(focus).toHaveBeenCalledTimes(1);
     });
 
     it('invokes the current scoped command from an explicit action even when shortcuts are disabled', async () => {
