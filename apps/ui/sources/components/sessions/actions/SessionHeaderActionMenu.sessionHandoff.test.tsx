@@ -392,8 +392,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => ({
+  // The menu also reads the runtime snapshot (Hub/handoff readers); keep the real owner and pin only this server's read.
+  ...await importOriginal<typeof import('@/sync/domains/features/featureDecisionRuntime')>(),
   useServerFeaturesSnapshotForServerId: () => serverSnapshotState.current,
+  useServerFeaturesRuntimeSnapshot: () => serverSnapshotState.current,
 }));
 
 vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
@@ -2083,6 +2086,12 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(handoffItem).toBeDefined();
     expect(handoffItem?.disabled).not.toBe(true);
     expect(handoffItem?.subtitle).not.toBe('common.unavailable');
+    // The Action spec's description is written for agents ("…keeping the same session id. Select target storage…");
+    // a person's menu row says only what needs them (QA-SHELL-1114 F8: Fork, Hand off and Compact showed it).
+    const specRows = dropdown.props.items.filter((item: any) => ['session.handoff', 'session.fork', 'session.compact'].includes(item?.id) && !item.disabled);
+    const { listActionSpecs } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const descriptions = new Set(listActionSpecs().map(spec => spec.description));
+    expect(specRows.filter((item: any) => item.subtitle !== undefined && descriptions.has(item.subtitle))).toEqual([]);
   });
 
   it('reacts when machine-rpc direct-peer viability becomes available after mount', async () => {

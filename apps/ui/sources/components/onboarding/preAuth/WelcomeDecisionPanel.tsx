@@ -187,7 +187,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     testID="welcome-scan-existing-home"
                     primary={row.emphasis === 'primary'}
                     presentation={presentation}
-                    title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.enterUrlManually')}
+                    title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.usePairingLinkTitle')}
                     subtitle={t(canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
                     iconName={canScanQr ? 'qr-code' : 'link'}
                     onPress={handleLogin}

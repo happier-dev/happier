@@ -3083,6 +3083,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     enterSecretKey: "Saisis une clé de récupération",
     invalidSecretKey: "Clé de récupération invalide. Vérifie-la et réessaie.",
     enterUrlManually: "Saisir l’URL manuellement",
+    usePairingLinkTitle: "Utiliser un lien d’association",
     scanComputerQrUnavailableTitle: "Scan du QR desktop indisponible",
     scanComputerQrUnavailableBody:
       "Cette méthode de connexion est désactivée sur ce Home. Utilise une autre option ci-dessous pour restaurer ton compte.",

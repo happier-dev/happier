@@ -294,9 +294,36 @@ it('keeps Software in the phone Browse by kind entry alongside the other support
 it('offers the kinds once when the curated catalog cannot be reached: the Browse entry, never a second copy in the page', async () => {
   const { screen, catalogReads } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
   await waitForHomeGovernance(() => expect(catalogReads.length).toBeGreaterThan(0));
-  await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.discover.unavailable').length).toBeGreaterThan(0));
+  await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.failure').length).toBeGreaterThan(0));
   expect(screen.findAllHostsByTestId('store.discover.pinned.kinds.row').length).toBeGreaterThan(0);
   expect(screen.findAllByTestId('store.discover.kinds')).toHaveLength(0);
+});
+
+it('does not report catalogs that wait for a Machine as unreachable when Discover falls back to the catalogs', async () => {
+  // No Machine here: the Machine-read catalogs (Chrome Web Store, skills.sh) answer needs_machine. That is the catalog's
+  // prerequisite, said on its own kind page, not an outage of "everything else" (QA-SHELL-1114 F2).
+  const { screen } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
+  await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.failure').length).toBeGreaterThan(0));
+  const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+  const reported = () => screen.root.findAllByType(RegistrySourcesUnavailable)
+    .filter(node => node.props.testID === 'store.kind.search.failure')
+    .flatMap(node => node.props.failures.map((failure: { message: string; details?: readonly string[] }) =>
+      [failure.message, ...(failure.details ?? [])].join(' ')));
+  // The other catalogs answer 503 in this fixture, so the line exists; only its Machine-waiting members are wrong.
+  await waitForHomeGovernance(() => expect(reported().length).toBeGreaterThan(0));
+  await flushHookEffects();
+  expect(reported().filter(line => /needs_machine|needsMachine/.test(line))).toEqual([]);
+});
+
+it('says the curated outage and the other catalogs\' outage as one line when Discover falls back to the catalogs', async () => {
+  // Curated sources and the fallback catalogs both fail here: the page states one outage, not one line per reader.
+  const { screen } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
+  const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+  const lines = () => screen.root.findAllByType(RegistrySourcesUnavailable);
+  await waitForHomeGovernance(() => expect(lines().some(node => node.props.testID === 'store.kind.search.failure')).toBe(true));
+  await flushHookEffects();
+  expect(lines()).toHaveLength(1);
+  expect(lines()[0]!.props.failures.length).toBeGreaterThan(1);
 });
 
 it('keeps the retained Discover choices mounted while presentation withdraws native demand', async () => {

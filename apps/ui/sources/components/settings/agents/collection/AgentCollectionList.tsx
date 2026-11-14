@@ -455,8 +455,9 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             key={diagnostic.path}
             testID={`settings-agents-collection.invalid.${diagnostic.path}`}
             title={diagnostic.displayName ?? diagnostic.path}
+            // The typed cause leads and may take a second line; only the path may be cut (phone row rule).
             subtitle={<CollectionStatusLine status="failed" label={t('settingsAgents.collection.invalidConfiguration')}
-                description={`${diagnostic.reason} · ${diagnostic.path}`} />}
+                description={`${diagnostic.reason} · ${diagnostic.path}`} numberOfLines={2} />}
             subtitleLines={0}
             icon={<HappierCollectionListMark><HappierBrandMark brand={{ displayName: diagnostic.displayName ?? diagnostic.path }} pixelSize={20} externallyLabelled /></HappierCollectionListMark>}
             mode="info"
@@ -591,14 +592,9 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             ) : null)}
             {visibleCustomBackends.length + visibleInvalidDefinitions.length > 0 ? (
                 <ItemGroup title={t('settingsAgents.collection.customAgents')}>
-                    {visibleCustomBackends.length > 0 ? <CardGridSheet testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
-                        key: backend.id,
-                        testID: `settings-agents-collection.custom.${backend.id}`,
-                        title: backend.title || backend.name,
-                        mark: <HappierBrandMark brand={brandMarks?.[backend.id] ?? { displayName: backend.title || backend.name }}
-                            pixelSize={CARD_GRID_SHEET.markPx} externallyLabelled />,
-                        onPress: () => openCustomAcpEditor(router, backend.id, false),
-                    }))} /> : null}
+                    {/* One presentation per collection: custom Agents are rows, valid and invalid alike, so a phone never sets a
+                        narrow tile beside a row (COR5-OPS-STORE-1114). */}
+                    {visibleCustomBackends.map(renderCustomRow)}
                     {visibleInvalidDefinitions.map(renderInvalidRow)}
                 </ItemGroup>
             ) : null}

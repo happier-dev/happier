@@ -2936,6 +2936,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         enterSecretKey: 'Gib einen Wiederherstellungsschlüssel ein',
         invalidSecretKey: 'Ungültiger Wiederherstellungsschlüssel. Prüf ihn und versuch es noch einmal.',
         enterUrlManually: 'URL manuell eingeben',
+        usePairingLinkTitle: 'Kopplungslink verwenden',
         scanComputerQrUnavailableTitle: 'QR-Scan vom Desktop nicht verfügbar',
         scanComputerQrUnavailableBody:
             'Diese Anmeldemethode ist auf diesem Home deaktiviert. Nutze unten eine andere Option, um dein Konto wiederherzustellen.',

@@ -3431,6 +3431,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     enterSecretKey: "Inserisci la chiave di recupero",
     invalidSecretKey: "Chiave di recupero non valida. Controlla e riprova.",
     enterUrlManually: "Inserisci URL manualmente",
+    usePairingLinkTitle: "Usa un link di associazione",
     scanComputerQrUnavailableTitle: "Scansione QR dal computer non disponibile",
     scanComputerQrUnavailableBody:
       "Questo metodo di accesso è disattivato su questo Home. Usa un’altra opzione qui sotto per ripristinare il tuo account.",

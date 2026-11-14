@@ -3282,6 +3282,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     enterSecretKey: "Por favor, insira uma chave de recuperação",
     invalidSecretKey: "Chave de recuperação inválida. Verifique e tente novamente.",
     enterUrlManually: "Inserir URL manualmente",
+    usePairingLinkTitle: "Usar um link de emparelhamento",
     scanComputerQrUnavailableTitle: "Escanear QR do computador indisponível",
     scanComputerQrUnavailableBody:
       "Este método de login está desativado neste Home. Use outra opção abaixo para restaurar sua conta.",

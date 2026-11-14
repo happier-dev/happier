@@ -527,10 +527,11 @@ const DiscoverBody = React.memo(function DiscoverBody(
     return <DiscoverLoading testID="store.discover.loading" />;
   return (
     <>
-      <CurationUnavailable
+      {/* Falling back to the catalogs, the shelves say the curated outage on their one line with the others'. */}
+      {curationOut && curation.sourceFailures.length > 0 ? null : <CurationUnavailable
         curation={curation}
         testID="store.discover.unavailable"
-      />
+      />}
       {curationOut ? <DiscoverWithoutCuration curation={curation} presented={props.presented} onOpenKind={nav.openKind} /> : null}
       {page.featured ? (
         <RegistryShelf<StoreDiscoverItem>
@@ -612,12 +613,10 @@ const NO_CURATION: RegistryCuration['curation'] = [];
 function DiscoverWithoutCuration(props: Readonly<{ curation: RegistryCuration; presented: boolean; onOpenKind: (kind: string) => void }>) {
   const fields = useStoreFilterFields(NO_CURATION, props.presented);
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
-  const failedSources = React.useMemo(() => props.curation.sourceFailures.map(failure => failure.sourceId),
-    [props.curation.sourceFailures]);
   return (
     <StoreSearch demand={demand} fields={fields} curation={NO_CURATION} curationComplete={false}>
       {(state) => <StoreCatalogShelves state={state} presented={props.presented} softwareTarget={null}
-        onOpenKind={props.onOpenKind} excludeSourceIds={failedSources} />}
+        onOpenKind={props.onOpenKind} curationFailures={props.curation.sourceFailures} />}
     </StoreSearch>
   );
 }

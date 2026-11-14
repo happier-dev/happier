@@ -2973,6 +2973,7 @@ export const ru: TranslationStructure = {
     enterSecretKey: "Пожалуйста, введите ключ восстановления",
     invalidSecretKey: "Неверный ключ восстановления. Проверьте и попробуйте снова.",
     enterUrlManually: "Ввести URL вручную",
+    usePairingLinkTitle: "Использовать ссылку для связывания",
     scanComputerQrUnavailableTitle: "Сканирование QR с компьютера недоступно",
     scanComputerQrUnavailableBody:
       "Этот способ входа отключён на этом Home. Используйте другой вариант ниже, чтобы восстановить аккаунт.",

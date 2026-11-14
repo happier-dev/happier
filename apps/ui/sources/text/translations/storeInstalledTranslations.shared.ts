@@ -28,6 +28,8 @@ type Labels = Readonly<{
   browseKind: string;
   sectionUnavailable: string;
   sectionPartial: string;
+  /** A read that settled short of everything (a Machine or source didn't answer): no pending glyph. */
+  sectionIncomplete: string;
   accountGroup: string;
   accountGroupBody: string;
   unassignedGroup: string;
@@ -81,6 +83,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Browse',
     sectionUnavailable: 'Couldn’t load these right now.',
     sectionPartial: 'Some of these haven’t loaded yet.',
+    sectionIncomplete: 'Some of these couldn’t be read, so this may not be everything.',
     accountGroup: 'Your account',
     accountGroupBody: 'Not tied to one Machine or project.',
     unassignedGroup: 'Not placed yet',
@@ -133,6 +136,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Parcourir',
     sectionUnavailable: 'Impossible de les charger pour le moment.',
     sectionPartial: 'Une partie n’est pas encore chargée.',
+    sectionIncomplete: 'Une partie n’a pas pu être lue ; la liste n’est peut-être pas complète.',
     accountGroup: 'Votre compte',
     accountGroupBody: 'Lié à aucune Machine ni à aucun projet.',
     unassignedGroup: 'Emplacement inconnu',
@@ -185,6 +189,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Durchsuchen',
     sectionUnavailable: 'Konnte gerade nicht geladen werden.',
     sectionPartial: 'Ein Teil ist noch nicht geladen.',
+    sectionIncomplete: 'Ein Teil konnte nicht gelesen werden; die Liste ist vielleicht nicht vollständig.',
     accountGroup: 'Dein Konto',
     accountGroupBody: 'An keine Machine und kein Projekt gebunden.',
     unassignedGroup: 'Noch ohne Ort',
@@ -237,6 +242,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Explorar',
     sectionUnavailable: 'No se pudieron cargar ahora.',
     sectionPartial: 'Una parte aún no se ha cargado.',
+    sectionIncomplete: 'Una parte no se pudo leer; puede que no esté todo.',
     accountGroup: 'Tu cuenta',
     accountGroupBody: 'No está ligado a una Machine ni a un proyecto.',
     unassignedGroup: 'Sin ubicación aún',
@@ -288,6 +294,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Explora',
     sectionUnavailable: 'No s’han pogut carregar ara.',
     sectionPartial: 'Una part encara no s’ha carregat.',
+    sectionIncomplete: 'Una part no s’ha pogut llegir; potser no hi és tot.',
     accountGroup: 'El teu compte',
     accountGroupBody: 'No està lligat a cap Machine ni projecte.',
     unassignedGroup: 'Encara sense ubicació',
@@ -340,6 +347,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Sfoglia',
     sectionUnavailable: 'Impossibile caricarli ora.',
     sectionPartial: 'Una parte non è ancora caricata.',
+    sectionIncomplete: 'Una parte non è stata letta; l’elenco potrebbe non essere completo.',
     accountGroup: 'Il tuo account',
     accountGroupBody: 'Non legato a una Machine o a un progetto.',
     unassignedGroup: 'Posizione non ancora nota',
@@ -391,6 +399,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Explorar',
     sectionUnavailable: 'Não foi possível carregar agora.',
     sectionPartial: 'Uma parte ainda não carregou.',
+    sectionIncomplete: 'Uma parte não pôde ser lida; talvez não esteja tudo aqui.',
     accountGroup: 'Sua conta',
     accountGroupBody: 'Não está ligado a uma Machine nem a um projeto.',
     unassignedGroup: 'Sem local ainda',
@@ -438,6 +447,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Przeglądaj',
     sectionUnavailable: 'Nie udało się ich teraz wczytać.',
     sectionPartial: 'Część jeszcze się nie wczytała.',
+    sectionIncomplete: 'Części nie udało się odczytać, więc lista może być niepełna.',
     accountGroup: 'Twoje konto',
     accountGroupBody: 'Niezwiązane z żadną Machine ani projektem.',
     unassignedGroup: 'Jeszcze bez miejsca',
@@ -485,6 +495,7 @@ export const storeInstalledTranslations = {
     browseKind: 'Обзор',
     sectionUnavailable: 'Сейчас не удалось загрузить.',
     sectionPartial: 'Часть ещё не загрузилась.',
+    sectionIncomplete: 'Часть не удалось прочитать, поэтому здесь может быть не всё.',
     accountGroup: 'Ваш аккаунт',
     accountGroupBody: 'Не привязано к Machine или проекту.',
     unassignedGroup: 'Место пока неизвестно',
@@ -533,6 +544,7 @@ export const storeInstalledTranslations = {
     browseKind: '見てみる',
     sectionUnavailable: '今は読み込めませんでした。',
     sectionPartial: '一部がまだ読み込まれていません。',
+    sectionIncomplete: '一部を読み取れなかったため、すべてではない可能性があります。',
     accountGroup: 'アカウント',
     accountGroupBody: '特定の Machine やプロジェクトに結び付いていません。',
     unassignedGroup: '場所が未確定',
@@ -580,6 +592,7 @@ export const storeInstalledTranslations = {
     browseKind: '浏览',
     sectionUnavailable: '暂时无法加载。',
     sectionPartial: '部分内容尚未加载。',
+    sectionIncomplete: '部分内容无法读取，因此这里可能不完整。',
     accountGroup: '你的账户',
     accountGroupBody: '不绑定某台 Machine 或某个项目。',
     unassignedGroup: '位置未知',
@@ -627,6 +640,7 @@ export const storeInstalledTranslations = {
     browseKind: '瀏覽',
     sectionUnavailable: '暫時無法載入。',
     sectionPartial: '部分內容尚未載入。',
+    sectionIncomplete: '部分內容無法讀取，因此這裡可能不完整。',
     accountGroup: '你的帳號',
     accountGroupBody: '不綁定某台 Machine 或某個專案。',
     unassignedGroup: '位置未知',

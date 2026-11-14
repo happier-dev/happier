@@ -156,9 +156,9 @@ import { useOpenSessionSimulatorPreview } from '@/components/sessions/simulator/
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'follow.set';
 
-function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
+function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>): string | undefined {
   if (handoffAvailability.available) {
-    return fallbackSubtitle;
+    return undefined;
   }
 
   switch (handoffAvailability.reason) {
@@ -679,9 +679,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         return {
           id: spec.id,
           title: spec.title,
+          // A spec's description is written for agents; a menu row says only why it can't be used right now.
           subtitle: compactDisabledReason ?? (spec.id === 'session.handoff'
-            ? resolveSessionHandoffMenuSubtitle(handoffAvailability, spec.description)
-            : spec.description),
+            ? resolveSessionHandoffMenuSubtitle(handoffAvailability)
+            : undefined),
           ...(compactDisabledReason ? { disabled: true, accessibilityLabel: `${spec.title}. ${compactDisabledReason}` } : {}),
           ...(spec.id === 'session.handoff' && handoffAvailability.available !== true
             ? { disabled: true }

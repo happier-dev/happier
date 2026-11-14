@@ -396,7 +396,7 @@ function InstalledBody(
               : t('storeInstalled.noMatchFilters')
           }
           primaryAction={{ label: t('storeInstalled.clear'), onPress: clear }}
-        />}<ManagedInventoryCoverage families={state.families} testIDPrefix="store.installed" /></>
+        />}<ManagedInventoryCoverage families={state.families} testIDPrefix="store.installed" sectionsPage /></>
       ) : unfiltered === 0 && loading ? (
         <ItemGroup
           title={t('capabilities.store.kinds.mcpServer.title')}

@@ -3043,6 +3043,7 @@ export const zhHans: TranslationStructure = {
     enterSecretKey: "请输入恢复密钥",
     invalidSecretKey: "无效的恢复密钥，请检查后重试。",
     enterUrlManually: "手动输入 URL",
+    usePairingLinkTitle: "使用配对链接",
     scanComputerQrUnavailableTitle: "无法扫描电脑端二维码",
     scanComputerQrUnavailableBody:
       "此Home已禁用该登录方式。请使用下方的其他选项恢复你的账号。",

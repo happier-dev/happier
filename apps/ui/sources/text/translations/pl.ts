@@ -3085,6 +3085,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     enterSecretKey: "Proszę wprowadzić klucz odzyskiwania",
     invalidSecretKey: "Nieprawidłowy klucz odzyskiwania. Sprawdź i spróbuj ponownie.",
     enterUrlManually: "Wprowadź URL ręcznie",
+    usePairingLinkTitle: "Użyj linku parowania",
     scanComputerQrUnavailableTitle: "Skanowanie QR z komputera niedostępne",
     scanComputerQrUnavailableBody:
       "Ta metoda logowania jest wyłączona na tym Home. Użyj poniżej innej opcji, aby odzyskać konto.",

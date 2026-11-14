@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
 import { SESSION_AUTHORING_NONE_OPTION_ID } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
@@ -49,9 +50,11 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     };
     const selectedId = props.value === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
         : props.value === null ? SESSION_AUTHORING_NONE_OPTION_ID : props.value;
+    const profileChosen = typeof props.value === 'string';
     const valueLabel = missing && props.source.selection ? presentApprovalProfile(props.source.selection.profile).title
         : items.find(item => item.id === selectedId)?.title ?? t(props.source.unavailable ? 'common.unavailable' : 'common.loading');
-    return <View>
+    // A chip keeps its own width wherever it is placed; only the field presentation spans its row.
+    return <View style={props.presentation === 'chips' ? styles.chipHost : undefined}>
         <DropdownMenu testID={props.testID} open={open}
             onOpenChange={next => { if (!disabled) setOpen(next); }}
             items={items} selectedId={props.value === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
@@ -60,7 +63,10 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
             emptyLabel={t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
             trigger={props.presentation === 'chips' ? ({ toggle }) => <SelectionListFilterChip filter={{
                 id: props.testID, testID: `${props.testID}-chip`, label: t('workflows.triggers.guided.profile.title'),
-                valueLabel, disabled, open: false, onOpenChange: next => { if (next) toggle(); }, renderPopoverContent: () => null,
+                // Until a profile is chosen the chip names its field, as every filter chip does; the inherit/none
+                // sentences belong to the open menu, where they are choices (QA-SHELL-1114 F3).
+                valueLabel: profileChosen ? valueLabel : t('workflows.triggers.guided.profile.title'), muted: !profileChosen,
+                disabled, open: false, onOpenChange: next => { if (next) toggle(); }, renderPopoverContent: () => null,
             }} /> : undefined}
             itemTrigger={props.presentation === 'chips' ? undefined : { title: t('workflows.triggers.guided.profile.title'),
                 subtitle: t('workflows.triggers.guided.profile.description'),
@@ -74,3 +80,10 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
             reason={t('common.unavailable')} /> : null}
     </View>;
 }
+
+const styles = StyleSheet.create({
+    chipHost: {
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+    },
+});

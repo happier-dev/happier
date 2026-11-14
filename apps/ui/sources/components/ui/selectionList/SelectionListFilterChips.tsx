@@ -52,6 +52,8 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
     // A search's scope chip is compact: until it has a value it names the filter, not a placeholder sentence.
     const shownValueLabel = filter.pairsWithSearch && filter.muted ? filter.label
         : props.placement === 'row' ? filter.rowValueLabel ?? valueLabel : valueLabel;
+    // A chip that names its own field (nothing chosen yet) is announced once, not "Profile: Profile".
+    const announcedValue = [valueLabel, filter.valueQualifier].filter(Boolean).join(' · ');
     const leading = filter.icon ?? selected?.icon ?? null;
     const iconOnly = filter.iconOnly === true && leading !== null;
     const hasChooser = filter.renderPopoverContent !== undefined
@@ -126,7 +128,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     {...(toggleable ? { checked: filter.selected === true } : {})}
                     accessibilityLabel={clearable
                         ? [valueLabel, filter.count, filter.clearAccessibilityLabel].filter(Boolean).join(', ')
-                        : [`${filter.label}: ${[valueLabel, filter.valueQualifier].filter(Boolean).join(' · ')}`, filter.note].filter(Boolean).join(', ')}
+                        : [announcedValue && announcedValue !== filter.label ? `${filter.label}: ${announcedValue}` : filter.label, filter.note].filter(Boolean).join(', ')}
                     {...(filter.accessibilityHint === undefined ? {} : { accessibilityHint: filter.accessibilityHint })}
                     expanded={canOpen ? open : undefined}
                     hasPopup={canOpen ? filter.renderPopoverContent ? 'dialog' : 'listbox' : undefined}

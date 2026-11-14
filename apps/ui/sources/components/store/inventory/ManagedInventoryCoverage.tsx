@@ -3,7 +3,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { ManagedInventorySectionsState } from './ManagedInventorySections';
-import { inventoryFamilyDiagnosticCode } from './inventoryCoverage';
+import { inventoryFamilyDiagnosticCode, partialInventoryCoverageState } from './inventoryCoverage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { joinList } from '@/utils/text/joinList';
 
@@ -23,15 +23,24 @@ function lineTitle(entries: readonly { kind: string }[]): string {
 export function ManagedInventoryCoverage(props: Readonly<{
     families: ManagedInventorySectionsState['families'];
     testIDPrefix: string;
+    /** This surface's sections show their own Next/All for a paged family (Installed), so a page needs no line here. */
+    sectionsPage?: boolean;
 }>): React.ReactNode {
     const partial: { kind: string; retry: (() => unknown) | undefined }[] = [];
+    const incomplete: { kind: string; retry: (() => unknown) | undefined }[] = [];
     const failed: { kind: string; code: string | undefined; retry: (() => unknown) | undefined }[] = [];
     for (const { kind, result } of props.families) {
         const coverage = result.coverage;
         if (typeof coverage !== 'object') continue;
         const entry = { kind: kind === 'configuredBackup' ? t('projects.deployments.sectionBackups') : t(`capabilities.store.kindSentenceNames.${kind}`),
             retry: typeof result.continuation === 'function' ? result.continuation as () => unknown : undefined };
-        if (!('unavailable' in coverage)) { partial.push(entry); continue; }
+        if (!('unavailable' in coverage)) {
+            // A page whose section shows its own Next/All says nothing more here; a settled short read is not "loading".
+            const state = partialInventoryCoverageState(coverage.partial);
+            if (state === 'arriving') partial.push(entry);
+            else if (state === 'incomplete' || !props.sectionsPage) incomplete.push(entry);
+            continue;
+        }
         failed.push({ ...entry, code: inventoryFamilyDiagnosticCode(coverage) });
     }
     const retryAction = (entries: typeof partial, state: string) => {
@@ -44,6 +53,9 @@ export function ManagedInventoryCoverage(props: Readonly<{
         // Still arriving is not an outage: the pending glyph, and nothing to retry yet.
         partial.length > 0 ? <SurfaceStateCard key="partial" testID={`${props.testIDPrefix}.coverage.partial`} size="line"
             kind="loading" title={lineTitle(partial)} reason={t('storeInstalled.sectionPartial')} /> : null,
+        incomplete.length > 0 ? <SurfaceStateCard key="incomplete" testID={`${props.testIDPrefix}.coverage.incomplete`} size="line"
+            kind="unavailable" title={lineTitle(incomplete)} reason={t('storeInstalled.sectionIncomplete')}
+            action={retryAction(incomplete, 'incomplete')} /> : null,
         failed.length > 0 ? <SurfaceStateCard key="unavailable" testID={`${props.testIDPrefix}.coverage.unavailable`} size="line"
             kind="unavailable" title={lineTitle(failed)}
             reason={t('storeInstalled.sectionUnavailable')}

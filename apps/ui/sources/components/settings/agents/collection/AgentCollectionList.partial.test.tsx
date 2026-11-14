@@ -59,5 +59,12 @@ describe('Agents collection partial inventory', () => {
         expect(visible).toContain('definitions[1]');
         expect(screen.findByTestId('settings-agents-collection.custom.broken')).toBeNull();
         expect(invalid!.props.onPress ?? invalid!.props.onClick).toBeUndefined();
+        // One presentation per collection: the valid sibling is a row like the invalid one (with what it runs), never a
+        // grid tile beside a row (COR5-OPS-STORE-1114 / QA-SHELL-1114: at 390 it became a narrow tile with its name cut).
+        expect(screen.findByTestId('settings-agents-collection.grid.custom')).toBeNull();
+        const working = screen.findHostByTestId('settings-agents-collection.custom.working')!;
+        const workingText = working.findAll(node => typeof node.type === 'string').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect(workingText).toContain('Working agent');
+        expect(workingText).toContain('agent');
     });
 });

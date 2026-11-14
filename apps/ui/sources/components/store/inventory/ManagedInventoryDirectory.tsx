@@ -209,7 +209,7 @@ export function ManagedInventoryDirectory(
           ))}
         </ItemGroup>
       ) : null}
-      <ManagedInventoryCoverage families={state.families} testIDPrefix={props.testIDPrefix} />
+      <ManagedInventoryCoverage families={state.families} testIDPrefix={props.testIDPrefix} sectionsPage />
       {sections.map((section) => (
         <InventorySection
           key={section.key}

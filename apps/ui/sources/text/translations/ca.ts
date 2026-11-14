@@ -3070,6 +3070,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         enterSecretKey: 'Introdueix la teva clau de recuperació',
         invalidSecretKey: 'Clau de recuperació no vàlida. Comprova-ho i torna-ho a provar.',
         enterUrlManually: 'Introdueix l\'URL manualment',
+        usePairingLinkTitle: 'Utilitza un enllaç d’emparellament',
         scanComputerQrUnavailableTitle: 'No es pot escanejar el QR de l’ordinador',
         scanComputerQrUnavailableBody:
             'Aquest mètode d’inici de sessió està desactivat en aquest Home. Fes servir una altra opció a continuació per restaurar el compte.',

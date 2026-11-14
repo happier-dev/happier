@@ -3545,6 +3545,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         secretKeyInputLabel: '復原金鑰',
         invalidSecretKey: '無效的復原金鑰，請檢查後重試。',
         enterUrlManually: '手動輸入 URL',
+        usePairingLinkTitle: '使用配對連結',
         lostAccessNoResetBody: "此 Home 不提供帳號重設。你仍可以透過已登入此帳號的裝置或復原金鑰重新登入。",
         scanComputerQrUnavailableTitle: '無法掃描電腦端 QR 碼',
         scanComputerQrUnavailableBody: '此Home已停用此登入方式。請使用下方其他選項來還原帳號。',

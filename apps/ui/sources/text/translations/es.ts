@@ -3248,6 +3248,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     enterSecretKey: "Ingresa tu clave de recuperación",
     invalidSecretKey: "Clave de recuperación inválida. Verifica e intenta de nuevo.",
     enterUrlManually: "Ingresar URL manualmente",
+    usePairingLinkTitle: "Usar un enlace de vinculación",
     scanComputerQrUnavailableTitle: "Escaneo de QR del ordenador no disponible",
     scanComputerQrUnavailableBody:
       "Este método de inicio de sesión está deshabilitado en este Home. Usa otra opción a continuación para restaurar tu cuenta.",

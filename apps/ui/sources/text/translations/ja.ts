@@ -3595,6 +3595,7 @@ export const ja: TranslationStructure = {
     invalidSecretKey:
       "復旧キーが無効です。確認して再試行してください。",
     enterUrlManually: "URLを手動で入力",
+    usePairingLinkTitle: "ペアリングリンクを使う",
     scanComputerQrUnavailableTitle: "PCのQRスキャンは利用できません",
     scanComputerQrUnavailableBody:
       "このHomeではこのサインイン方法が無効になっています。下の別の方法でアカウントを復元してください。",
