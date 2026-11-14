@@ -109,7 +109,6 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     pane: AppPaneScopeApi;
     paddingTop?: number;
     headerPaddingTop?: number;
-    forceEmptyState?: boolean;
     testIds?: DetailsTabGroupPanelProps['testIds'];
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
@@ -237,7 +236,6 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     group={group}
                     paddingTop={props.paddingTop}
                     headerPaddingTop={props.headerPaddingTop}
-                    forceEmptyState={props.forceEmptyState}
                     testIds={groupPanelTestIds}
                     resolveTabIconName={props.resolveTabIconName}
                     resolveTabPresentation={props.resolveTabPresentation}
@@ -259,7 +257,6 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
     }, [
         details.groups.length,
         details.maximizedGroupId,
-        props.forceEmptyState,
         groupPanelTestIds,
         props.headerPaddingTop,
         props.paddingTop,
@@ -287,7 +284,6 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
             group={emptyGroup}
             paddingTop={props.paddingTop}
             headerPaddingTop={props.headerPaddingTop}
-            forceEmptyState={props.forceEmptyState}
             testIds={groupPanelTestIds}
             resolveTabIconName={props.resolveTabIconName}
             resolveTabPresentation={props.resolveTabPresentation}
@@ -303,7 +299,6 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         emptyGroup,
         props.sessionId,
         props.serverId,
-        props.forceEmptyState,
         groupPanelTestIds,
         props.headerPaddingTop,
         props.paddingTop,

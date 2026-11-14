@@ -136,7 +136,6 @@ export type DetailsTabGroupPanelProps = Readonly<{
     group: DetailsWorkspaceGroupView;
     paddingTop?: number;
     headerPaddingTop?: number;
-    forceEmptyState?: boolean;
     testIds?: Readonly<{
         root?: string;
     }> & DetailsTabStripTestIds;
@@ -226,7 +225,6 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
         return props.group.tabs.find((tab) => tab.key === props.group.activeTabKey) ?? props.group.tabs.at(-1) ?? null;
     }, [props.group.activeTabKey, props.group.tabs]);
     const effectiveActiveKey = props.group.activeTabKey ?? activeTab?.key ?? null;
-    const forceEmptyState = props.forceEmptyState === true;
     // A tab replaced in place: the active key is new while a key the group showed before has left.
     // Only that tab's mount reads it, so a later render computing nothing changes no animation.
     const previousTabKeys = React.useRef<ReadonlySet<string> | null>(null);
@@ -253,7 +251,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     // One tab bar on a phone (owner ruling 2026-10-30): the Session tabs rail is the phone's only tab bar, so a group
     // holding several pages (a wide layout's, after a resize) shows the page on screen alone, and the other pages its
     // strip offered move into that page's `⋯`. Presentation only: the group itself is not changed.
-    const lendsControls = props.collapseSingleTabStrip === true && !phoneStripCarriesLeading && !forceEmptyState && !restoreChipOnStrip
+    const lendsControls = props.collapseSingleTabStrip === true && !phoneStripCarriesLeading && !restoreChipOnStrip
         && (props.group.tabs.length === 1 || phone);
     const headerActionsScopeKey = `details-group:${React.useId()}`;
     const { renderHeaderLeadingActions, renderHeaderActions, renderLiveActions } = props;
@@ -329,30 +327,26 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 {leadingActions}
                 {/* A hidden main column's restore chip, at the strip edge the column went to (lab H1–H3). */}
                 {props.group.isFocused && mainColumnEdge === 'start' ? <PaneMainRestoreChip /> : null}
-                {!forceEmptyState ? (
-                    <DetailsTabStrip
-                        paneScopeId={props.pane.scopeId}
-                        sessionId={props.sessionId}
-                        serverId={props.serverId}
-                        pane={props.pane}
-                        group={props.group}
-                        presentedTitles={presentedTitles}
-                        resolveTabIconName={props.resolveTabIconName}
-                        resolveTabPresentation={props.resolveTabPresentation}
-                        resolveTabHref={props.resolveTabHref}
-                        unsavedTabKeys={unsavedKeys}
-                        testIds={props.testIds}
-                    />
-                ) : (
-                    <View style={{ flex: 1, minHeight: 0, minWidth: 0 }} />
-                )}
+                <DetailsTabStrip
+                    paneScopeId={props.pane.scopeId}
+                    sessionId={props.sessionId}
+                    serverId={props.serverId}
+                    pane={props.pane}
+                    group={props.group}
+                    presentedTitles={presentedTitles}
+                    resolveTabIconName={props.resolveTabIconName}
+                    resolveTabPresentation={props.resolveTabPresentation}
+                    resolveTabHref={props.resolveTabHref}
+                    unsavedTabKeys={unsavedKeys}
+                    testIds={props.testIds}
+                />
                 {props.group.isFocused && mainColumnEdge === 'end' ? <PaneMainRestoreChip /> : null}
                 {props.renderStripActions ? props.renderStripActions() : null}
                 {/* Launchers lead; what stays reachable and the pane's own controls close the row, in the same order a lent header draws them. */}
                 {renderLiveActions ? renderLiveActions() : null}
                 {props.renderHeaderActions ? props.renderHeaderActions() : null}
             </View> : null}
-            {forceEmptyState || props.group.tabs.length === 0 ? (
+            {props.group.tabs.length === 0 ? (
                 props.renderEmptyState ? props.renderEmptyState() : (
                     <SurfaceStateCard
                         testID="pane-details-empty-state"

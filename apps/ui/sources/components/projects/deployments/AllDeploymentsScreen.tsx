@@ -5,6 +5,7 @@ import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-
 
 import {
   useIsFocused,
+  useLocalSearchParams,
   useRouter,
 } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -29,6 +30,8 @@ import { isSameDeploymentName, useDeploymentEnvironmentRowParts, useDeploymentEn
 import { useDeviceType } from '@/utils/platform/responsive';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
+import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView } from './ServicesViews';
+import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 
 export const ALL_DEPLOYMENTS_ROUTE = '/projects/deployments';
@@ -55,19 +58,30 @@ const WITHDRAWN = new Set([
 ]);
 
 /**
- * Projects → All deployments (owner ruling Q9): every Environment this Account can read, one demanded page at a
- * time, grouped by its Project. A row opens the Environment on its Project's Deployments page.
+ * Services (pfc-redesign; formerly Projects → All deployments, owner ruling Q9): everything this Account runs, as
+ * views of one collection. Apps lists every Environment, one demanded page at a time, grouped by its Project; a row
+ * opens the Environment on its Project's Deployments page. The view is the route's own (`view`).
  */
 export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const lifetime = useActiveServerAccountScopeLifetime();
   const demand = useDeploymentPresentationDemand(useIsFocused());
   const read = useDeploymentInventory(lifetime, demand);
+  const router = useRouter();
+  const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
+  const view = readServicesView(typeof params.view === 'string' ? params.view : null);
+  const selectView = React.useCallback((next: ServicesView) => {
+    router.setParams({ view: next === 'apps' ? undefined : next });
+  }, [router]);
   return (
     <AllDeploymentsView
       read={read}
       serverId={lifetime?.scope.serverId ?? null}
       lifetime={lifetime}
       presented={demand.visible}
+      controller={read.controller}
+      demand={demand}
+      view={view}
+      onSelectView={selectView}
     />
   );
 });
@@ -80,6 +94,12 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     lifetime?: ServerAccountScopeLifetime | null;
     /** Whether the page is on screen: backup coverage is read for the shown Environments only then. */
     presented?: boolean;
+    /** The Account-wide read owner the other views (Databases, Domains) demand from; without it only Apps shows. */
+    controller?: DeploymentReadControllerV1 | null;
+    /** The page's presentation demand: a view reads only while the page is on screen. */
+    demand?: DeploymentReadDemandV1;
+    view?: ServicesView;
+    onSelectView?: (view: ServicesView) => void;
   }>,
 ) {
   const { read, serverId } = props;
@@ -111,14 +131,25 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   ) : null;
   const openNewApp = useOpenNewApp();
   const openDeployApp = React.useCallback(() => openNewApp(), [openNewApp]);
-  const header = (
+  // One create on Services (reuse map §4): Deploy an app, the flow every entry opens. The empty page's scene carries it
+  // instead, so the page never shows two.
+  const deployApp = React.useMemo(() => ({ title: t('newApp.title'), icon: 'plus' as const, onPress: openDeployApp,
+    testID: 'all-deployments.deployApp' }), [openDeployApp]);
+  const header = (create: boolean) => (
     <PageHeader
       testID="all-deployments.header"
-      title={t('projects.deployments.allTitle')}
-      description={t('projects.deployments.allDescription')}
+      title={t('projects.deployments.services.title')}
+      description={t('projects.deployments.services.description')}
       alwaysShowTitle
+      {...(create ? { primaryAction: deployApp } : {})}
     />
   );
+  const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
+  const viewDemand = props.demand!;
+  const phone = useDeviceType() === 'phone';
+  const viewTabs = props.controller && props.demand ? (
+    <ServicesViewTabs active={view} onSelect={(next) => props.onSelectView?.(next)} />
+  ) : null;
   const retry = React.useCallback(() => {
     void read.refresh();
   }, [read]);
@@ -133,7 +164,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       <ItemList
         testID={withdrawn ? 'all-deployments.denied' : 'all-deployments.error'}
       >
-        {header}
+        {header(false)}
         {withdrawn ? (
           <SurfaceStateCard
             kind="denied"
@@ -163,7 +194,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   if (items.length === 0 && !paged) {
     return (
       <ItemList testID="all-deployments.empty">
-        {header}
+        {header(false)}
         <EmptyState
           layout="page"
           scene="shipped"
@@ -180,7 +211,14 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     <>
     {backups.readers}
     <ItemList testID="all-deployments">
-      {header}
+      {header(true)}
+      {viewTabs}
+      {view === 'databases' && props.controller ? (
+        <ServicesDatabasesView controller={props.controller} demand={viewDemand} serverId={serverId} />
+      ) : view === 'domains' && props.controller ? (
+        <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
+          accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} />
+      ) : (<>
       {notBackedUpFilter}
       {snapshot.status === 'unavailable' ? (
         <SurfaceFreshnessLine
@@ -246,6 +284,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           </View>
         </ItemGroup>
       ) : null}
+      </>)}
     </ItemList>
     </>
   );

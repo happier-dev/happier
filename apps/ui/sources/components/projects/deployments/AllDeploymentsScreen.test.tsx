@@ -73,7 +73,7 @@ const page = (
 });
 
 /** The network boundary only: the Account-wide controller, its paging and the page composition run for real. */
-function controllerFor(list: (cursor: string | undefined) => ListResult) {
+function controllerFor(list: (cursor: string | undefined) => ListResult, extra: Partial<DeploymentReadTransportV1> = {}) {
   const calls: (string | undefined)[] = [];
   const transport: DeploymentReadTransportV1 = {
     listEnvironments: async (_scope, query) => {
@@ -92,6 +92,7 @@ function controllerFor(list: (cursor: string | undefined) => ListResult) {
       ok: false,
       failure: { code: 'deployment_unavailable', retryable: true },
     }),
+    ...extra,
   };
   const controller = createDeploymentReadControllerV1({
     scope: { serverId: 'home', accountId: 'account-owner' },
@@ -100,9 +101,9 @@ function controllerFor(list: (cursor: string | undefined) => ListResult) {
   return { controller, calls };
 }
 
-function Page(props: Readonly<{ controller: DeploymentReadControllerV1 }>) {
+function Page(props: Readonly<{ controller: DeploymentReadControllerV1; view?: 'apps' | 'databases' | 'domains' }>) {
   const read = useDeploymentCollection(props.controller, shown);
-  return <AllDeploymentsView read={read} serverId="home" />;
+  return <AllDeploymentsView read={read} serverId="home" controller={props.controller} demand={shown} view={props.view} />;
 }
 
 async function render(controller: DeploymentReadControllerV1, ready: string) {
@@ -292,6 +293,48 @@ describe('Projects → All deployments', () => {
     const scroller = screen.findAll((node) => node.props.contentContainerStyle !== undefined)[0]!;
     const { paddingBottom } = StyleSheet.flatten(scroller.props.contentContainerStyle) as { paddingBottom?: number };
     expect(paddingBottom).toBeGreaterThanOrEqual(floatingTabBarHeight);
+    controller.retire();
+  });
+});
+
+describe('Services (pfc-redesign svcApps · svcDb)', () => {
+  it('names the page Services and, in its Databases view, lists each environment\'s databases with their measured size', async () => {
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
+    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
+      listDataServicePage: async () => ({ ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production',
+        content: createDeploymentEnvironmentDetailV1().content,
+        databaseSizes: [
+          { service: 'shop-db', size: { status: 'available', bytes: 1288490188, measurement: 'database_bytes', observedAtMs: 1 },
+            growth: { status: 'unavailable', reason: 'no_previous_measurement' } },
+          { service: 'cache', size: { status: 'unavailable', reason: 'unsupported_engine' },
+            growth: { status: 'unavailable', reason: 'unsupported_engine' } },
+        ] }] } }),
+    });
+    const screen = await renderScreen(<Page controller={controller} view="databases" />);
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services.databases.row.env-shop.shop-db'), (node) => node !== null);
+    });
+    const { t } = await import('@/text');
+    expect(screen.getTextContent()).toContain(t('projects.deployments.services.title'));
+    expect(screen.getTextContent()).toMatch(/1\.\d+ GB/);
+    // A size the owner could not read says why, never a made-up figure.
+    expect(screen.getTextContent()).toContain(t('projects.deployments.services.sizeUnsupported'));
+    // The Apps list is not drawn under the Databases view.
+    expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
+    controller.retire();
+  });
+  it('reads the Domains view from the Account-wide domain page, and says when there is none', async () => {
+    let reads = 0;
+    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
+      listDomainPage: async () => { reads += 1; return { ok: true, value: { nextCursor: null, items: [] } }; },
+    });
+    const screen = await renderScreen(<Page controller={controller} view="domains" />);
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services.domains.empty'), (node) => node !== null);
+    });
+    expect(reads).toBe(1);
+    expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
     controller.retire();
   });
 });

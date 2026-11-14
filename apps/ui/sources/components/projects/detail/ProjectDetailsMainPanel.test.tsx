@@ -66,7 +66,7 @@ vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
 }));
 
 describe('ProjectDetailsMainPanel', () => {
-    it('keeps the main project surface anchored to the base root while sourcing the worktree list from the base repo snapshot', async () => {
+    it('keeps the main project surface anchored to the base root and reads no SCM snapshot of its own', async () => {
         deviceTypeMock = 'tablet';
         workspaceDetailsPanelSpy.mockClear();
         workspaceScmSnapshotControllerSpy.mockClear();
@@ -100,39 +100,8 @@ describe('ProjectDetailsMainPanel', () => {
                 rootPath: '/repo',
             }),
         }));
-        expect(workspaceScmSnapshotControllerSpy).toHaveBeenCalledWith({
-            serverId: 's1',
-            machineId: 'm1',
-            rootPath: '/repo',
-        });
-    });
-
-    it('keeps the worktree list available on phone for the fullscreen details route', async () => {
-        deviceTypeMock = 'phone';
-        workspaceDetailsPanelSpy.mockClear();
-        const { ProjectDetailsMainPanel } = await import('./ProjectDetailsMainPanel');
-
-        await renderScreen(
-            <ProjectDetailsMainPanel
-                scopeId="project:wr_1"
-                activeRootPath="/repo/.worktrees/feature-auth"
-                activeWorktreeId="gitwt_feature"
-                onSelectRootPath={() => {}}
-                workspaceRef={{
-                    id: 'wr_1',
-                    serverId: 's1',
-                    machineId: 'm1',
-                    rootPath: '/repo',
-                    createdAtMs: 1,
-                } satisfies WorkspaceRefV1}
-            />,
-        );
-
-        const props = workspaceDetailsPanelSpy.mock.calls.at(-1)?.[0] as {
-            renderEmptyStateSupplementaryContent?: () => React.ReactNode;
-        };
-        expect(props.renderEmptyStateSupplementaryContent).toBeTypeOf('function');
-        expect(props.renderEmptyStateSupplementaryContent?.()).toBeTruthy();
+        // The forced-overview worktree list was never reachable (no caller set forceOverviewMode); its read went with it.
+        expect(workspaceScmSnapshotControllerSpy).not.toHaveBeenCalled();
     });
 
     it('forwards project plugin placement projection to the shared workspace details panel', async () => {

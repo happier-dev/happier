@@ -33,6 +33,7 @@ import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
 import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { createProjectInfoDetailsTab } from './detail/projectDetailsTabBuilders';
 import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -88,6 +89,14 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         toggleEmbeddedTerminalInDockLocation({ pane, dockLocation, bottomTerminalActive, rightTerminalActive,
             rightPaneHiddenByDetails: false });
     }, [bottomTerminalActive, dockLocation, pane, rightTerminalActive]);
+    // Where this Project is available (Machines with a checkout, Add machine) opens beside the page, as its details.
+    const openProjectInfo = React.useCallback(() => {
+        pane.openDetailsTab(createProjectInfoDetailsTab(), { intent: 'pinned' });
+    }, [pane]);
+    const projectMenuActions = React.useMemo(() => [
+        { id: 'availableOn', title: t('workspaceSync.availableOn'), testID: 'project-shell-header.availableOn', onSelect: openProjectInfo },
+        { id: 'terminal', title: t('settings.terminal'), onSelect: openProjectTerminal },
+    ], [openProjectInfo, openProjectTerminal]);
     // The page's menus and Add surfaces float inside its own column (header and body), never over the sidebar.
     const pageColumnRef = React.useRef<View>(null);
     const workspaceRefs = useWorkspaceRefs();
@@ -356,7 +365,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                         onSelectPage={handleSelectPage}
                                         onSelectWorkspace={handleSelectWorkspace}
                                         pageActionsKey={projectPageActionsKey(scopeId)}
-                                        menuActions={[{ id: 'terminal', title: t('settings.terminal'), onSelect: openProjectTerminal }]}
+                                        menuActions={projectMenuActions}
                                     />
                                     </PageColumnProvider>
                                 ) : props.surface === undefined || props.surface === props.page ? (

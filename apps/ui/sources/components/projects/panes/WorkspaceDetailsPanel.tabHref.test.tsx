@@ -27,7 +27,7 @@ describe('workspace Details tab destinations', () => {
     it('keeps tabs without a shareable route local while preserving scoped file destinations', async () => {
         const screen = await renderScreen(<AppPaneProvider><WorkspaceDetailsPanel
             workspaceRef={{ id: 'workspace-tab-href', serverId: 'home-test', machineId: 'machine-test', rootPath: '/repo', createdAtMs: 1 }}
-            scopeId="project:workspace-tab-href" forceOverviewMode
+            scopeId="project:workspace-tab-href"
         /></AppPaneProvider>);
         const { resolveTabHref } = screen.find(node => typeof node.props.resolveTabHref === 'function').props as DetailsSplitWorkspaceProps;
         if (!resolveTabHref) throw new Error('Expected workspace Details route owner');

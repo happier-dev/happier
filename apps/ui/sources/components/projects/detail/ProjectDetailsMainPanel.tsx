@@ -4,9 +4,7 @@ import { Pressable } from 'react-native';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { WorkspaceDetailsPanel, type WorkspaceDetailsPanelHeaderActionRenderParams } from '@/components/projects/panes/WorkspaceDetailsPanel';
-import { WorkspaceWorktreeListSection } from '@/components/workspaces/scm/worktrees/WorkspaceWorktreeListSection';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { buildProjectRouteHref } from './projectRouteState';
@@ -18,7 +16,6 @@ export type ProjectDetailsMainPanelProps = Readonly<{
     scopeId: string;
     activeRootPath: string;
     activeWorktreeId?: string | null;
-    forceOverviewMode?: boolean;
     onSelectRootPath: (path: string) => void;
     onRequestClose?: () => void;
     pluginUiProjection?: PluginUiProjectionModel | null;
@@ -28,12 +25,6 @@ export type ProjectDetailsMainPanelProps = Readonly<{
 export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPanelProps) => {
     const deviceType = useDeviceType();
     const routerRef = useProjectRouteRouterRef();
-    const workspaceScope = React.useMemo(() => ({
-        serverId: props.workspaceRef.serverId,
-        machineId: props.workspaceRef.machineId,
-        rootPath: props.workspaceRef.rootPath,
-    }), [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId]);
-    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope, { detail: 'summary' });
 
     const renderHeaderActionsPrefix = React.useCallback((params: WorkspaceDetailsPanelHeaderActionRenderParams) => {
         if (deviceType !== 'phone') return null;
@@ -73,17 +64,6 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
         );
     }, [deviceType, props.activeRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath, props.workspaceRef.serverId, routerRef]);
 
-    const renderEmptyStateSupplementaryContent = React.useCallback(() => {
-        if (snapshot?.repo.isRepo !== true) return null;
-        return (
-            <WorkspaceWorktreeListSection
-                worktrees={snapshot.repo.worktrees ?? []}
-                selectedRootPath={props.activeRootPath}
-                onSelectRootPath={props.onSelectRootPath}
-            />
-        );
-    }, [props.activeRootPath, props.onSelectRootPath, snapshot?.repo]);
-
     return (
         <WorkspaceDetailsPanel
             workspaceRef={props.workspaceRef}
@@ -91,13 +71,11 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
             activeRootPath={props.activeRootPath}
             activeWorktreeId={props.activeWorktreeId}
             displayPathOverride={props.workspaceRef.rootPath}
-            forceOverviewMode={props.forceOverviewMode}
             showTerminalHeaderAction={false}
             onRequestClose={props.onRequestClose}
             pluginUiProjection={props.pluginUiProjection}
             platform={props.platform}
             renderHeaderActionsPrefix={renderHeaderActionsPrefix}
-            renderEmptyStateSupplementaryContent={renderEmptyStateSupplementaryContent}
         />
     );
 });

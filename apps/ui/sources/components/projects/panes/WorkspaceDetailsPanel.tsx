@@ -1,15 +1,13 @@
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable } from 'react-native';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -73,7 +71,6 @@ export type WorkspaceDetailsPanelProps = Readonly<{
     activeRootPath?: string;
     activeWorktreeId?: string | null;
     displayPathOverride?: string;
-    forceOverviewMode?: boolean;
     showTerminalHeaderAction?: boolean;
     sessionIdForAugmentation?: string | null;
     /**
@@ -88,7 +85,6 @@ export type WorkspaceDetailsPanelProps = Readonly<{
     platform?: LocalServicePreviewPlatform;
     nowMs?: () => number;
     renderHeaderActionsPrefix?: (params: WorkspaceDetailsPanelHeaderActionRenderParams) => React.ReactNode;
-    renderEmptyStateSupplementaryContent?: () => React.ReactNode;
 }>;
 
 export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelProps) => {
@@ -212,31 +208,9 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     const emptyEditorScope = React.useMemo(() => ({
         serverId: props.workspaceRef.serverId, machineId: props.workspaceRef.machineId, rootPath: effectiveRootPath,
     }), [effectiveRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
-    // The editor column with nothing open (lab EM1). The Project's own facts live on its Overview, so
-    // the column invites opening a file instead of repeating them; a forced overview keeps the facts.
-    const renderEmptyState = React.useCallback(() => props.forceOverviewMode ? (
-        <ItemList testID="project-details-info" containerStyle={{ paddingTop: theme.space.s12 }}>
-            <ItemGroup title={t('projects.detail.groupTitle')}>
-                <Item title={t('projects.detail.fields.name')} detail={displayName} mode="info" />
-                <Item title={t('projects.detail.fields.machine')} detail={machineName} mode="info" />
-                <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
-            </ItemGroup>
-            <WorkspaceSyncRelationshipList
-                title={t('workspaceSync.availableOn')}
-                serverId={props.workspaceRef.serverId}
-                workspaceRefId={selectedWorkspaceRef?.id ?? null}
-                onAddMachine={openWorkspaceSyncAddMachineForProject}
-                onOpenDetails={openWorkspaceSyncDetails}
-                onOpenConflicts={openWorkspaceSyncConflicts}
-            />
-            {props.renderEmptyStateSupplementaryContent ? props.renderEmptyStateSupplementaryContent() : null}
-            <View style={{ alignItems: 'center', paddingHorizontal: theme.space.s24, paddingTop: theme.space.s6 }}>
-                <Text style={{ color: theme.colors.text.secondary, ...Typography.variant('body'),  textAlign: 'center', maxWidth: 680 }}>
-                    {t('projects.details.emptyBody')}
-                </Text>
-            </View>
-        </ItemList>
-    ) : (
+    // The editor column with nothing open (lab EM1). The Project's own facts and where it is available open from the
+    // Project's menu as the workspace-info tab, so the column invites opening a file instead of repeating them.
+    const renderEmptyState = React.useCallback(() => (
         <EmptyEditorPage
             scope={emptyEditorScope}
             title={t('panes.emptyEditor.projectTitle')}
@@ -245,21 +219,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             onOpenFile={openFileInDetailsPinned}
             onReview={openReviewAllChanges}
         />
-    ), [
-        emptyEditorScope,
-        openFileInDetailsPinned,
-        openReviewAllChanges,
-        displayName,
-        displayPath,
-        machineName,
-        openWorkspaceSyncConflicts,
-        openWorkspaceSyncDetails,
-        openWorkspaceSyncAddMachineForProject,
-        selectedWorkspaceRef,
-        pluginSurfacePlatform,
-        props,
-        theme.colors.text.secondary,
-    ]);
+    ), [emptyEditorScope, openFileInDetailsPinned, openReviewAllChanges]);
 
     const renderWorkspaceInfo = React.useCallback(() => (
         <ItemList testID="project-details-workspace-info" containerStyle={{ paddingTop: theme.space.s12 }}>
@@ -507,7 +467,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
             </Pressable>
         );
-        if (editorArrangement || props.forceOverviewMode) return null;
+        if (editorArrangement) return null;
         return (
             <IconButton
                 variant="plain"
@@ -518,7 +478,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 icon={<Icon name="x" size={DETAILS_TAB_STRIP_METRICS.actionGlyphPx} color={theme.colors.text.secondary} />}
             />
         );
-    }, [deviceType, editorArrangement, iconButtonStyle, props.forceOverviewMode, props.onRequestClose, requestClose, theme.colors.text.secondary]);
+    }, [deviceType, editorArrangement, iconButtonStyle, props.onRequestClose, requestClose, theme.colors.text.secondary]);
 
     const resolveTabHref = React.useCallback((tab: DetailsTabState) => {
         const details = parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key))?.details;
@@ -544,7 +504,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 tab: (safeTabKey) => `workspace-details-tab-${safeTabKey}`,
                 tabClose: (safeTabKey) => `workspace-details-tab-close-${safeTabKey}`,
             }}
-            forceEmptyState={props.forceOverviewMode}
             resolveTabHref={resolveTabHref}
             resolveTabPresentation={resolveTabPresentation}
             renderTabContent={renderTabContent}

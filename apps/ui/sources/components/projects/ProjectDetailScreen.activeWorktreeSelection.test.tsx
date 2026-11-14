@@ -446,6 +446,20 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(screen.findByType(ProjectOverviewWidgets).props.activeRootPath).toBe('/repo');
     });
 
+    // Lane 12 Fork C ruling 23:16Z: "Available on" (Machines with a checkout, Add machine) is reachable from the Project.
+    it('opens the Project\'s Available on details from its own menu, in the details pane', async () => {
+        const { ProjectShellHeaderHost } = await import('./shell/ProjectShellHeaderHost');
+        const screen = await mount({ page: 'overview' });
+        const action = (screen.findByType(ProjectShellHeaderHost).props.menuActions as { id: string; onSelect: () => void }[])
+            .find((candidate) => candidate.id === 'availableOn');
+        expect(action, 'the Project menu offers Available on').toBeDefined();
+        await act(async () => action!.onSelect());
+        expect(runtime.pane.scopeState?.details.isOpen).toBe(true);
+        expect(runtime.pane.scopeState?.details.tabs.map((tab) => tab.kind)).toContain('workspaceInfo');
+        // The page under it stays the route's own Overview.
+        expect(screen.findByType(ProjectCockpitShell).props.surface).toBe('overview');
+    });
+
     it('retains the route-owned Overview and checkout when a details companion opens', async () => {
         const screen = await mount({ page: 'overview' });
         await act(async () => runtime.pane.openDetailsTab({ key: 'file:a', kind: 'file', title: 'a', resource: { kind: 'file', path: 'a' } }));

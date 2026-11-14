@@ -335,9 +335,9 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         available: availability => availability.bots === true,
         activationAvailable: availability => availability.botsRoster === true,
     },
-    // Deployment operations use the existing overflow/pinning policy until their surface is selected.
+    // Services (pfc-redesign): everything the Account runs, as views; overflow/pinning policy unchanged.
     {
-        id: 'deployments', titleKey: 'projects.deployments.title', icon: 'rocket-launch',
+        id: 'deployments', titleKey: 'projects.deployments.services.title', icon: 'rocket-launch',
         placement: { kind: 'rail', region: 'app' }, band: 'library', activation: 'navigate',
         routePath: '/projects/deployments', signal: 'deploymentAttentionCount',
     },

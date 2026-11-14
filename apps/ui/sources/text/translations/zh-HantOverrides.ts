@@ -14310,7 +14310,6 @@ settingsSession: {
             noSessionAvailableDetails: '在此資料夾中啟動工作階段，以在專案中啟用原始碼管理。',
         },
         details: {
-            emptyBody: '開啟「檔案」或「原始碼管理」即可在此預覽檔案與差異。',
             placeholderFileBody: '「{title}」的檔案預覽會顯示在此處。',
             placeholderScmReviewBody: '差異預覽會顯示在此處。',
             placeholderCommitBody: '提交詳細資訊會顯示在此處。',
