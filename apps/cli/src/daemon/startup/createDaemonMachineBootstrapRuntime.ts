@@ -56,7 +56,7 @@ import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/proje
 import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+import { projectDaemonRequesterWorkAttribution, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
@@ -199,6 +199,7 @@ export function createDaemonMachineBootstrapRuntime(
     sessionRunnerStatus?: BootstrapRuntime['sessionRunnerStatus'];
     awaitAgentSessionOpen: BootstrapRuntime['awaitAgentSessionOpen'];
     isSessionAlreadyRunning: BootstrapRuntime['isSessionAlreadyRunning'];
+    isSessionRespawnPending?: BootstrapRuntime['isSessionRespawnPending'];
     loadLocalSessionMetadataForHandoff: BootstrapRuntime['loadLocalSessionMetadataForHandoff'];
     resolveHostedSessionWorkingDirectory?: (sessionId: string) => Promise<string | null>;
     beforeShutdown: BootstrapRuntime['beforeShutdown'];
@@ -570,21 +571,34 @@ export function createDaemonMachineBootstrapRuntime(
         });
       }
       const createWorkflowRecovery = params.createWorkflowRecoveryForMachine;
-      let recoverWorkflowRuns: ReturnType<NonNullable<typeof createWorkflowRecovery>> | undefined;
+      let recoverWorkflowRuns: Promise<ReturnType<NonNullable<typeof createWorkflowRecovery>>> | undefined;
       workflowRecovery = createWorkflowRecovery
         ? async (trigger, signal, workflowRunId) => {
             if (params.isWorkflowFeatureEnabled?.() !== true) return;
-            recoverWorkflowRuns ??= createWorkflowRecovery({
-              machineId: registeredMachine.id,
-              machineAdmissionTransport: async (request, options) =>
-                await apiMachine.enqueueSessionPendingByMachine(request, options),
-              machineActionDirectTargetTransport: {
+            const recover = await (recoverWorkflowRuns ??= (async () => {
+              // Startup recovery reads this installed Account's storage. Carry
+              // that same held identity into the host-private native reader.
+              const requesterWorkAttributionV1 = projectDaemonRequesterWorkAttribution(
+                automationAccountId && automationInstallationId ? { serverId: automationHomeId,
+                  custodianAccountId: automationAccountId, machineId: registeredMachine.id,
+                  installationId: automationInstallationId } : null,
+                await params.resolveCurrentServerIdentityId?.() ?? null,
+              );
+              return createWorkflowRecovery({
                 machineId: registeredMachine.id,
-                machineServiceAction: request => apiMachine.executeMachineServiceAction(request),
-                invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
-              },
-            });
-            await recoverWorkflowRuns(trigger, signal
+                machineAdmissionTransport: async (request, options) =>
+                  await apiMachine.enqueueSessionPendingByMachine(request, options),
+                machineActionDirectTargetTransport: {
+                  machineId: registeredMachine.id,
+                  machineServiceAction: request => apiMachine.executeMachineServiceAction(request),
+                  invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, {
+                    ...options,
+                    ...(requesterWorkAttributionV1 ? { localActionContext: { requesterWorkAttributionV1 } } : {}),
+                  }),
+                },
+              });
+            })());
+            await recover(trigger, signal
               ? AbortSignal.any([workflowRecoveryCancellation.signal, signal]) : workflowRecoveryCancellation.signal, workflowRunId);
           }
         : null;
@@ -794,6 +808,7 @@ export function createDaemonMachineBootstrapRuntime(
     ...(params.sessionRunnerStatus ? { sessionRunnerStatus: params.sessionRunnerStatus } : {}),
     awaitAgentSessionOpen: params.awaitAgentSessionOpen,
     isSessionAlreadyRunning: params.isSessionAlreadyRunning,
+    ...(params.isSessionRespawnPending ? { isSessionRespawnPending: params.isSessionRespawnPending } : {}),
     loadLocalSessionMetadataForHandoff: params.loadLocalSessionMetadataForHandoff,
     beforeShutdown: async () => {
       workflowRecoveryCancellation.abort();

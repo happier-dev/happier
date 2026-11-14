@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
@@ -7,6 +7,9 @@ import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 import { executeExternalAction } from './executeExternalAction';
 import { encodeStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
+import { ApiClient } from '@/api/api';
+import { createDaemonMachineBootstrapRuntime } from '@/daemon/startup/createDaemonMachineBootstrapRuntime';
+import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import {
   ExecutionRunGetResponseSchema, FeaturesResponseSchema, WorkflowDefinitionV1Schema,
@@ -29,7 +32,8 @@ vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (inpu
 } }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); boundary.control = null; });
 
-it('reads exact failed native input recovery through the installed signed UI invocation reader', async () => {
+it.each(['signed-reader', 'startup', 'foreign-startup'] as const)('recovers exact retained native input through %s', async mode => {
+  const startup = mode !== 'signed-reader';
   const homeId = 'srv_workflow_recovery';
   const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 0,
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
@@ -79,22 +83,22 @@ it('reads exact failed native input recovery through the installed signed UI inv
       kind: 'happier.workflow-progress.v1', blockKind: 'root', attempt: '0',
       invocationPath: { blockId: '$root', scope: [] }, logicalInvocationRecordId: rootId }) } });
   await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: storage.run().revision, checkpointEnvelope,
-    invocations: [{ id: invocationId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: 'failed',
+    invocations: [{ id: invocationId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: startup ? 'running' : 'failed',
       contentEnvelope: sealProgress(invocationId, '1', rootId, { kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: '0',
         invocationPath: { blockId: 'detached-positive', scope: [] }, logicalInvocationRecordId: invocationId,
         workspace: { descriptor: { machineId: 'machine', directory: h.cwd, checkoutRootPath: h.cwd } }, reason: { code: 'no_eligible_member' },
         execution: { kind: 'detached_run', runId: nativeRunId, localInputId, runtimeSelection: {} } }) }] });
   await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision, state: 'interrupted', checkpointEnvelope });
+  if (startup) storage.requestControl('cancelled');
   // Exercise the real encrypted device-local native producer and cold reader.
   // No provider process is needed to read an already retained settled input.
   await retainExecutionRunState({ runId: nativeRunId, callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
     intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
     permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response',
-    status: 'failed', startedAtMs: 1, finishedAtMs: 2, error: { code: 'no_eligible_member', message: 'Unavailable' },
-    inputTurns: { occurrenceId: 'occurrence', last: { turnId: 'turn', inputIds: [localInputId], state: 'failed' } } });
-  const native = ExecutionRunGetResponseSchema.parse(await h.machine.invokeLocalMachineAction(SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-    { runId: nativeRunId, includeStructured: false }));
-  expect(native.run.inputTurns?.last).toMatchObject({ inputIds: [localInputId], state: 'failed' });
+    status: startup ? 'cancelled' : 'failed', startedAtMs: 1, finishedAtMs: 2, error: { code: 'no_eligible_member', message: 'Unavailable' },
+    ...(mode === 'foreign-startup' ? { requesterWorkAttributionV1: { serverId: homeId, accountId: 'another-account',
+      machineId: 'machine', installationId: h.f.installation.installationId } } : {}),
+    inputTurns: { occurrenceId: 'occurrence', last: { turnId: 'turn', inputIds: [localInputId], state: startup ? 'cancelled' : 'failed' } } });
   const httpPhases: Array<{ path: string; operation?: string; failureClass?: string }> = [];
   const basePost = vi.mocked(axios.post).getMockImplementation()!;
   vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
@@ -103,11 +107,57 @@ it('reads exact failed native input recovery through the installed signed UI inv
     httpPhases.push(phase);
     if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
     if (body && typeof body === 'object' && 'operation' in body) {
+      if (body.operation === 'recovery.list') return { status: 200, data: { candidates: [{ run: storage.run(), parentAttempt: 1 }] } };
       try { return { status: 200, data: await storage.execute(body as Parameters<typeof storage.execute>[0]) }; }
       catch (error) { httpPhases.push({ ...phase, failureClass: error instanceof Error ? error.name : typeof error }); throw error; }
     }
     return await basePost(url, body, options);
   });
+  if (startup) {
+    // Keep the actual ApiClient, bootstrap and registered native dispatcher.
+    // Only HTTP persistence and the private control listener are substituted.
+    const runtime = createProductionDaemonWorkflowRuntime({ credentials: installedCredentials, accountId: 'requester', serverId });
+    const bootstrap = createDaemonMachineBootstrapRuntime({ api: await ApiClient.create(installedCredentials),
+      credentials: installedCredentials, requesterServerId: serverId, resolveCurrentServerIdentityId: () => homeId,
+      controlPort: 43129, runtimeId: 'workflow-recovery', publicReleaseChannel: 'dev', startupSource: 'manual', serviceLabel: undefined,
+      transferRuntimeStatePublisher: null, spawnSessionForInternalResume: async () => { throw new Error('Unexpected Session'); },
+      spawnSession: async () => { throw new Error('Unexpected Session'); }, stopSession: async () => true,
+      awaitAgentSessionOpen: async () => { throw new Error('Unexpected Session'); }, isSessionAlreadyRunning: async () => false,
+      loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {}, requestShutdown() {},
+      directPeerServerLifecycle: null, directTransferRegistryHost: {} as never, daemonServerWorkScheduler: {} as never,
+      setDaemonServerWorkOnline() {}, onMachineConnectionOnline: async () => {}, reconcileConnectedServicesProjection: async () => {},
+      isShuttingDown: () => false, isWorkflowFeatureEnabled: () => true,
+      createWorkflowRecoveryForMachine: input => runtime.createRecoveryForMachine(input),
+    });
+    const machine = await bootstrap.createConnectedApiMachine({ id: 'machine', encryptionMode: 'plain', dataEncryptionKey: 'plain',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    onTestFinished(() => machine?.shutdown());
+    const nativeReads: unknown[] = [];
+    if (!machine) throw new Error('Missing installed Machine');
+    machine.setRPCHandlers({ spawnSession: h.daemon.spawnSession, stopSession: h.daemon.stopSession, requestShutdown() {} }, {
+      ...(h.daemon.externalActionIngressOwner ? { externalActionIngressOwner: h.daemon.externalActionIngressOwner } : {}),
+      ...(h.actionsSettingsProvider ? { actionsSettingsProvider: h.actionsSettingsProvider } : {}),
+    });
+    const invoke = machine.invokeLocalMachineAction.bind(machine);
+    vi.spyOn(machine, 'invokeLocalMachineAction').mockImplementation(async (method, input, options) => {
+      const result = await invoke(method, input, options);
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) nativeReads.push({
+        attribution: options?.localActionContext?.requesterWorkAttributionV1,
+        result: ExecutionRunGetResponseSchema.safeParse(result).success ? 'available'
+          : { errorCode: result && typeof result === 'object' && 'errorCode' in result ? String(result.errorCode) : 'invalid_response' },
+      });
+      return result;
+    });
+    await bootstrap.recoverWorkflowRuns?.('startup');
+    expect(storage.run(), JSON.stringify({ httpPhases, operations: storage.operations(), nativeReads }))
+      .toMatchObject({ state: 'cancelled', workflowCustodyState: mode === 'foreign-startup' ? 'pending' : 'settled' });
+    expect(storage.rowById(invocationId)?.index.lifecycle).toBe(mode === 'foreign-startup' ? 'cancel_requested' : 'cancelled');
+    expect(nativeReads).toContainEqual({
+      attribution: { serverId: homeId, accountId: 'requester', machineId: 'machine', installationId: h.f.installation.installationId },
+      result: mode === 'foreign-startup' ? { errorCode: 'execution_run_not_found' } : 'available',
+    });
+    return;
+  }
   const owner = h.daemon.externalActionIngressOwner;
   if (!owner) throw new Error('Missing installed Action ingress');
   const target = { kind: 'machine' as const, machineId: 'machine' };
