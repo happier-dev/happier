@@ -161,6 +161,8 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     targetSessionAddress?: SessionAddress | null;
     /** Exact request owner, independent of whether navigation exposes a conversation or History. */
     pendingRequestSessionAddress?: SessionAddress | null;
+    /** Exact admitted transcript owner, retained through End independently of its working target. */
+    conversationSessionAddress?: SessionAddress | null;
     /** Applied voice from the current admitted attempt; never the next saved preference. */
     inUseVoice?: import('@happier-dev/protocol/actions/voiceConversationActionFamily').VoiceConversationInUseVoice | null;
     /** Render Speaks from only for this admitted carrier fact, using its exact Session's display name. */
@@ -550,6 +552,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             requestAddress: presentedEnded.targetSessionAddress ?? conversationSessionAddress };
     }, [currentAccountScope, presentedEnded]);
     const openConversationTarget = presentedEnded ? endedOpenConversationTarget : activeOpenConversationTarget;
+    const conversationSessionAddress = presentedEnded
+        ? endedOpenConversationTarget ? presentedEnded.conversationSessionAddress : null
+        : activeOpenConversationTarget?.requestAddress ?? null;
     const openConversationSessionAddress = openConversationTarget?.address ?? null;
     const openConversationSessionId = openConversationSessionAddress?.sessionId ?? null;
     const canOpenConversation = openConversationTarget !== null;
@@ -851,6 +856,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             ended: presentedEnded,
             markEvent,
             firstSuccessEvent,
+            conversationSessionAddress,
             onDismissEnded,
             onDismissFailedAttempt,
             onToggle,
@@ -889,6 +895,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             targetSessionAddress,
             pendingRequestSessionAddress,
             statusLabel,
+            conversationSessionAddress,
             elapsedStartedAt,
             canHoldToTalk,
             beginHoldToTalk,

@@ -73,8 +73,8 @@ const { deriveCanonicalVoiceTranscriptEntryId } = await import('@/voice/transcri
 const { sendVoiceSessionComposerText } = await import('@/voice/binding/sendVoiceSessionComposerText');
 const { VoiceSetupFirstSuccessRuntime } = await import('./VoiceSetupFirstSuccessRuntime');
 const { VoiceSetupPanel } = await import('./VoiceSetupPanel');
-const { useVoiceSetupConversationMessages } = await import('./useVoiceSetupItem');
-const { deriveVoiceSetupFacts } = await import('./voiceSetupFacts');
+const { useVoiceSetupBlock } = await import('./VoiceSetupItem');
+const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
 const initialAdapters = getVoiceAdapterRegistry().list();
 const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
 let homeSequence = 0;
@@ -183,16 +183,11 @@ it.each([
     }));
     function Scene() {
         const control = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
-        const setupControl = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
-        const { messages: retained } = useVoiceSetupConversationMessages(conversation);
-        const facts = deriveVoiceSetupFacts({ providerId: 'local_conversation', readiness: null,
-            microphonePermission: 'unknown', messages: retained });
+        const setup = useVoiceSetupBlock({ layout: 'wide', inPlace: true,
+            attemptTarget: { kind: 'session', sessionAddress: conversation } });
         return <>
             {source === 'durable' ? <VoiceSessionRuntime /> : <VoiceSetupFirstSuccessRuntime />}
-            <VoiceSetupPanel testID="setup" model={{ facts, serviceTitle: null, serviceTiles: [], readiness: null,
-                tryLive: setupControl.live, canStart: setupControl.canStart, shortcutLabel: null, firstSuccess: setupControl.firstSuccessEvent }}
-                actions={{ onSelectService() {}, onRecover() {}, onAllowMicrophone() {}, onOpenSystemSettings: null,
-                    onTry() {}, onDone() {}, onOpenSettings() {}, onClose() {} }} />
+            {setup?.renderPanel?.({ close() {} })}
             <VoiceComposerPlanet pose="ready" muted={false} markEvent={control.markEvent}
                 accessibilityLabel="Voice" accessibilityHint="Voice" onPress={() => {}} />
         </>;
@@ -285,6 +280,8 @@ it.each([
         });
         if (!restartBeforeInput) await act(async () => publish([messages[0]!]));
         const events = () => screen!.findAllByType(VoiceMarkArt).map((mark) => mark.props.event);
+        expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)).toBeNull();
+        expect(screen.findByType(VoiceSetupPanel).props.model.facts.firstTurnComplete).toBe(false);
         expect(events()).toEqual([null, null]);
         const attemptId = getVoiceSessionPresentedAttemptId();
         if (endBeforeReply) await act(async () => {
@@ -297,6 +294,7 @@ it.each([
                 attemptIdentity: canonicalAttempt.attemptIdentity });
         });
         await act(async () => publish(messages));
+        expect(screen.findByType(VoiceSetupPanel).props.model.facts.firstTurnComplete).toBe(true);
         const completed = events();
         expect(completed).toEqual([{ kind: 'gather', id: `${attemptId}:first-success` }, { kind: 'gather', id: `${attemptId}:first-success` }]);
         await act(async () => publish([...messages]));
