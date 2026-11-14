@@ -2155,8 +2155,10 @@ describe('startDaemonSessionControlRuntime', () => {
                     purpose: { kind: 'accepted-input-start' } });
                 // Home previews its selected intent without persisting a revision
                 // or currentAdmission; Bob's policy still precedes that mutation.
-                return { status: 200, data: { machine: ManagedMachineV1Schema.parse({ ...enrolled,
-                    desired: 'start', desiredWhen: 'now' }) } };
+                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
+                    machine: { ...enrolled, desired: 'start', desiredWhen: 'now' },
+                    requestId: request.requestId, replayed: false,
+                }) };
             }
             if (path.endsWith('/admit-policy')) {
                 currentMachine = ManagedMachineV1Schema.parse({ ...enrolled, desired: 'start', intentRevision: 2 });
@@ -2828,7 +2830,10 @@ describe('startDaemonSessionControlRuntime', () => {
                 }
             }
             if (policy === 'wake-approved-replay' && path.endsWith('/prepare-policy')) {
-                return { status: 200, data: { machine: { ...machine, desired: 'start' } } };
+                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
+                    machine: { ...machine, desired: 'start' },
+                    requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
+                }) };
             }
             if (policy === 'wake-approved-replay' && path.endsWith('/report-intent')) {
                 machine = ManagedMachineV1Schema.parse({ ...machine, observation: { observedAt: Date.now(), availability: 'present', power: 'running' } });
@@ -15321,7 +15326,7 @@ describe('startDaemonSessionControlRuntime', () => {
             listRecordingsForView: expect.any(Function),
             cleanupExpiredRecordings: expect.any(Function),
         }));
-        expect(controlServerInput?.simulatorPreview).toEqual(expect.objectContaining({
+        expect(controlServerInput?.resolveSimulatorPreview?.()).toEqual(expect.objectContaining({
             getSnapshot: expect.any(Function),
             dispatchAction: expect.any(Function),
         }));
@@ -15382,8 +15387,8 @@ describe('startDaemonSessionControlRuntime', () => {
         const apiSimulatorRoutesProvider = setSimulatorPreviewRoutesProvider.mock.calls[0]?.[0] as
             | (() => unknown)
             | undefined;
-        expect(apiSimulatorRoutesProvider?.()).toBe(controlServerInput?.simulatorPreview);
-        await expect(controlServerInput?.simulatorPreview?.getSnapshot()).resolves.toMatchObject({
+        expect(apiSimulatorRoutesProvider?.()).toBe(controlServerInput?.resolveSimulatorPreview?.());
+        await expect(controlServerInput?.resolveSimulatorPreview?.()?.getSnapshot()).resolves.toMatchObject({
             diagnostics: expect.arrayContaining([
                 expect.objectContaining({
                     platform: 'ios',
@@ -15782,8 +15787,6 @@ describe('startDaemonSessionControlRuntime', () => {
         const onBrowserControlRoutesReady = vi.fn();
         const onBrowserContextRoutesReady = vi.fn();
         const onBrowserAutomationRoutesReady = vi.fn();
-        const registerBrowserControlRoutes = vi.fn();
-        const registerBrowserContextRoutes = vi.fn();
         const dispatchCommand = vi.fn(async (command: { commandId: string }) => ({
             v: 1 as const,
             commandId: command.commandId,
@@ -15857,15 +15860,11 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(onBrowserControlRoutesReady).toHaveBeenCalledOnce();
         expect(onBrowserContextRoutesReady).toHaveBeenCalledOnce();
         expect(onBrowserAutomationRoutesReady).toHaveBeenCalledOnce();
-        expect(registerBrowserControlRoutes).toHaveBeenCalledOnce();
-        expect(registerBrowserContextRoutes).toHaveBeenCalledOnce();
 
         await runtime.refreshBrowserRouteOwners();
         expect(onBrowserControlRoutesReady).toHaveBeenCalledOnce();
         expect(onBrowserContextRoutesReady).toHaveBeenCalledOnce();
         expect(onBrowserAutomationRoutesReady).toHaveBeenCalledOnce();
-        expect(registerBrowserControlRoutes).toHaveBeenCalledOnce();
-        expect(registerBrowserContextRoutes).toHaveBeenCalledOnce();
 
         await runtime.stopControlServer();
         expect(setBrowserDaemonControlRoutesProvider).toHaveBeenLastCalledWith(null);
@@ -15911,6 +15910,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     'browser.diagnostics': false,
                     'browser.recording': false,
                 }),
+                onBrowserDiagnosticsRoutesReady: registerBrowserDiagnosticsRoutes,
+                onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
             } satisfies Record<string, unknown>),
         });
 
@@ -16677,7 +16678,7 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
-        await controlServerInput?.simulatorPreview?.getSnapshot();
+        await controlServerInput?.resolveSimulatorPreview?.()?.getSnapshot();
         expect(liveStreamCaptureRegistry.resolve({
             streamFamily: 'ios-simulator:sim_ios_startup:screen',
         })).toMatchObject({

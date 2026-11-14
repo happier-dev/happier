@@ -721,8 +721,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const policyInput = ManagedPolicyAdmissionInputV1Schema.parse({ ...admissionClient.correlation(machine), purpose: prepared.purpose });
                 // Preparation projects the reviewed effect without changing the
                 // retained row. Shared Ask owns admission as well as native IO.
-                const preview = hydrator.normalize((await admissionClient.post(
-                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedControllerMachineOutputV1Schema)).machine);
+                const preview = (await normalizeManagedPresetCarrier(await admissionClient.post(
+                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
+                hydrator, options.signal)).machine;
                 let accepted: ReturnType<typeof ManagedIntentResultSchema.parse> | undefined;
                 const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineFullV1> => {
                     if (context) {

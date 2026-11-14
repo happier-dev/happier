@@ -13,7 +13,7 @@ import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/mac
 import type { ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { signMachineInstallationProof, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { MANAGED_POLICY_PROOF_HEADER, ManagedPolicyAdmissionInputV1Schema, decodeManagedPolicyProofV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { MANAGED_POLICY_PROOF_HEADER, ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, decodeManagedPolicyProofV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
@@ -142,11 +142,11 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         }
         if (path.endsWith('/prepare-policy')) {
             const preparation = ManagedPolicyAdmissionInputV1Schema.parse(body);
-            return { status: 200, data: { machine: { ...machine,
+            return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ requestId: preparation.requestId, replayed: false, machine: { ...machine,
                 ...(preparation.purpose.kind === 'accepted-input-start' ? { desired: 'start' as const }
                     : preparation.purpose.kind === 'retention' && machine.retention.kind !== 'until-delete' && !machine.submittedNativeEffect
                         ? { desired: resolveMachineRetentionNativeIntentV1(machine.retention.effect, [intent])! } : {}),
-                desiredWhen: 'now', desiredAfterMs: undefined } } };
+                desiredWhen: 'now', desiredAfterMs: undefined } }) };
         }
         if (path.endsWith('/admit-policy')) {
             const admission = ManagedPolicyAdmissionInputV1Schema.parse(body);
@@ -2304,9 +2304,10 @@ describe('unused Stop through guest drain and controller operation custody', () 
         if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         test.post.mockImplementation(async (url, body, config) => {
-            if (String(url).endsWith('/prepare-policy')) return { status: 200, data: {
+            if (String(url).endsWith('/prepare-policy')) return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
+                requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
                 machine: { ...test.readMachine(), desired: intent, desiredWhen: 'now' },
-            } };
+            }) };
             if (String(url).endsWith('/admit-policy')) {
                 const response = await home(url, body, config);
                 if (!response || typeof response !== 'object' || !('data' in response)

@@ -10,6 +10,7 @@ import { FeaturesResponseSchema, normalizeActionsSettingsV1, createActionExecuto
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 
 import { configuration } from '@/configuration';
 import { updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId, removeStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
@@ -609,7 +610,10 @@ describe('daemon managed Machine Action factory', () => {
             }
             if (path.endsWith('/policies')) return { status: 200, data: { machines: [machine], targets: rearmed ? [target] : [] } };
             if (path.endsWith('/actions/get')) return { status: 200, data: machine };
-            if (path.endsWith('/prepare-policy')) return { status: 200, data: { machine: wake ? { ...machine, desired: 'start' } : machine } };
+            if (path.endsWith('/prepare-policy')) return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
+                machine: wake ? { ...machine, desired: 'start' } : machine,
+                requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
+            }) };
             if (path.endsWith('/admit-policy')) machine = ManagedMachineV1Schema.parse({ ...machine, desired: wake ? 'start' : 'delete', intentRevision: 2 });
             if (path.endsWith('/submit-intent')) return { status: 200, data: { machine, submitted: true } };
             if (path.endsWith('/report-intent') && !nativeRefused) machine = ManagedMachineV1Schema.parse({ ...machine,
