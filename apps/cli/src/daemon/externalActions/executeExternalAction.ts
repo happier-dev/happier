@@ -920,6 +920,9 @@ async function executeExternalActionRequest(input: Readonly<{
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
     ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery ? { bypassApprovals: true } : {}),
+    // The exact compute effect is already admitted by Home; reading a source
+    // Session profile here would borrow the controller's Account credential.
+    ...(approvedDelegatedAcquire ? { approvalProfileId: null } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
     ...(admittedAuthorization && originalRootCurrentness ? {
       verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },

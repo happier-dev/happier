@@ -33,7 +33,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
   projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
   ActionOperationRevisionEphemeralV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
@@ -316,4 +316,136 @@ it.each([false, true])('continues normal UI Create confirmation without a review
   if (withSetup) expect(await Promise.race([setupPublication, childFailure])).toMatchObject({ operationId: setupOperationId, state: 'succeeded' });
   expect(setupReports).toEqual(withSetup ? ['running', 'succeeded'] : []);
   if (withSetup) expect(await readFile(marker, 'utf8')).toBe('setup\n');
+}, 120_000);
+
+it.each([false, true])('keeps delegated Session compute separate from requester-policy continuation (agentStart=%s)', async hasContinuation => {
+  onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
+  const homeId = 'srv_managed_session_identity';
+  const serverUrl = 'https://session-home.test';
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'controller-owner', tokenEpoch: 0,
+    provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
+  const unavailable = async (): Promise<never> => { throw new Error('No native provider is reached at the refused Home preset read'); };
+  const providerAuthority = createManagedProviderOperationAuthority({ materializationBaseDir: '/unused-managed-session-identity',
+    purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+      projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+    }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+    createRedactionLease: () => ({ add() {}, close() {} }) });
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
+    credentials, accountActionCredentials: credentials, requesterCredentials: credentials,
+    externalActionAccountId: 'controller-owner', ordinaryAccountSession: true, homeServerIdentityId: homeId,
+    machineAccess: { custodianAccountId: 'controller-owner', role: 'manage' }, managedProviderOperationAuthority: providerAuthority,
+    accountSettings: { actionsSettingsV1: { v: 1, actions: {
+      'machines.managed.acquire': { approvalRequiredSurfaces: ['agent'] },
+    } } },
+    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: 'machine' }),
+  });
+  const serverId = configuration.activeServerId;
+  await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [serverId]: {
+    ...settings.servers?.[serverId], id: serverId, name: 'Managed Session Home', serverUrl, webappUrl: serverUrl,
+    createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+    homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl, revision: 1,
+      endpoints: [{ kind: 'https', url: serverUrl }] },
+  } } }));
+  const owner = h.daemon.externalActionIngressOwner;
+  if (!owner) throw new Error('Missing installed external Action ingress');
+  const operationOutcomes: ActionOperationSnapshotV1[] = [];
+  Reflect.set(h.machine, 'socket', createApiSessionSocketStub({ connected: true, emit: (event, [payload]) => {
+    if (event !== ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1) return;
+    const publication = ActionOperationRevisionEphemeralV1Schema.parse(payload);
+    if (publication.content.t === 'plain') operationOutcomes.push(publication.content.v);
+  } }));
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: 'delegated-preset', revision: 1 },
+    controller: { machineId: 'machine', installationId: h.f.installation.installationId },
+    ...(hasContinuation ? { agentStart: { directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'acme.project-launch', localId: 'agent' } } } } : {}),
+  });
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'member-session-acquire', target, input });
+  const sessionActionOrigin = { v: 1 as const,
+    caller: { kind: 'session' as const, sessionId: 'member-session', starterDepth: 0, turnDepth: 0 },
+    sourceTurnId: 'member-turn', requestId: envelope.requestId!, callerPermissionMode: 'default' as const };
+  const principal = { accountId: 'team-member', authority: 'account_automation' as const,
+    authentication: { kind: 'account' as const, tokenEpoch: 0 }, sessionActionOrigin };
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-member-session-acquire', binding: {
+    serverIdentityId: homeId, accountId: principal.accountId, authentication: principal.authentication,
+    sessionActionOrigin, custodianAccountId: 'controller-owner',
+    sessionActionSource: { machineId: 'source-machine', installationId: 'source-installation' },
+    accountEncryptionMode: 'plain', actionId: 'machines.managed.acquire', requestId: envelope.requestId,
+    machineId: 'machine', installationId: h.f.installation.installationId, target, admittedMachineRole: 'use', managedAcquireDelegation: true,
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const authorization = sealManagedControllerActionCodecV1({ authorization: root,
+    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(41) },
+    installationPublicKey: Buffer.from(h.f.installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes });
+  const writeHome = vi.mocked(axios.post).getMockImplementation();
+  if (!writeHome) throw new Error('Missing canonical Home HTTP boundary');
+  const homePaths: string[] = [];
+  const readHome = vi.mocked(axios.get).getMockImplementation();
+  if (!readHome) throw new Error('Missing canonical Home read boundary');
+  vi.mocked(axios.get).mockImplementation(async (...args) => {
+    const path = new URL(String(args[0])).pathname;
+    homePaths.push(`GET ${path}`);
+    if (path === '/v1/account/profile') return { status: 200, data: { id: 'controller-owner' } };
+    // A controller credential cannot read the member's source Session policy.
+    if (path === '/v2/sessions/member-session') return { status: 403, data: { error: 'forbidden' } };
+    return readHome(...args);
+  });
+  onTestFailed(() => { if (!hasContinuation) expect(homePaths, JSON.stringify(homePaths)).toContain('POST /v1/machines/presets/get'); });
+  vi.mocked(axios.post).mockImplementation(async (...args) => {
+    const path = new URL(String(args[0])).pathname;
+    homePaths.push(`POST ${path}`);
+    if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+    // A legitimate Home refusal after preflight discriminates requester custody
+    // from the unrelated controller credential without executing a provider.
+    if (path === '/v1/machines/presets/get') return { status: 200, data: { kind: 'refused', code: 'credential_unavailable' } };
+    return writeHome(...args);
+  });
+  const invoke = (caller = principal, proof = authorization, current = true) => executeExternalAction({ ...owner,
+    actionId: 'machines.managed.acquire', envelope, executionAuthorization: proof, principal: caller,
+    currentMachineId: 'machine', currentAccountId: 'controller-owner', currentInstallationId: h.f.installation.installationId,
+    verifyExecutionAuthorization: async () => current, signal: h.signal });
+  expect(await invoke({ ...principal, sessionActionOrigin: { ...sessionActionOrigin,
+    caller: { ...sessionActionOrigin.caller, sessionId: 'unrelated-source-session' } } }))
+    .toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+  expect(await invoke(principal, authorization, false)).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+  const { managedAcquireDelegation: _delegation, ...ordinaryBinding } = root.binding;
+  const ordinary = sealManagedControllerActionCodecV1({ authorization: { ...root, binding: ordinaryBinding },
+    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(41) },
+    installationPublicKey: Buffer.from(h.f.installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes });
+  expect(await invoke(principal, ordinary)).toMatchObject({ kind: 'response', response: { execution: {
+    ok: false, errorCode: 'approval_context_unavailable',
+  } } });
+  expect(homePaths).not.toContain('POST /v1/machines/presets/get');
+  const result = await invoke();
+  if (hasContinuation) {
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { execution: {
+      ok: false, errorCode: 'approval_context_unavailable',
+    } } });
+    expect(homePaths).not.toContain('GET /v2/sessions/member-session');
+    expect(homePaths).not.toContain('POST /v1/machines/presets/get');
+    expect(operationOutcomes).toEqual([]);
+    return;
+  }
+  expect(result, JSON.stringify({ result, operationOutcomes })).toMatchObject({ kind: 'response', response: { execution: {
+    ok: true, result: { status: 'accepted' },
+  } } });
+  if (result.kind !== 'response') throw new Error('The installed ingress did not accept delegated compute');
+  const response = ExternalActionResponseEnvelopeV1Schema.parse(result.response);
+  if (!response.execution.ok) throw new Error('The installed executor refused delegated compute');
+  const accepted = response.execution.result;
+  if (!accepted || typeof accepted !== 'object' || Array.isArray(accepted)
+    || !('operationId' in accepted)) throw new Error('Missing installed operation acceptance');
+  const manager: unknown = Reflect.get(h.machine, 'rpcHandlerManager');
+  if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed operation observer');
+  // Observe through the real read handler in the same member scope Home admitted.
+  // Foreign requester operations are not published to the custodian's socket.
+  expect(await manager.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
+    { operationId: accepted.operationId, waitForTerminal: true }, { signal: h.signal,
+      rpcContext: { machineAdmission: { actorAccountId: root.binding.accountId, custodianAccountId: root.binding.custodianAccountId,
+        machineId: root.binding.machineId, installationId: root.binding.installationId, role: 'use', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => h.f.isHomeCurrent() },
+    })).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'credential_unavailable' } } });
+  expect(homePaths.filter(path => path === 'POST /v1/machines/presets/get')).toHaveLength(1);
+  expect(homePaths).not.toContain('GET /v2/sessions/member-session');
 }, 120_000);

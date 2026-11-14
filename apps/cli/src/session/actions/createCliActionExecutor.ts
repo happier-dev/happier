@@ -42,7 +42,8 @@ import { ManagedMachineActionIdV1Schema, isManagedRetainedControlInvocation } fr
 import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
-import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { actionStartTargetUnavailableV1, isAgentStartActionInvocationV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -144,7 +145,7 @@ export function createCliActionExecutor(
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   });
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
-  const requesterPrivateEffectAuthorityFailure = (actionId: ActionId, context: ActionExecutorContext | undefined) => {
+  const requesterPrivateEffectAuthorityFailure = (actionId: ActionId, input: unknown, context: ActionExecutorContext | undefined) => {
     const binding = context?.externalActionExecutionAuthorization?.binding;
     if (binding && binding.accountId !== runtimeAccountId && binding.accountEncryptionMode === 'e2ee'
       && (actionId === 'template.instantiate' || actionId === 'session.spawn_new')) {
@@ -156,6 +157,12 @@ export function createCliActionExecutor(
       || binding.accountId === runtimeAccountId) return null;
     const effect = getActionSpec(actionId).sideEffectClass;
     if (effect === 'none' || effect === 'read') return null;
+    // Home admitted this exact compute acquire. Agent work still needs the
+    // source requester's private policy, which controller custody cannot supply.
+    if (actionId === 'machines.managed.acquire' && binding.actionId === actionId
+      && binding.managedAcquireDelegation === true
+      && !isAgentStartActionInvocationV1(actionId, readRecord(input))
+      && readRetainedVerifiedExternalActionRequester(context?.externalActionExecutionAuthorization)) return null;
     // Receiving Machine admission grants effect placement, not the requester's
     // private Action policy or approval Artifact writes. The existing Account
     // projection reads facts only; it cannot authorize borrowing custodian policy.
@@ -557,7 +564,7 @@ export function createCliActionExecutor(
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
     prepare: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
-        ?? requesterPrivateEffectAuthorityFailure(actionId, context);
+        ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return { kind: 'settled' as const, result: denied };
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return { kind: 'settled' as const,
@@ -573,7 +580,7 @@ export function createCliActionExecutor(
     },
     execute: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
-        ?? requesterPrivateEffectAuthorityFailure(actionId, context);
+        ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return denied;
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable');
