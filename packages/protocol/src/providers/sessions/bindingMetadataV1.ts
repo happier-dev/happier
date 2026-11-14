@@ -32,7 +32,10 @@ import { PluginContributionIdentityV1Schema } from '../../plugins/contributionId
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderRoleModelsV1Schema, ProviderGatewayPlacementV1Schema } from '../connections/v1.js';
 
-import type { AgentProviderBindingLaunchMaterialization } from '../materialization/v1.js';
+import {
+  AgentProviderBindingPreparedV1Schema,
+  type AgentProviderBindingLaunchMaterialization,
+} from '../materialization/v1.js';
 import {
   AgentSessionProviderBindingV1Schema,
   type AgentSessionProviderBindingV1,
@@ -64,11 +67,7 @@ const ProviderRuntimeBindingBasisCommonV1Schema = lazyZodSchema(() => z.strictOb
   contributionKey: z.nullable(ProviderContributionKeySchema),
   runtimeCredentialTransport: z.nullable(ProviderCredentialTransportV1Schema),
   roleModels: z.optional(ProviderRoleModelsV1Schema),
-  prepared: z.strictObject({
-    v: z.literal(1),
-    materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
-    adapterBindingKey: z.optional(ProviderAdapterBindingKeyV1Schema),
-  }),
+  prepared: AgentProviderBindingPreparedV1Schema,
   adapterVersion: z.number().check(z.int(), z.positive()),
   agentSupport: AgentProviderRequirementsV1Schema,
 }));
@@ -134,7 +133,7 @@ export const SessionProviderBindingMetadataV1Schema = lazyZodSchema(() => z.stri
   model: z.optional(ProviderModelDescriptorV1Schema),
   managedPurposeBindings: z.optional(QualifiedConnectedAccountPurposeBindingsV1Schema),
   protocol: ProviderWireProtocolSchema,
-  materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
+  materialization: AgentProviderRequirementsV1Schema.shape.materialization,
   adapterBindingKey: z.optional(ProviderAdapterBindingKeyV1Schema),
   compatibilityFingerprint: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
   bindingSecurityFingerprint: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),

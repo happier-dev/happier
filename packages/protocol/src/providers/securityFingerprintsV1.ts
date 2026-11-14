@@ -12,6 +12,7 @@ import {
 } from '../connect/connectedAccountPurposeBindings.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { z } from '../zodRuntimePolicy.js';
+import type { AgentProviderRequirementsV1 } from './compatibility/v1.js';
 import type { CapabilitySupport, ProviderWireProtocol } from './capabilities/v1.js';
 import { CapabilitySupportSchema, ProviderWireProtocolSchema } from './capabilities/v1.js';
 import type { ProviderCatalogProbeV1 } from './catalog/descriptorV1.js';
@@ -365,7 +366,7 @@ type ProviderBindingSecurityFingerprintV1Base = Readonly<{
   modelCapabilities: Readonly<{
     reasoningControls?: CapabilitySupport;
   }>;
-  materialization: 'spawnEnv' | 'engineConfig' | 'configFile';
+  materialization: AgentProviderRequirementsV1['materialization'];
   adapterBindingKey?: string;
   credentialDestination?: ProviderCredentialDestinationV1;
   compatibilityFingerprint: string;

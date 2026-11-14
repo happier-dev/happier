@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
+import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 import { ProviderAdapterBindingKeyV1Schema } from '../sessions/adapterBindingKeyV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '../ids.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
@@ -10,7 +11,6 @@ import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderCredentialTransportV1Schema } from '../credentials/v1.js';
 import { ProviderModelGenerationSettingsV1Schema, ProviderRoleModelsV1Schema } from '../connections/v1.js';
 
-const MaterializationKindSchema = z.enum(['spawnEnv', 'engineConfig', 'configFile']);
 const ProviderBindingKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(512)));
 
 const PrepareInputBaseSchema = lazyZodSchema(() => z.strictObject({
@@ -33,7 +33,7 @@ export const AgentProviderBindingPrepareInputV1Schema = lazyZodSchema(() => z.un
 
 export const AgentProviderBindingPreparedV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  materialization: MaterializationKindSchema,
+  materialization: AgentProviderRequirementsV1Schema.shape.materialization,
   adapterBindingKey: z.optional(ProviderAdapterBindingKeyV1Schema),
 }));
 
