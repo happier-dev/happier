@@ -18,17 +18,20 @@ export const ConnectedDeviceSchema = z.object({
 });
 export type ConnectedDevice = z.infer<typeof ConnectedDeviceSchema>;
 export type ConnectedDeviceIdentity = Readonly<Pick<ConnectedDevice, 'name' | 'platform' | 'appVersion'>>;
-export type ListedConnectedDevice = ConnectedDeviceIdentity & Readonly<{ id: string; lastSeen: number }>;
+export type ListedConnectedDevice = ConnectedDeviceIdentity & Readonly<{ id: string; lastSeen: number | null }>;
 
 /**
  * Devices seen in the last fourteen days. `lastSeenByClientId` is the relay's presence (client id →
  * epoch ms); a device without presence falls back to the last-seen time an older build stored. The
  * running device (`localClientId`) is connected by definition, so it is listed as seen now even when
- * the relay has no presence for it (older relay, failed request); other devices need real evidence.
+ * the relay has no presence for it. `lastSeenByClientId` is null when the relay's presence could not be
+ * read at all (older relay, failed request): recency is then unknowable, so a device with no other
+ * evidence is listed with a null last-seen instead of being dropped. When presence did load, a device
+ * it has no record of was not seen recently and stays hidden.
  */
 export function listConnectedDevices(
     settings: unknown,
-    lastSeenByClientId: Readonly<Record<string, number>>,
+    lastSeenByClientId: Readonly<Record<string, number>> | null,
     now: number,
     localClientId: string | null = null,
 ): ListedConnectedDevice[] {
@@ -39,12 +42,12 @@ export function listConnectedDevices(
         const parsed = ConnectedDeviceSchema.safeParse(value);
         if (!parsed.success) continue;
         const id = key.slice(CONNECTED_DEVICE_KEY_PREFIX.length);
-        const lastSeen = lastSeenByClientId[id] ?? parsed.data.lastSeen ?? (id === localClientId ? now : undefined);
-        if (lastSeen === undefined || lastSeen < now - CONNECTED_DEVICE_WINDOW_MS) continue;
+        const lastSeen = lastSeenByClientId?.[id] ?? parsed.data.lastSeen ?? (id === localClientId ? now : null);
+        if (lastSeen === null ? lastSeenByClientId !== null : lastSeen < now - CONNECTED_DEVICE_WINDOW_MS) continue;
         const { name, platform, appVersion } = parsed.data;
         devices.push({ name, platform, appVersion, lastSeen, id });
     }
-    return devices.sort((a, b) => b.lastSeen - a.lastSeen);
+    return devices.sort((a, b) => (b.lastSeen ?? -Infinity) - (a.lastSeen ?? -Infinity));
 }
 
 /**

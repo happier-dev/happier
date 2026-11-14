@@ -18,10 +18,10 @@ export async function apiReportConnectedClientSeen(clientId: string): Promise<vo
     }
 }
 
-/** When each of this account's clients was last seen (client id → epoch ms); empty on older relays. */
-export async function apiListConnectedClientsLastSeen(): Promise<Record<string, number>> {
+/** When each of this account's clients was last seen (client id → epoch ms); null on relays without the endpoint. */
+export async function apiListConnectedClientsLastSeen(): Promise<Record<string, number> | null> {
     const response = await serverFetch(CONNECTED_CLIENT_ROUTES.list, { method: 'GET' }, {});
-    if (response.status === 404) return {};
+    if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Connected-client list failed with HTTP ${response.status}`);
     const parsed = ConnectedClientsResponseSchema.parse(await response.json());
     return Object.fromEntries(parsed.clients.map((client) => [client.clientId, client.lastSeenAt]));

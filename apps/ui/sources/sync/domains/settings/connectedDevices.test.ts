@@ -40,6 +40,22 @@ describe('connected devices', () => {
         expect(listConnectedDevices(settings, {}, now)).toEqual([]);
     });
 
+    it('lists devices with an unknown last-seen only when the relay presence is unavailable', () => {
+        const now = 2_000_000_000_000;
+        const identity = { name: 'Laptop', platform: 'desktop', appVersion: '0.2.20-beta1.4' } as const;
+        const settings = {
+            [`${CONNECTED_DEVICE_KEY_PREFIX}known`]: identity,
+            [`${CONNECTED_DEVICE_KEY_PREFIX}unknown`]: { ...identity, name: 'Phone', platform: 'android' },
+        };
+        // Presence loaded and has no record for "unknown": it was not seen recently, so it stays hidden.
+        expect(listConnectedDevices(settings, { known: now - 5 }, now).map((device) => device.id)).toEqual(['known']);
+        // Presence unavailable (older relay, failed request): recency is unknowable, so nothing is dropped for it.
+        expect(listConnectedDevices(settings, null, now)).toEqual([
+            { ...identity, lastSeen: null, id: 'known' },
+            { ...identity, name: 'Phone', platform: 'android', lastSeen: null, id: 'unknown' },
+        ]);
+    });
+
     it('retains other devices when applying an independent device update', () => {
         const existing = { name: 'Phone', platform: 'android', appVersion: '0.2.19-fork.20' } as const;
         const updated = { name: 'Laptop', platform: 'desktop', appVersion: '0.2.19-fork.23' } as const;
