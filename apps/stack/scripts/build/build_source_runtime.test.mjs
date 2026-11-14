@@ -3133,6 +3133,17 @@ test('source reload passing daemon selects the validated graph without claiming 
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
 });
 
+test('source reload refuses a lost prepared product before changing the incumbent', async t => {
+  const graph = await reloadFixtureGraph(t, 'export {};');
+  const admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
+    components: { daemon: graph.daemon }, pending: graph.pending });
+  await rm(graph.daemon.entrypoint);
+  await assert.rejects(admitted.activate(), { code: 'source_bundle_unavailable', component: 'daemon', entryGraph: 'daemon',
+    phase: 'activation', retryable: false });
+  assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
+  assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+});
+
 test('source reload interrupted preparation cannot select a completed candidate', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
   const admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,

@@ -1126,7 +1126,8 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
       for (const [component, built] of Object.entries(components)) {
         const record = await readOptionalJson(join(resolve(built.runtimeDir, '../..'), 'source-bundle.json'));
         if (record?.identity !== built.identity || record?.entrypoint !== built.entrypoint || !existsSync(built.entrypoint)) {
-          throw new Error(`[source-bundle] cannot select an incomplete ${component} reload graph`);
+          throw Object.assign(new Error(`[source-bundle] cannot select an incomplete ${component} reload graph`),
+            { code: 'source_bundle_unavailable', component, entryGraph: component, phase: 'activation', retryable: false });
         }
       }
       const selections = { ...Object.fromEntries(Object.entries(components).map(([component, built]) => [component, { entrypoint: built.entrypoint }])),

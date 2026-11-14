@@ -1522,18 +1522,28 @@ export async function startStackDevTargets(
             const workerFailure = outcome.kind === 'worker-exit' && outcome.result?.code !== 0
               ? workerEnvironmentFailures.get(worker) : null;
             if (workerFailure) await workerFailure.publication;
+            // PREPARED already admitted the replacement. A failed activation
+            // cannot turn that swap into another source preparation request.
+            const preparedReloadFailure = sourceSnapshot && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1'
+              && outcome.kind === 'worker-exit' && Number.isInteger(outcome.result?.code)
+              && outcome.result.code !== 0 && outcome.result.code !== 255
+              ? Object.assign(new Error(`[reload] ${target.name} prepared replacement exited (code=${outcome.result.code}); repair the runtime failure before explicitly reloading`),
+                { code: 'source_reload_activation_failed', phase: 'activation', retryable: false,
+                  exitCode: outcome.result.code }) : null;
             const environmentRefusal = workerFailure?.refusal
-              ?? (workerFailure?.sourceRefusal?.retryable === false ? workerFailure.sourceRefusal : null);
+              ?? (workerFailure?.sourceRefusal?.retryable === false ? workerFailure.sourceRefusal : null)
+              ?? preparedReloadFailure;
             if (environmentRefusal) {
-              // A refused source worker never acquired the incumbent lifecycle;
-              // controller cleanup must release transport without stopping it.
-              if (sourceSnapshot && workerFailure.sourceRefusal) startedRemoteTargets.delete(target.name);
+              // Refusal releases transport without acquiring another lifecycle.
+              // An incumbent may still be serving behind the exited observer.
+              if (sourceSnapshot && (workerFailure?.sourceRefusal || preparedReloadFailure)) startedRemoteTargets.delete(target.name);
               if (workersByTarget.get(target.name) === worker) workersByTarget.delete(target.name);
               if (tunnelsByTarget.get(target.name) === tunnel) tunnelsByTarget.delete(target.name);
               await stopProcess(worker);
               await stopProcess(tunnel);
               targetFailuresByTarget.set(target.name, { name: target.name, phase: environmentRefusal.phase, error: environmentRefusal });
-              publishTargetState(plan, 'failed', { phase: environmentRefusal.phase, error: environmentRefusal.message });
+              publishTargetState(plan, 'failed', { phase: environmentRefusal.phase, error: environmentRefusal.message,
+                ...(preparedReloadFailure ? { reason: environmentRefusal.code } : {}) });
               logger.error?.(environmentRefusal.message);
               return;
             }

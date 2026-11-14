@@ -1468,7 +1468,7 @@ test(`source preparation phase followed by worker death retries only after remot
 }
 
 for (const preparedSourceReload of [false, true]) {
-test(`source worker crash prepares current source instead of retaining its crashed graph (${preparedSourceReload ? 'prepared reload' : 'cached launch'})`, async t => {
+test(`source worker crash ${preparedSourceReload ? 'refuses prepared reload without readmission' : 'prepares current source for cached launch'}`, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-crash-refresh-' });
   const target = { name: 'linux', platform: 'posix', ssh: 'linux-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/home' };
   const workers = [];
@@ -1490,6 +1490,7 @@ test(`source worker crash prepares current source instead of retaining its crash
     targetPlans: [{ target, services: { server: true, daemon: false, expo: false } }],
     onTargetStateChange: state => {
       states.push(state);
+      if (preparedSourceReload && state.status === 'failed') observeRecovery();
       if (state.status === 'running') (workers.length === 1 ? observeInitial : observeRecovery)();
       if (workers.length === 2 && state.status === 'degraded') observeRecovery();
     },
@@ -1513,6 +1514,7 @@ test(`source worker crash prepares current source instead of retaining its crash
       const child = { ...input, exitCode: null };
       if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
         workers.push(child);
+        if (preparedSourceReload) observeInitial();
         if (workers.length === 2) {
           // The source restart owner selects a new graph after its preflight.
           identities.server = { selected: 'fixed-graph', loaded: 'fixed-graph' };
@@ -1523,7 +1525,9 @@ test(`source worker crash prepares current source instead of retaining its crash
     },
     stopProcess: async child => { child.exitCode = 0; },
     waitForProcess: async child => child === workers[0] ? firstExit : new Promise(() => {}),
-    waitForServerReady: async () => {},
+    waitForServerReady: async () => {
+      if (preparedSourceReload) await new Promise(() => {});
+    },
     waitForRetry: async () => await new Promise(setImmediate), logger: { error() {} },
   });
   try {
@@ -1532,6 +1536,14 @@ test(`source worker crash prepares current source instead of retaining its crash
     workers[0].exitCode = 1;
     failWorker({ code: 1 });
     await recovered;
+    if (preparedSourceReload) {
+      assert.equal(workers.length, 1, 'a prepared swap must not request another source capture');
+      assert.equal(flushes, initialFlushes, 'a prepared swap must not synchronize for a second admission');
+      assert.equal(stops.length, 0, 'failure must not acquire another runtime lifecycle');
+      assert.equal(states.at(-1).reason, 'source_reload_activation_failed');
+      assert.equal(controller.targetFailures[0].error.code, 'source_reload_activation_failed');
+      return;
+    }
     const replacement = workers[1].args.at(-1);
     assert.match(replacement, /--restart/);
     assert.doesNotMatch(replacement, /--reuse-source-runtime|--prepared-source-reload|\/remote\/crashed-ui/,
