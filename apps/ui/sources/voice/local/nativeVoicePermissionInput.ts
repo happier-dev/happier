@@ -46,6 +46,8 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   let promptAtTurnStart: NativePermissionPrompt | null = null;
   let reading: Promise<void> | null = null;
   let responseSettlement: Promise<NativePermissionDecision | null> = Promise.resolve(null);
+  const answeredRequests = new Set<string>();
+  const requestKey = (address: SessionAddress, requestId: string) => JSON.stringify([address.serverId, address.sessionId, requestId]);
   const readAddresses = (): readonly SessionAddress[] => {
     const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: params.controlSessionId });
     if (binding?.transcriptMode !== 'native_session') return [];
@@ -82,7 +84,8 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     const requests = addresses.flatMap(address => {
       const session = resolveVoiceContextSessionFromState(address, state);
       return session ? listPendingSessionRequests(session, readStoredSessionMessagesForAddress(state, address))
-        .filter(request => request.kind === 'permission').map(request => ({ address, request })) : [];
+        .filter(request => request.kind === 'permission' && !answeredRequests.has(requestKey(address, request.id)))
+        .map(request => ({ address, request })) : [];
     });
     const currentPrompt = prompt;
     if (currentPrompt && requests.some(({ address, request }) => request.id === currentPrompt.request.id
@@ -196,6 +199,11 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           // Report the Action's settled decision to the turn lifecycle owner.
           responseSettlement = responding.then(result => result.ok ? appliedDecision : null, () => null);
           requireActionSuccess(await responding);
+          // The native acknowledgement retires this input even while sync still
+          // projects it as pending. A later Yes belongs to the next read-out ID.
+          answeredRequests.add(requestKey(selected.address, selected.request.id));
+          if (prompt === selected) prompt = null;
+          observe();
         } catch (error) {
           if (!disposed && !params.signal.aborted) await params.onResponseSettled({ ok: false, error });
           return true;

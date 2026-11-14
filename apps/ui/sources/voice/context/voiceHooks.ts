@@ -49,6 +49,7 @@ interface SessionMetadata {
 
 /** Full session context already disclosed during the current Voice attempt. */
 const voiceAttemptShownSessionAddresses = new Set<string>();
+const voiceAttemptAnnouncedPermissionRequests = new Set<string>();
 
 type VoiceDebugEvent =
   | 'voice_contextual_update'
@@ -330,6 +331,11 @@ export const voiceHooks = {
     if (!readVoicePrivacySettings(storage.getState().settings).sharePermissionRequests) return;
 
     if (resolvePolicy(address).level === 'none') return;
+    if (requestKind === 'permission') {
+      const announcementKey = JSON.stringify([sessionAddressKey(address), requestId]);
+      if (voiceAttemptAnnouncedPermissionRequests.has(announcementKey)) return;
+      voiceAttemptAnnouncedPermissionRequests.add(announcementKey);
+    }
     reportSession(sink, address);
     const prefs = getVoiceContextPrefs(address);
     announceAssistantText(
@@ -436,6 +442,7 @@ export const voiceHooks = {
   onVoiceStarted(sessionId: string, scope: VoiceHostAuthoredContextScope): string {
     emitVoiceDebugDiagnostic('voice_session_started', { sessionId });
     voiceAttemptShownSessionAddresses.clear();
+    voiceAttemptAnnouncedPermissionRequests.clear();
     const resolution = resolveVoiceInitialContext(sessionId, { scope });
     if (resolution.kind === 'session') {
       voiceAttemptShownSessionAddresses.add(sessionAddressKey(resolution.sessionAddress));
@@ -479,6 +486,7 @@ export const voiceHooks = {
   onVoiceStopped() {
     emitVoiceDebugDiagnostic('voice_session_stopped', {});
     voiceAttemptShownSessionAddresses.clear();
+    voiceAttemptAnnouncedPermissionRequests.clear();
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
   },
 };

@@ -13,14 +13,50 @@ import { voiceHooks } from './voiceHooks';
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 import type { Message } from '@happier-dev/session-core/messages';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { reportNewAgentRequestsFromSessionTransition } from './reportNewAgentRequestsFromSessionTransition';
 
 const original = storage.getState();
 afterEach(() => {
+    voiceHooks.onVoiceStopped();
     vi.restoreAllMocks();
     storage.setState(original);
     resetVoiceAdapterRegistryForTests();
     setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
     useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+});
+
+it.each(['realtime', 'local'] as const)('announces each native request once per Voice attempt through %s delivery', engineKind => {
+    const providerId = `cost.permission-${engineKind}`;
+    const address = { serverId: 'voice-permission-home', sessionId: 'voice-permission-session' };
+    const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId, encryptionMode: 'plain' });
+    const voice = voiceSettings.voiceSettingsParse({ providerId: 'local_conversation',
+        privacy: { sharePermissionRequests: true }, ui: { updates: { activeSession: 'snippets' } } });
+    storage.setState({ settings: { ...original.settings, voice }, sessions: { [session.id]: session } });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(address);
+    const spoken: string[] = [];
+    const snapshot = { adapterId: providerId, sessionId: address.sessionId, status: 'connected' as const,
+        mode: 'idle' as const, canStop: true };
+    // Only the speech/provider transport is replaced; sync transition, request derivation and policy are real.
+    registerVoiceAdapters([{ id: providerId, engineKind, start: async () => {}, stop: async () => {},
+        toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {}, sendContextUpdate: () => {},
+        getSnapshot: () => snapshot, subscribe: () => () => {}, resolveContextChannel: () => ({
+            hostAuthoredContext: 'session_context', sendContextualUpdate: () => {},
+            sendTextMessage: text => { spoken.push(text); },
+            ...(engineKind === 'local' ? { announceAssistantText: (text: string) => { spoken.push(text); } } : {}),
+        }) }]);
+    setVoiceSessionSnapshot(snapshot);
+    const pending = { ...session, agentState: { requests: {
+        'native-request-1': { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' } },
+    } } };
+    for (let echo = 0; echo < 18; echo++) reportNewAgentRequestsFromSessionTransition(null, pending);
+    expect(spoken).toHaveLength(1);
+    reportNewAgentRequestsFromSessionTransition(null, { ...pending, agentState: { requests: {
+        'native-request-2': { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' } },
+    } } });
+    expect(spoken).toHaveLength(2);
+    voiceHooks.onVoiceStopped();
+    reportNewAgentRequestsFromSessionTransition(null, pending);
+    expect(spoken).toHaveLength(3);
 });
 
 it.each(['happier.voice.xai/realtime-xai', 'happier.voice.openai/realtime-openai',

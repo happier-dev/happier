@@ -49,8 +49,12 @@ const run120Choices = buildCodexPermissionChoices('16367ecb-d8ca-463b-8155-cf0fd
 describe('native Voice permission input', () => {
   registerLocalVoiceEngineHarnessHooks();
 
-  it.each(["No, don't run it", 'NO DO NOT RUN IT I'])(
-    'settles the read-out native request from the R143 speech entry: %s', async answer => {
+  it.each([
+    { answer: "No, don't run it", nextRequest: false },
+    { answer: 'NO DO NOT RUN IT I', nextRequest: false },
+    { answer: 'Yes.', nextRequest: true },
+  ])(
+    'settles the exact read-out request with delayed sync before a second request ($answer, next=$nextRequest)', async ({ answer, nextRequest }) => {
       const storage = await getStorage();
       const state = storage.getState();
       const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -80,19 +84,23 @@ describe('native Voice permission input', () => {
         agentState: { requests: { 'native-write': { kind: 'permission', tool: 'Write',
           arguments: { file_path: '/tmp/native-voice-test' }, createdAt: Date.now(), nativeChoices: codexChoices } } },
       });
+      let expectedRequestId = 'native-write';
       const incumbent = sessionRpcWithServerScope.getMockImplementation()!;
       sessionRpcWithServerScope.mockImplementation(async request => {
         if (request.method !== RPC_METHODS.SESSION_PERMISSION_RESPOND) return incumbent(request);
         const payload = SessionPermissionRespondRpcParamsV1Schema.parse(request.payload);
-        expect(payload).toMatchObject({ id: 'native-write', nativeChoice: {
-          requirementId: codexChoices.requirementId, choiceId: 'decline',
+        expect(payload).toMatchObject({ id: expectedRequestId, nativeChoice: {
+          requirementId: codexChoices.requirementId, choiceId: nextRequest ? 'accept' : 'decline',
         } });
+        // The native RPC acknowledges before its state publication reaches the client.
+        if (nextRequest && expectedRequestId === 'native-write') return { ok: true };
         const pending = storage.getState().sessions[requestSessionId]!;
         await applyLocalVoiceSessionAgentState({ ...pending,
           agentStateVersion: (pending.agentStateVersion ?? 0) + 1,
           updatedAt: Math.max(Date.now(), pending.updatedAt + 1),
-          agentState: { requests: {}, completedRequests: { 'native-write': {
-            tool: 'Write', status: 'denied', completedAt: Date.now(), nativeChoice: 'nativeChoice' in payload ? payload.nativeChoice : undefined,
+          agentState: { requests: {}, completedRequests: { [expectedRequestId]: {
+            ...pending.agentState!.requests![expectedRequestId]!,
+            status: nextRequest ? 'approved' : 'denied', completedAt: Date.now(), nativeChoice: 'nativeChoice' in payload ? payload.nativeChoice : undefined,
           } } },
         });
         return { ok: true };
@@ -110,11 +118,28 @@ describe('native Voice permission input', () => {
         const respond = input.captureResponse();
         expect(respond).not.toBeNull();
         await respond!(answer);
-        expect(settled).toHaveBeenCalledWith({ ok: true, decision: 'denied' });
-        expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.['native-write']).toBeUndefined();
-        expect(storage.getState().sessions[requestSessionId]?.agentState?.completedRequests?.['native-write'])
-          .toMatchObject({ status: 'denied' });
-      } finally { input.dispose(); await lifecycle.stop(); }
+        expect(settled).toHaveBeenCalledWith({ ok: true, decision: nextRequest ? 'approved' : 'denied' });
+        if (nextRequest) {
+          const pending = storage.getState().sessions[requestSessionId]!;
+          expectedRequestId = 'native-second-write';
+          await applyLocalVoiceSessionAgentState({ ...pending,
+            agentStateVersion: (pending.agentStateVersion ?? 0) + 1,
+            updatedAt: Math.max(Date.now(), pending.updatedAt + 1),
+            agentState: { requests: { ...pending.agentState?.requests, [expectedRequestId]: {
+              kind: 'permission', tool: 'Write', arguments: { file_path: '/tmp/native-second-voice-test' },
+              createdAt: Date.now(), nativeChoices: codexChoices,
+            } } },
+          });
+          await input.waitForPendingReadout();
+          expect(input.canAccept()).toBe(true);
+          const respondToSecond = input.captureResponse();
+          expect(respondToSecond).not.toBeNull();
+          await respondToSecond!('Yes.');
+        }
+        expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.[expectedRequestId]).toBeUndefined();
+        expect(storage.getState().sessions[requestSessionId]?.agentState?.completedRequests?.[expectedRequestId])
+          .toMatchObject({ status: nextRequest ? 'approved' : 'denied' });
+      } finally { input.dispose(); await lifecycle.stop(controlSessionId); }
     },
   );
 
