@@ -256,6 +256,8 @@ import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMeta
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { createCredentialAccountEncryptionCurrentness, readAccountEncryptionCurrentnessForRead,
     type CredentialAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { holdSessionNotificationFacts, isNotificationFactsAccountWake,
+    type SessionNotificationFactsHold } from '@/notifications/activity/heldSessionNotificationFacts';
 import {
     fetchSessionByIdCompat,
     fetchSessionTurnsProjection,
@@ -594,6 +596,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly readAccountEncryptionCurrentnessForRead: () => Promise<AccountEncryptionCurrentnessResponse>;
     /** Owner Account currentness held on this client's Account update socket (read-only reuse). */
     private heldAccountEncryptionCurrentness: CredentialAccountEncryptionCurrentness | null = null;
+    private notificationFactsHold: SessionNotificationFactsHold | null = null;
     private agentState: AgentState | null;
     private agentStateRequestStore: AgentStateRequestStore | null = null;
     private questionAnswerDeliveryRegistered = false;
@@ -747,6 +750,8 @@ export class ApiSessionClient extends EventEmitter {
     private applyArchivedAtSnapshot(archivedAt: number | null): void {
         if (this.archivedAt === archivedAt) return;
         this.archivedAt = archivedAt;
+        // Archive state is a notification eligibility fact.
+        this.notificationFactsHold?.invalidate('session');
         this.emit('archive-state-updated', archivedAt);
     }
 
@@ -1959,6 +1964,8 @@ export class ApiSessionClient extends EventEmitter {
                 source: 'session-scoped',
             }),
             onSessionFollowInvalidated: () => {
+                // A `session-changed` relation push can change responsibility for notifications.
+                this.notificationFactsHold?.invalidate('session');
                 // The existing exact-Session hint also invalidates its live
                 // worker relation. Keep immutable origin, but never use a
                 // detached relation while the existing snapshot owner refreshes.
@@ -2048,6 +2055,8 @@ export class ApiSessionClient extends EventEmitter {
             replayLatestSessionPresenceOnReconnect: () => this.transcriptApi.replayLatestPresence(),
             markConnected: () => {
                 this.sessionConnectionEpoch += 1;
+                // Relation pushes may have been missed while this Session socket was down.
+                this.notificationFactsHold?.invalidate('session');
                 const reason = this.hasConnectedOnce ? 'reconnect' : 'connect';
                 this.hasConnectedOnce = true;
                 return { reason, epoch: this.sessionConnectionEpoch };
@@ -2150,6 +2159,30 @@ export class ApiSessionClient extends EventEmitter {
         userSocket.on('update', (data: Update) => { held.update(data); });
         if (userSocket.connected) held.connected({ refresh: false });
         this.heldAccountEncryptionCurrentness = held;
+        this.holdNotificationFacts(userSocket);
+    }
+
+    /**
+     * Notification eligibility facts are held only while this owner client receives the pushes
+     * that can change them: Account wakes naming `session-follows` (Follow facts and delivery
+     * mutes) on this Account socket, and `session-changed` relation pushes on its Session socket.
+     */
+    private holdNotificationFacts(userSocket: AccountUpdatesSocket): void {
+        if (!this.hasOwnerMetadataAuthority()) return;
+        const attach = () => {
+            if (this.closed || this.notificationFactsHold) return;
+            this.notificationFactsHold = holdSessionNotificationFacts(this.token, this.sessionId);
+        };
+        const detach = () => {
+            this.notificationFactsHold?.release();
+            this.notificationFactsHold = null;
+        };
+        userSocket.on('connect', attach);
+        userSocket.on('disconnect', detach);
+        userSocket.on('update', (data: Update) => {
+            if (isNotificationFactsAccountWake(data.body)) this.notificationFactsHold?.invalidate('account');
+        });
+        if (userSocket.connected) attach();
     }
 
     private handleUserScopedUpdate(
@@ -4989,6 +5022,8 @@ export class ApiSessionClient extends EventEmitter {
         if (this.presenceTimer !== null) clearTimeout(this.presenceTimer);
         this.presenceTimer = null;
         this.heldAccountEncryptionCurrentness?.dispose();
+        this.notificationFactsHold?.release();
+        this.notificationFactsHold = null;
         const closingSocket = this.socket;
         this.prepareForClose();
         try {

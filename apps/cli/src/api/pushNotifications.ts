@@ -19,6 +19,7 @@ import type { LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration'
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp'
 import { readAccountSessionDeliveryMutedScopes } from './sessionDeliveryMuteTransport';
+import { readHeldAccountDeliveryMutes, readHeldSessionNotificationContext } from '@/notifications/activity/heldSessionNotificationFacts';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { NotificationQuestionAnswerV1Schema } from '@happier-dev/protocol/push/notificationQuestionActions';
 
@@ -173,12 +174,14 @@ export class PushNotificationClient {
     }
 
     async fetchSessionNotificationContext(sessionId: string): Promise<RawSessionRecord | null> {
-        return fetchSessionById({ reason: 'session-notification', token: this.token, serverUrl: this.baseUrl, sessionId, accessProjectionVersion: 1 })
+        // A live Session client holder drops this on every push that can change it.
+        return readHeldSessionNotificationContext(this.token, sessionId, () =>
+            fetchSessionById({ reason: 'session-notification', token: this.token, serverUrl: this.baseUrl, sessionId, accessProjectionVersion: 1 }))
     }
 
     readAccountSessionDeliveryMutedScopes(): ReturnType<typeof readAccountSessionDeliveryMutedScopes> {
-        return readAccountSessionDeliveryMutedScopes({ token: this.token, serverHttpBaseUrl: this.baseUrl,
-            accountId: readAccountIdFromToken(this.token) ?? '' });
+        return readHeldAccountDeliveryMutes(this.token, () => readAccountSessionDeliveryMutedScopes({ token: this.token,
+            serverHttpBaseUrl: this.baseUrl, accountId: readAccountIdFromToken(this.token) ?? '' }));
     }
 
     /**
