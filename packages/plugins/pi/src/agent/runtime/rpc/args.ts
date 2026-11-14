@@ -1,4 +1,6 @@
-import { PI_PROVIDER_ID } from '../../providerBinding.js';
+import { join } from 'node:path';
+
+import { PI_PROVIDER_ID, PI_PROVIDER_MODELS_FILE } from '../../providerBinding.js';
 import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
 import { PI_CONNECTED_ACCOUNT_MODEL_ENV } from '../../launchEnvironment.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
@@ -129,6 +131,10 @@ export function buildPiRpcLaunch(opts?: PiRpcArgsOptions): Readonly<{ args: read
     : '';
   if (resumeSessionId) args.push('--session', resumeSessionId);
   return { args, requiredFiles: [
+    // The bound Provider is registered by this private native catalog, including
+    // brokered relay bindings prepared after the member's home snapshot.
+    ...(opts?.providerModelId && opts.env?.PI_CODING_AGENT_DIR
+      ? [join(opts.env.PI_CODING_AGENT_DIR, PI_PROVIDER_MODELS_FILE)] : []),
     ...(requestAuthArgs[1] ? [requestAuthArgs[1]] : []),
     ...(opts?.modelDiscoveryExtensionPath ? [opts.modelDiscoveryExtensionPath] : []),
     ...(opts?.happierToolsExtension ? [opts.happierToolsExtension.extensionPath, opts.happierToolsExtension.configPath] : []),

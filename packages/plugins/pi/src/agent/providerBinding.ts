@@ -3,6 +3,7 @@ import { PI_CONNECTED_ACCOUNT_MODEL_ENV, PI_DIRECT_AUTH_ENV_KEYS, PI_PROVIDER_SE
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, PI_REQUEST_AUTH_PRODUCER_VERSION_ENV } from './auth/services/requestAuth/env.js';
 
 export const PI_PROVIDER_ID = 'happier-provider';
+export const PI_PROVIDER_MODELS_FILE = 'models.json';
 const SECRET_ENV_KEY = PI_PROVIDER_SECRET_ENV_KEY;
 export const PI_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   SECRET_ENV_KEY, PI_CONNECTED_ACCOUNT_MODEL_ENV, ...PI_DIRECT_AUTH_ENV_KEYS, PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
@@ -25,7 +26,7 @@ export const PI_PROVIDER_BINDING_ADAPTER = {
     return {
       v: 1, kind: 'configFile', nativeHome: true,
       env: PI_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: name === SECRET_ENV_KEY ? credential : null, source: 'provider' as const })),
-      files: [{ relativePath: 'models.json', utf8: JSON.stringify({ providers: { [PI_PROVIDER_ID]: {
+      files: [{ relativePath: PI_PROVIDER_MODELS_FILE, utf8: JSON.stringify({ providers: { [PI_PROVIDER_ID]: {
         api: 'openai-responses', baseUrl: input.binding.endpoint.normalizedUrl,
         apiKey: '${HAPPIER_PI_PROVIDER_API_KEY}',
         headers: Object.fromEntries(Object.entries(input.binding.endpoint.publicHeaders).map(([name,value]) => [name,nativeLiteral(value)])),

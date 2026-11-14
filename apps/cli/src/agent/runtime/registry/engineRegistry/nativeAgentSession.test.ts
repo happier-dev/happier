@@ -1,6 +1,7 @@
+import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
-import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
 import { launchBorrowedTerminalProcess } from '@/terminal/host/borrowedTerminalProcess';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
@@ -6969,8 +6970,8 @@ describe('native Agent session host adapter', () => {
         expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
             request: { kind: 'create', sessionId: 'codex-catalog-refusal', cwd: '/repo' },
             failure: { phase: 'agent_runtime_open', code: 'mcp_tool_catalog_unavailable',
-                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
-                    providerErrorCode: McpErrorCode.ConnectionClosed } } }));
+                failureCause: expect.objectContaining({ phase: 'client_start', failureReason: 'unclassified_provider_error',
+                    providerErrorCode: McpErrorCode.ConnectionClosed }) } }));
         expect(attestations).not.toContainEqual(expect.objectContaining({ phase: 'prepare' }));
     });
 
@@ -6989,7 +6990,7 @@ describe('native Agent session host adapter', () => {
                     message: 'PRIVATE_NATIVE_CONSTRUCTION', details: { failureCause: { code: 'agent_startup_failed',
                         phase: 'client_start', failureReason: 'unclassified_provider_error',
                         providerErrorMessage: 'PRIVATE_NATIVE_PROVIDER' } } });
-                throw new Error('PRIVATE_NATIVE_CONSTRUCTION');
+                throw new Error('PRIVATE_NATIVE_CONSTRUCTION', { cause: Object.assign(new Error('PRIVATE_NATIVE_INNER'), { code: 'EACCES' }) });
             } } },
             lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
             sessionCapabilities: { open: phase === 'before-open' ? [] : ['create'], delivery: ['newTurn'], cancel: phase === 'after-commit' },
@@ -7017,8 +7018,9 @@ describe('native Agent session host adapter', () => {
             expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
                 request: { kind: 'create', sessionId: 'failed-construction', cwd: '/repo' }, providerSessionId: null,
                 failure: { phase: 'agent_runtime_open', code: phase === 'typed-startup' ? 'agent_startup_failed' : 'agent_session_error',
-                    failureCause: { ...(phase === 'typed-startup' ? { code: 'agent_startup_failed' } : {}),
-                        phase: 'client_start', failureReason: 'unclassified_provider_error' } } }));
+                    failureCause: expect.objectContaining({ ...(phase === 'typed-startup' ? { code: 'agent_startup_failed' } : {}),
+                        phase: 'client_start', failureReason: 'unclassified_provider_error',
+                        ...(phase === 'typed-startup' || phase === 'before-open' ? {} : { providerErrorCode: 'EACCES', actionCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } }) }) } }));
         }
         expect(JSON.stringify(attestations)).not.toContain('PRIVATE_');
     });
@@ -10107,6 +10109,38 @@ describe('native Agent session host adapter', () => {
             `Native Agent '${agentId}' does not declare sessions.open resume support`,
         );
         expect(open).not.toHaveBeenCalled();
+    });
+
+    it('opens an adopted held Session of a create-only native Agent (the adopt contract re-enters it, no provider resume)', async () => {
+        const agentId = 'acme-create-only-adopted-agent';
+        const opened: number[] = [];
+        for (const adopting of [false, true]) {
+            const open = vi.fn<AgentSessionRuntimeFactory['open']>(async () => ({
+                send: vi.fn(async () => ({ status: 'admitted' as const })),
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(),
+            }));
+            const contributions = createExternalContributionFixtures(agentId, ['create']);
+            const plan = await createNativeAgentRuntimeSessionPlan({
+                runtime: { sessions: { open } }, lease: createLease(agentId),
+                backend: contributions.backend, agent: contributions.agent,
+                createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+                sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/tmp/acme-adopted', resume: 'acp-held-1' }),
+            });
+            if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
+            // The daemon hands the spared holder to the respawned runner through the Session environment.
+            if (adopting) vi.stubEnv(SESSION_HOLDER_ADOPT_ENV_KEY, JSON.stringify({ socketPath: '/tmp/holder.sock', holderPid: 1, agentPid: 2 }));
+            try {
+                await plan.config.createSessionRuntime({
+                    directory: '/tmp/acme-adopted', metadata: {}, machineId: 'machine-1',
+                    session: createNativeSessionClientTestPort(`session-adopted-${adopting}`), transcriptSession: {}, messageBuffer: {},
+                    mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default', setThinking: () => undefined,
+                    memoryRecallGuidanceEnabled: false,
+                } as never).catch(() => undefined);
+            } finally { vi.unstubAllEnvs(); }
+            opened.push(open.mock.calls.length);
+        }
+        expect(opened).toEqual([0, 1]);
     });
 
     it('rejects a cancellation-capable Agent when its opened runtime omits cancel', async () => {

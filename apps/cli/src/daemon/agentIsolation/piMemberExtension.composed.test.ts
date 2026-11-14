@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { expect, it } from 'vitest';
 import { preparePiHappierToolsExtension } from '../../../../../packages/plugins/pi/src/agent/tools/assets';
+import { PI_PROVIDER_BINDING_ADAPTER } from '../../../../../packages/plugins/pi/src/agent/providerBinding';
 import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth';
 import { authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
@@ -150,4 +151,51 @@ it.skipIf(process.platform !== 'linux')('selects generated Pi tools for the memb
       await expect(readFile(tools.extensionPath)).resolves.toBeInstanceOf(Buffer);
     } finally { await launch.release(); }
   } finally { controller.abort(); await tools.dispose(); await rm(memberHome, { recursive: true, force: true }); }
+});
+
+
+it.skipIf(process.platform !== 'linux')('selects the bound Pi provider catalog into the member native home before construction', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-member-provider-'));
+  const tools = await preparePiHappierToolsExtension({ directory: root });
+  try {
+    const sourceHome = join(root, 'provider-binding');
+    const runtimeHome = join(root, 'runtime');
+    const nativeHome = join(runtimeHome, 'pi');
+    await mkdir(sourceHome);
+    // Recorded #150 shape: the relay Provider is in a late private models.json,
+    // while the admitted member home contains no ambient vendor configuration.
+    const transport = { id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+      destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } as const;
+    const model = { id: 'muse-spark-1.2-contributor', name: 'Selected model' };
+    const materialized = await PI_PROVIDER_BINDING_ADAPTER.materialize({ v: 1,
+      prepared: PI_PROVIDER_BINDING_ADAPTER.prepare(),
+      binding: { v: 1, agentTargetKey: 'pi', contributionKey: null,
+        selection: { connectionId: 'brokered-team-muse', model },
+        endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'http://127.0.0.1:7777/v1',
+          protocol: 'openai-responses', publicHeaders: {} },
+        runtimeCredentialTransport: transport, compatibilityFingerprint: 'admitted' },
+      credential: { kind: 'apiKey', transport, value: 'synthetic-relay-only' } });
+    for (const file of materialized.files) await writeFile(join(sourceHome, file.relativePath), file.utf8);
+    const models = JSON.parse(materialized.files[0]!.utf8);
+    const pi = buildPiRpcLaunch({ providerModelId: 'muse-spark-1.2-contributor',
+      env: { PI_CODING_AGENT_DIR: sourceHome }, happierToolsExtension: tools });
+    const launch = await authorizeResolvedProjectExecLaunchForHost({
+      launch: { command: process.execPath, args: [...pi.args], requiredFiles: pi.requiredFiles,
+        cwd: root, env: { PI_CODING_AGENT_DIR: sourceHome } },
+      agentIsolation: { read: () => ({ enabled: true,
+        status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root],
+        localTransport: { agentUid: 2402, agentGid: 2402 },
+        launch: { managedHappierBinaryPath: '/fixture/happier', runtimeHome,
+          environment: { PI_CODING_AGENT_DIR: nativeHome }, selectedEnvironmentKeys: ['PI_CODING_AGENT_DIR'], selectedMaterials: [] } }) },
+      requesterIdentity: { kind: 'isolated', separationRequired: false,
+        requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } },
+      agentLaunchKind: 'workspaceExec', signal: new AbortController().signal, assertCurrent() {},
+    });
+    try {
+      const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
+      const selected = frame.selectedMaterials.find(file => join(frame.runtimeHome, file.relativePath) === join(frame.environment.PI_CODING_AGENT_DIR!, 'models.json'));
+      expect(selected, 'native Pi must discover the selected relay Provider').toBeDefined();
+      expect(JSON.parse(Buffer.from(selected!.contentBase64, 'base64').toString())).toEqual(models);
+    } finally { await launch.release(); }
+  } finally { await tools.dispose(); await rm(root, { recursive: true, force: true }); }
 });

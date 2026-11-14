@@ -264,6 +264,7 @@ import { createExternalSessionTerminalFollowProjector } from '@/session/external
 import { publishNativeAgentTerminalHostBinding } from '@/agent/runtime/session/terminal/terminalHostBinding';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
+import { projectSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import {
     AGENT_SESSION_CONTINUATION_UNREACHABLE_ERROR_NAME,
 } from '@/session/shared/spawnSessionContract';
@@ -6320,8 +6321,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             : source ? { kind: 'fork', sessionId, cwd: failureAgentCwd, source } : null;
                     if (request) {
                         // Carry typed diagnostics only; native error bodies remain in their owning process.
+                        const projectedCause = projectSessionRuntimeFailureCause(failure, 'client_start');
                         const failureCause = issue.failureCause
-                            ? (({ providerErrorMessage: _privateMessage, ...safe }) => safe)(issue.failureCause)
+                            ? (({ providerErrorMessage: _privateMessage, ...safe }) => safe)({
+                                ...projectedCause, ...issue.failureCause,
+                            })
                             : undefined;
                         try {
                             await params.attestSessionOpen?.({ phase: 'refused', request,
