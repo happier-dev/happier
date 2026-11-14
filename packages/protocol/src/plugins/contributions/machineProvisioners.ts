@@ -6,7 +6,7 @@ import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema
 import * as mini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
-import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
 import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from '../actions/inputSchemaTraversal.js';
@@ -533,15 +533,7 @@ export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisioners
 
 /** A declaration-neutral projection of the existing validator, not a second parser. */
 function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSchema<T, T> {
-  return createProtocolComposableSchema<T, T>(
-    () => zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
-    value => {
-      const result = z.safeParse(schema, value);
-      return result.success ? { success: true, data: result.data } : { success: false,
-        error: new ProtocolValidationError(result.error.issues.map(issue => ({ code: issue.code, message: issue.message, path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number') }))),
-      };
-    },
-  );
+  return projectZodProtocolSchema(schema);
 }
 export const MachineProvisionerCheckInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
 export const MachineProvisionerNativeCauseProtocolV1Schema = projectRoleSchema(MachineProvisionerNativeCauseV1Schema);

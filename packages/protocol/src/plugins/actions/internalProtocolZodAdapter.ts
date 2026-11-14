@@ -1,7 +1,7 @@
 /** Protocol-internal Mini projection of the neutral composable schema. */
 import * as mini from '../../zodRuntimePolicy.js';
 import { createProtocolComposableSchema, createProtocolStoredReadSchema, embedProtocolJsonSchema, normalizePluginJsonSchema, projectProtocolStoredReadJsonSchema, ProtocolValidationError, type ProtocolComposableSchema, type ProtocolJsonValue } from './protocolComposableSchema.js';
-import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 import type {
@@ -21,19 +21,24 @@ export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
 ): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> {
   // Parsing and native composition do not consume a JSON document. Give its
   // construction to the composable owner's memoized projection lifetime.
+  const stored = createStoredReadSchema(schema);
+  const parse = (input: unknown, retained: boolean): ProtocolSchemaSafeParseResult<mini.output<TSchema>> => {
+    const parsed = mini.safeParse(retained ? stored : schema, input);
+    return parsed.success
+      ? { success: true, data: parsed.data }
+      : { success: false, error: new ProtocolValidationError(parsed.error.issues.map(issue => ({
+        code: issue.code,
+        message: issue.message,
+        path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number'),
+      }))) };
+  };
   return createProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>>(
-      () => zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
-      input => {
-        const parsed = mini.safeParse(schema, input);
-        return parsed.success
-          ? { success: true, data: parsed.data }
-          : { success: false, error: new ProtocolValidationError(parsed.error.issues.map(issue => ({
-            code: issue.code,
-            message: issue.message,
-            path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number'),
-          }))) };
-      },
-    );
+    () => zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
+    input => parse(input, false), false,
+    // A native parser can express more than the neutral DSL can rehydrate.
+    // Its existing stored projection owns both field dropping and constraints.
+    input => parse(input, true),
+  );
 }
 
 /**

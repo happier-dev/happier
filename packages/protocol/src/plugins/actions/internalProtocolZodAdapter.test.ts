@@ -7,12 +7,22 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { LaunchProfileIdV2ProtocolSchema } from '../../profiles/v2/profileId.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
+import { MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from './internalProtocolZodAdapter.js';
 import * as strictJson from '../contributions/strictJsonValue.js';
 import type { ProtocolJsonValue } from './protocolComposableSchema.js';
 import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolJsonValue, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray } from './protocolComposableSchema.js';
 
 describe('the private neutral-schema bridge for Mini parents', () => {
+  it('retains native domain validation when reading projected native failure facts', () => {
+    const projected = projectZodProtocolSchema(MachineProvisionerNativeCauseV1Schema);
+    const value = { localCause: 'native_command_failed', command: 'restart', exitCode: 1, stderr: 'Guest agent unavailable' };
+    const stored = createProtocolStoredReadSchema(projected);
+    expect(stored.parse({ ...value, retired: true })).toEqual(value);
+    expect(stored.safeParse({ ...value, exitCode: '1' }).success).toBe(false);
+    expect(projected.safeParse({ ...value, retired: true }).success).toBe(false);
+  });
+
   it('composes and parses projected native schemas without constructing JSON documents', () => {
     const clones = vi.spyOn(strictJson, 'cloneStrictPluginJsonValue');
     try {

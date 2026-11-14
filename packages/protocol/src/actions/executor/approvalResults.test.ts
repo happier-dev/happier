@@ -58,6 +58,28 @@ describe('approval origin currentness diagnostics', () => {
 
 
 describe('settled approval effect evidence', () => {
+  it('retains the native resize outcome through approval settlement and recorded replay', () => {
+    const actionId = 'machines.managed.resize';
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
+      actionArgs: { homeId: 'home', managedId: 'managed', size: { memoryBytes: 4 * 1024 ** 3 } }, summary: 'Resize',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', accountId: 'owner', actionId, requestId: 'resize' },
+      decision: { kind: 'approve', decidedAtMs: 2 } });
+    // Replay150 reached the requested size but Lima restart exited nonzero.
+    const exec: ActionExecuteResult = { ok: true, result: {
+      result: { kind: 'unknown', code: 'lima_start_failed', nativeCause: {
+        localCause: 'native_command_failed', command: 'restart', exitCode: 1, stderr: 'Guest agent unavailable',
+      } },
+      observation: { observedAt: 3, availability: 'present', power: 'running', storage: 'retained',
+        size: { memoryBytes: 4 * 1024 ** 3 } },
+    } };
+    const settled = projectSettledApprovalExecution({ request, actionId, exec, dispatchEffectAttempted: true, executedAtMs: 3 });
+    expect(settled.exec).toEqual(exec);
+    expect(settled.request.status).toBe('executed');
+    expect(buildActionExecuteResultFromRecordedApprovalExecution(settled.request)).toEqual(exec);
+  });
+
   it.each([
     { exec: { ok: true, result: { ok: false, error: 'source_unavailable', effectAttempted: false } }, status: 'failed', attempted: false },
     { exec: { ok: true, result: { ok: false, error: 'source_conflict' } }, status: 'failed', attempted: undefined },

@@ -472,6 +472,7 @@ export function createProtocolComposableSchema<TInput, TOutput>(
   projection: object | (() => object),
   parseNormalized: ProtocolNormalizedParser<TOutput>,
   allowsUndefined = false,
+  parseStoredNormalized?: ProtocolNormalizedParser<TOutput>,
 ): ProtocolComposableSchema<TInput, TOutput> {
   // Caller documents retain immediate admission. Internal incumbent-parser
   // adapters can supply a factory: JSON projection is independent of parsing.
@@ -479,7 +480,10 @@ export function createProtocolComposableSchema<TInput, TOutput>(
     typeof projection === 'function'
       ? () => normalizePluginJsonSchema(projection())
       : normalizePluginJsonSchema(projection),
-    parseNormalized, allowsUndefined, false,
+    parseStoredNormalized
+      ? (value, purpose) => (purpose === 'stored' ? parseStoredNormalized : parseNormalized)(value)
+      : parseNormalized,
+    allowsUndefined, parseStoredNormalized !== undefined,
   );
 }
 
