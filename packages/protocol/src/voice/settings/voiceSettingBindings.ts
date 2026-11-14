@@ -1,3 +1,6 @@
+import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
+import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { resolveVoiceProviderLanguagePreference } from '../../plugins/contributions/voiceProviders.js';
 import { SettingsDeclarationValueV1Schema } from '../../actions/settingsDeclarationActionFamily.js';
@@ -253,14 +256,59 @@ function updateVoiceLocalConversationSetting(
         replacePath(readLocalDirectVoiceSettings(voice), segments, parsed.value) as VoiceLocalDirectSettings);
     const next = replacePath(readLocalConversationVoiceSettings(voice), segments, parsed.value) as VoiceLocalConversationSettings;
     if (path === 'agent.chatModelId' || path === 'agent.commitModelId') {
-        const roleSelection = path === 'agent.chatModelId' ? 'chatModelSelection' : 'commitModelSelection';
-        return writeLocalConversationVoiceSettings(voice, { ...next,
-            agent: { ...next.agent, [roleSelection]: null, providerChat: null } });
+        const role = path === 'agent.chatModelId' ? 'chat' : 'commit';
+        return updateVoiceRoleModelChoice(voice, role, { source: next.agent[`${role}ModelSource`], model: parsed.value });
     }
     return writeLocalConversationVoiceSettings(voice, next);
 }
 
+/** One role choice includes its source and exact model/credential identity. */
+function voiceRoleModelChoiceSchema(role: 'chat' | 'commit') {
+    const sourceSchema = schemaAtPath(VoiceLocalConversationSchema, ['agent', `${role}ModelSource`]);
+    return z.strictObject({
+        source: z.string(),
+        model: z.union([z.string(), z.null(), ProviderBoundModelRefSchema, TeamCredentialProviderModelSelectionV1Schema]),
+    }).check(z.refine(choice => z.safeParse(sourceSchema, choice.source).success));
+}
+function updateVoiceRoleModelChoice(voice: VoiceSettings, role: 'chat' | 'commit', value: unknown): VoiceSettings | null {
+    const parsed = voiceRoleModelChoiceSchema(role).safeParse(value);
+    if (!parsed.success || !canEditLocalConversation(voice)) return null;
+    const cfg = readLocalConversationVoiceSettings(voice);
+    const { source, model } = parsed.data;
+    return writeLocalConversationVoiceSettings(voice, { ...cfg, agent: { ...cfg.agent,
+        [`${role}ModelSource`]: source,
+        [`${role}ModelId`]: typeof model === 'string' ? model : model?.modelId ?? 'default',
+        [`${role}ModelSelection`]: typeof model === 'string' ? null : model,
+        providerChat: null,
+    } });
+}
+function voiceRoleModelBinding(role: 'chat' | 'commit'): VoiceSettingBindingV1<T> {
+    return {
+        scope: 'account', kind: 'owner', access: 'read_write',
+        read: settings => {
+            if (!canEditLocalConversation(settings.voice)) return SETTING_VALUE_UNAVAILABLE;
+            const agent = readLocalConversationVoiceSettings(settings.voice).agent;
+            return { source: agent[`${role}ModelSource`],
+                model: agent[`${role}ModelSelection`] ?? (agent[`${role}ModelId`] === 'default' ? null : agent[`${role}ModelId`]) };
+        },
+        // Retain scalar model-id callers; compound inputs are the full picker operation.
+        parse: value => {
+            if (typeof value === 'string') return { success: true, value };
+            const parsed = voiceRoleModelChoiceSchema(role).safeParse(value);
+            return parsed.success ? { success: true, value: projectNativeJsonValueForTransport(parsed.data) } : { success: false };
+        },
+        mutate: (settings, value) => {
+            const voice = typeof value === 'string'
+                ? updateVoiceLocalConversationSetting(settings.voice, `agent.${role}ModelId`, value)
+                : updateVoiceRoleModelChoice(settings.voice, role, value);
+            return voice ? { voice } : null;
+        },
+    };
+}
+
 function voiceLocalConversationBinding(path: LocalConversationPreferencePath): VoiceSettingBindingV1<T> {
+    if (path === 'agent.chatModelId') return voiceRoleModelBinding('chat');
+    if (path === 'agent.commitModelId') return voiceRoleModelBinding('commit');
     const segments = path.split('.');
     const valueSchema = schemaAtPath(VoiceLocalConversationSchema, segments);
     return {
@@ -383,6 +431,6 @@ function voiceDiagnosticsCaptureBinding(direction: CaptureDirection): VoiceSetti
             applyVoiceDiagnosticsCaptureDirection(owner.readVoiceDiagnosticsSettings(settings.voice), direction, value)) },
     };
 }
-return { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
+return { updateVoiceRoleModelChoice, voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
     voiceMemoryRestoreBinding, resolveVoiceMemoryRestoreChoice, applyVoiceMemoryRestoreChoice, voiceExecutionMachineBinding, voiceDiagnosticsCaptureBinding };
 }

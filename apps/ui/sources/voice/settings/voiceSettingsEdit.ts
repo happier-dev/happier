@@ -1,7 +1,9 @@
+import { applyVoiceAgentSelectionV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { readLocalConversationVoiceSettings, readVoiceProviderSettingsConfig, writeLocalConversationVoiceSettings, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { projectVoiceProviderSelectionRows, selectVoiceProviderOption } from '@/voice/registry/providerSelection';
+import { updateVoiceRoleModelChoice } from './roleModelChoice';
 import { updateConversationLanguagePreference } from './language/conversationLanguage';
 
 export const voiceSettingsEditRegistry = createDefaultVoiceProviderRegistry();
@@ -27,6 +29,28 @@ export function rebaseVoiceSettingsEdit(current: VoiceSettings, before: VoiceSet
             throw new Error('voice_settings_provider_changed');
         }
     }
+    const oldAgent = readLocalConversationVoiceSettings(before).agent;
+    const nextAgent = readLocalConversationVoiceSettings(next).agent;
+    const selectionKeys = ['agentId', 'agentTargetKey', 'agentIdentity'] as const;
+    if (selectionKeys.some((key) => !areAccountSettingsJsonValuesEqual(oldAgent[key], nextAgent[key]))) {
+        const selected = applyVoiceAgentSelectionV1(current, { kind: 'catalog', entry: {
+            agentId: nextAgent.agentId, backendTargetKey: nextAgent.agentTargetKey,
+            identity: nextAgent.agentIdentity, isBuiltIn: nextAgent.agentIdentity === null, projectionGeneration: null,
+        } }, { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings });
+        current = selected;
+    }
+    for (const role of ['chat', 'commit'] as const) {
+        if (areAccountSettingsJsonValuesEqual(
+            [oldAgent[`${role}ModelSource`], oldAgent[`${role}ModelId`], oldAgent[`${role}ModelSelection`]],
+            [nextAgent[`${role}ModelSource`], nextAgent[`${role}ModelId`], nextAgent[`${role}ModelSelection`]],
+        )) continue;
+        const selected = updateVoiceRoleModelChoice(current, role, {
+            source: nextAgent[`${role}ModelSource`],
+            model: nextAgent[`${role}ModelSelection`] ?? nextAgent[`${role}ModelId`],
+        });
+        if (!selected) throw new Error('voice_settings_provider_changed');
+        current = selected;
+    }
     let rebased = rebase(current, before, next) as VoiceSettings;
     if (before.assistantLanguage !== next.assistantLanguage) {
         const language = updateConversationLanguagePreference(current, next.assistantLanguage, voiceSettingsEditRegistry);
@@ -46,17 +70,6 @@ export function rebaseVoiceSettingsEdit(current: VoiceSettings, before: VoiceSet
     }
     if (!areAccountSettingsJsonValuesEqual(before.welcome, next.welcome)) {
         rebased = { ...rebased, welcome: next.welcome };
-    }
-    const oldAgent = readLocalConversationVoiceSettings(before).agent;
-    const nextAgent = readLocalConversationVoiceSettings(next).agent;
-    const selectionKeys = ['agentId', 'agentTargetKey', 'agentIdentity'] as const;
-    if (selectionKeys.some((key) => !areAccountSettingsJsonValuesEqual(oldAgent[key], nextAgent[key]))) {
-        const cfg = readLocalConversationVoiceSettings(rebased);
-        rebased = writeLocalConversationVoiceSettings(rebased, {
-            ...cfg,
-            agent: { ...cfg.agent, agentId: nextAgent.agentId, agentTargetKey: nextAgent.agentTargetKey,
-                agentIdentity: nextAgent.agentIdentity },
-        });
     }
     return rebased;
 }

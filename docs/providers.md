@@ -1166,7 +1166,15 @@ revision and delivery mode. A Voice carrier following a Session reads the same
 active-route disposition and preserves the Team binding intent. Voice chat and
 commit runtimes consume the existing Team Provider launch admission and binding
 opener, including isolated commits and retained-run recovery. Team credentials
-therefore retain the Provider owner's brokered or direct delivery contract.
+therefore retain the Provider owner's brokered or direct delivery contract. In the
+same development source, `settings.set` at `voiceConversations.chatModelId` or
+`voiceConversations.commitModelId` accepts `{source, model}` through the picker’s
+canonical role-model binding. `model` is `null` for automatic, a raw native model
+id, a Provider-bound reference, or a Team credential selection. Chat sources are
+`session`/`custom`; commit sources are `chat`/`session`/`custom`. Scalar model ids
+remain accepted for existing callers. Agent changes replay the canonical Agent
+selection against current settings, clearing the previous Agent’s model routing
+while preserving unrelated concurrent edits.
 Automatic child inheritance retains its existing refusal of direct Team custody;
 the caller must make an explicit supported credential choice.
 Agent-native child definitions retain their Agent's own model rules.

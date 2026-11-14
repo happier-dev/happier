@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
 import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
-import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 
 export type LocalNeuralExecutionPolicy = Readonly<{
@@ -50,6 +49,7 @@ export async function resolveDaemonVoiceInferenceExecution(params: Readonly<{
 
     let daemonInferenceEnabled: boolean;
     try {
+        const { isRuntimeFeatureEnabled } = await import('@/sync/domains/features/featureDecisionInputs');
         daemonInferenceEnabled = await isRuntimeFeatureEnabled({
             featureId: 'voice.daemonInference',
         });

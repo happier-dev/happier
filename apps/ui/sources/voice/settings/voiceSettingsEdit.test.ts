@@ -31,6 +31,29 @@ describe('Voice settings edit intent', () => {
         expect(rebased.assistantLanguage).toBe('fr');
         expect(readLocalConversationVoiceSettings(rebased).agent.providerChat).toEqual(configured);
     });
+    it('replays Agent selection clears against concurrently selected old-Agent models', () => {
+        const before = voiceSettingsParse({});
+        const cfg = readLocalConversationVoiceSettings(before);
+        const selection = { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'old-model' };
+        const current = writeLocalConversationVoiceSettings({ ...before, assistantLanguage: 'fr' }, {
+            ...cfg, agent: { ...cfg.agent, chatModelSelection: selection, commitModelSelection: selection,
+                providerChat: { status: 'configured', chat: selection, commit: selection } },
+        });
+        const next = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent, agentId: 'custom' } });
+        const rebased = rebaseVoiceSettingsEdit(current, before, next);
+        expect(rebased.assistantLanguage).toBe('fr');
+        expect(readLocalConversationVoiceSettings(rebased).agent).toMatchObject({ agentId: 'custom',
+            chatModelSelection: null, commitModelSelection: null, providerChat: null });
+    });
+    it('replays a raw model choice without retaining a concurrently selected Provider binding', () => {
+        const before = voiceSettingsParse({});
+        const cfg = readLocalConversationVoiceSettings(before);
+        const selection = { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'other-model' };
+        const current = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent, chatModelSelection: selection } });
+        const next = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent, chatModelId: 'raw-native-model', chatModelSelection: null } });
+        expect(readLocalConversationVoiceSettings(rebaseVoiceSettingsEdit(current, before, next)).agent)
+            .toMatchObject({ chatModelId: 'raw-native-model', chatModelSelection: null });
+    });
     it('retires a captured language editor even when bundled fallback metadata has the same entry identity', () => {
         const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const entry = voiceSettingsEditRegistry.get(providerId);

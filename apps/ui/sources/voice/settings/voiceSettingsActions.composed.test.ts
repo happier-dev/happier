@@ -83,6 +83,31 @@ describe('Voice declarations through the default Settings Action and Account per
         expect(account.writes).toHaveLength(writesBefore + 2);
     });
 
+    it('selects native and Provider-bound role models through canonical settings Actions', async () => {
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse({
+            voice: { providerId: 'local_conversation' },
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent'] } },
+        }));
+        onTestFinished(account.dispose);
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
+        const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        for (const role of ['chat', 'commit'] as const) {
+            for (const selection of [
+                { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'native-model' },
+                { agentTargetKey: 'agent:claude', providerConnectionId: 'voice-provider', modelId: 'chosen-model' },
+                { kind: 'team_credential_provider_model', resourceId: 'voice-resource', teamId: 'voice-team',
+                    expectedResourceRevision: 1, agentTargetKey: 'agent:claude', modelId: 'team-model', deliveryMode: 'brokered' },
+            ]) {
+                const value = { source: 'custom', model: selection };
+                const anchor = `voiceConversations.${role}ModelId`;
+                expect(await executor.execute('settings.set', { anchor, value }, context)).toMatchObject({ ok: true });
+                expect(readLocalConversationVoiceSettings(account.persistedSettings.voice).agent[`${role}ModelSelection`]).toEqual(selection);
+                expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value } });
+            }
+        }
+    });
     it('retains a saved Voice binding across predecessor ingress without a write on load', async () => {
         const { normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
         const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');

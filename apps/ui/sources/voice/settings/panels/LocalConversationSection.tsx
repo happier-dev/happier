@@ -1,3 +1,4 @@
+import { updateVoiceRoleModelChoice } from '@/voice/settings/roleModelChoice';
 import * as React from 'react';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -389,6 +390,11 @@ export function LocalConversationSection(props: {
     props.setVoice(writeLocalConversationVoiceSettings(voice, { ...cfg, ...patch }));
   };
 
+  const setRoleModel = (role: 'chat' | 'commit', model: typeof cfg.agent.chatModelSelection | string,
+    source: typeof cfg.agent.commitModelSource = cfg.agent[`${role}ModelSource`]) => {
+    const next = updateVoiceRoleModelChoice(voice, role, { source, model });
+    if (next) props.setVoice(next);
+  };
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
   /** Picking an agent fixes it: the settings with the source set, for the selection to build on. */
   const withFixedAgentSource = () => cfg.agent.agentSource === 'agent'
@@ -634,16 +640,16 @@ export function LocalConversationSection(props: {
                 allowAutomatic: true, canEnterCustomNativeValue: true,
                 headerAccessory: <Item title={sameAsAgentModelLabel}
                   subtitle={t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle')}
-                  selected={followsAgentModel} onPress={() => { setAgent({ chatModelSource: 'session' }); setOpenMenu(null); }} />,
+                  selected={followsAgentModel} onPress={() => { setRoleModel('chat', cfg.agent.chatModelSelection ?? cfg.agent.chatModelId, 'session'); setOpenMenu(null); }} />,
                 probe: preflightModels.probe,
                 onRequestClose: () => setOpenMenu(null),
                 onSelect: selection => {
-                  setAgent({ chatModelSource: 'custom', chatModelId: selection?.modelId ?? 'default', chatModelSelection: selection, providerChat: null });
+                  setRoleModel('chat', selection, 'custom');
                   setOpenMenu(null);
                 },
               }}
               onSelectTeamCredentialModel={selection => {
-                setAgent({ chatModelSource: 'custom', chatModelId: selection.modelId, chatModelSelection: selection, providerChat: null });
+                setRoleModel('chat', selection, 'custom');
                 setOpenMenu(null);
               }}
             /> : undefined}
@@ -671,7 +677,7 @@ export function LocalConversationSection(props: {
             onSelect={(id) => {
               if (id === SAME_AS_SESSION_ID) {
                 setOpenMenu(null);
-                if (cfg.agent.chatModelSource !== 'session') setAgent({ chatModelSource: 'session' });
+                if (cfg.agent.chatModelSource !== 'session') setRoleModel('chat', cfg.agent.chatModelSelection ?? cfg.agent.chatModelId, 'session');
                 return;
               }
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
@@ -687,7 +693,7 @@ export function LocalConversationSection(props: {
 
               const next = String(id ?? '').trim();
               if (!next) return;
-              setAgent({ chatModelSource: 'custom', chatModelId: next, chatModelSelection: null, providerChat: null });
+              setRoleModel('chat', next, 'custom');
               setOpenMenu(null);
             }}
           />
@@ -702,7 +708,7 @@ export function LocalConversationSection(props: {
               onCommit={(draft) => {
                 setCustomEntry(null);
                 if (!draft) return String(cfg.agent.chatModelId ?? '');
-                setAgent({ chatModelSource: 'custom', chatModelId: draft, chatModelSelection: null, providerChat: null });
+                setRoleModel('chat', draft, 'custom');
               }}
             />
           ) : null}
@@ -839,7 +845,7 @@ export function LocalConversationSection(props: {
             subtitleLines={0}
             testIDPrefix="settings.voice.local.mediatorCommitModelSource"
             value={cfg.agent.commitModelSource}
-            onChange={(next) => setAgent({ commitModelSource: next })}
+            onChange={(next) => setRoleModel('commit', cfg.agent.commitModelSelection ?? cfg.agent.commitModelId, next)}
             options={[
               { id: 'chat', label: t('settingsVoice.local.mediatorCommitModelSourceChat'), description: t('settingsVoice.local.conversation.commitModelSource.chatSubtitle') },
               { id: 'session', label: t('settingsVoice.local.mediatorCommitModelSourceSession'), description: t('settingsVoice.local.conversation.commitModelSource.sessionSubtitle') },
@@ -862,12 +868,12 @@ export function LocalConversationSection(props: {
                   allowAutomatic: true, canEnterCustomNativeValue: true, probe: preflightModels.probe,
                   onRequestClose: () => setOpenMenu(null),
                   onSelect: selection => {
-                    setAgent({ commitModelId: selection?.modelId ?? 'default', commitModelSelection: selection, providerChat: null });
+                    setRoleModel('commit', selection);
                     setOpenMenu(null);
                   },
                 }}
                 onSelectTeamCredentialModel={selection => {
-                  setAgent({ commitModelId: selection.modelId, commitModelSelection: selection, providerChat: null });
+                  setRoleModel('commit', selection);
                   setOpenMenu(null);
                 }}
               /> : undefined}
@@ -907,7 +913,7 @@ export function LocalConversationSection(props: {
 
                 const next = String(id ?? '').trim();
                 if (!next) return;
-                setAgent({ commitModelId: next, commitModelSelection: null, providerChat: null });
+                setRoleModel('commit', next);
                 setOpenMenu(null);
               }}
             />
@@ -922,7 +928,7 @@ export function LocalConversationSection(props: {
                 onCommit={(draft) => {
                   setCustomEntry(null);
                   if (!draft) return String(cfg.agent.commitModelId ?? '');
-                  setAgent({ commitModelId: draft, commitModelSelection: null, providerChat: null });
+                  setRoleModel('commit', draft);
                 }}
               />
             ) : null}
