@@ -557,8 +557,9 @@ export async function prepareMemoryWorker(params: Readonly<{
       } finally { if (request) activeSessionRequests.delete(request); }
     },
     noteSessionChanged: async change => {
-      // Activity, presence and ready writes cannot move eligibility or observedSeq; transcript,
-      // archive and removal facts arrive through their own carriers. Unknown or missing proofs read.
+      // Activity, presence, ready, pending-queue, Turn-status and Agent-state writes cannot move
+      // eligibility or observedSeq; transcript, archive and removal facts arrive through their own
+      // carriers. Unknown or missing proofs read.
       if (change.memoryInputsChanged === false) return;
       await waitForReady();
       if (stopped || !desired.enabled) return;

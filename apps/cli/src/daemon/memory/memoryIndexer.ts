@@ -53,7 +53,6 @@ import { enforceMemoryDiskBudgets } from './enforceMemoryDiskBudgets';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import type { EmbeddingsProviderResolution } from './deepIndex/embeddings/embeddingsProviderTypes';
 import { fetchMemorySemanticTranscriptPage } from './transcript/fetchSemanticPage';
-import { isLegacyUnclassifiedTranscriptRow } from './transcript/legacyUnclassifiedTranscriptRows';
 import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 import {
@@ -304,24 +303,14 @@ export async function createMemoryIndexer(params: Readonly<{
             scope: 'main',
             ...(args.signal ? { signal: args.signal } : {}),
           });
-          const legacy = await fetchEncryptedTranscriptMessagesPage({
-            token: params.credentials.token,
-            sessionId: args.sessionId,
-            afterSeq: args.afterSeq,
-            limit: args.limit,
-            scope: 'main',
-            ...(args.signal ? { signal: args.signal } : {}),
-          });
           args.signal?.throwIfAborted();
 
           return decryptTranscriptRows({
             // The whole crypto context, not just the key: memory ingests only rows
             // the Session's established mode can authenticate.
             crypto: cryptoContext,
-            rows: [
-              ...roleFiltered.messages,
-              ...legacy.messages.filter(isLegacyUnclassifiedTranscriptRow),
-            ],
+            // Home includes legacy unclassified (null-role) rows in a `user` role filter.
+            rows: roleFiltered.messages,
           });
         } catch (error) {
           if (!(error instanceof AccountEncryptionMaterialUnavailableError)) {

@@ -417,9 +417,9 @@ describe('memoryWorker', () => {
             progress: worker.getWorkerStatus().sessionProgress?.find(row => row.sessionId === session.id),
             stale: current.search({ query: 'quartz', scope, maxResults: 1 }) })).toHaveLength(1);
           expect(current.search({ query: 'quartz', scope: { type: 'session', sessionId: session.id }, maxResults: 1 })).toEqual([]);
-          // The canonical semantic reader performs one selected-role query and
-          // one legacy-unclassified fallback query for each source snapshot.
-          expect(transcriptReads.get(session.id)).toEqual({ selected: 1, legacy: 1 });
+          // The canonical semantic reader performs one selected-role query per source
+          // snapshot; Home includes legacy unclassified rows in it, so no fallback read.
+          expect(transcriptReads.get(session.id)).toEqual({ selected: 1, legacy: 0 });
         }
       } finally { current.close(); }
       const completedInventoryReads = inventoryReads;
@@ -428,7 +428,7 @@ describe('memoryWorker', () => {
       await vi.waitFor(() => expect(worker.getWorkerStatus()).toMatchObject({ state: 'idle', activeOperations: [] }));
       expect(inventoryReads).toBe(completedInventoryReads);
       expect(worker.getIndexSources?.().filter(row => row.state !== 'ready')).toEqual([]);
-      expect([...transcriptReads.values()]).toEqual(sessions.map(() => ({ selected: 1, legacy: 1 })));
+      expect([...transcriptReads.values()]).toEqual(sessions.map(() => ({ selected: 1, legacy: 0 })));
     } finally { await worker.stop(); setDaemonProcess(configuration, previousDaemon); }
   });
   it('publishes a retained queue failure code without exposing its private message', async () => {

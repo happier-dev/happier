@@ -44,7 +44,6 @@ describe('fetchMemorySemanticTranscriptPage', () => {
       maxRawRowsToScan: 20,
       direction: 'after',
       contentPolicy: { includeToolSummaries: false, includeToolOutputs: true },
-      includeLegacyUnknownRoleFallback: false,
       fetchPage,
     });
 
@@ -109,35 +108,23 @@ describe('fetchMemorySemanticTranscriptPage', () => {
     ]);
   });
 
-  it('falls back to bounded legacy null-role rows without admitting event rows', async () => {
-    const fetchPage = vi.fn<FetchTranscriptRawPage>()
-      .mockResolvedValueOnce({
-        messages: [],
-        hasMore: false,
-        nextBeforeSeq: null,
-        nextAfterSeq: null,
-      })
-      .mockResolvedValueOnce({
-        messages: [
-          {
-            id: 'event-row',
-            seq: 6,
-            createdAt: 6000,
-            messageRole: 'event',
-            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'event noise must not index' } } },
-          },
-          {
-            id: 'legacy-row',
-            seq: 7,
-            createdAt: 7000,
-            messageRole: null,
-            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'legacy null-role memory row' } } },
-          },
-        ],
-        hasMore: false,
-        nextBeforeSeq: null,
-        nextAfterSeq: null,
-      });
+  it('reads legacy null-role rows from the one role-filtered page the server already includes them in', async () => {
+    // Home contract (`buildRequestedMessageRoleWhere`): a role filter containing
+    // `user` also returns legacy unclassified (null-role) rows, never event rows.
+    const fetchPage = vi.fn<FetchTranscriptRawPage>().mockImplementation(async (args) => ({
+      messages: args.roles?.includes('user') ? [
+        {
+          id: 'legacy-row',
+          seq: 7,
+          createdAt: 7000,
+          messageRole: null,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'legacy null-role memory row' } } },
+        },
+      ] : [],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    }));
 
     const page = await fetchMemorySemanticTranscriptPage({
       token: 'token',
@@ -151,8 +138,8 @@ describe('fetchMemorySemanticTranscriptPage', () => {
       fetchPage,
     });
 
-    expect(fetchPage).toHaveBeenNthCalledWith(1, expect.objectContaining({ roles: ['user', 'agent'] }));
-    expect(fetchPage).toHaveBeenNthCalledWith(2, expect.not.objectContaining({ roles: expect.anything() }));
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(fetchPage).toHaveBeenCalledWith(expect.objectContaining({ roles: ['user', 'agent'] }));
     expect(page.items.map((item) => item.text)).toEqual(['legacy null-role memory row']);
   });
 });
