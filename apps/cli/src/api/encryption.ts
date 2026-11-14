@@ -114,6 +114,15 @@ export function decryptLegacy(data: Uint8Array, secret: Uint8Array): any | null 
  * @param dataKey - The 32-byte AES-256 key
  * @returns The encrypted data bundle (nonce + ciphertext + auth tag)
  */
+/** Data-key bundle bytes around the ciphertext: version (1) + nonce (12) + auth tag (16). */
+const DATA_KEY_BUNDLE_OVERHEAD_BYTES = 1 + 12 + 16;
+
+/** Most bytes `encrypt` adds around its serialized plaintext, across both variants. */
+export const ENCRYPTED_PAYLOAD_MAX_OVERHEAD_BYTES = Math.max(
+  tweetnacl.secretbox.nonceLength + tweetnacl.secretbox.overheadLength,
+  DATA_KEY_BUNDLE_OVERHEAD_BYTES,
+);
+
 function encryptWithDataKeyAndNonce(data: any, dataKey: Uint8Array, nonce: Uint8Array): Uint8Array {
   if (nonce.length !== 12) {
     throw new Error('Data-key encryption nonce must be 12 bytes');
@@ -129,7 +138,7 @@ function encryptWithDataKeyAndNonce(data: any, dataKey: Uint8Array, nonce: Uint8
   const authTag = cipher.getAuthTag();
 
   // Bundle: version(1) + nonce (12) + ciphertext + auth tag (16)
-  const bundle = new Uint8Array(12 + encrypted.length + 16 + 1);
+  const bundle = new Uint8Array(encrypted.length + DATA_KEY_BUNDLE_OVERHEAD_BYTES);
   bundle.set([0], 0);
   bundle.set(nonce, 1);
   bundle.set(new Uint8Array(encrypted), 13);
