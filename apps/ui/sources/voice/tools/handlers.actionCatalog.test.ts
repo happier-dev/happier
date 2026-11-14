@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { answerDiscussionThreadForTests, createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerDiscussionThreadForTests, createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -177,7 +177,7 @@ describe('Voice Action reference catalog', () => {
       }
     });
   it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-synthetic',
-    'mcp-rejected', 'mcp-canceled', 'mcp-ended', 'mcp-retired', 'native-approved'] as const)(
+    'mcp-rejected', 'mcp-brief-rejected', 'mcp-dismissed', 'mcp-canceled', 'mcp-ended', 'mcp-retired', 'native-approved'] as const)(
     'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
       const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
         accountId: 'alice', currentAccount: true });
@@ -186,7 +186,8 @@ describe('Voice Action reference catalog', () => {
       home.answer(serverId, '/v1/features', { body: features });
       let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
         t: 'plain', v: { voice: { ...settingsDefaults.voice,
-          canApproveRequests: source !== 'voice-off' && source !== 'admitted-on' && source !== 'mcp-on' && source !== 'mcp-synthetic' } },
+          canApproveRequests: source !== 'voice-off' && source !== 'admitted-on' && source !== 'mcp-on'
+            && source !== 'mcp-synthetic' && source !== 'mcp-brief-rejected' } },
       };
       let version = 1;
       home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content, version } }) });
@@ -222,6 +223,13 @@ describe('Voice Action reference catalog', () => {
       home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
       const controller = new AbortController();
       const input = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
+      const { Modal } = await import('@/modal');
+      let review: Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0] | undefined;
+      const hiddenReviews: string[] = [];
+      const unregisterReview = Modal.registerProvider({
+        showModal: config => { review = config; return 'voice-action-review'; },
+        hideModal: id => { hiddenReviews.push(id); }, hideAllModals: () => {}, updateCustomModalProps: () => {},
+      });
       const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
       const nativeRequest = source.startsWith('mcp-') || source === 'native-approved';
       const dispatch = (actionId: string, actionInput: unknown, actionRequestId: string) =>
@@ -239,7 +247,8 @@ describe('Voice Action reference catalog', () => {
       const pending = voice ? voice.native.opens[0]!.functionTools![0]!.call({ t: 'settings_set', args: input },
         { callId: 'native-reviewed-settings' })
         : nativeRequest
-        ? dispatch('settings.set', input, 'live-person-request')
+        ? dispatch(source === 'mcp-brief-rejected' ? 'ui.voice_global.brief.request' : 'settings.set',
+          source === 'mcp-brief-rejected' ? {} : input, 'live-person-request')
         : source === 'coding-agent'
         ? createDefaultActionExecutor().execute('settings.set', input, {
           surface: 'agent', serverId, actionRequestId: 'coding-session-request', signal: controller.signal,
@@ -276,37 +285,51 @@ describe('Voice Action reference catalog', () => {
             try {
               expect(await Promise.race([observing.then(() => 'observing'), pending.then(() => 'settled')])).toBe('observing');
             } finally { stop(); }
+            await waitForHomeGovernance(() => expect(review).toMatchObject({ type: 'custom',
+              props: { artifactId: asks[0]!.id, serverId }, chrome: { testID: 'approvals.in-place.modal' } }));
+          }
+          if (source === 'mcp-dismissed') {
+            review?.onRequestClose?.();
+            expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
+            expect(hiddenReviews).toEqual(['voice-action-review']);
+            expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(asks[0]!.id)!)))
+              .toMatchObject({ status: 'open' });
+            expect(version).toBe(1);
+            return;
           }
           if (source === 'mcp-canceled' || source === 'mcp-ended' || source === 'mcp-retired') {
             if (source === 'mcp-canceled') controller.abort();
             else if (source === 'mcp-ended') runController.abort();
             else await home.switchAccount(serverId, 'bob');
             expect(await pending).toMatchObject({ ok: false });
+            expect(hiddenReviews).toEqual(['voice-action-review']);
             expect(version).toBe(1);
             expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(asks[0]!.id)!)))
               .toMatchObject({ status: 'open' });
             return;
           }
           expect(await createDefaultActionExecutor().execute('approval.request.decide', {
-            artifactId: asks[0]!.id, decision: source === 'mcp-rejected' ? 'reject' : 'approve',
+            artifactId: asks[0]!.id, decision: source === 'mcp-rejected' || source === 'mcp-brief-rejected' ? 'reject' : 'approve',
           }, { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
           if (nativeRequest) {
             // SPAWN-QUEUED-DUP-1113 option A: a native Action awaits its reviewed result.
             const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
             publishHomeAccountChange(serverId, [asks[0]!.id]);
-            expect(await pending).toMatchObject(source === 'mcp-rejected'
+            expect(await pending).toMatchObject(source === 'mcp-rejected' || source === 'mcp-brief-rejected'
               ? { ok: false, errorCode: 'approval_rejected' }
               : { ok: true, result: { anchor: input.anchor, value: input.value } });
+            expect(hiddenReviews).toEqual(['voice-action-review']);
           } else {
             expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
               artifactId: asks[0]!.id, actionId: 'settings.set' } });
           }
-          expect(version).toBe(source === 'mcp-rejected' ? 1 : 2);
+          expect(version).toBe(source === 'mcp-rejected' || source === 'mcp-brief-rejected' ? 1 : 2);
           expect(home.artifacts(serverId).list()).toHaveLength(1);
         }
         if (voice) voice.native.complete('The reviewed setting was updated.');
         if (nativeTurn) await expect(nativeTurn).resolves.toMatchObject({ assistantText: 'The reviewed setting was updated.' });
       } finally {
+        unregisterReview();
         admittedAccount.dispose();
         controller.abort();
         await pending.catch(() => undefined);

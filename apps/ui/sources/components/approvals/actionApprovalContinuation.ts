@@ -104,6 +104,8 @@ export async function resumeActionExecutionResult(input: Readonly<{
     actionId: ActionId;
     scope: ServerAccountScope;
     signal?: AbortSignal;
+    /** Cancels only this caller's interest; the Artifact retains its own lifecycle. */
+    aborted?: () => ActionExecuteResult;
     onApprovalPending(registration: ActionApprovalContinuation): void;
 }> & ({ actionInput: unknown; requestId?: string } | { requestId: string; actionInput?: never })): Promise<ActionExecuteResult> {
     if (!input.result.ok) return input.result;
@@ -124,7 +126,7 @@ export async function resumeActionExecutionResult(input: Readonly<{
         },
         succeeded: value => ({ ok: true, result: value }),
         failed: (code, failure) => failure ?? { ok: false, errorCode: code, error: code },
-        aborted: () => ({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }),
+        aborted: input.aborted ?? (() => ({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' })),
     });
 }
 

@@ -16,6 +16,8 @@ import { redactVoiceActionExecutionResultForProvider } from '@/voice/context/red
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { createActionApprovalContinuationObserver, resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
 import { observeActionApprovalContinuation } from '@/components/approvals/observeActionApprovalContinuation';
+import { showApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { Modal } from '@/modal';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { VoiceAgentHandle } from './types';
@@ -50,7 +52,15 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
     });
     const turnOrigin = turn?.turnOrigin;
     const spec = getActionSpec(request.actionId);
-    const cancellation = mergeAbortSignals([context.signal, handle.signal]);
+    const dismissal = new AbortController();
+    const cancellation = mergeAbortSignals([context.signal, handle.signal, dismissal.signal]);
+    let reviewId: string | null = null;
+    const closeReview = () => {
+      if (reviewId === null) return;
+      const id = reviewId;
+      reviewId = null;
+      Modal.hide(id);
+    };
     let stopApprovalObservation: (() => void) | undefined;
     let approvalAccount: ReturnType<typeof captureLazyActionAccountContext> | undefined;
     try {
@@ -63,6 +73,7 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
         if (!result.success) return failure('invalid_action_output');
         const settled = await resumeActionExecutionResult({ result: result.data.execution, actionId: request.actionId,
           scope: handle.accountLifetime.scope, signal,
+          aborted: () => failure(dismissal.signal.aborted ? 'cancelled' : 'action_account_scope_changed').execution,
           requestId: request.voiceRun.actionRequestId,
           onApprovalPending: registration => {
             const observer = createActionApprovalContinuationObserver({ onExecuted: () => {} });
@@ -75,6 +86,14 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
               } });
             stopApprovalObservation = () => { observe(); deliver(); observer.dispose(); };
             observer.requestApproval(registration);
+            let answered = false;
+            reviewId = showApprovalReview({ artifactId: registration.artifactId, serverId,
+              onDecisionRecorded: () => { answered = true; },
+              onDismissed: () => {
+                closeReview();
+                if (!answered && !signal?.aborted) dismissal.abort();
+              },
+            });
           } });
         if (!handle.accountLifetime.isCurrent()) {
           const receipt = projectKnownAccountAuthorityRetirementReceipt(spec, settled);
@@ -89,6 +108,7 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
     } catch (error) {
       return { v: 1 as const, execution: { ok: false as const, ...normalizeActionExecutorThrownError(error) } };
     } finally {
+      closeReview();
       stopApprovalObservation?.();
       if (approvalAccount) void approvalAccount.then(account => account.dispose(), () => {});
       cancellation.dispose();
