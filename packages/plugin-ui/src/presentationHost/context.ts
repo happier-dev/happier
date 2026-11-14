@@ -6,7 +6,7 @@ import type { PropertyListProps } from '../components/PropertyList.js';
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
-import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControl, PluginUiActionControlPresentation, PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { NavigationListDestination } from '../components/NavigationList.js';
 import type { ItemProps } from '../components/List.js';
 import type { HappierUiPalette, HappierUiTypography } from '../environment/types.js';
@@ -223,6 +223,16 @@ export type PluginUiPresentationHost = Readonly<{
   renderActionIconButton?(props: IconButtonProps): ReactElement;
   renderActionForm?(props: FormProps): ReactElement;
   renderActionToggle?(props: ToggleProps): ReactElement;
+  /**
+   * Same-realm hosts draw an `Action.Control` where the author declared it, so it stays inside the
+   * presentation (dialog, sheet or pane) that hosts it. `control` is the bound registration, `null`
+   * until the host admits it; the host button keeps the only physical gesture. Absent where the
+   * author tree is framed: the control stays in the mount's slot.
+   */
+  renderActionControl?(input: Readonly<{
+    control: PluginUiActionControl | null;
+    presentation: PluginUiActionControlPresentation;
+  }>): ReactElement | null;
   /** Host-private synchronous press scope; never carried by public Host API requests. */
   runPress?(event: unknown, invoke: () => unknown): unknown;
   /** Same-realm presentation capability; task reads and grants remain with the incumbent ShareSheet. */

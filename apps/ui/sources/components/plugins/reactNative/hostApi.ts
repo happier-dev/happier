@@ -105,6 +105,7 @@ import {
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { decodeBase64 } from '@/encryption/base64';
 import { createSelectedActionInputCustody } from '../hostApi/selectedActionInputCustody';
+import { recordPluginActionControlPlacement } from '@/components/plugins/surfaces/pluginSurfaceActionControls';
 
 export type PluginReactNativeHostApiRequestHandler = (
     request: PluginUiHostApiRequestEnvelopeV1,
@@ -990,7 +991,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 request: (request, signal) => transport.request('actionControl', request, { signal }),
             });
             const owned = disposable(() => { void binding.dispose(); });
-            return Object.freeze({ update: binding.update, dispose: owned.dispose });
+            const bound = Object.freeze({ update: binding.update, dispose: owned.dispose });
+            // Same realm: the host draws this control where the author declares it.
+            recordPluginActionControlPlacement(bound, bind.subscriptionId);
+            return bound;
         },
         widgetArea: async (request, options) => {
             assertActive(options?.signal);

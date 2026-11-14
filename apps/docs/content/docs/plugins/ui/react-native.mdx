@@ -437,9 +437,11 @@ state, or import app, host, or protocol internals. Keep
 ### Host-rendered Action controls (0.3 development source)
 
 Use `Action.Control` when a person's Run button needs fresh input from your
-existing controller. This unpublished contract registers the host's accessible
-button in the mounted surface's action slot; the component renders no button
-inside your author tree. The same control works outside a hosted-web iframe.
+existing controller. This unpublished contract registers a host-owned accessible
+button. In a React Native surface the host draws it where you declare
+`Action.Control`, so it stays inside your details pane, sheet or dialog. In a
+hosted-web surface it sits in the mounted surface's action slot, outside the iframe.
+Either way the button is the host's: only a person's press on it prepares a run.
 
 ```tsx
 <Action.Control

@@ -23,9 +23,29 @@ export type MountedPluginActionControl = Readonly<{
     busy: boolean;
 }>;
 
+/**
+ * Same-realm carrier correlation: the author's control object names the registered subscription, so
+ * the host can draw its button where the author declared it. A placement grants nothing; only the
+ * host button's physical press reaches `press`.
+ */
+const actionControlPlacements = new WeakMap<object, string>();
+
+/** Recorded by the same-realm carrier when it returns a bound control to the author tree. */
+export function recordPluginActionControlPlacement(control: object, subscriptionId: string): void {
+    actionControlPlacements.set(control, subscriptionId);
+}
+
+export function readPluginActionControlPlacement(control: object): string | undefined {
+    return actionControlPlacements.get(control);
+}
+
 /** Host-private presentation and gesture entry. Neither is part of the author Host API. */
 export type PluginSurfaceActionControls = Readonly<{
     getSnapshot(): readonly MountedPluginActionControl[];
+    /** The controls no author-tree placement draws: the mount's slot for framed carriers. */
+    getSlotSnapshot(): readonly MountedPluginActionControl[];
+    /** Draw a control at its declaration instead of the mount's slot, until the returned release. */
+    placeInline(id: string): () => void;
     subscribe(listener: () => void): () => void;
     press(id: string): Promise<void>;
     /** Private entry used only by host-created inline controls. */
@@ -64,13 +84,29 @@ export function createPluginSurfaceActionControls(input: Readonly<{
 }>): PluginSurfaceActionControls {
     const controls = new Map<string, Binding>();
     const listeners = new Set<() => void>();
+    const inline = new Map<string, number>();
     let snapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
+    let slotSnapshot: readonly MountedPluginActionControl[] = snapshot;
     const emptySnapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
     let disposed = false;
     const current = () => !disposed && !input.signal.aborted && input.isCurrent();
     const publish = () => {
         snapshot = Object.freeze([...controls.values()].map(binding => binding.view));
+        slotSnapshot = inline.size === 0 ? snapshot : Object.freeze(snapshot.filter(view => !inline.has(view.id)));
         for (const listener of listeners) listener();
+    };
+    const placeInline = (id: string) => {
+        inline.set(id, (inline.get(id) ?? 0) + 1);
+        publish();
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            const count = (inline.get(id) ?? 1) - 1;
+            if (count > 0) inline.set(id, count);
+            else inline.delete(id);
+            if (!disposed) publish();
+        };
     };
     const release = (id: string, binding: Binding) => {
         if (controls.get(id) !== binding) return;
@@ -216,7 +252,8 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         listeners.clear();
     };
     input.signal.addEventListener('abort', dispose, { once: true });
-    return Object.freeze({ getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot, subscribe: (listener: () => void) => {
+    return Object.freeze({ getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot,
+        getSlotSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : slotSnapshot, placeInline, subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };
     }, handleRequest, press, commit, invalidatePreparations: () => {

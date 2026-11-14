@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import { PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi } from '../hostApi/context.js';
+import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
@@ -26,12 +27,14 @@ export type ActionControlProps = Readonly<{
 }>;
 
 /**
- * Registers a control in the mounted host's action slot, outside the author
- * tree (and outside the iframe on hosted-web). The host owns the physical
- * button. Presentation updates do not replace the controller preparing a run.
+ * Registers a host-owned control. A same-realm host draws its button here, inside whatever
+ * presentation hosts this declaration; a framed carrier (hosted-web) keeps it in the mount's slot
+ * outside the iframe. The host owns the physical button either way. Presentation updates do not
+ * replace the controller preparing a run.
  */
 export function ActionControl(props: ActionControlProps): ReactNode {
   const host = usePluginHostApi();
+  const renderInline = useOptionalPluginUiPresentationHost()?.renderActionControl;
   const translate = usePluginTranslation();
   const title = resolveAuthorText(translate, props.title, props.titleKey)
     ?? translate('happier.plugin-ui.action.execute', 'Run');
@@ -51,6 +54,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
     presentation.current = nextPresentation;
   });
   const binding = useRef<PluginUiActionControl | null>(null);
+  const [bound, setBound] = useState<PluginUiActionControl | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useLayoutEffect(() => {
@@ -62,6 +66,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
     const retire = () => {
       lifetime.abort();
       if (binding.current === mounted) binding.current = null;
+      setBound(null);
       mounted?.dispose();
     };
     signal?.addEventListener('abort', retire, { once: true });
@@ -82,6 +87,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
       if (lifetime.signal.aborted) { control.dispose(); return; }
       mounted = control;
       binding.current = control;
+      setBound(control);
       // A render can update the presentation while admission is pending.
       void control.update(presentation.current).catch(error => {
         if (lifetime.signal.aborted) return;
@@ -108,5 +114,6 @@ export function ActionControl(props: ActionControlProps): ReactNode {
     return () => { active = false; };
   }, [host, actionKey, signal, title, accessibilityLabel, disabled, variant]);
 
-  return unavailable ? props.fallback ?? null : null;
+  if (unavailable) return props.fallback ?? null;
+  return renderInline ? renderInline({ control: bound, presentation: nextPresentation }) : null;
 }
