@@ -6,6 +6,7 @@ import { API_TOKEN_FULL_GRANT_V1, freezeActionCompletionContractV1, getActionSpe
   parseWorkflowStoredContentEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
   type AccountApiTokensListActionOutputV1, type WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { ManagedListInputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -263,6 +264,122 @@ describe('production daemon retained operation target', () => {
       expect(storage.rowById(childId)?.index.lifecycle).toBe('cancelled');
       expect(methods).toContain('actionOperation.cancel.v1');
     } finally { finish(); recovery.abort(); await caller.catch(() => undefined); }
+  });
+
+  it.each(['absent', 'unavailable', 'deleted-target', 'no-managed-row', 'home-forbidden',
+    'wrong-managed-target', 'foreign-home', 'managed-unavailable'] as const)
+  ('retires uncertain setup custody only with exact native absence or retained deletion authority (%s)', async observation => {
+    const accountId = 'account-1', machineId = 'original-worker';
+    const targetMachineId = observation === 'absent' || observation === 'unavailable' ? machineId : 'deleted-native-guest';
+    const targetHomeId = observation === 'foreign-home' ? 'another-home' : 'home';
+    const runId = '957e9e44-0508-51b7-b232-a1b0233e7f7a';
+    const rootId = 'e0e41968-286d-4295-aedd-7adeddbd392a', childId = 'fbb604fc-2884-456b-8023-ec4d4cebd9f9';
+    const actionId = 'machines.setup.apply';
+    const input = { homeId: targetHomeId, machineId: targetMachineId, targets: [{ homeId: targetHomeId, machineId: targetMachineId,
+      desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], recipePlans: [] }] };
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {},
+      blocks: [{ kind: 'action', id: 'setup', actionId, input: {} }] };
+    releaseHome = publishServerHttpRuntimeOrigin('http://127.0.0.1:43187', 'https');
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
+        startedBy: 'user', definition, authoredDefinition: definition, workDepth: 0, metadata: null, frozenChildren: {}, materializedLeaves: [],
+        source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' }, originalCommittedRevision: 'a'.repeat(40) },
+        origin: { kind: 'direct' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      } }));
+    const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint: { kind: 'happier.workflow-checkpoint.v1',
+        rootRecordId: rootId, nextSequence: '2', frontier: { nextBlockOrdinal: 0, paused: false } } }));
+    // The retained #150 shape has a dispatch identity, but no acceptance output,
+    // operation receipt or explicit proof that historical effects were absent.
+    const seal = (root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: root ? rootId : childId,
+        sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'action',
+        invocationPath: { blockId: root ? '$root' : 'setup', scope: [] }, attempt: '0', logicalInvocationRecordId: root ? rootId : childId,
+        reason: { code: 'credential_scope_denied', failureCause: { phase: 'dispatch', errorClass: 'RpcError',
+          errorCode: 'credential_scope_denied', httpStatus: null } },
+        ...(!root ? { execution: { kind: 'action' as const, actionId, actionRequestId: `${runId}/${childId}/0`,
+          localInputId: 'setup-input', input } } : {}) },
+    }));
+    const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
+      rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
+    await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: storage.run().revision, checkpointEnvelope,
+      invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0',
+        lifecycle: 'outcome_uncertain', contentEnvelope: seal(false) }] });
+    await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision, state: 'outcome_uncertain',
+      checkpointEnvelope, invocationTransitions: [{ id: rootId, expectedLifecycle: 'pending',
+        expectedContentRevision: storage.rowById(rootId)!.index.contentRevision, lifecycle: 'outcome_uncertain' }] });
+    const childBytes = storage.rowById(childId)!.contentEnvelope;
+    // The Home list projection owns allocation state. Desired Delete and an
+    // unavailable guest alone do not establish that the original target is gone.
+    const managedMachine = ManagedMachineV1Schema.parse({ id: 'retained-native', homeId: 'home',
+      custodianAccountId: accountId, enrollmentAccountId: accountId,
+      enrolledMachineId: observation === 'wrong-managed-target' ? 'another-native-guest' : targetMachineId,
+      launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+      allocation: observation === 'managed-unavailable' ? 'bound' : 'confirmed-absent',
+      creationState: 'active', desired: 'delete', desiredWhen: 'now', intentRevision: 2,
+      observation: { observedAt: 1, availability: observation === 'managed-unavailable' ? 'unavailable' : 'absent' },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const managedReads: unknown[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, config) => {
+      if (String(url).endsWith(managedMachineActionEndpointPathV1('machines.managed.list'))) {
+        const query = ManagedListInputV1Schema.parse(body);
+        managedReads.push(query);
+        expect(query).toEqual({ homeId: 'home', enrolledMachineId: targetMachineId });
+        expect(config?.headers?.Authorization).toBe('Bearer token');
+        // A foreign Account without read access receives a refusal, not a row.
+        // Legitimate shared access is not refused merely because custody differs.
+        if (observation === 'home-forbidden') throw Object.assign(new Error('Home read forbidden'),
+          { response: { status: 403, data: { code: 'permission_denied' } } });
+        return { status: 200, data: ManagedListOutputV1Schema.parse({ machines:
+          observation === 'no-managed-row' || observation === 'unavailable' ? [] : [managedMachine] }) };
+      }
+      if (!String(url).endsWith('/v3/automations/runs/workflow-storage') || !body || typeof body !== 'object' || !('operation' in body))
+        throw new Error('Unexpected Home write');
+      return { status: 200, data: body.operation === 'recovery.list'
+        ? { candidates: storage.run().workflowCustodyState === 'pending' ? [{ run: storage.run(), parentAttempt: 0 }] : [] }
+        : await storage.execute(body as WorkflowRunStorageTestkitOperation) };
+    });
+    const operations = createHostActionOperationRuntime({ machineId: targetMachineId, resolveAccountId: async () => accountId });
+    const methods: string[] = [];
+    const invoke = async (method: string, request: unknown) => {
+      methods.push(method);
+      if (method !== 'actionOperation.list.v2') throw new Error('Recovery must not dispatch or cancel native work');
+      // The real original operation owner is unreachable; Home remains a
+      // separate authority, never an empty native-operation response.
+      if (observation !== 'absent') throw new Error('Native owner transport unavailable');
+      return await operations.handlers.listV2(request);
+    };
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+      expect(request.machineId).toBe(targetMachineId);
+      return await invoke(request.method, request.request);
+    });
+    const runtime = createProductionDaemonWorkflowRuntime({ credentials: { token: 'token', encryption: null }, accountId, serverId: 'home' });
+    let admissions = 0;
+    const recover = runtime.createRecoveryForMachine({ machineId,
+      machineAdmissionTransport: async () => { admissions++; throw new Error('Recovery must not admit new native work'); },
+      machineActionDirectTargetTransport: { machineId, invoke } });
+    await recover('startup');
+    if (observation === 'foreign-home') {
+      expect(methods).toEqual([]);
+      expect(managedReads).toEqual([]);
+    } else expect(methods).toContain('actionOperation.list.v2');
+    expect(methods.every(method => method === 'actionOperation.list.v2')).toBe(true);
+    expect(admissions).toBe(0);
+    expect(storage.run()).toMatchObject({ state: 'outcome_uncertain',
+      workflowCustodyState: observation === 'absent' || observation === 'deleted-target' ? 'settled' : 'pending' });
+    expect(storage.rowById(childId)).toMatchObject({ index: { lifecycle: 'outcome_uncertain' }, contentEnvelope: childBytes });
+    expect(await storage.execute({ operation: 'get', runId })).toMatchObject({ checkpointEnvelope });
+    const revision = storage.run().revision;
+    await recover('reconnect');
+    expect(storage.run().revision).toBe(revision);
+    expect(storage.rowById(childId)!.contentEnvelope).toBe(childBytes);
+    expect(admissions).toBe(0);
   });
 
   it.each(['exact', 'local-only', 'pending', 'foreign-account', 'foreign-machine', 'absent', 'stored-absent', 'already-uncertain', 'cancel-requested-parent', 'cancelled-root-parent',

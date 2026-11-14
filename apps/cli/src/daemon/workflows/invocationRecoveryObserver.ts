@@ -455,6 +455,9 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         && !execution.awaitedRuns?.length && execution.output === undefined && params.nativeActionOperations?.findAction) {
         try {
           const found = await params.nativeActionOperations.findAction(execution, input.signal);
+          // Positive absence retires observation custody, never proves what
+          // historical effects occurred or authorizes replaying the Action.
+          if (found?.kind === 'absent') return { kind: 'outcome_uncertain', code: LOST_ACTION_OPERATION_CODE };
           if (found?.kind === 'found' && found.operation.actionId === execution.actionId
             && found.operation.requestId === execution.actionRequestId
             && found.operation.scope.machineId === found.target.machineId

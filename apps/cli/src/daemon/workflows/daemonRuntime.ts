@@ -45,6 +45,7 @@ import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConvers
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { readManagedMachines } from '@/machines/managed/readManagedMachine';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import type { StoredCredentials } from '@/persistence';
@@ -611,8 +612,20 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               const homeId = typeof execution.input.homeId === 'string' ? execution.input.homeId
                 : getActionSpec(id.data).invocationServerIdForInput?.(execution.input) ?? serverId;
               if (!await isServerProfileHomeIdentity(serverId, homeId)) return null;
-              return await findNativeOperation({ actionId: execution.actionId, requestId: execution.actionRequestId,
-                machineId: target.machineId, key: 'native' }, signal);
+              try {
+                return await findNativeOperation({ actionId: execution.actionId, requestId: execution.actionRequestId,
+                  machineId: target.machineId, key: 'native' }, signal);
+              } catch {
+                signal?.throwIfAborted();
+                // A deleted guest cannot answer its process-local operation
+                // lookup. Consume Home's positive allocation authority; an
+                // empty, refused or unavailable read is never proof of absence.
+                const machines = await readManagedMachines({ credentials: params.credentials,
+                  serverHttpBaseUrl: resolveServerHttpBaseUrl(), homeId, enrolledMachineId: target.machineId,
+                  ...(signal ? { signal } : {}) });
+                return machines.some(machine => machine.homeId === homeId && machine.enrolledMachineId === target.machineId
+                  && machine.allocation === 'confirmed-absent') ? { kind: 'absent' as const } : null;
+              }
             },
             findStartup: async (creationKey, signal) => {
               if (input.machineActionDirectTargetTransport.machineId !== input.machineId) return null;
