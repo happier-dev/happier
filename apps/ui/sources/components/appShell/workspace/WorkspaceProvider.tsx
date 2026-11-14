@@ -504,7 +504,11 @@ export function WorkspaceProvider(props: Readonly<{
         }
         if (!hostsRoute || !owner.isReady || !eligible) return;
         if (!runtime.initialized) {
-            runtime.adapter.initialize(routeHref);
+            // A Home window has no addressed destination; its restored layout owns the selection.
+            const state = owner.getState();
+            const retainedHref = appWindowRef.current?.record.selectedAddress.kind === 'home'
+                ? hrefForDestinationRef(latest.current.catalog, state.tabs[state.groups[state.focusedGroupId].activeTabId].target) : null;
+            runtime.adapter.initialize(retainedHref ?? routeHref);
             runtime.initialized = true;
             // Cold browser admission owns the child before Expo's nested
             // navigator acknowledges it, just like an explicit workspace open.
