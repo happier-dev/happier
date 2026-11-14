@@ -48,7 +48,13 @@ export function lazySchema<T extends core.$ZodType>(build: () => T): T {
           ctx.seen.get(proxy)!.ref = built;
         };
         internals = new Proxy(original, {
-          get: (target, field) => field === 'processJSONSchema' ? processJSONSchema : Reflect.get(target, field),
+          get: (target, field) => {
+            if (field === 'processJSONSchema') return processJSONSchema;
+            // The built schema owns its refinement ancestry. Walking that
+            // parent again for this reference can replace a refined $ref.
+            if (field === 'parent') return undefined;
+            return Reflect.get(target, field);
+          },
         });
       }
       return internals;

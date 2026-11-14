@@ -251,6 +251,23 @@ describe('lazySchema', () => {
       schemas: { Mode: { type: 'string', enum: ['read_only', 'full'] } },
     });
   });
+
+  it('preserves a named refinement instead of referencing its less restrictive parent', () => {
+    const child = z.string().meta({ id: 'NamedBase' }).min(2).meta({ id: 'NamedChild' });
+    const eager = z.object({ value: child });
+    const lazy = z.object({ value: lazySchema(() => child) });
+
+    expect(z.toJSONSchema(lazy)).toEqual(z.toJSONSchema(eager));
+  });
+
+  it('preserves refinements of a named parent in draft-7 projection', () => {
+    const child = z.string().meta({ id: 'Draft7Base' }).min(2);
+    const eager = z.object({ value: child });
+    const lazy = z.object({ value: lazySchema(() => child) });
+
+    expect(z.toJSONSchema(lazy, { target: 'draft-7' }))
+      .toEqual(z.toJSONSchema(eager, { target: 'draft-7' }));
+  });
 });
 
 // Importing the protocol package must not build every schema it declares; each
