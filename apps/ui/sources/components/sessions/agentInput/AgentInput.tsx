@@ -44,6 +44,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { useHasHardwareKeyboard } from '@/hooks/ui/useHasHardwareKeyboard';
+import { useComposerKeepsFocusAfterSend } from './hooks/useComposerKeepsFocusAfterSend';
 import type { NewSessionAfterSendMode } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { ComposerHistorySwipeArea, type ComposerHistoryDirection } from './ComposerHistorySwipeArea';
 import { AgentInputKeepKeyboardToggle } from './components/AgentInputKeepKeyboardToggle';
@@ -1400,9 +1401,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
     const inputRef = React.useRef<MultiTextInputHandle>(null);
     const hasHardwareKeyboard = useHasHardwareKeyboard();
-    const keepFocusAfterSendSetting = useLocalSetting('composerKeepFocusAfterSend');
-    const keepFocusAfterSend = keepFocusAfterSendSetting === true
-        || (keepFocusAfterSendSetting == null && hasHardwareKeyboard);
+    const keepFocusAfterSend = useComposerKeepsFocusAfterSend();
     const showKeepKeyboardToggle = Boolean(props.sessionId) && !hasHardwareKeyboard;
     // History flicks cycle from an empty field and keep cycling while it shows a recalled message. The
     // person reaching into that message (focus, a caret move, an edit) ends it until the field is empty again.
@@ -1656,8 +1655,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setLiveTextStatus(nextStatus);
             updateInputSelectionState(nextState.selection);
         }
-        if (props.sessionId && !keepFocusAfterSend) {
-            inputRef.current?.blur();
+        if (props.sessionId) {
+            // Clicking Send can move focus to the button before this handler runs.
+            // Restore it during the send gesture, never from a later background update.
+            if (keepFocusAfterSend) inputRef.current?.focus();
+            else inputRef.current?.blur();
         }
         messageHistory.reset();
         setHistoryFlicksArmed(false);
