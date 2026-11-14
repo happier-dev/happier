@@ -3,7 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
-  ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
+  projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -58,12 +59,11 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
   });
 });
 const routerHandle = vi.hoisted(() => ({ current: null as null | { spies: { push: { mock: { calls: unknown[][] } } } } }));
-// Install the presentation boundary before eager Action imports can load Modal.
-vi.mock('@/modal', async () => {
-  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-  return createModalModuleMock({ renderCustomModals: true }).module;
-});
 installApprovalCommonModuleMocks({
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ renderCustomModals: true }).module;
+  },
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
   reactNative: async () => {
     const [{ createCapturingFlatListMock }, { createReactNativeWebMock, createMeasuredViewMock }] = await Promise.all([
@@ -601,6 +601,7 @@ describe('Machine → Setup tab (P-M1)', () => {
       serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
     await publishManagedDevbox(serverId);
+    await harness.requireUiApproval(home, 'machines.presets.list');
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [presetWire(preset('web', 'Web box'))] } });
     const setup = { scripts: [{ body: 'echo bundled' }] };
@@ -676,13 +677,15 @@ describe('Machine → Setup tab (P-M1)', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    approvalStates = () => harness.artifacts(home).list().map(artifact => {
-      const request = StoredApprovalRequestSchema.parse(JSON.parse(harness.artifacts(home).readPlainBody(artifact.id)!));
+    const approvalArtifacts = harness.artifacts(home);
+    approvalStates = () => approvalArtifacts.list().map(artifact => {
+      const request = StoredApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(artifact.id)!));
       return { status: request.status, execution: request.execution };
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
     await publishManagedDevbox(serverId);
-    phase = 'use the default setup approval policy';
+    phase = 'require saved preset read and setup Apply approval';
+    await harness.requireUiApproval(home, ['machines.presets.list', 'machines.setup.apply']);
     harness.answer(home, '/v1/machines/devbox', {
       body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) },
     });
@@ -811,6 +814,9 @@ describe('Machine → Setup tab (P-M1)', () => {
           accountEncryptionMode: 'plain',
           requestId: envelope.requestId, target: envelope.target,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+            actionId: 'machines.setup.apply', envelope,
+          }),
         } });
     };
     harness.answer(home, bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.apply'), { select: input => {
@@ -887,18 +893,21 @@ describe('Machine → Setup tab (P-M1)', () => {
     // The review names what gets applied and where.
     expect(mounted.getTextContent()).toContain(t('machinePresets.setup.tab.reviewApplyPreset', { preset: 'Build box', machine: 'devbox' }));
     expect(applied).toEqual([]);
-    phase = 'apply review';
-    await act(async () => pressable('machine-setup-apply')!.props.onPress());
-    await vi.waitFor(() => expect(mounted.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
-    expect(applied).toEqual([]);
     expect(harness.artifacts(home).list()).toEqual([]);
     expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
-    await mounted.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    phase = 'apply the exact in-place review';
+    // Apply is this flow's designed confirmation, including under Settings Ask.
+    // The receiver prepares the same effects once before accepting the operation.
+    await act(async () => pressable('machine-setup-apply')!.props.onPress());
     await waitForHomeGovernance(() => expect(applied).toEqual([expectedInput()]));
+    expect(mounted.findByTestId('actions.confirmation-review.decision-approve')).toBeNull();
+    expect(mounted.tree.findAll(node => typeof node.props?.diagnosticCode === 'string')).toEqual([]);
+    expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.apply')).toHaveLength(1);
     expect(plans).toEqual([
       { homeId: 'srv_build', machineId: 'devbox' },
       { homeId: 'srv_build', machineId: 'devbox' },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources() },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources(), exclusions: [] },
     ]);
     const artifacts = harness.artifacts(home);
     expect(artifacts.list()).toHaveLength(0);
@@ -912,7 +921,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     phase = 'operation rows in place';
     await waitForHomeGovernance(() => expect(mounted.findByTestId('machine-setup-operation')).not.toBeNull());
     expect(mounted.findByTestId('machine-setup-review')).toBeNull();
-    expect(plans).toHaveLength(3);
+    expect(plans).toHaveLength(4);
     expect(applied).toHaveLength(1);
     expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
     await mounted.unmount();
@@ -925,6 +934,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
     await publishManagedDevbox(serverId);
+    await harness.requireUiApproval(home, 'machines.presets.list');
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [
       presetWire(preset('web', 'Web box')), presetWire(preset('build', 'Build box')), presetWire({ ...preset('other', 'Other box'), revision: 3 }),

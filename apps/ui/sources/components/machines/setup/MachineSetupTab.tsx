@@ -150,6 +150,10 @@ function MachineSetupRoot(
     () => readMachineSetupRecipes(setup.plan, openedSources, setup.observation),
     [openedSources, setup.plan, setup.observation],
   );
+  const attached = React.useMemo(
+    () => readAttachedMachineSetupSources(setup.plan?.sources ?? NO_SOURCES, openedSources),
+    [openedSources, setup.plan?.sources],
+  );
   const recipeTarget = React.useMemo(() => saveScope ? { scope: saveScope, machine: null } : null, [saveScope]);
   const recipeOptions = useMachineSetupRecipeOptions(recipeTarget, { presented: presented && recipes.length > 0 });
   const recipeOffers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
@@ -162,10 +166,6 @@ function MachineSetupRoot(
     return <MachineSetupReviewInPlace setup={setup} machineName={machine} />;
   }
 
-  const attached = React.useMemo(
-    () => readAttachedMachineSetupSources(setup.plan?.sources ?? NO_SOURCES, openedSources),
-    [openedSources, setup.plan?.sources],
-  );
   const attachedKeys = new Set(attached.map((source) => source.sourceKey));
   const attachable = presetList.filter(
     (entry) => !attachedKeys.has(presetOriginKey(entry)),
