@@ -19,6 +19,41 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 describe('action operation observation RPC handlers', () => {
+  it('filters V2 Activity by requester and half-open creation time before its cursor without expanding Account scope', async () => {
+    let now = 9;
+    const store = createActionOperationStore({ now: () => now });
+    const scope = { accountId: 'alice', machineId: 'machine', sessionId: 'session' };
+    for (const [operationId, createdAt, accountId] of [
+      ['before', 9, 'alice'], ['at-from', 10, 'alice'], ['inside', 19, 'alice'], ['at-to', 20, 'alice'], ['foreign', 15, 'bob'],
+    ] as const) {
+      now = createdAt;
+      store.create({ operationId, actionId: 'projects.script.run', title: 'Script', scope: { ...scope, accountId },
+        requestId: operationId, cancellation: 'unsupported', inputIdentity: '{}' });
+    }
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
+    registerActionOperationRpcHandlers(rpc, createActionOperationRpcHandlers({ store,
+      runner: createActionOperationRunner({ store, resolveAction: () => null }), machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId }));
+    const filtered = { actorAccountId: 'alice', createdAtFromMs: 10, createdAtToMs: 20,
+      states: ['accepted'], sessionId: scope.sessionId };
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, filtered)).toMatchObject({
+      items: [{ operationId: 'inside' }, { operationId: 'at-from' }], nextCursor: null,
+    });
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, { ...filtered, cursor: 'inside' }))
+      .toMatchObject({ items: [{ operationId: 'at-from' }], nextCursor: null });
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, { ...filtered, cursor: 'before' }))
+      .toMatchObject({ items: [{ operationId: 'inside' }, { operationId: 'at-from' }], nextCursor: null });
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, { actorAccountId: 'bob' }))
+      .toEqual({ items: [], nextCursor: null });
+    const requestIdentity = { actionId: 'projects.script.run', requestId: 'at-from' };
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, { requestIdentity, createdAtToMs: 10 }))
+      .toEqual({ items: [], nextCursor: null });
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, { requestIdentity, createdAtFromMs: 10 }))
+      .toMatchObject({ items: [{ operationId: 'at-from' }] });
+    expect(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V1.list, {}))
+      .toMatchObject({ items: [{ operationId: 'at-to' }, { operationId: 'inside' }, { operationId: 'at-from' }, { operationId: 'before' }] });
+  });
+
   it('performs zero caller permission reads after cancellation admission', async () => {
     const store = createActionOperationStore();
     const scope = { accountId: 'requester', machineId: 'machine' };

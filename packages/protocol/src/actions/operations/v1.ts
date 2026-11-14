@@ -738,6 +738,12 @@ export const ActionOperationListV1RequestSchema = lazyZodSchema(() => z.strictOb
 export type ActionOperationListV1Request = z.infer<typeof ActionOperationListV1RequestSchema>;
 
 export const ActionOperationListV2RequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV1RequestSchema, {
+  /** Narrow the authorized requester's retained operations. */
+  actorAccountId: z.optional(ActionOperationIdentifierV1Schema),
+  /** Inclusive lower bound on operation creation time. */
+  createdAtFromMs: z.optional(ActionOperationTimestampV1Schema),
+  /** Exclusive upper bound on operation creation time. */
+  createdAtToMs: z.optional(ActionOperationTimestampV1Schema),
   /** Select the newest retained host receipt, without durable-domain discovery. */
   requestIdentity: z.optional(z.strictObject({
     actionId: ActionOperationIdentifierV1Schema,

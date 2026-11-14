@@ -77,6 +77,9 @@ type ListActionOperationsInput = ActionOperationQueryScope & Readonly<{
   states?: readonly ActionOperationStateV1[];
   cursor?: string;
   requestIdentity?: ActionOperationListV2Request['requestIdentity'];
+  actorAccountId?: ActionOperationListV2Request['actorAccountId'];
+  createdAtFromMs?: ActionOperationListV2Request['createdAtFromMs'];
+  createdAtToMs?: ActionOperationListV2Request['createdAtToMs'];
 }>;
 
 function isTerminal(snapshot: ActionOperationSnapshotV1): boolean {
@@ -648,6 +651,9 @@ export function createActionOperationStore(options?: Readonly<{
       const candidates = input.requestIdentity ? (requested ? [requested] : []) : [...snapshots.values()];
       const ordered = candidates
         .filter((snapshot) => inScope(snapshot, input))
+        .filter((snapshot) => input.actorAccountId === undefined || snapshot.scope.accountId === input.actorAccountId)
+        .filter((snapshot) => input.createdAtFromMs === undefined || snapshot.createdAt >= input.createdAtFromMs)
+        .filter((snapshot) => input.createdAtToMs === undefined || snapshot.createdAt < input.createdAtToMs)
         .filter((snapshot) => !invocationMetadata.get(snapshot.operationId)?.deploymentChildIdentity)
         .filter((snapshot) => !states || states.has(snapshot.state))
         .sort((left, right) => {

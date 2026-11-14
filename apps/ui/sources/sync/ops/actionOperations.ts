@@ -96,9 +96,14 @@ export async function listActionOperations(
         requireCurrentDomainFacts?: true | (() => boolean);
     }>,
 ): Promise<ActionOperationListV1Response> {
+    const request = params.request;
+    const requiresCurrentRequest = request?.requestIdentity !== undefined
+        || request?.actorAccountId !== undefined
+        || request?.createdAtFromMs !== undefined
+        || request?.createdAtToMs !== undefined;
     return await readActionOperationObservation(params, params.request ?? {}, ActionOperationListV1ResponseSchema, {
         current: ACTION_OPERATION_RPC_METHODS_V2.list, predecessor: ACTION_OPERATION_RPC_METHODS_V1.list,
-    }, params.request?.requestIdentity ? true : params.requireCurrentDomainFacts);
+    }, requiresCurrentRequest ? true : params.requireCurrentDomainFacts);
 }
 
 export async function getActionOperation(

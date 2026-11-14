@@ -110,6 +110,9 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
         ...(request.states ? { states: request.states } : {}),
         ...(request.cursor ? { cursor: request.cursor } : {}),
         ...(requestIdentity ? { requestIdentity } : {}),
+        ...(request.actorAccountId !== undefined ? { actorAccountId: request.actorAccountId } : {}),
+        ...(request.createdAtFromMs !== undefined ? { createdAtFromMs: request.createdAtFromMs } : {}),
+        ...(request.createdAtToMs !== undefined ? { createdAtToMs: request.createdAtToMs } : {}),
       });
       const items = managedId ? response.items.filter(snapshot => matchesManagedRead(snapshot, managedId)) : response.items;
       return ActionOperationListV1ResponseSchema.parse({ ...response,

@@ -211,4 +211,19 @@ describe('action operation transport', () => {
             .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         expect(methods).toEqual([ACTION_OPERATION_RPC_METHODS_V2.list]);
     });
+
+    it.each([{ actorAccountId: 'account-1' }, { createdAtFromMs: 0 }, { createdAtToMs: 1000 }])(
+        'never downgrades a filtered Activity read into the closed predecessor list (%j)', async request => {
+            const methods: string[] = [];
+            const rpc = createRpc(async ({ method }) => {
+                methods.push(method);
+                return method === ACTION_OPERATION_RPC_METHODS_V2.list
+                    ? { error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+                    : { items: [accepted], nextCursor: null };
+            });
+            await expect(listActionOperations({ machineId: 'machine-1', rpc, request }))
+                .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+            expect(methods).toEqual([ACTION_OPERATION_RPC_METHODS_V2.list]);
+        },
+    );
 });

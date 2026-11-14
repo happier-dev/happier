@@ -836,4 +836,14 @@ describe('Action operation v1 contract', () => {
     ]) expect(ActionOperationListV2RequestSchema.safeParse(request).success).toBe(false);
   });
 
+  it('keeps Activity requester and creation-time filters exclusive to the closed V2 list request', () => {
+    const request = { actorAccountId: 'alice', createdAtFromMs: 0, createdAtToMs: 1000 };
+    expect(ActionOperationListV2RequestSchema.parse(request)).toEqual(request);
+    expect(ActionOperationListV1RequestSchema.safeParse(request).success).toBe(false);
+    for (const invalid of [{ actorAccountId: '' }, { createdAtFromMs: -1 }, { createdAtToMs: 1.5 },
+      { ...request, accountId: 'bob' }]) {
+      expect(ActionOperationListV2RequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
 });
