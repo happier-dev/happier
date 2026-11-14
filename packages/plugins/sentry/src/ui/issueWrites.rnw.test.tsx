@@ -28,10 +28,12 @@ import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceCo
 import {
   SENTRY_ACTION_IDS,
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+  SENTRY_FAILURE_CODES,
   SENTRY_PLUGIN_ID,
   SENTRY_SCOPE_SEPARATOR,
 } from '../sentryContracts.js';
 import { renderSurface } from './renderSurface.js';
+import { SentryReadIssueResultV1Schema } from '../detail/detailContracts.js';
 
 /**
  * The person's Sentry issue writes, composed end to end below the host: the host-rendered control
@@ -183,6 +185,8 @@ async function mountOverview(
   activated.push(plugin);
   const controls = new Map<string, Bound>();
   const prepared: unknown[] = [];
+  const producerResults: unknown[] = [];
+  const readRequestIds: string[] = [];
   const input = detailInput(presentation, panel);
   const surface = defineUiSurface((context) => (
     <TriagePostMutationCompletionProvider
@@ -210,10 +214,15 @@ async function mountOverview(
       launchInput: input as unknown as JsonValue,
       handlers: {
         // Panel reads are not under test; an unavailable read leaves the Overview standing.
-        executeAction: async ({ action, input }) => {
+        executeAction: async ({ action, input, requestId, signal }) => {
           if (readBoundary !== undefined) {
             const localId = typeof action === 'string' ? action : action.localId;
-            return await plugin.invokeAction(localId, input, { services: localId === SENTRY_ACTION_IDS.assign ? boundary.context.services : readBoundary.context.services }) as JsonValue;
+            const result = await plugin.invokeAction(localId, input, { requestId, signal, services: localId === SENTRY_ACTION_IDS.assign ? boundary.context.services : readBoundary.context.services });
+            if (localId === SENTRY_ACTION_IDS.readIssue) {
+              producerResults.push(result);
+              readRequestIds.push(requestId);
+            }
+            return result as JsonValue;
           }
           throw Object.assign(new Error('unavailable'), {
             code: 'unavailable',
@@ -226,7 +235,7 @@ async function mountOverview(
               publish,
               presentation: request.presentation,
             });
-            return;
+            return { dispose: () => { controls.delete(request.subscriptionId); } };
           }
           if (request.kind === 'update') {
             controls.get(request.subscriptionId)!.presentation =
@@ -257,7 +266,7 @@ async function mountOverview(
     [...controls.values()].find(
       (control) => control.presentation.title === title,
     );
-  return { fixture, controls, prepared, byTitle };
+  return { fixture, controls, prepared, producerResults, readRequestIds, byTitle };
 }
 
 async function press(
@@ -274,6 +283,35 @@ const unresolved = { status: 200, body: issueDetail.body };
 const teamsExhausted = { link: '<https://us.sentry.io/api/0/projects/7701/9001/teams/>; rel="next"; results="false"' };
 
 describe('Sentry issue writes in the detail panel', () => {
+  it.each([
+    { observed: 'resolved' as const, live: 'unresolved', offered: true },
+    { observed: 'active' as const, live: 'resolved', offered: false },
+  ])('offers writes from live $live instead of observed $observed', async ({ observed, live, offered }) => {
+    const summary = { status: 200, body: { ...issueDetail.body, status: live } };
+    const reads = providerBoundary([summary, summary, { status: 200, body: [] }, { status: 200, body: [], headers: teamsExhausted }]);
+    const page = await mountOverview(observed, providerBoundary([]), { count: 0 }, 'actions', reads);
+    await vi.waitFor(() => expect(reads.requests.length).toBe(4));
+    await vi.waitFor(() => expect(page.byTitle('Resolve') !== undefined).toBe(offered));
+    expect(page.byTitle('Archive') !== undefined).toBe(offered);
+  });
+
+  it.each([
+    { status: 429, failureClass: 'rateLimit', code: SENTRY_FAILURE_CODES.rateLimitedUnhinted },
+    { status: 200, failureClass: 'unsupportedContract', code: SENTRY_FAILURE_CODES.responseUnparseable },
+  ])('shows the registered HTTP $status read failure code and issued request identity in Details', async ({ status, failureClass, code }) => {
+    const reads = providerBoundary([{ status, body: {} }]);
+    const page = await mountOverview('active', providerBoundary([]), { count: 0 }, 'overview', reads);
+    await vi.waitFor(() => expect(page.producerResults[0]).toBeDefined());
+    expect(SentryReadIssueResultV1Schema.parse(page.producerResults[0])).toMatchObject({ kind: 'unavailable', failure: { class: failureClass, code, requestId: page.readRequestIds[0] } });
+    const notices = await page.fixture.getAllByRole('button', { name: 'Details' });
+    for (let index = 0; index < notices.length; index += 1) {
+      await act(async () => { await page.fixture.press((await page.fixture.getAllByRole('button', { name: 'Details' }))[index]!); });
+      if (await page.fixture.queryByText(code) !== undefined) break;
+    }
+    await expect(page.fixture.getByText(code)).resolves.toBeDefined();
+    await expect(page.fixture.getByText(page.readRequestIds[0]!)).resolves.toBeDefined();
+  });
+
   it('keeps the known assignee during loading and a failed directory, then retries to an honest empty directory', async () => {
     let release!: (response: Recorded) => void;
     const pending = new Promise<Recorded>(resolve => { release = resolve; });
@@ -288,6 +326,9 @@ describe('Sentry issue writes in the detail panel', () => {
     expect(loading.state?.disabled).toBe(true);
     await act(async () => { release({ status: 403, body: {} }); });
     await vi.waitFor(async () => expect(await page.fixture.getByText('Could not load people.')).toBeDefined());
+    await act(async () => { await page.fixture.press(await page.fixture.getByRole('button', { name: 'Details' })); });
+    await expect(page.fixture.getByText('Request ID')).resolves.toBeDefined();
+    await expect(page.fixture.getByText(page.readRequestIds.at(-1)!)).resolves.toBeDefined();
     expect((await page.fixture.getByRole('button', { name: 'Assignee, Assignee One' })).state?.disabled).toBe(true);
     await act(async () => { await page.fixture.press(await page.fixture.getByRole('button', { name: 'Retry' })); });
     expect(await page.fixture.queryByText('Could not load people.')).toBeUndefined();

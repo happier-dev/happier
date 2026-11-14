@@ -20,6 +20,8 @@ const SOURCE = { pluginId: 'happier.forge', localId: 'items' } as const;
 const INSTANCE = '11111111-1111-4111-8111-111111111111';
 
 type RowFacts = Readonly<{
+  state?: ReturnType<typeof testkitSnapshot>['state'];
+  dueDate?: string;
   lane?: TriageListRowV1['lane'];
   attention?: 'required' | 'suggested' | null;
   reasonLabel?: string;
@@ -38,7 +40,7 @@ function row(entryId: string, facts: RowFacts = {}): TriageListRowV1 {
       outcome: {
         kind: 'present',
         locator: testkitLocator(),
-        snapshot: testkitSnapshot({ title: `Entry ${entryId}`, ...(facts.facts === undefined ? {} : { facts: facts.facts }) }),
+        snapshot: testkitSnapshot({ title: `Entry ${entryId}`, ...(facts.state === undefined ? {} : { state: facts.state }), ...(facts.dueDate === undefined ? {} : { dueDate: facts.dueDate }), ...(facts.facts === undefined ? {} : { facts: facts.facts }) }),
         viewer: testkitViewer({ involvement: [...(facts.involvement ?? [])] }),
       },
     },
@@ -435,4 +437,26 @@ describe('the PRs & Issues grouping axis', () => {
     // One entry is not a pattern: its own chip says it.
     expect(readTriageSharedGroupReasonsV1(mixed.slice(0, 1)).size).toBe(0);
   });
+});
+
+it('selects Home tasks by needs-you, overdue, today, started, preserving ties', () => {
+  const nowMs = new Date(2026, 10, 14, 12).getTime();
+  const rows = [
+    row('ordinary', { involvement: ['assignee'] }),
+    row('started', { involvement: ['assignee'], state: { presentation: 'active', stage: 'started' } }),
+    row('today', { involvement: ['assignee'], dueDate: '2026-11-14' }),
+    row('overdue', { involvement: ['assignee'], dueDate: '2026-11-13' }),
+    row('attention', { involvement: ['assignee'] }),
+    row('overdue-second', { involvement: ['assignee'], dueDate: '2026-11-12' }),
+  ];
+  const items = planTriageListItemsV1({ rows, pins: [], workflowSubjectOf: () => null,
+    agentStatesOf: key => key === triageEntryRowKey(rows[4]!.entryRef) ? [{
+      lifecycle: 'active', operational: 'permission_required', workStatus: { bucket: 'needs_you', tone: 'warning' },
+    }] : [],
+    tasks: { audience: 'mine', isTask: () => true, hasSessions: () => false,
+      urgency: { nowMs, locale: 'en', text: (_key, fallback) => fallback ?? _key } },
+  });
+  expect(items.map(item => item.row.entryRef.entryId)).toEqual([
+    'attention', 'overdue', 'overdue-second', 'today', 'started', 'ordinary',
+  ]);
 });

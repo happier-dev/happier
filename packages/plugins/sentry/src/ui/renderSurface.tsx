@@ -25,6 +25,7 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
 import {
   Badge,
   Banner,
@@ -241,6 +242,7 @@ function SelectedOccurrenceSummary({
           read.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[read.failure]} />}
       />
     );
   }
@@ -321,7 +323,7 @@ function SelectedEventRefreshNotice({
   const text = usePluginTranslation();
   if (read.kind !== 'success' || read.refresh === null) return null;
   return (
-    <Banner
+    <><Banner
       tone={read.refresh.kind === 'loading' ? 'neutral' : 'warning'}
       title={read.refresh.kind === 'loading'
         ? text('plugins.sentry.ui.readingOccurrence', 'Reading one occurrence of this issue')
@@ -332,7 +334,7 @@ function SelectedEventRefreshNotice({
             read.refresh.failure,
             text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
           )}
-    />
+    /><TriageSourceReadFailureDetails failures={[read.refresh.kind === 'error' ? read.refresh.failure : null]} /></>
   );
 }
 
@@ -426,7 +428,7 @@ function LiveSummary({
   }
   if (summary.kind === 'unavailable') {
     return (
-      <Banner
+      <><Banner
         tone="warning"
         title="Showing the last observation"
         titleKey="plugins.sentry.ui.lastObservation"
@@ -434,7 +436,7 @@ function LiveSummary({
           summary.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
-      />
+      /><TriageSourceReadFailureDetails failures={[summary.failure]} /></>
     );
   }
 
@@ -524,6 +526,7 @@ function TagValuesSection({
           state.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[state.failure]} />}
       />
     );
   }
@@ -542,7 +545,7 @@ function TagValuesSection({
       {state.failure === null
         ? null
         : (
-          <Banner
+          <><Banner
             tone="warning"
             title="Showing the values read so far"
             titleKey="plugins.sentry.ui.partialTagValues"
@@ -550,7 +553,7 @@ function TagValuesSection({
               state.failure,
               text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
             )}
-          />
+          /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
         )}
       <ItemGroup accessibilityLabel={text(
         'plugins.sentry.ui.tagValuesLabel',
@@ -619,6 +622,7 @@ function TagsSection({
           distribution.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[distribution.failure]} />}
       />
     );
   }
@@ -863,7 +867,7 @@ function OverviewPanel({
           </Row>
         )}
         {/* In a Triage panel the writes are the frame's `actions` panel, beside the header's own actions. */}
-        {story ? null : <SentryIssueWrites input={input} current={summary.kind === 'ready' ? summary.value.assignee : undefined} />}
+        {story ? null : <SentryIssueWrites input={input} summary={summary.kind === 'ready' ? summary.value : undefined} />}
         {entries.length > 0
           ? <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />
           : story ? null : (
@@ -931,9 +935,9 @@ function OverviewPanel({
  * mounted as host controls, offered only where they would change the issue's state. Assignment
  * consumes the same group's hold and settlement, with project-owned named choices.
  */
-function SentryIssueWrites({ input, current }: Readonly<{ input: TriageDetailSurfaceInputV1; current: SentryAssigneeV1 | null | undefined }>): React.ReactElement {
+function SentryIssueWrites({ input, summary }: Readonly<{ input: TriageDetailSurfaceInputV1; summary: SentryIssueSummaryV1 | undefined }>): React.ReactElement {
   const request = useTriageDetailRequest(input);
-  const presentation = input.observation.snapshot.state.presentation;
+  const presentation = summary?.statePresentation ?? input.observation.snapshot.state.presentation;
   const writes = React.useMemo((): readonly TriageSourceWriteV1[] => {
     const target = SentryIssueWriteInputV1Schema.safeParse({ v: 1, ...request });
     const writeInput = target.success ? target.data : null;
@@ -952,7 +956,7 @@ function SentryIssueWrites({ input, current }: Readonly<{ input: TriageDetailSur
   const webUrl = input.observation.locator.webUrl;
   return <TriageSourceWrites key={input.observation.observedAtMs} writes={writes} sourceName="Sentry"
     {...(webUrl === undefined ? {} : { sourceUrl: webUrl })}>
-      {({ held, settle }) => <SentryIssueAssignment input={input} current={current} held={held} settle={settle} />}
+      {({ held, settle }) => <SentryIssueAssignment input={input} current={summary?.assignee} held={held} settle={settle} />}
     </TriageSourceWrites>;
 }
 
@@ -1105,6 +1109,7 @@ function ActivatedOccurrenceDetail({
           read.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[read.failure]} />}
       />
     );
   }
@@ -1342,6 +1347,7 @@ function OccurrencesPanel({
             state.failure,
             text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
           )}
+          action={<TriageSourceReadFailureDetails failures={[state.failure]} />}
         />
         {spreadControl}
       </Stack>
@@ -1366,7 +1372,7 @@ function OccurrencesPanel({
           {state.failure === null
             ? null
             : (
-              <Banner
+              <><Banner
                 tone="warning"
                 title="Showing the events read so far"
                 titleKey="plugins.sentry.ui.partialEvents"
@@ -1374,7 +1380,7 @@ function OccurrencesPanel({
                   state.failure,
                   text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
                 )}
-              />
+              /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
             )}
           <ActivatedOccurrenceDetail input={input} controller={selectedEvent} />
         </Stack>
@@ -1458,6 +1464,7 @@ function StackTracePanel({
           read.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[read.failure]} />}
       />
     );
   }
@@ -1774,6 +1781,7 @@ function ActivityPanel({
           history.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
         )}
+        action={<TriageSourceReadFailureDetails failures={[history.failure]} />}
       />
     );
   }
@@ -1874,7 +1882,7 @@ function SentryDetailBody({
             'stack-trace': panels['stack-trace'],
             occurrences: panels.occurrences,
             release: panels.release,
-            actions: <SentryIssueWrites input={input} current={summary.kind === 'ready' ? summary.value.assignee : undefined} />,
+            actions: <SentryIssueWrites input={input} summary={summary.kind === 'ready' ? summary.value : undefined} />,
           }}
         />
       </Screen>

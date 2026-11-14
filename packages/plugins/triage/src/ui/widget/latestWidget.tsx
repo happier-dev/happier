@@ -35,6 +35,8 @@ import { projectTriageEntryDisplay } from '../window/entryDisplay.js';
 import { projectTriageListWindow } from '../window/mountedWindow.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { useTriageListWindowViewDemand } from '../window/useTriageListWindowViewDemand.js';
+import { useTriageListSessionActivityV1 } from '../list/useListSessionActivity.js';
+import { useTriageListSessionActivitySourcesV1 } from '../list/useListSessionActivitySources.js';
 import { planTriageListItemsV1 } from '../list/sections.js';
 import { planTriageTaskViewInventoryV1 } from '../list/viewInventory.js';
 import { TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
@@ -99,16 +101,23 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   const footprint = useWidgetPresentation()?.footprint;
   const roomRows = footprint ? Math.min(TRIAGE_LATEST_WIDGET_ROWS_V1, widgetFootprintBodyRows(footprint)) : TRIAGE_LATEST_WIDGET_ROWS_V1;
   const shownRows = Math.max(1, roomRows - (footprint && degraded ? 1 : 0));
+  const entryRefs = React.useMemo(() => tasksOnly ? snapshot.window?.rows.map(row => row.entryRef) ?? [] : [],
+    [snapshot.window, tasksOnly]);
+  const sourceInstanceIds = useTriageListSessionActivitySourcesV1(tasksOnly ? snapshot.window ?? null : null);
+  const sessionActivity = useTriageListSessionActivityV1({ entryRefs, sourceInstanceIds,
+    acquisition: snapshot.passes, active: tasksOnly && activity.active,
+    taskProjection: snapshot.taskProjection, refreshList: refresh });
   const view = React.useMemo(
     () => {
       if (snapshot.window === undefined) return undefined;
       const projected = projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, hostApi, sharedScope)?.rows;
       if (projected === undefined) return undefined;
       const items = planTriageListItemsV1({ rows: projected, pins: [], workflowSubjectOf: () => null,
-        ...(tasksOnly ? { tasks: { audience: 'mine' as const, hasSessions: () => false,
+        agentStatesOf: key => sessionActivity.agentStates.get(key) ?? [],
+        ...(tasksOnly ? { tasks: { urgency: { nowMs: Date.now(), locale: surfaceContext.locale, text }, audience: 'mine' as const, hasSessions: () => false,
           isTask: planTriageTaskViewInventoryV1(source => readTriageSourceDescriptorV1(surfaceContext, source)?.kinds)
             .includesKind } } : {}) });
-      // The most pressing open work, in the page's band order (In progress, To do, Backlog); Done and Canceled stay
+      // The section owner ranks needs-you, overdue, today, then started; Done and Canceled stay
       // on the page behind their collapsed bands (lab `tasks-widget`).
       const byKey = new Map(projected.map((row) => [triageEntryRowKey(row.entryRef), row] as const));
       const shown = items.filter((item) => !tasksOnly || item.group !== 'completed' && item.group !== 'canceled').slice(0, shownRows);
@@ -118,7 +127,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         inProgress: items.filter((item) => item.group === 'started').length,
         needsYou: items.filter((item) => item.group === 'needsYou').length };
     },
-    [hostApi, sharedScope, shownRows, snapshot.window, surfaceContext.targetedContributions, tasksOnly],
+    [hostApi, sharedScope, shownRows, snapshot.window, surfaceContext.targetedContributions, surfaceContext.locale, tasksOnly, sessionActivity.agentStates, text],
   );
   const rows = view?.rows;
   const openPage = React.useCallback(() => {

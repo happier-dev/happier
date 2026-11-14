@@ -1,3 +1,5 @@
+import type { PluginTranslate } from '@happier-dev/plugin-ui';
+import { readTriageTaskDueV1 } from './taskDue.js';
 import type { TriageEntryLocatorV1, TriageEntryRelationsV1, TriageEntryStateV1, TriageSourceWorkflowSubjectV1, TriageTaskCapabilitiesV1,
   TriageTaskTransitionRequiredFieldV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageDetailFieldsV1, projectTriageDetailFieldTextV1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
@@ -185,6 +187,8 @@ export function planTriageListItemsV1(input: Readonly<{
   display?: TriageListRowProjectionOptionsV1;
   tasks?: Readonly<{
     audience: 'mine' | 'agents' | 'everyone';
+    /** Home's urgency order; the full page retains its own status bands and manual order. */
+    urgency?: Readonly<{ nowMs: number; locale: string; text: PluginTranslate }>;
     isTask: (entryRef: TriageListRowV1['entryRef']) => boolean;
     hasSessions: (key: string) => boolean;
     capabilitiesOf?: (entryRef: TriageListRowV1['entryRef']) => TriageTaskCapabilitiesV1 | undefined;
@@ -270,6 +274,16 @@ export function planTriageListItemsV1(input: Readonly<{
       group.items.sort((left, right) => rank.get(left.row.entryRef.entryId)! - rank.get(right.row.entryRef.entryId)!);
       group.slots.forEach((slot, index) => { items[slot] = group.items[index]!; });
     }
+  }
+  if (input.tasks?.urgency !== undefined) {
+    const { nowMs, locale, text } = input.tasks.urgency;
+    const ranks = new Map(items.map(item => {
+      const due = item.task == null ? null : readTriageTaskDueV1(item.task.dueDate, item.task.category, locale, nowMs, text);
+      const needsYou = agentStatesOf(item.key).some(state => state.workStatus.bucket === 'needs_you');
+      return [item.key, needsYou ? 0 : due?.tone === 'danger' ? 1 : due?.tone === 'warning' ? 2
+        : item.task?.category === 'started' ? 3 : 4] as const;
+    }));
+    items.sort((left, right) => ranks.get(left.key)! - ranks.get(right.key)!);
   }
   // A Session transition changes its own item/group, not every unchanged
   // display row. Retain only the preceding projection; no history is kept.

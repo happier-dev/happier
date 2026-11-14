@@ -405,7 +405,8 @@ describe('the New for you widget', () => {
     });
     it('says an overdue task as its one loud fact, ahead of a blocker', async () => {
         const blocker = { source: SOURCE, kindId: 'issue', collisionScope: 'example/repository', entryId: 'issue-9' };
-        const harness = createListHarness(true, { dueDate: '2000-01-03', relations: { blockedBy: [blocker] } });
+        // Six newer personal tasks fill the prefix; urgency must select this overdue source task first.
+        const harness = createListHarness(true, { dueDate: '2000-01-03', relations: { blockedBy: [blocker] } }, true);
         const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), (input) => harness.executeAction(input),
             undefined, { surface: renderTasksWidget, targetedContributions: harness.targetedContributions });
         await vi.waitFor(() => widget.getByText('My assigned task'));
