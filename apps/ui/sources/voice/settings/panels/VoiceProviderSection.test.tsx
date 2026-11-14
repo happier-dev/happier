@@ -2173,7 +2173,7 @@ describe('VoiceProviderSection', () => {
         const { getAcpCatalogSnapshot } = await import('@/sync/store/settings/acpCatalogSnapshot');
         const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
         const { refreshMachineAgents, readMachineAgentsForScope } = await import('@/agents/machineAgents/useMachineAgents');
-        agentProjectionEntries = { claude: { id: 'claude', title: 'Claude',
+        agentProjectionEntries = { claude: { id: 'claude', title: 'Claude', providerOwnedEnvironmentKeys: [],
             identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
         } };

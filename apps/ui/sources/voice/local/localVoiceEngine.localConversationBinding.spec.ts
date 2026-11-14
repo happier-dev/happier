@@ -392,9 +392,9 @@ describe('local voice engine local conversation binding', () => {
         });
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
         const { Modal } = await import('@/modal');
-        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
+        const shown = createDeferred<Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0]>();
         const unregister = Modal.registerProvider({
-            showModal: config => { shown.resolve(config as Parameters<typeof Modal.show>[0]); return 'home-carrier-confirmation'; },
+            showModal: config => { shown.resolve(config); return 'home-carrier-confirmation'; },
             hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
         });
         const lifecycle = createVoiceSessionLifecycleController();
@@ -441,10 +441,10 @@ describe('local voice engine local conversation binding', () => {
                 : result;
         });
         const { Modal } = await import('@/modal');
-        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
+        const shown = createDeferred<Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0]>();
         // Present through the real Modal owner, replacing only its mounted host.
         const unregister = Modal.registerProvider({
-            showModal: config => { shown.resolve(config as Parameters<typeof Modal.show>[0]); return 'carrier-review'; },
+            showModal: config => { shown.resolve(config); return 'carrier-review'; },
             hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
         });
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
@@ -832,7 +832,7 @@ describe('local voice engine local conversation binding', () => {
             }
             return sessionIncumbent(request);
         });
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId: lifetime.scope.serverId });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId: lifetime.scope.serverId }, 'refresh');
         await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: machine.id, accountLifetime: lifetime, force: true });
         const readAgent = (agentId: string) => readMachineAgentsForScope(lifetime, machine.id).agents.find(agent => agent.agentId === agentId);
         expect(readAgent('claude')).toMatchObject({ state: 'ready', stale: false });
