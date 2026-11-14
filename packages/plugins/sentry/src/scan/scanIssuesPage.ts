@@ -27,7 +27,7 @@ import { classifySentryFailure } from '../api/sentryFailure.js';
 import { readSentryNextPageRelation } from '../api/sentryLinkHeader.js';
 import { mapSentryIssueForInvokedInstance } from '../entries/sentryIssueMapping.js';
 import type { SentryIssueSnapshotV1 } from '../entries/sentryIssueTypes.js';
-import type { SentryInvokedInstanceV1 } from '../instances/sentryCollisionScope.js';
+import { resolveSentryInvokedScope, type SentryInvokedInstanceV1 } from '../instances/sentryCollisionScope.js';
 
 import {
   SENTRY_CONTINUATION_UNAVAILABLE_REASON,
@@ -144,6 +144,9 @@ export async function executeSentryScanPage(
     }));
   }
 
+  const scope = resolveSentryInvokedScope({ configured: input.configured, requestUrl: url });
+  if (!scope.ok) return failedResult(scope.failure);
+
   const outcome = await input.client.request({ url, operation: 'issuesList' });
   if (outcome.kind === 'failed') return failedResult(outcome.failure);
 
@@ -186,11 +189,10 @@ export async function executeSentryScanPage(
     const mapped = mapSentryIssueForInvokedInstance({
       raw,
       configured: input.configured,
-      requestUrl: url,
+      collisionScope: scope.collisionScope,
       organizationSlug: input.organizationSlug,
     });
     if (!mapped.ok) {
-      if (mapped.reason === 'scope-mismatch') return failedResult(mapped.failure);
       omittedItemCount += 1;
       continue;
     }

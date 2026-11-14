@@ -23,10 +23,7 @@ import {
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import type { SentryFailureV1 } from '../sentryContracts.js';
-
 import {
-  resolveSentryInvokedScope,
   isSentryNumericId,
   type SentryInvokedInstanceV1,
 } from '../instances/sentryCollisionScope.js';
@@ -43,15 +40,14 @@ import type {
 export type SentryIssueMappingInputV1 = Readonly<{
   raw: unknown;
   configured: SentryInvokedInstanceV1;
-  /** The route actually invoked, revalidated before an observation is emitted. */
-  requestUrl: string;
+  /** Resolved once by the request owner through resolveSentryInvokedScope. */
+  collisionScope: string;
   organizationSlug: string | null;
 }>;
 
 export type SentryIssueMappingResultV1 =
   | Readonly<{ ok: true; snapshot: SentryIssueSnapshotV1 }>
-  | Readonly<{ ok: false; reason: 'malformed-row' }>
-  | Readonly<{ ok: false; reason: 'scope-mismatch'; failure: SentryFailureV1 }>;
+  | Readonly<{ ok: false; reason: 'malformed-row' }>;
 
 const MALFORMED = Object.freeze({ ok: false as const, reason: 'malformed-row' as const });
 
@@ -228,18 +224,6 @@ export function admitSentryIssueResponseIdentity(
 export function mapSentryIssueForInvokedInstance(
   input: SentryIssueMappingInputV1,
 ): SentryIssueMappingResultV1 {
-  const scope = resolveSentryInvokedScope({
-    configured: input.configured,
-    requestUrl: input.requestUrl,
-  });
-  if (!scope.ok) {
-    return Object.freeze({
-      ok: false as const,
-      reason: 'scope-mismatch' as const,
-      failure: scope.failure,
-    });
-  }
-
   const raw = input.raw;
   if (!isRecord(raw)) return MALFORMED;
 
@@ -381,7 +365,7 @@ export function mapSentryIssueForInvokedInstance(
       kindId: 'error-issue' as const,
       localRef: Object.freeze({
         kindId: 'error-issue' as const,
-        collisionScope: scope.collisionScope,
+        collisionScope: input.collisionScope,
         entryId,
       }),
       title: title.value.length === 0 ? entryId : title.value,

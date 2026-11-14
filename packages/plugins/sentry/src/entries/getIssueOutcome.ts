@@ -123,16 +123,14 @@ export function resolveSentryGetOutcome(input: SentryGetOutcomeInputV1): SentryG
   const mapped = mapSentryIssueForInvokedInstance({
     raw: body,
     configured: input.configured,
-    requestUrl: input.requestUrl,
+    collisionScope: scope.collisionScope,
     organizationSlug: input.organizationSlug,
   });
   if (!mapped.ok) {
-    return unresolved(mapped.reason === 'scope-mismatch'
-      ? mapped.failure
-      : Object.freeze({
-        class: 'unsupportedContract' as const,
-        code: SENTRY_FAILURE_CODES.responseUnparseable,
-      }));
+    return unresolved(Object.freeze({
+      class: 'unsupportedContract' as const,
+      code: SENTRY_FAILURE_CODES.responseUnparseable,
+    }));
   }
 
   const assignedTo = readSentryAssignee(body.assignedTo);

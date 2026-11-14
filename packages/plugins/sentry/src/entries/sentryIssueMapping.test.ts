@@ -13,6 +13,7 @@ import {
   TriageSourceScanObservationV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
+import { resolveSentryInvokedScope } from '../instances/sentryCollisionScope.js';
 import { toTriagePresentObservation } from '../source/observation.js';
 import { mapSentryIssueForInvokedInstance } from './sentryIssueMapping.js';
 
@@ -22,13 +23,18 @@ const INVOKED = Object.freeze({
   deploymentOrigin: 'https://us.sentry.io',
   organizationId: '7701',
 });
-const REQUEST_URL = 'https://us.sentry.io/api/0/organizations/7701/issues/';
+const scope = resolveSentryInvokedScope({
+  configured: INVOKED,
+  requestUrl: 'https://us.sentry.io/api/0/organizations/7701/issues/',
+});
+if (!scope.ok) throw new Error('fixture scope must resolve');
+const collisionScope = scope.collisionScope;
 
 function map(raw: unknown, organizationSlug: string | null = 'example-org') {
   return mapSentryIssueForInvokedInstance({
     raw,
     configured: INVOKED,
-    requestUrl: REQUEST_URL,
+    collisionScope,
     organizationSlug,
   });
 }
@@ -397,23 +403,6 @@ describe('mapSentryIssueForInvokedInstance', () => {
       if (result.ok) continue;
       expect(result.reason).toBe('malformed-row');
     }
-  });
-
-  it('fails closed when the invoked route disagrees with the exact configured instance', () => {
-    const result = mapSentryIssueForInvokedInstance({
-      raw: issuesListPage1.body[0],
-      configured: INVOKED,
-      requestUrl: 'https://us.sentry.io/api/0/organizations/7702/issues/',
-      organizationSlug: 'example-org',
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    if (result.reason !== 'scope-mismatch') return;
-    expect(result.failure).toEqual({
-      class: 'unsupportedContract',
-      code: 'sentry-invoked-organization-mismatch',
-    });
   });
 
   it('sets scopeLabel from the project display name and falls back deterministically', () => {
