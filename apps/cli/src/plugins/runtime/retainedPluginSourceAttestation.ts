@@ -136,13 +136,18 @@ export async function attestFreshRunnerAgentBinding(params: Readonly<{
             if ('kind' in params.binding) {
                 return Object.freeze({ ...params.binding, pluginVersion: source.manifest.version });
             }
+            // A development leaf runs the checkout's current source, exactly as the
+            // daemon resolved it. The manifest's published factory locates the packed
+            // `.happier-plugin-build` layout, which only a build refreshes; it names
+            // the declared factory here and never the module this runner loads.
             const factory = readRetainedBundledAgentFactory(source.manifest, params.binding.localAgentId);
+            if (factory.locator.module !== params.binding.locator.module) {
+                throw new Error('Runner Agent development source factory differs from its admitted declaration');
+            }
             return createAgentSessionRunnerFactoryBinding({
                 ...params.binding,
                 pluginVersion: source.manifest.version,
                 locator: factory.locator,
-                normalizedModulePath: factory.normalizedModulePath,
-                loadMode: factory.loadMode,
             });
         }
         throw new Error('Runner Agent bundled source has no pinned snapshot identity');

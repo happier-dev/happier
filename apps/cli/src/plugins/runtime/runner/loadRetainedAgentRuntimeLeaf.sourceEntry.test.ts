@@ -60,6 +60,10 @@ describe('retained development source entries', () => {
                     normalizedModulePath: 'src/agent/runtime/factory.ts', loadMode: 'source-ts',
                 }),
             });
+            // The runner must load the checkout's current source, never the packed
+            // `.happier-plugin-build` publication left by an earlier build.
+            expect('kind' in binding ? null : { path: binding.normalizedModulePath, loadMode: binding.loadMode })
+                .toEqual({ path: 'src/agent/runtime/factory.ts', loadMode: 'source-ts' });
             leaf = await loadRetainedAgentRuntimeLeaf({
                 paths, binding,
                 developmentRunnerSnapshotIdentity: runnerSnapshotIdentity,
