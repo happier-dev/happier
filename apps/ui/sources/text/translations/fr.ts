@@ -18656,7 +18656,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} secrets scellés pour ${machine} dans cet environnement. Seul son daemon peut les ouvrir, et seulement au démarrage d’une version.`,
       sourceSavedSecret: "Secret enregistré",
       sourceSecretRevision: ({ revision }: { revision: number }) => `révision ${revision}`,
-      sourceReferenceDetail: "Renseigné à chaque déploiement",
       sourceFactDetail: "Renseigné par Happier à chaque déploiement",
       servingErrorTitle: "Impossible de charger ce qui est en service",
       historyErrorTitle: "Impossible de charger l’historique",

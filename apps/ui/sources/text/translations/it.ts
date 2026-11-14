@@ -18784,7 +18784,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} segreti sigillati per ${machine} in questo ambiente. Solo il suo daemon può aprirli, e solo all’avvio di una release.`,
       sourceSavedSecret: "Segreto salvato",
       sourceSecretRevision: ({ revision }: { revision: number }) => `revisione ${revision}`,
-      sourceReferenceDetail: "Compilato a ogni deploy",
       sourceFactDetail: "Compilato da Happier a ogni deploy",
       servingErrorTitle: "Impossibile caricare ciò che è in servizio",
       historyErrorTitle: "Impossibile caricare la cronologia",

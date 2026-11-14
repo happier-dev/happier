@@ -18607,7 +18607,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `Sekrety (${count}) zapieczętowane dla ${machine} w tym środowisku. Tylko jego daemon może je otworzyć, i tylko przy uruchamianiu wydania.`,
       sourceSavedSecret: "Zapisany sekret",
       sourceSecretRevision: ({ revision }: { revision: number }) => `wersja ${revision}`,
-      sourceReferenceDetail: "Uzupełniane przy każdym wdrożeniu",
       sourceFactDetail: "Uzupełniane przez Happier przy każdym wdrożeniu",
       servingErrorTitle: "Nie udało się wczytać tego, co działa",
       historyErrorTitle: "Nie udało się wczytać historii",

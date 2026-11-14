@@ -18696,7 +18696,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count}件のシークレットはこの環境の${machine}に封印されています。開けるのはそのデーモンだけで、リリース開始時のみです。`,
       sourceSavedSecret: "保存済みシークレット",
       sourceSecretRevision: ({ revision }: { revision: number }) => `リビジョン ${revision}`,
-      sourceReferenceDetail: "デプロイごとに入力",
       sourceFactDetail: "デプロイごとに Happier が入力",
       servingErrorTitle: "稼働中の内容を読み込めませんでした",
       historyErrorTitle: "履歴を読み込めませんでした",

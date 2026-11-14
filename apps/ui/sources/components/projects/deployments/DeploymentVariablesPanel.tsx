@@ -295,7 +295,8 @@ export const DeploymentVariablesPanel = React.memo(
                   key: 'valueFrom',
                   title: t('projects.deployments.columnValueFrom'),
                   render: source,
-                  minWidth: 180,
+                  // Where a value comes from is the row's longest fact (a secret's name and revision): it gets the room.
+                  minWidth: 240,
                   priority: 4,
                 },
                 ...(props.providerTargetLinkId ? [{
@@ -319,6 +320,8 @@ export const DeploymentVariablesPanel = React.memo(
           `${row.name}, ${phaseLabel(row.phase)}, ${sourceTitle(row.binding, props.environmentName, secretName)}`,
         testID: (row) => `project-deployments.environment.variable.${row.name}`,
         columnTitles: { title: t('projects.deployments.columnName') },
+        // Names are short identifiers: the title column keeps what a name needs, not a sentence's room.
+        titleMinWidth: 160,
       };
     }, [
       editable,
@@ -1356,7 +1359,7 @@ function RotatedWord(props: Readonly<{ testID?: string }>) {
   return <StatusWord testID={props.testID} variant="attention" label={t('projects.deployments.editors.secretRotated')} />;
 }
 
-/** "Saved secret · revision 2" over its provenance, or a value, or a reference: what the row's value comes from. */
+/** What the row's value comes from, on one line: a value, a saved secret and its revision, or a reference. */
 function ValueSource(
   props: Readonly<{
     binding: VariableBinding;
@@ -1367,31 +1370,17 @@ function ValueSource(
 ) {
   const { theme } = useUnistyles();
   const title = sourceTitle(props.binding, props.environmentName, props.secretName);
-  const detail = sourceDetail(props.binding);
-  const value =
-    props.binding.source.kind === 'value' &&
-    props.binding.source.value.length > 0;
+  const source = props.binding.source;
+  const value = source.kind === 'value' && source.value.length > 0;
+  // One line (lab envVars): the row's glyph already says the kind, so a secret adds only its revision.
+  const revision = source.kind === 'secret'
+    ? t('projects.deployments.sourceSecretRevision', { revision: source.resourceRevision }) : null;
   return (
-    <View style={styles.source}>
-      <Text
-        // Long names wrap to a second line rather than clipping in a narrow column.
-        numberOfLines={2}
-        style={[styles.sourceTitle, value && styles.mono]}
-      >
-        {title}
-      </Text>
-      {props.rotatedTestID ? (
-        <Text variant="meta" numberOfLines={1}><RotatedWord testID={props.rotatedTestID} /></Text>
-      ) : detail ? (
-        <Text
-          variant="meta"
-          numberOfLines={1}
-          style={{ color: theme.colors.text.secondary }}
-        >
-          {detail}
-        </Text>
-      ) : null}
-    </View>
+    <Text numberOfLines={1} style={[styles.sourceTitle, value && styles.mono]}>
+      {title}
+      {revision ? <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{` · ${revision}`}</Text> : null}
+      {props.rotatedTestID ? <>{' · '}<RotatedWord testID={props.rotatedTestID} /></> : null}
+    </Text>
   );
 }
 
@@ -1495,23 +1484,6 @@ function factTitle(fact: DeploymentVariableFactV1): string {
 }
 
 /** The provenance line under the source (lab's second line): which revision, or what kind of value. */
-function sourceDetail(binding: VariableBinding): string | null {
-  const source = binding.source;
-  switch (source.kind) {
-    case 'secret':
-      // The row's kind leads, so a secret named like a value still reads as a Saved secret.
-      return `${t('projects.deployments.sourceSavedSecret')} · ${t('projects.deployments.sourceSecretRevision', {
-        revision: source.resourceRevision,
-      })}`;
-    case 'value':
-      return t('projects.deployments.sourceValue');
-    case 'reference':
-      return t('projects.deployments.sourceReferenceDetail');
-    case 'deploymentFact':
-      return t('projects.deployments.sourceFactDetail');
-  }
-}
-
 const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phaseTrigger: {
@@ -1525,7 +1497,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 6,
   },
   phase: { ...Typography.variant('body'), color: theme.colors.text.secondary },
-  source: { minWidth: 0, flexShrink: 1, gap: theme.space.s2 },
   sourceTitle: {
     ...Typography.variant('body'),
     color: theme.colors.text.primary,

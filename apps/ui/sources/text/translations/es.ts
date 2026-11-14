@@ -18782,7 +18782,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} secretos sellados para ${machine} en este entorno. Solo su daemon puede abrirlos, y solo al iniciar una versión.`,
       sourceSavedSecret: "Secreto guardado",
       sourceSecretRevision: ({ revision }: { revision: number }) => `revisión ${revision}`,
-      sourceReferenceDetail: "Se completa en cada despliegue",
       sourceFactDetail: "Happier lo completa en cada despliegue",
       servingErrorTitle: "No se pudo cargar lo que está en servicio",
       historyErrorTitle: "No se pudo cargar el historial",

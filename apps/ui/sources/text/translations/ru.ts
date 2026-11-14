@@ -18735,7 +18735,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `Секретов: ${count}, запечатаны для ${machine} в этом окружении. Открыть их может только его демон и только при запуске релиза.`,
       sourceSavedSecret: "Сохранённый секрет",
       sourceSecretRevision: ({ revision }: { revision: number }) => `ревизия ${revision}`,
-      sourceReferenceDetail: "Подставляется при каждом деплое",
       sourceFactDetail: "Happier подставляет при каждом деплое",
       servingErrorTitle: "Не удалось загрузить то, что сейчас работает",
       historyErrorTitle: "Не удалось загрузить историю",

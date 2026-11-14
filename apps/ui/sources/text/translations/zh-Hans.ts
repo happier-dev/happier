@@ -18401,7 +18401,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} 个密钥已封存给此环境的 ${machine}。只有它的守护进程能打开，且仅在启动发布时。`,
       sourceSavedSecret: "已保存的密钥",
       sourceSecretRevision: ({ revision }: { revision: number }) => `修订 ${revision}`,
-      sourceReferenceDetail: "每次部署时填入",
       sourceFactDetail: "每次部署时由 Happier 填入",
       servingErrorTitle: "无法加载当前正在服务的内容",
       historyErrorTitle: "无法加载历史记录",

@@ -22222,7 +22222,6 @@ const enProjects = {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} ${plural({ count, singular: 'secret', plural: 'secrets' })} sealed to ${machine} for this environment. Only its daemon can open them, and only while starting a release.`,
       sourceSavedSecret: "Saved secret",
       sourceSecretRevision: ({ revision }: { revision: number }) => `revision ${revision}`,
-      sourceReferenceDetail: "Filled in at each deploy",
       sourceFactDetail: "Filled in by Happier at each deploy",
       servingErrorTitle: "Couldn’t load what’s serving",
       historyErrorTitle: "Couldn’t load the history",

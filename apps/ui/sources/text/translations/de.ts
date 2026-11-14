@@ -18890,7 +18890,6 @@ settingsSession: {
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} Geheimnisse für ${machine} in dieser Umgebung versiegelt. Nur ihr Daemon kann sie öffnen, und nur beim Start eines Releases.`,
       sourceSavedSecret: "Gespeichertes Geheimnis",
       sourceSecretRevision: ({ revision }: { revision: number }) => `Revision ${revision}`,
-      sourceReferenceDetail: "Bei jedem Deployment eingesetzt",
       sourceFactDetail: "Von Happier bei jedem Deployment eingesetzt",
       servingErrorTitle: "Was gerade läuft, konnte nicht geladen werden",
       historyErrorTitle: "Verlauf konnte nicht geladen werden",
