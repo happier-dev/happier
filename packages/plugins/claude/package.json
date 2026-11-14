@@ -109,6 +109,7 @@
     "./happier-plugin-ui/claude-agent-settings-native": "./src/ui/agentSettings.tsx"
   },
   "files": [
+    "src",
     "dist",
     ".happier-plugin", ".happier-plugin-build",
     "package.json",

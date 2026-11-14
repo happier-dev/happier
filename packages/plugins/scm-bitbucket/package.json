@@ -24,6 +24,7 @@
     "./happier-plugin-ui/bitbucket-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx"
   },
   "files": [
+    "src",
     "assets",
     "dist",
     ".happier-plugin", ".happier-plugin-build",

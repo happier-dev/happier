@@ -11,7 +11,7 @@
     "./happier-plugin-ui/docker-sandboxes-machine-native": "./src/ui/renderSandboxesPage.tsx",
     "./package.json": "./package.json"
   },
-  "files": ["dist", "assets", ".happier-plugin", ".happier-plugin-build", "package.json"],
+  "files": ["src", "dist", "assets", ".happier-plugin", ".happier-plugin-build", "package.json"],
   "scripts": {
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run",

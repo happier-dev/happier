@@ -27,6 +27,7 @@
     "./happier-plugin-ui/channel-state-migrations": "./src/collectionMigrationArtifact.ts"
   },
   "files": [
+    "src",
     "assets",
     "dist",
     ".happier-plugin", ".happier-plugin-build",

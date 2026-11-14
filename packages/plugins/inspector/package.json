@@ -20,6 +20,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "src",
     "dist",
     "assets",
     ".happier-plugin", ".happier-plugin-build",

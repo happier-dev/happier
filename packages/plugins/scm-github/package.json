@@ -29,6 +29,7 @@
     }
   },
   "files": [
+    "src",
     "dist",
     "assets",
     ".happier-plugin", ".happier-plugin-build",
