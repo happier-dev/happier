@@ -10,6 +10,7 @@ import transformClasses from '@babel/plugin-transform-classes';
 import { build, version as esbuildVersion, type Metafile, type Plugin } from 'esbuild';
 
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui/hostRuntimeExternals';
+import { isPluginUiHostRuntimeExternalSpecifierV1 } from '@happier-dev/protocol/plugins/ui/hostModuleAdmission';
 
 export class PluginUiUniversalCompilerError extends Error {
     readonly code: string;
@@ -139,7 +140,9 @@ function compilerPolicyPlugin(artifactId: string, resolveSourceImport?: (specifi
                         `Executable Plugin UI artifact "${artifactId}" imports unsupported Node built-in "${args.path}"`,
                     );
                 }
-                if (hostExternalSpecifiers.has(args.path)) {
+                // Host-provided Protocol subpaths come from the host's own instance: an
+                // artifact never carries a private copy of the Protocol schema graph.
+                if (isPluginUiHostRuntimeExternalSpecifierV1(args.path)) {
                     return { path: args.path, external: true };
                 }
                 if (unsupportedAssetExtension.test(args.path)) {
@@ -326,7 +329,7 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
                 .map((importRecord) => importRecord.path)
         )),
     )].sort();
-    const unexpectedExternal = externalSpecifiers.find((specifier) => !hostExternalSpecifiers.has(specifier));
+    const unexpectedExternal = externalSpecifiers.find((specifier) => !isPluginUiHostRuntimeExternalSpecifierV1(specifier));
     if (unexpectedExternal) {
         throw new PluginUiUniversalCompilerError(
             'unexpected_external',

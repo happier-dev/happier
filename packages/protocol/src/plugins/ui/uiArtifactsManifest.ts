@@ -19,6 +19,13 @@ const PluginUiExecutableExportsV2Schema = lazyZodSchema(() => z.array(z.string()
     }
   })));
 
+const PluginUiExecutableHostModulesV2Schema = lazyZodSchema(() => z.array(z.string().check(z.trim(), z.minLength(1))).check(z.superRefine((modules, ctx) => {
+    const sorted = [...new Set(modules)].sort();
+    if (modules.length !== sorted.length || modules.some((name, index) => name !== sorted[index])) {
+      ctx.addIssue({ code: "custom", message: 'Executable host modules must be unique and sorted' });
+    }
+  })));
+
 export const PluginUiExecutableArtifactV2Schema = lazyZodSchema(() => z.strictObject({
   artifactId: PluginUiArtifactIdV2Schema,
   tier: z.literal('reactNative'),
@@ -26,7 +33,11 @@ export const PluginUiExecutableArtifactV2Schema = lazyZodSchema(() => z.strictOb
   files: z.tuple([PluginUiArtifactFileV1Schema]),
   digest: PluginUiArtifactDigestV1Schema,
   builtWith: z.strictObject({ bundler: z.literal('esbuild'), version: z.string().check(z.trim(), z.minLength(1)) }),
-  executable: z.strictObject({ exports: PluginUiExecutableExportsV2Schema }),
+  executable: z.strictObject({
+    exports: PluginUiExecutableExportsV2Schema,
+    /** Modules the artifact left external for its host (sorted). Absent on artifacts built before hosts provided Protocol subpaths. */
+    hostModules: z.optional(PluginUiExecutableHostModulesV2Schema),
+  }),
   hostUiApiRange: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.superRefine((value, ctx) => {
   const expectedEntry = `react-native/${value.artifactId}/entry.cjs.bundle`;

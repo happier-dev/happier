@@ -241,7 +241,8 @@ export async function buildUniversalPluginUiArtifacts(
             })] as const,
             digest: computePluginUiArtifactFileSetSha256DigestV1([file]),
             builtWith: Object.freeze({ bundler: 'esbuild' as const, version: artifact.esbuildVersion }),
-            executable: Object.freeze({ exports: artifact.exports }),
+            // Hosts admit the artifact only when they provide every module it left external.
+            executable: Object.freeze({ exports: artifact.exports, hostModules: artifact.externalSpecifiers }),
             hostUiApiRange: `^${PLUGIN_UI_HOST_API_VERSION_V1}`,
         });
     });

@@ -166,12 +166,13 @@ describe('evaluatePluginUiCommonJsBundle', () => {
         for (const specifier of [
             '@happier-dev/plugin-ui/presentation',
             '@happier-dev/plugin-ui/presentation/typeScale',
+            '@happier-dev/protocol/not/provided',
         ]) {
             expect(() => evaluatePluginUiCommonJsBundle({
                 bytes: encoder.encode(`require(${JSON.stringify(specifier)}); exports.read = () => true;`),
                 identity,
                 requestedExport: 'read',
-            })).toThrowError(expect.objectContaining({ code: 'unknown_host_module' }));
+            })).toThrowError(expect.objectContaining({ code: 'unknown_host_module', specifier }));
         }
     });
 

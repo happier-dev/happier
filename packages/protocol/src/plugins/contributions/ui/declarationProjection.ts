@@ -29,7 +29,7 @@ import type { PluginPortableReleaseManifestV1 } from '../../availability/v1.js';
 import { createPluginContributionIdentity, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '../../contributionIdentity.js';
 import type { PluginUiArtifactsManifestEntryV2 } from '../../ui/uiArtifactsManifest.js';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '../../ui/hostApiDefinition.js';
-import { isPluginUiHostApiVersionCompatibleV1 } from '../../ui/hostApi.js';
+import { isPluginUiExecutableArtifactHostCompatibleV1, isPluginUiHostApiVersionCompatibleV1 } from '../../ui/hostApi.js';
 import { deriveGeneratedHostedWebAssetPolicyV1, type GeneratedHostedWebAssetPolicyV1 } from '../../ui/hostedWebAssetPolicy.js';
 
 type DescriptiveContribution<T> = Readonly<{
@@ -1006,7 +1006,7 @@ export function projectPluginPortableUiDeclarationsV1(
             && artifact.artifactId === definition.artifact) ?? [];
         if (candidates.length !== 1) return [];
         const artifact = candidates[0]!;
-        const compatible = isPluginUiHostApiVersionCompatibleV1(artifact.hostUiApiRange);
+        const compatible = artifact.tier === 'reactNative' && isPluginUiExecutableArtifactHostCompatibleV1(artifact);
         return [projectPluginReactNativeArtifactEntryV1({
             pluginId, pluginVersion: manifest.version, contributionId: definition.id,
             artifactId: artifact.artifactId, artifact, generatedOwnerKind: 'renderer',

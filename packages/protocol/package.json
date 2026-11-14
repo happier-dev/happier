@@ -645,7 +645,7 @@
   ],
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node scripts/generate-exports.mjs --check && node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "node scripts/generate-embedded-feature-policies.mjs && node scripts/generate-exports.mjs --check && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "build:finite": "node scripts/generate-exports.mjs --check && node scripts/generate-embedded-feature-policies.mjs --check && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "generate:plugin-action-reference": "node ../../apps/docs/scripts/generateReference.mjs --only=host-actions.mdx",
     "check:plugin-action-reference": "node ../../apps/docs/scripts/generateReference.mjs --only=host-actions.mdx --check",
@@ -679,6 +679,7 @@
   },
   "devDependencies": {
     "@types/tr46": "5.0.1",
+    "esbuild": "0.27.2",
     "typescript": "^5.9.2"
   }
 }

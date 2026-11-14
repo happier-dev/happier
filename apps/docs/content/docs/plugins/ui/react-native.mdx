@@ -410,6 +410,16 @@ typed unavailable or cancellation result. Negotiation reports which methods
 the mounted host supports; an older host that cannot admit the requested API
 returns `incompatible_api_version`.
 
+In 0.3 development source, the host also provides `@happier-dev/protocol`
+subpaths: every public subpath that React Native can load. The managed build
+leaves those imports out of your artifact and uses the host's instance instead
+of bundling a private copy. It records them as `executable.hostModules` in
+`ui-artifacts.json`. A host that lacks a recorded module refuses the artifact as
+incompatible (`generated_ui_host_api_mismatch`) and never resolves another copy;
+if evaluation reaches the import, it fails with `unknown_host_module` and names
+the specifier. A Protocol module with Node-only imports is still bundled.
+Rebuild with the SDK that matches the oldest host you target.
+
 `@happier-dev/plugin-sdk/ui/client` is the hosted-web bootstrap client; do not
 use it from a React Native renderer. Use the curated `plugin-ui` controls for
 semantic UI. `react-native` is a host-provided framework singleton, not a

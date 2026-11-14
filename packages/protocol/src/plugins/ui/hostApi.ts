@@ -1,5 +1,6 @@
 import semver from 'semver';
 import { PLUGIN_UI_HOST_API_VERSIONS_V1 } from './hostApiDefinition.js';
+import { readMissingPluginUiHostModulesV1 } from './hostModuleAdmission.js';
 
 export * from './hostApiDefinition.js';
 
@@ -37,4 +38,18 @@ export function isPluginUiHostApiVersionCompatibleV1(range: unknown): boolean {
 export function resolvePluginUiHostApiVersionV1(range: unknown): (typeof PLUGIN_UI_HOST_API_VERSIONS_V1)[number] | null {
   return PLUGIN_UI_HOST_API_VERSIONS_V1.find(version =>
     isPluginUiHostApiVersionCompatibleWithVersionV1(version, range)) ?? null;
+}
+
+/**
+ * Current-host admission of an executable artifact: its Host API range, and
+ * every module it left external for the host (`executable.hostModules`). An
+ * artifact built against newer host-provided Protocol subpaths is refused here
+ * instead of failing inside evaluation.
+ */
+export function isPluginUiExecutableArtifactHostCompatibleV1(artifact: Readonly<{
+  hostUiApiRange: string;
+  executable: Readonly<{ hostModules?: readonly string[] }>;
+}>): boolean {
+  return isPluginUiHostApiVersionCompatibleV1(artifact.hostUiApiRange)
+    && readMissingPluginUiHostModulesV1(artifact.executable.hostModules).length === 0;
 }

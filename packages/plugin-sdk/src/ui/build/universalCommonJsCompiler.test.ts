@@ -375,6 +375,30 @@ describe('compileUniversalPluginUiCommonJs', () => {
         expect(module.exports.renderSurface()).toBe('1.2K');
     });
 
+    it('leaves host-provided Protocol subpaths to the host instead of bundling a private Protocol copy', async () => {
+        const specifier = '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+        const { root, entry } = await fixture([
+            `import { PluginUiArtifactsManifestV2Schema } from '${specifier}';`,
+            'export const renderSurface = () => PluginUiArtifactsManifestV2Schema.safeParse({}).success;',
+        ].join('\n'));
+        const packages = await readWorkspacePackages(resolve(import.meta.dirname, '../../../../..'));
+        const result = await compileUniversalPluginUiCommonJs({
+            projectRoot: root, entryPath: entry, artifactId: 'protocol-host',
+            requestedExports: ['renderSurface'], exportConditions: ['happier-source'],
+            resolveSourceImport: (requested) => packages.has(packageNameOfSpecifier(requested))
+                ? resolveWorkspaceSource(packages, requested, { conditions: ['react-native'] }) : undefined,
+        });
+        const protocolBytes = Object.values(result.metafile.outputs).flatMap(output => Object.entries(output.inputs))
+            .filter(([path]) => resolve(root, path).startsWith(resolve(import.meta.dirname, '../../../../protocol/src')))
+            .reduce((total, [, input]) => total + input.bytesInOutput, 0);
+        expect(protocolBytes).toBe(0);
+        expect(result.externalSpecifiers).toEqual([specifier]);
+        const hostSchema = { safeParse: () => ({ success: 'host-instance' }) };
+        const exports = evaluateWithHermesBindingSemantics(result.bytes,
+            { [specifier]: { PluginUiArtifactsManifestV2Schema: hostSchema } });
+        expect(exports.renderSurface!()).toBe('host-instance');
+    });
+
     it('reports a bundled host dependency bypass without refusing a valid artifact', async () => {
         const { root, entry } = await fixture("import { marker } from './node_modules/react/index.js'; export const renderSurface = () => marker;");
         await installFixturePackage(root, 'react', 'duplicated-react-instance');

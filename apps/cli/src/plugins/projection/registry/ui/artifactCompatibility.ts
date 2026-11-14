@@ -1,4 +1,5 @@
 import { isPluginUiHostApiVersionCompatibleV1, isPluginUiHostApiVersionCompatibleWithVersionV1 } from '@happier-dev/protocol/plugins/ui/hostApi';
+import { readMissingPluginUiHostModulesV1 } from '@happier-dev/protocol/plugins/ui/hostModuleAdmission';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
 import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
 
@@ -18,7 +19,13 @@ export function generatedUiArtifactCompatibilityFailure(params: Readonly<{
     )) {
         return 'generated_ui_host_api_mismatch';
     }
-    return null;
+    return generatedUiArtifactHostModuleFailure(params.entry);
+}
+
+/** An executable artifact may rely only on modules this host provides. */
+function generatedUiArtifactHostModuleFailure(entry: PluginUiArtifactsManifestEntryV2): string | null {
+    return entry.tier === 'reactNative' && readMissingPluginUiHostModulesV1(entry.executable.hostModules).length > 0
+        ? 'generated_ui_host_api_mismatch' : null;
 }
 
 /** Pre-acquisition and load-time admission use the same Host UI API range. */
@@ -26,5 +33,5 @@ export function generatedUiArtifactDefaultHostCompatibilityFailure(
     entry: PluginUiArtifactsManifestEntryV2,
 ): string | null {
     return isPluginUiHostApiVersionCompatibleV1(entry.hostUiApiRange)
-        ? null : 'generated_ui_host_api_mismatch';
+        ? generatedUiArtifactHostModuleFailure(entry) : 'generated_ui_host_api_mismatch';
 }

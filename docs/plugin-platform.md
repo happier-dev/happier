@@ -3048,7 +3048,41 @@ so each artifact keeps its own plugin code while sharing host schema identities.
 The map remains exact, with no prefix fallback or second registry. Unlisted
 dependencies and hosted-web artifacts retain their existing bundling behavior.
 
-The CLI supplies the portable SDK/Zod subset through its existing plugin module
+Hosts also provide every public `@happier-dev/protocol/<subpath>` whose import
+graph React Native can load. Before the change each Triage or voice artifact
+carried a private 6.5 MB copy of Protocol and cost 600–800 MB of native memory to
+evaluate on Android. The Protocol export generator
+(`packages/protocol/scripts/generate-exports.mjs` with `hostProvidedModules.mjs`)
+derives the set from the real import graph. It uses React Native resolution
+(`react-native`/`browser` fields and `browser` replacement maps), and a module
+whose graph reaches a Node built-in is not provided. The generator writes two
+files that nobody edits:
+`src/plugins/ui/hostProvidedProtocolSubpaths.generated.ts` (the specifier list)
+and `hostProvidedProtocolModules.generated.ts` (static namespace imports). The
+compiler externalizes exactly `isPluginUiHostRuntimeExternalSpecifierV1`
+(`hostModuleAdmission.ts`). The app map and the CLI portable adapter spread the
+same generated module table, so desktop, web, iOS, Android and the CLI cannot
+drift. The table is static: the hosts already evaluate the Protocol root, which
+reaches about 2,800 of the roughly 3,000 modules.
+
+A new RN-loadable module joins the set when authoring preparation regenerates it.
+A Node-only one stays bundled into artifacts that import it. Verification-only
+callers (CI, target execution, publication) accept a set that lacks newer
+modules, because the compiler and the hosts read the same files. A listed module
+that later reaches a Node-only import fails the generator, which names the
+import chain, because existing artifacts rely on the host providing it.
+
+Each executable artifact records what it left external in
+`ui-artifacts.json` as `executable.hostModules`. Current-host admission
+(`isPluginUiExecutableArtifactHostCompatibleV1` in the app and Protocol
+projections, and `generatedUiArtifactCompatibilityFailure` in the CLI) blocks an
+artifact with `generated_ui_host_api_mismatch` when this host does not provide a
+recorded module. Evaluation fails `unknown_host_module` and names the specifier.
+The CLI refuses an unprovided Protocol specifier instead of resolving another
+copy beside the artifact. Artifacts built before the field existed omit it and
+externalize only the fixed list.
+
+The CLI supplies the portable SDK/Zod/Protocol subset through its existing plugin module
 loader's demand-loaded CommonJS adapter. Its static host bindings remain visible
 to native payload bundling, so an acquired artifact does not need adjacent SDK
 packages. Other dependencies keep the native artifact-relative resolver and

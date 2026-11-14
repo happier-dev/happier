@@ -1,8 +1,8 @@
 /**
  * Canonical specifier list for modules supplied by the app while evaluating a
- * universal plugin UI CommonJS artifact. The SDK
- * compiler externalizes exactly this list and the app evaluator resolves each
- * `require()` from its same-realm host module map.
+ * universal plugin UI CommonJS artifact. The SDK compiler externalizes this
+ * list plus the generated Protocol subpaths (`hostModuleAdmission.ts`),
+ * and the app evaluator resolves each `require()` from its same-realm host module map.
  */
 
 export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
@@ -41,6 +41,7 @@ export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
     '@happier-dev/plugin-sdk/storage',
     '@happier-dev/plugin-sdk/ui',
     '@happier-dev/plugin-sdk/webhooks',
+    '@happier-dev/protocol',
     'zod',
     'zod/mini',
     'zod/v4/core',

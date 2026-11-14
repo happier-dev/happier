@@ -17,25 +17,25 @@ export class PluginUiCommonJsEvaluationError extends Error {
     readonly code: PluginUiCommonJsEvaluationErrorCode;
     readonly identity: PluginUiCommonJsArtifactIdentity;
     readonly requestedExport: string;
+    /** The module an `unknown_host_module` artifact required that this host does not provide. */
+    readonly specifier?: string;
 
     constructor(input: Readonly<{
         code: PluginUiCommonJsEvaluationErrorCode;
         identity: PluginUiCommonJsArtifactIdentity;
         requestedExport: string;
+        specifier?: string;
     }>) {
-        super(`${input.code}:${input.identity.pluginId}:${input.identity.artifactId}`);
+        super(`${input.code}:${input.identity.pluginId}:${input.identity.artifactId}${input.specifier ? `:${input.specifier}` : ''}`);
         this.name = 'PluginUiCommonJsEvaluationError';
         this.code = input.code;
         this.identity = input.identity;
         this.requestedExport = input.requestedExport;
+        if (input.specifier) this.specifier = input.specifier;
     }
 }
 
-function fail(input: Readonly<{
-    code: PluginUiCommonJsEvaluationErrorCode;
-    identity: PluginUiCommonJsArtifactIdentity;
-    requestedExport: string;
-}>): never {
+function fail(input: ConstructorParameters<typeof PluginUiCommonJsEvaluationError>[0]): never {
     throw new PluginUiCommonJsEvaluationError(input);
 }
 
@@ -79,6 +79,7 @@ export function instantiatePluginUiCommonJsBundle(input: PluginUiCommonJsEvaluat
                 code: 'unknown_host_module',
                 identity: input.identity,
                 requestedExport: input.requestedExport,
+                specifier,
             });
         }
         return (hostModules as Readonly<Record<string, unknown>>)[specifier];

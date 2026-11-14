@@ -88,11 +88,11 @@ describe('buildUniversalPluginUiArtifacts hosted static staging', () => {
         expect(result.manifest.entries).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 artifactId: 'collection-migrations',
-                executable: { exports: ['collectionMigrations', 'default'] },
+                executable: { exports: ['collectionMigrations', 'default'], hostModules: [] },
             }),
             expect.objectContaining({
                 artifactId: 'panel',
-                executable: { exports: ['renderSurface'] },
+                executable: expect.objectContaining({ exports: ['renderSurface'] }),
             }),
         ]));
         const artifact = result.manifest.entries.find((entry) => entry.artifactId === 'collection-migrations')!;

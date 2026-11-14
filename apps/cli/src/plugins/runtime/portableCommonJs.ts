@@ -26,12 +26,14 @@ import * as Zod from 'zod';
 import * as ZodMini from 'zod/mini';
 import * as ZodCore from 'zod/v4/core';
 import * as EnglishLocale from 'zod/v4/locales/en.js';
+import * as HappierProtocol from '@happier-dev/protocol';
+import { PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES } from '@happier-dev/protocol/plugins/ui/hostProvidedProtocolModules.generated';
 import type { PluginUiHostRuntimeExternalSpecifierV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginModuleNamespace } from './loadPluginModule';
 
 type PortableHostSpecifier = Extract<PluginUiHostRuntimeExternalSpecifierV1,
-    '@happier-dev/plugin-sdk' | `@happier-dev/plugin-sdk/${string}` | 'zod' | `zod/${string}`>;
+    '@happier-dev/plugin-sdk' | `@happier-dev/plugin-sdk/${string}` | '@happier-dev/protocol' | 'zod' | `zod/${string}`>;
 
 // Static namespaces keep these bindings visible to native payload bundlers.
 // This module is imported only when a portable executable is actually loaded.
@@ -59,21 +61,35 @@ const hostNamespaces = {
     'zod/mini': ZodMini,
     'zod/v4/core': ZodCore,
     'zod/v4/locales/en.js': EnglishLocale,
+    '@happier-dev/protocol': HappierProtocol,
 } satisfies Record<PortableHostSpecifier, unknown>;
 
 // The compiler emits ESM-to-CommonJS interop wrappers. Mark namespace values
 // as ESM so their existing default exports are not wrapped a second time.
-const hostModules: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(hostNamespaces)
-    .map(([specifier, namespace]) => [specifier, { __esModule: true, ...namespace }]));
+// Protocol subpaths are the same generated set every Plugin UI host provides;
+// the CLI already holds these module instances for its own Protocol imports.
+const hostModules: Readonly<Record<string, unknown>> = Object.fromEntries(
+    Object.entries({ ...PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES, ...hostNamespaces })
+        .map(([specifier, namespace]) => [specifier, { __esModule: true, ...(namespace as object) }]));
+
+function isProtocolSpecifier(specifier: string): boolean {
+    return specifier === '@happier-dev/protocol' || specifier.startsWith('@happier-dev/protocol/');
+}
 
 export async function loadPortableCommonJsModule(entryPath: string): Promise<PluginModuleNamespace> {
     const nativeRequire = createRequire(entryPath);
     const pluginModule = new Module(entryPath);
     pluginModule.filename = entryPath;
     pluginModule.paths = nativeRequire.resolve.paths('@happier-dev/plugin-sdk') ?? [];
-    const pluginRequire = Object.assign((specifier: string): unknown => Object.hasOwn(hostModules, specifier)
-        ? hostModules[specifier]
-        : nativeRequire(specifier), nativeRequire);
+    const pluginRequire = Object.assign((specifier: string): unknown => {
+        if (Object.hasOwn(hostModules, specifier)) return hostModules[specifier];
+        // Never fall through to another Protocol copy beside the artifact.
+        if (isProtocolSpecifier(specifier)) {
+            throw Object.assign(new Error(`Plugin artifact requires host module "${specifier}", which this host does not provide`),
+                { code: 'unknown_host_module', specifier });
+        }
+        return nativeRequire(specifier);
+    }, nativeRequire);
     pluginModule.require = pluginRequire;
     nativeRequire.cache[entryPath] = pluginModule;
     try {

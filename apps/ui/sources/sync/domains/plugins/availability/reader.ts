@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol/plugins/availability';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { derivePluginAccountExecutionArtifactSlots, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiHostApiVersionCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
+import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiExecutableArtifactHostCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
     type PluginUiArtifactsManifestEntryV2, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -2042,7 +2042,7 @@ function deriveAccountUiProjection(input: Readonly<{
             const matching = graphs.filter(graph => graph.tier === 'reactNative' && graph.artifactId === executable.artifactId
                 && graph.executable.exports.includes(executable.exportName));
             const graph = matching.length === 1 ? matching[0] : undefined;
-            const compatible = graph !== undefined && isPluginUiHostApiVersionCompatibleV1(graph.hostUiApiRange);
+            const compatible = graph !== undefined && graph.tier === 'reactNative' && isPluginUiExecutableArtifactHostCompatibleV1(graph);
             if (graph) {
                 const entry = projectPluginReactNativeArtifactEntryV1({ pluginId: manifest.id, pluginVersion: manifest.version,
                     contributionId, artifactId: graph.artifactId, artifact: graph, generatedOwnerKind: 'clientContribution',

@@ -144,6 +144,69 @@ test('Vite and Node resolve the same public and private subpaths through the gen
   }
 });
 
+// Plugin UI hosts provide every public subpath React Native can load; the set is
+// derived from the import graph and a provided subpath can never silently drop out.
+test('derives the Plugin UI host-provided subpaths from the React Native import graph', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'protocol-host-provided-'));
+  const packageRoot = join(root, 'packages/protocol');
+  const write = async (path, text) => {
+    await mkdir(dirname(join(packageRoot, path)), { recursive: true });
+    await writeFile(join(packageRoot, path), text);
+  };
+  const generated = async () => (await readFile(join(packageRoot,
+    'src/plugins/ui/hostProvidedProtocolSubpaths.generated.ts'), 'utf8')).match(/'@happier-dev\/protocol\/[^']+'/g)
+    .map(specifier => specifier.slice(1, -1));
+  try {
+    await write('package.json', JSON.stringify({ name: '@happier-dev/protocol', type: 'module', exports: {} }));
+    await write('tsconfig.json', JSON.stringify({ include: ['src/**/*.ts'], exclude: ['src/**/*.test.ts'] }));
+    await write('export-aliases.json', JSON.stringify({ './alias-name': './src/safe.ts' }));
+    await write('src/safe.ts', 'export const safe = 1;\n');
+    await write('src/safe.test.ts', "import { readFileSync } from 'node:fs'; export const n = readFileSync;\n");
+    await write('src/nodeBuiltin.ts', "import { readFileSync } from 'node:fs'; export const n = readFileSync;\n");
+    await write('src/transitive.ts', "import { n } from './nodeBuiltin.js'; export const t = n;\n");
+    await write('src/browserMapped.ts', "import { box } from 'nacl-like'; export const b = box;\n");
+    await write('src/nodeOnlyPackage.ts', "import { x } from 'node-only'; export const y = x;\n");
+    // A package may replace a guarded builtin with `false` in its browser map, as Metro honours.
+    await write('node_modules/nacl-like/package.json', JSON.stringify({ name: 'nacl-like', main: 'index.js', browser: { crypto: false } }));
+    await write('node_modules/nacl-like/index.js', "var c; try { c = require('crypto'); } catch (e) {} exports.box = 1;\n");
+    await write('node_modules/node-only/package.json', JSON.stringify({ name: 'node-only', main: 'index.js' }));
+    await write('node_modules/node-only/index.js', "exports.x = require('os').cpus;\n");
+
+    await generateProtocolExports({ packageRoot });
+    expect(await generated()).toEqual([
+      '@happier-dev/protocol/alias-name', '@happier-dev/protocol/browserMapped', '@happier-dev/protocol/safe',
+    ]);
+    const modules = await readFile(join(packageRoot, 'src/plugins/ui/hostProvidedProtocolModules.generated.ts'), 'utf8');
+    expect(modules).toContain("import * as m1 from '../../safe.js';");
+    expect(modules).toContain("'@happier-dev/protocol/alias-name': m1,");
+    await generateProtocolExports({ packageRoot, check: true });
+
+    // New modules join (or not) automatically; neither case is an error. Until authoring
+    // regenerates, verification accepts the older set: compiler and hosts read the same files.
+    await write('src/laterSafe.ts', 'export const later = 2;\n');
+    await write('src/laterNodeOnly.ts', "import { cpus } from 'node:os'; export const c = cpus;\n");
+    await generateProtocolExports({ packageRoot, check: true });
+    expect(await generated()).not.toContain('@happier-dev/protocol/laterSafe');
+    await generateProtocolExports({ packageRoot });
+    expect(await generated()).toContain('@happier-dev/protocol/laterSafe');
+    expect(await generated()).not.toContain('@happier-dev/protocol/laterNodeOnly');
+
+    // A listed module that disappears makes the generated host import graph stale.
+    await rm(join(packageRoot, 'src/laterSafe.ts'));
+    await expect(generateProtocolExports({ packageRoot, check: true })).rejects.toThrow('Protocol exports are stale');
+    await generateProtocolExports({ packageRoot });
+
+    // A provided module that becomes Node-only fails loudly, naming the import chain.
+    await write('src/safe.ts', "import { t } from './transitive.js'; export const safe = t;\n");
+    const regression = 'src/safe.ts -> src/transitive.ts -> src/nodeBuiltin.ts -> node:fs';
+    await expect(generateProtocolExports({ packageRoot, check: true })).rejects.toThrow(regression);
+    await expect(generateProtocolExports({ packageRoot })).rejects.toThrow(regression);
+    expect(await generated()).toContain('@happier-dev/protocol/safe');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('published exports match the current compiled public source inventory', async () => {
   await generateProtocolExports({ check: true });
 });

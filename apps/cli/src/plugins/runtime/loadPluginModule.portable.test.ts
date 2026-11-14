@@ -13,6 +13,7 @@ import * as ZodCore from 'zod/v4/core';
 import EnglishLocale from 'zod/v4/locales/en.js';
 import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 
 import { compileUniversalPluginUiCommonJs } from '../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { loadPluginModule } from './loadPluginModule';
@@ -36,7 +37,8 @@ describe('portable CommonJS plugin host modules', () => {
                 "import english from 'zod/v4/locales/en.js';",
                 "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';",
                 "import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';",
-                'export const read = () => ({ mini: z.string, classic: classic.string, defaultClassic: defaultZod.string, core: core.$ZodError, english, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, parsed: z.string().safeParse(42) });',
+                "import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';",
+                'export const read = () => ({ mini: z.string, classic: classic.string, defaultClassic: defaultZod.string, core: core.$ZodError, english, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, manifest: PluginUiArtifactsManifestV2Schema, parsed: z.string().safeParse(42) });',
             ].join('\n'));
             const compiled = await compileUniversalPluginUiCommonJs({
                 projectRoot: root, entryPath, artifactId: 'account-runtime', requestedExports: ['read'],
@@ -50,7 +52,21 @@ describe('portable CommonJS plugin host modules', () => {
             if (typeof first.read !== 'function') throw new Error('Missing authored read export');
             expect(first.read()).toEqual({ mini: z.string, classic: Zod.string, defaultClassic: Zod.string, core: ZodCore.$ZodError,
                 english: EnglishLocale, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema,
-                parsed: expect.objectContaining({ success: false }) });
+                manifest: PluginUiArtifactsManifestV2Schema, parsed: expect.objectContaining({ success: false }) });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('refuses a Protocol subpath the host does not provide instead of loading another copy', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-portable-missing-'));
+        const artifactPath = join(root, 'entry.cjs.bundle');
+        try {
+            await writeFile(artifactPath, "module.exports.read = require('@happier-dev/protocol/not/provided').value;");
+            await expect(loadPluginModule({ source: { kind: 'file_backed', entryPath: artifactPath,
+                committedAuthorization: { pluginId: 'acme.portable-missing', immutableGenerationId: artifactPath } } }))
+                .rejects.toMatchObject({ code: 'PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+                    cause: expect.objectContaining({ code: 'unknown_host_module', specifier: '@happier-dev/protocol/not/provided' }) });
         } finally {
             await rm(root, { recursive: true, force: true });
         }

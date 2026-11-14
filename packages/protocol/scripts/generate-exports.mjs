@@ -1,14 +1,15 @@
-import { readFile, readdir, rename, writeFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import ts from 'typescript';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
+import { deriveHostProvidedProtocolModules } from './hostProvidedModules.mjs';
 
 const defaultPackageRoot = fileURLToPath(new URL('../', import.meta.url));
 
-export async function deriveProtocolExports(packageRoot) {
+async function readProtocolPublicSources(packageRoot) {
   const configPath = join(packageRoot, 'tsconfig.json');
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
   if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
@@ -16,11 +17,6 @@ export async function deriveProtocolExports(packageRoot) {
   if (inputs.errors.length) {
     throw new Error(inputs.errors.map(error => ts.flattenDiagnosticMessageText(error.messageText, '\n')).join('\n'));
   }
-  const entry = source => ({
-    'happier-source': source,
-    types: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.d.ts'),
-    default: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.js'),
-  });
   // Compiler roots also include declaration inputs and support for tests.
   // They have no public executable module contract.
   const privateSuffix = /(?:\.d|\.test|\.spec|\.testkit|\.test-d)$/;
@@ -32,6 +28,16 @@ export async function deriveProtocolExports(packageRoot) {
     if (source.startsWith('../') || !source.endsWith('.ts') || !isPublic(source.slice(0, -3))) continue;
     publicSources.add(source.slice(0, -3));
   }
+  return publicSources;
+}
+
+export async function deriveProtocolExports(packageRoot, publicSources) {
+  publicSources ??= await readProtocolPublicSources(packageRoot);
+  const entry = source => ({
+    'happier-source': source,
+    types: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.d.ts'),
+    default: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.js'),
+  });
   // One subpath pattern publishes every public module. Node re-reads the
   // nearest package.json for each loaded file, so an enumerated map (3,000+
   // entries, ~750 KB) cost ~5 ms CPU per protocol module on every Node import.
@@ -81,23 +87,38 @@ export async function generateProtocolExports({ packageRoot = defaultPackageRoot
   const readProjection = async () => {
     const manifestPath = join(packageRoot, 'package.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    const exports = await deriveProtocolExports(packageRoot);
-    return { manifestPath, manifest, exports, current: JSON.stringify(manifest.exports) === JSON.stringify(exports) };
+    const publicSources = await readProtocolPublicSources(packageRoot);
+    const exports = await deriveProtocolExports(packageRoot, publicSources);
+    // The Plugin UI host module set is the same public inventory, narrowed to what React Native can load.
+    const host = await deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports });
+    const hostCurrent = host.files.every(file => file.current === file.next) || (check && host.coherent);
+    return { manifestPath, manifest, exports, hostFiles: host.files,
+      current: JSON.stringify(manifest.exports) === JSON.stringify(exports) && hostCurrent };
   };
   const projection = await readProjection();
   // Current exports are a read: a compiler publishing dist must not hold up
   // unrelated remote dispatch merely because it owns the package build lock.
   if (projection.current) return projection.manifest;
-  if (check) throw new Error('Protocol exports are stale. Run pnpm --filter @happier-dev/protocol generate:exports.');
+  if (check) throw new Error('Protocol exports are stale (package.json exports or the generated Plugin UI host modules). Run pnpm --filter @happier-dev/protocol generate:exports.');
   return withWorkspaceBundleLock(async () => {
     // The manifest may have changed while waiting for the writer. Read its
     // current fields under that same publication owner before replacing it.
-    const { manifestPath, manifest, exports, current } = await readProjection();
+    const { manifestPath, manifest, exports, hostFiles, current } = await readProjection();
     if (current) return manifest;
-    const temporaryPath = `${manifestPath}.${randomUUID()}.tmp`;
+    const replace = async (path, text) => {
+      const temporaryPath = `${path}.${randomUUID()}.tmp`;
+      await writeFile(temporaryPath, text);
+      await rename(temporaryPath, path);
+    };
+    for (const file of hostFiles) {
+      if (file.current === file.next) continue;
+      await mkdir(dirname(file.path), { recursive: true });
+      await replace(file.path, file.next);
+    }
     const generatedManifest = { ...manifest, exports };
-    await writeFile(temporaryPath, `${JSON.stringify(generatedManifest, null, 2)}\n`);
-    await rename(temporaryPath, manifestPath);
+    if (JSON.stringify(manifest.exports) !== JSON.stringify(exports)) {
+      await replace(manifestPath, `${JSON.stringify(generatedManifest, null, 2)}\n`);
+    }
     return generatedManifest;
   }, {
     signal,
