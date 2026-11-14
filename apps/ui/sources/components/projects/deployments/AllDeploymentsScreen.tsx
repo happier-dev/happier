@@ -13,6 +13,7 @@ import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation
 import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -191,15 +192,25 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
   const viewDemand = props.demand!;
   const phone = useDeviceType() === 'phone';
+  // Each view's needs-you count marks its tab (lab "Apps • 3"): Apps from its own read, the others as they report.
+  const [viewNeedYou, setViewNeedYou] = React.useState<Partial<Record<ServicesView, number>>>({});
+  const appsNeedYou = React.useMemo(() => countAppsNeedYou(items), [items]);
+  const needYou = React.useMemo(() => ({ ...viewNeedYou, apps: appsNeedYou }), [appsNeedYou, viewNeedYou]);
   const viewTabs = props.controller && props.demand ? (
-    <ServicesViewTabs active={view} onSelect={(next) => props.onSelectView?.(next)} />
+    <ServicesViewTabs active={view} needYou={needYou} onSelect={(next) => props.onSelectView?.(next)} />
   ) : null;
+  // One create (reuse map D2): beside the Services column, its "+" is the page's create and its field the search.
+  const besideColumn = useAppShellColumn().columnVisible;
   // The main-screen head (lab svcHead): the title row's magnifier and create, the views and their filter right under
   // it, then the count line from the shown view's own reported counts.
   const [query, setQuery] = React.useState('');
   const search = React.useMemo<MainScreenSearch>(() => ({ value: query, onChangeText: setQuery,
     placeholder: t('projects.deployments.services.searchPlaceholder'), testID: 'all-deployments.search' }), [query]);
-  const [viewCount, setViewCount] = React.useState<ServicesViewCount | null>(null);
+  const [viewCount, setViewCountState] = React.useState<ServicesViewCount | null>(null);
+  const setViewCount = React.useCallback((next: ServicesViewCount) => {
+    setViewCountState(next);
+    setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
+  }, []);
   const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items) : null, [items, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   const header = (create: boolean) => (
@@ -208,10 +219,9 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       title={t('projects.deployments.services.title')}
       {...(phone ? {} : { description: t('projects.deployments.services.description') })}
       alwaysShowTitle
-      // Wide, the Services column carries the search (one per page); a phone's head keeps its magnifier.
-      search={create && phone ? search : null}
-      create={create ? deployCreate : null}
-      {...(create && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {})}
+      search={create && !besideColumn ? search : null}
+      create={create && !besideColumn ? deployCreate : null}
+      {...(create && !besideColumn && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {})}
       band={viewTabs || (view === 'apps' && notBackedUpFilter) ? <>{viewTabs}{view === 'apps' ? notBackedUpFilter : null}</> : undefined}
       {...(create && count ? { count } : {})}
     />
@@ -396,6 +406,11 @@ export function AllDeploymentsGroups(
       {...(props.hereMachine ? { hereMachine: true } : {})}
     />
   );
+}
+
+/** The Apps rows that need the person: a failed or unconfirmed latest deploy (the readiness owner's tone). */
+function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
+  return items.filter((item) => item.currentDeployment && deploymentRailState(item.currentDeployment.state)?.tone).length;
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */

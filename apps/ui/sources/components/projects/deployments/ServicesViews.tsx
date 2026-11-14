@@ -41,7 +41,7 @@ import {
 export type ServicesView = 'apps' | 'databases' | 'domains' | 'checks' | 'watched';
 const VIEWS: readonly ServicesView[] = ['apps', 'databases', 'domains', 'checks', 'watched'];
 /** A view's count line, from its own read's reported rows (the page's head draws it, MainScreenHeader `count`). */
-export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (string | null)[] }>;
+export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (string | null)[]; needYou?: number }>;
 
 /** The route's `view`, read once: anything else is the Apps view. */
 export function readServicesView(
@@ -54,6 +54,8 @@ export function ServicesViewTabs(
   props: Readonly<{
     active: ServicesView;
     onSelect: (view: ServicesView) => void;
+    /** How many rows need the person in each view, as its owner reported them: the tab's needs-you count. */
+    needYou?: Partial<Record<ServicesView, number>>;
   }>,
 ) {
   const overflow = React.useMemo(() => ({ label: t('common.more'), testID: 'services.view.more' }), []);
@@ -70,8 +72,11 @@ export function ServicesViewTabs(
       },
       { id: 'checks' as const, label: t('projects.deployments.services.checks') },
       { id: 'watched' as const, label: t('projects.deployments.services.watched') },
-    ],
-    [],
+    ].map((tab) => {
+      const count = props.needYou?.[tab.id] ?? 0;
+      return count > 0 ? { ...tab, count: String(count), countTone: 'danger' as const } : tab;
+    }),
+    [props.needYou],
   );
   return (
     // The page head's band places it on the sheets' edge (MainScreenHeader).
@@ -198,7 +203,7 @@ export function ServicesDatabasesView(
     rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,
     uncovered > 0 ? t('projects.deployments.notBackedUpCount', { count: uncovered }) : null,
   ] : null, [read.snapshot.value, rows.length, uncovered]);
-  useReportViewCount('databases', countParts, props.onCount);
+  useReportViewCount('databases', countParts, props.onCount, uncovered);
   if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
@@ -249,13 +254,13 @@ export function ServicesDatabasesView(
 
 /** A view publishes its count line to the page head when its words change (MainScreenHeader `count`). */
 export function useReportViewCount(view: ServicesView, parts: readonly (string | null)[] | null,
-  onCount: (count: ServicesViewCount) => void) {
+  onCount: (count: ServicesViewCount) => void, needYou = 0) {
   const signature = parts ? parts.join('\u0000') : null;
   const latest = React.useRef(parts);
   latest.current = parts;
   React.useEffect(() => {
-    if (latest.current) onCount({ view, parts: latest.current });
-  }, [onCount, signature, view]);
+    if (latest.current) onCount({ view, parts: latest.current, needYou });
+  }, [needYou, onCount, signature, view]);
 }
 
 type AccountDomainItem = Readonly<{ environment: Readonly<{ projectSourceId: string }>; environmentTitle: string;
@@ -332,7 +337,12 @@ export function ServicesDomainsView(
       unreachable > 0 ? t('projects.deployments.editors.domainsNotReachable', { count: unreachable }) : null,
     ];
   }, [items, read.snapshot.value]);
-  useReportViewCount('domains', countParts, props.onCount);
+  // The Domains tab's needs-you count: the addresses its count line says need the person.
+  const domainsNeedYou = React.useMemo(() => items.filter((item) => {
+    const need = deploymentDomainNeedKind(item);
+    return need === 'waitingForDns' || need === 'notReachable';
+  }).length, [items]);
+  useReportViewCount('domains', countParts, props.onCount, domainsNeedYou);
   const bands = React.useMemo(() => domainProjectBands(items), [items]);
   if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (

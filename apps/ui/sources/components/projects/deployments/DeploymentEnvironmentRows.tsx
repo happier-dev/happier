@@ -23,6 +23,7 @@ import { t } from '@/text';
 
 import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
+import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 
@@ -151,8 +152,8 @@ export function DeploymentEnvironmentRows(
       {
         key: 'lastDeploy',
         title: t('projects.deployments.services.columnLastDeploy'),
-        minWidth: 148,
-        priority: 3,
+        minWidth: 112,
+        priority: 4,
         listColumn: true,
         render: (row) =>
           row.steps ? (
@@ -172,14 +173,27 @@ export function DeploymentEnvironmentRows(
             row.detail
           ),
       },
+      // Where it answers (the collection's resolved live address), drawn as its host; the first column to give way.
+      {
+        key: 'address',
+        title: t('projects.deployments.services.columnAddress'),
+        minWidth: 160,
+        priority: 2,
+        listColumn: true,
+        render: (row) => row.liveAddress ? (
+          <Text style={{ ...meta, ...Typography.mono() }} numberOfLines={1}>
+            {formatDeploymentLiveAddress(row.liveAddress)}
+          </Text>
+        ) : null,
+      },
       ...(hereMachine
         ? []
         : [
             {
               key: 'runsOn',
               title: t('projects.deployments.services.columnRunsOn'),
-              minWidth: 176,
-              priority: 2,
+              minWidth: 136,
+              priority: 3,
               listColumn: true,
               render: (row: Row) => row.runsOn,
             },
@@ -187,8 +201,8 @@ export function DeploymentEnvironmentRows(
       {
         key: 'state',
         title: t('projects.deployments.services.columnState'),
-        minWidth: 128,
-        priority: 1,
+        minWidth: 120,
+        priority: 5,
         align: 'end',
         listColumn: true,
         render: (row) => <EnvironmentStateWord row={row} />,

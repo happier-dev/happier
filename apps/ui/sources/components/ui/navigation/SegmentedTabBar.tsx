@@ -116,6 +116,11 @@ export type SegmentedTab<T extends string = string> = Readonly<{
      */
     count?: string;
     /**
+     * `danger`: the count is how many need the person (lab svcHead "Apps • 3"), drawn after a dot in the needs-you
+     * ink; otherwise the quiet tertiary count.
+     */
+    countTone?: 'danger';
+    /**
      * The key combination that chooses this option ("Cmd+Shift+2"), drawn as its keycaps after the label
      * and announced with it.
      */
@@ -486,6 +491,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: HAPPIER_FIELD_BOX_METRICS.fontSizePx,
         lineHeight: HAPPIER_FIELD_BOX_METRICS.lineHeightPx,
         color: theme.colors.text.primary,
+    },
+    tabCountDanger: {
+        color: theme.colors.state.danger.textForeground,
     },
     tabCount: {
         color: theme.colors.text.tertiary,
@@ -955,7 +963,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                         ]}
                                     >
                                         {tab.label}
-                                        {tab.count && fit.counts ? <Text style={styles.tabCount}>{` ${tab.count}`}</Text> : null}
+                                        {tab.count && fit.counts ? <TabCount tab={tab} /> : null}
                                     </Text>
                                     {tab.shortcut ? <KeyCombinationHint label={tab.shortcut} /> : null}
                                     {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}
@@ -1097,8 +1105,16 @@ export function SegmentedValueSelect<T extends string>(props: Readonly<{
 const OVERFLOW_KEY = '\u0000more';
 
 /** A page tab's caption: its glyph (when the row has room), label and quiet count. */
+/** A tab's count after its label: quiet, or the needs-you count after a dot in its tone (`countTone`). */
+function TabCount(props: Readonly<{ tab: Pick<SegmentedTab, 'count' | 'countTone'> }>) {
+    const styles = stylesheet;
+    return props.tab.countTone === 'danger'
+        ? <Text style={[styles.tabCount, styles.tabCountDanger]}>{` • ${props.tab.count}`}</Text>
+        : <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text>;
+}
+
 function PlainTabCaption(props: Readonly<{
-    tab: Pick<SegmentedTab, 'label' | 'icon' | 'count' | 'id'> & Partial<Pick<SegmentedTab, 'badge' | 'shortcut'>>;
+    tab: Pick<SegmentedTab, 'label' | 'icon' | 'count' | 'id' | 'countTone'> & Partial<Pick<SegmentedTab, 'badge' | 'shortcut'>>;
     icon: boolean;
     active: boolean;
     /** The words are drawn (false: the glyph stands alone for a tab that is not chosen). */
@@ -1125,7 +1141,7 @@ function PlainTabCaption(props: Readonly<{
             {props.label === false || props.more ? null : (
                 <Text numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null]}>
                     {props.tab.label}
-                    {props.tab.count && props.count !== false ? <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text> : null}
+                    {props.tab.count && props.count !== false ? <TabCount tab={props.tab} /> : null}
                 </Text>
             )}
             {props.label !== false && props.tab.shortcut ? <KeyCombinationHint label={props.tab.shortcut} /> : null}
@@ -1172,7 +1188,7 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
             accessibilityLabel: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
             subtitle: tab.disabled === true ? tab.unavailableReason : undefined,
             icon: tab.icon ?? undefined,
-            rightElement: tab.count ? <Text numberOfLines={1} style={styles.tabCount}>{tab.count}</Text> : undefined,
+            rightElement: tab.count ? <Text numberOfLines={1} style={[styles.tabCount, tab.countTone === 'danger' ? styles.tabCountDanger : null]}>{tab.count}</Text> : undefined,
             category: OVERFLOW_PAGES_CATEGORY,
             disabled: tab.disabled === true,
             testID: props.testID ? `${props.testID}:${tab.id}` : undefined,

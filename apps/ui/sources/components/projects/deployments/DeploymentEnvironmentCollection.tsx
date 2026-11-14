@@ -205,7 +205,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   const anyPlatform = items.some((item) => item.runtimeTargetLink?.source.kind === 'plugin');
   const platformTitle = useDeploymentPlatformTargetTitles(lifetime, anyPlatform);
   const nowMs = Date.now();
-  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink }) => {
+  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress }) => {
     // An unknown Machine drops out of the line rather than reading "a machine".
     const name = machineNames[environment.controllerMachineId] ?? null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
@@ -237,6 +237,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       platform: platform !== null,
       /** How it runs on a Machine target ("Compose"); a platform names itself in Runs on. */
       runtimeKind: compose,
+      /** The address it serves at (the collection's resolved live address); null when none or not known. */
+      liveAddress: liveAddress ?? null,
       // What was deployed last (its receipt's title), else what is live; never one that only repeats the row's name.
       deploymentTitle: [currentDeployment?.title, liveVersionTitle]
         .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,
