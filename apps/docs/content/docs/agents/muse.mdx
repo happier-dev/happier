@@ -17,6 +17,36 @@ For native login and API-key connections, see
 
 ## Troubleshooting
 
+### Shell commands fail in a home-directory workspace
+
+In a Coder workspace or devcontainer, Muse can answer text-only turns while
+shell commands fail with `Linux sandbox helper ... is under writable sandbox
+root` and `Bubblewrap unavailable`. If the writable workspace is your entire
+home directory, it can include Muse's own sandbox helper.
+
+Happier uses [Meta's installer](https://dev.meta.ai/install.sh), whose default
+location is `~/.local/bin`. A Session opened at `/home/coder`, for example,
+includes that installation in its writable workspace. Muse rejects a helper
+inside a writable sandbox root: a command allowed to replace the helper could
+undermine the sandbox on later commands. This differs from the Ubuntu
+user-namespace restriction below.
+
+Create a new Session in a dedicated project directory that does not contain the
+Muse installation, rather than selecting your whole home directory. If your
+work requires the broader root, ask the Machine administrator to place Muse
+outside every writable workspace root. Meta's installer accepts
+`MUSE_INSTALL_DIR`, and Happier recognizes that location when the variable is
+available to its running process. Moving only a launcher link is insufficient
+if the actual helper remains inside the writable root.
+
+Meta documents a bundled Linux bubblewrap helper; a separate system installation
+is not always required. An administrator-provided system bubblewrap must also
+be outside the writable roots and permitted by the guest's namespace policy.
+Changing the install path alone does not remove container or AppArmor
+restrictions. In a new Session, ask Muse to run `printf sandbox-ok` to verify
+the chosen environment. Text-only success does not verify shell execution.
+See [Meta's sandbox requirements](https://dev.meta.ai/docs/muse-code/permissions#run-inside-the-sandbox).
+
 ### Approved shell commands fail on Ubuntu
 
 On Ubuntu 24.04 and later, an approved shell command can fail with
