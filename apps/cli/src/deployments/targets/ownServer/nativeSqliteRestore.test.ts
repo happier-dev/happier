@@ -168,6 +168,7 @@ describe.skipIf(!artifactDirectory)('native SQLite on the retained original OCI'
                     const runtimeImage = await project.prepareResticRuntime({ render, context });
                     resticReference = runtimeImage.registryReference;
                     const input = { project, render, activation, context, io, ...backup, runtimeImage,
+                        retainSource: () => source.commit(),
                         async readDatabaseUsername() { return undefined; }, onStopPending() {} };
                     return await effect(input);
                 } finally { await backup.dispose(); }

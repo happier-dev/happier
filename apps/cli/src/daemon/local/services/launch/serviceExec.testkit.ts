@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import nacl from 'tweetnacl';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
 import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -45,6 +46,8 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
     nativeExecutableIo?: true;
     /** A distinct application writer for real restore quiesce/resume checks. */
     writerService?: true;
+    /** Pinned operation helper supplied through the native image owner's private injection. */
+    sqliteRuntime?: true;
 }> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'happier-service-exec-'));
     const controller = new AbortController();
@@ -62,6 +65,8 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
             ...(options.dockerOperatingSystem === undefined ? {} : { operatingSystem: options.dockerOperatingSystem }),
         });
         const image = await docker.registerImage('worker', 'candidate-b');
+        const sqliteRuntime = options.sqliteRuntime ? { image: await docker.registerImage('sqlite', 'sqlite-operation-runtime'),
+            version: 'fixture-sqlite' } : undefined;
         const document = JSON.stringify({ services: { worker: { image: image.registryReference,
             environment: { TOKEN: '${TOKEN:?required}', ...options.serviceEnvironment },
             ...(options.serviceLabels ? { labels: options.serviceLabels } : {}),
@@ -86,10 +91,11 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
                 definitions: [{ toolId: 'docker', displayName: 'Docker', lookupNames: ['docker'] }], registerGrant() {} }),
             async resolveExecutable() { throw new Error('Only the resolved native tool is admitted'); }, resolvePath: async path => String(path) });
         const seed = options.installationPrivateSeed ?? new Uint8Array(32).fill(31);
-        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'TOKEN',
-            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('finite-secret'), resourceRevision: 1 } };
-        const bindings = [binding, ...(options.applicationDockerHost === undefined ? [] : [{
+        const binding = createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'TOKEN',
+            resourceId: 'finite-secret', resourceRevision: 1 });
+        const bindings: EnvironmentVariableBindingV1[] = [binding, ...(options.applicationDockerHost === undefined ? [] : [{
             purpose: 'variable' as const, phase: 'runtime' as const, name: 'DOCKER_HOST',
+            grantRef: randomUUID(),
             source: { kind: 'value' as const, value: options.applicationDockerHost },
         }])];
         const resource = { resourceId: 'finite-secret', ownerAccountId: 'finite-owner', displayName: 'Finite secret',
@@ -98,8 +104,7 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
                 v: { v: 1 as const, name: 'Finite secret', kind: 'password' as const, value: 'finite-native-secret-sentinel' } } };
         const resources = [resource, ...Object.entries(options.runtimeSecrets ?? {}).map(([name, value]) => {
             const resourceId = `finite-${name.toLowerCase()}`;
-            bindings.push({ purpose: 'variable', phase: 'runtime', name,
-                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } });
+            bindings.push(createDeploymentSecretVariableBindingV1({ phase: 'runtime', name, resourceId, resourceRevision: 1 }));
             return { ...resource, resourceId, displayName: name,
                 storedContent: { t: 'plain' as const, v: { ...resource.storedContent.v, name, value } } };
         })];
@@ -128,6 +133,7 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
             },
         } : createProjectNativeToolchainIoForHost({ async resolveTool() { return null; } });
         const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec, envPort, source, sourceKind: 'stored',
+            ...(sqliteRuntime ? { sqliteRuntime } : {}),
             files: ['compose.yaml'], services: options.writerService ? ['worker', 'writer'] : ['worker'],
             images: options.recordedImages === false ? [] : [image, ...(options.writerService ? [{ ...image, service: 'writer' }] : [])], io,
             settleNative: readPluginExecProcessCustodyForHost(exec).waitForSettlement });

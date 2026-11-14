@@ -103,6 +103,7 @@ describe('own-server migration native backup consumer', () => {
                                     signal: context.operation.signal!, isCurrent: () => true, preparation });
                                 if (mode === 'cancel') controller.abort();
                                 return { input: { project, render, activation, context, io, ...environment, runtimeImage,
+                                    retainSource: () => source.commit(),
                                     readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({ data, preparation }),
                                     readAccess() { const selected = environment.readAccess(); passwordPath = selected.credentialFiles[0]?.hostPath; return selected; },
                                     onStopPending() {} },

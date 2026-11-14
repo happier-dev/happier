@@ -403,6 +403,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             targetLinkId: input.generation.deployment.targetLinkId, affectedServices, context: input.request.context }) ?? Promise.resolve(null) })
                     : undefined;
                 const native = { project, render, activation: currentActivation, context, io: recovery.runtime.nativeIo, onExpectedDownServicesChanged,
+                    retainSource: () => recovery.source.commit(),
                     onBackupSettled: input.backupDelivery ? backupRunNotice(input.snapshot.environment, input.snapshot.link.id, context.operation.operationId, input.backupDelivery) : undefined,
                     async onNamedVolumeBindingsChanged(namedVolumes: NativeComposeProjectRender['namedVolumes']) {
                         const source = await captureOwnServerDeploymentSource({ source: recovery.source,
@@ -1193,8 +1194,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                         deploymentId: snapshot.link.activeDeploymentId, context: request.context }));
                                 }
                                 if (!retained || !retainedProject || !incumbentRender || !incumbent || !readIncumbentDatabaseUsername) return refuse('backup_required');
+                                const incumbentSource = retained.source;
                                 return { input: { ...operands, project: retainedProject, render: incumbentRender, activation: incumbent,
                                     context, io: retained.runtime.nativeIo,
+                                    retainSource: () => incumbentSource.commit(),
                                     onBackupSettled: backupRunNotice(snapshot.environment, snapshot.link.id, context.operation.operationId,
                                         await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal)),
                                     readDatabaseUsername: readIncumbentDatabaseUsername,

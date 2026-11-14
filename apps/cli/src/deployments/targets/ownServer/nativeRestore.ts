@@ -42,6 +42,8 @@ export type OwnServerNativeRestoreInput = Readonly<{
     execEnv: DeploymentExecEnvPortV1;
     readAccess(): ResticAccessV1;
     readDatabaseUsername(service: string): Promise<OwnServerDatabaseUsernameForHost | undefined>;
+    /** Native activation can retain this source even when its reply fails or is cancelled. */
+    retainSource(): Promise<void>;
     onStopPending(status: 'stop_pending'): void;
     /** Planned interruption, published before stop; actual custody remains separate. */
     onExpectedDownServicesChanged?(services: readonly string[]): Promise<void>;
@@ -275,6 +277,7 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                         const project = input.project.createVolumeRestoreCandidate(bindings);
                         volumeProjects.push(project);
                         const render = await project.render({ signal });
+                        await input.retainSource();
                         const active = await project.activate({ render, context: input.context, signal,
                             runningServices: request.destination.runningServices });
                         await input.onNamedVolumeBindingsChanged?.(bindings);

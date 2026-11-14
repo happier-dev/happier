@@ -88,7 +88,7 @@ describe('native restore adapter', () => {
                     content: { kind: 'secret', value: role === 'repositoryPassword' ? 'repository-private' : role === 'accessKeyId' ? 'access-private' : 'secret-private' } }));
                 const username = "database user\\' --literal";
                 const usernameBinding: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> = {
-                    purpose: 'variable', phase: 'runtime', name: 'LOGICAL_USER', source: mode === 'receiptCapture' || mode === 'dumpFailure'
+                    purpose: 'variable', phase: 'runtime', name: 'LOGICAL_USER', grantRef: crypto.randomUUID(), source: mode === 'receiptCapture' || mode === 'dumpFailure'
                         ? { kind: 'secret', ref: formatSharedSavedSecretRefV1('logical-user'), resourceRevision: 1 }
                         : { kind: 'value', value: username } };
                 const usernameGrant = usernameBinding.source.kind === 'secret'
@@ -97,9 +97,10 @@ describe('native restore adapter', () => {
                         installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey, content: { kind: 'secret', value: username } })
                     : sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
                     environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
-                    binding: { purpose: 'variable', phase: 'runtime', name: usernameBinding.name } },
+                    binding: { purpose: 'variable', phase: 'runtime', grantRef: usernameBinding.grantRef } },
                     installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
-                    content: { kind: 'environmentValues', definition: usernameBinding.source } });
+                    content: { kind: 'environmentValues', definition: usernameBinding.source,
+                        binding: { purpose: 'variable', phase: 'runtime', name: usernameBinding.name, grantRef: usernameBinding.grantRef } } });
                 const controller = new AbortController();
                 let passwordPath: string | undefined;
                 let destinationPasswordPath: string | undefined;
@@ -134,6 +135,7 @@ describe('native restore adapter', () => {
                             return repositoryOverride ? { ...selected, repository: repositoryOverride } : selected;
                         };
                         const input = { project, render, activation, context, io, ...environment, readAccess, runtimeImage,
+                            retainSource: () => source.commit(),
                             readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({
                                 data: [{ engine: 'postgres', service: 'worker', logicalBackup: {
                                     adapter: 'postgres-v1', ...(mode === 'success' ? {} : { username: usernameBinding.name }) } }], preparation: {
@@ -348,12 +350,14 @@ describe('native restore adapter', () => {
                                     installationPrivateSeed: seed, bindings: destinationBindings, backupDestinationUses: destinationBindings,
                                     grants: destinationGrants, backupConfigBaseDir: root, assertCurrent: source.assertCurrent } });
                             const destinationUsernameBinding = { purpose: 'variable' as const, phase: 'runtime' as const,
-                                name: 'LOGICAL_USER', source: { kind: 'value' as const, value: 'destination-database-user' } };
+                                name: 'LOGICAL_USER', grantRef: crypto.randomUUID(), source: { kind: 'value' as const, value: 'destination-database-user' } };
                             const destinationUsernameGrant = sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
                                 environmentId: destination.environmentId, machineId: source.machineId, installationId: source.installationId,
-                                binding: { purpose: 'variable', phase: 'runtime', name: destinationUsernameBinding.name } },
+                                binding: { purpose: 'variable', phase: 'runtime', grantRef: destinationUsernameBinding.grantRef } },
                                 installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
-                                content: { kind: 'environmentValues', definition: destinationUsernameBinding.source } });
+                                content: { kind: 'environmentValues', definition: destinationUsernameBinding.source,
+                                    binding: { purpose: 'variable', phase: 'runtime', name: destinationUsernameBinding.name,
+                                        grantRef: destinationUsernameBinding.grantRef } } });
                             const destinationInput = { ...input, ...destinationEnvironment,
                                 readAccess() {
                                     const selected = destinationEnvironment.readAccess();

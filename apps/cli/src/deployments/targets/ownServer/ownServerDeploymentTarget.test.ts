@@ -4,9 +4,9 @@ import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/aut
 import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceKeyV1';
 import axios from 'axios';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -88,6 +88,7 @@ import { createNativeCaddyStartFirstRoutes } from '@/machines/reachability/nativ
 import type { NativeComposeStartFirstRoutes } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { readOwnServerDeploymentStageLogs } from './stageLog';
+import { createOwnServerSourceCustodyReader } from './sourceProvenance';
 import { buildOwnServerDeploymentReceipt, isOwnServerBuildReceiptComplete } from './buildReceipt';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentRootForHost } from './paths';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -318,6 +319,7 @@ describe('own-server target at the Action host boundary', () => {
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
         ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -329,7 +331,8 @@ describe('own-server target at the Action host boundary', () => {
         const previewCopy = previewCompanion || scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure'
             || scenario === 'public_preview_configure_failure';
         const publicCopy = scenario === 'public_copy' || scenario === 'public_restore_drill' || previewCopy;
-        const uploadedVolume = scenario === 'standalone_public_restore_volume_upload';
+        const uploadedVolume = scenario.startsWith('standalone_public_restore_volume_upload');
+        const restoreActivationFailure = scenario === 'standalone_public_restore_volume_upload_activation_failure';
         const retainedBackupTransport = scenario === 'public_backup_restore_local' ? 'local'
             : scenario === 'public_backup_restore_sftp' ? 'sftp' : undefined;
         const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health';
@@ -1786,12 +1789,14 @@ describe('own-server target at the Action host boundary', () => {
                 }
                 if (publicCopy || scenario === 'standalone_public_restore_upload') {
                     const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
+                        grantRef: randomUUID(),
                         source: { kind: 'value' as const, value: publicCopy ? destinationDatabase : database } };
                     environment.content.bindings.push(databaseBinding);
                     runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
                         installationId: 'installation-a', environmentId: environment.environment.id,
-                        binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
-                        content: { kind: 'environmentValues', definition: databaseBinding.source } }));
+                        binding: { purpose: 'variable', phase: 'runtime', grantRef: databaseBinding.grantRef } }, installationPublicKey,
+                        content: { kind: 'environmentValues', definition: databaseBinding.source,
+                            binding: { purpose: 'variable', phase: 'runtime', name: databaseBinding.name, grantRef: databaseBinding.grantRef } } }));
                 }
                 const activateDestination = async () => {
                     const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
@@ -3053,6 +3058,11 @@ describe('own-server target at the Action host boundary', () => {
                         if (!prepared.ok) throw new Error('Expected upload preparation');
                         const preparation = DeploymentBackupRestoreResultV1Schema.parse(prepared.result);
                         if (preparation.kind !== 'prepared') throw new Error('Expected retained upload preparation');
+                        const restorationRoot = join(await resolveOwnServerDeploymentRootForHost(root, profile.id),
+                            resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerIdentityId, environment.environment.id),
+                            'restorations', serving.deployment.id, serving.deployment.id);
+                        // Read-only preparation must still relinquish unused source custody.
+                        await expect(realpath(restorationRoot)).rejects.toMatchObject({ code: 'ENOENT' });
                         const confirm = { ...input, mode: 'confirm' as const, prepareOperationId: preparation.operationId };
                         const beforeHeld = await readFile(boundary.eventsFile, 'utf8');
                         const held = await observeNativeAction(operations, await executor.execute('deployments.backups.restore', confirm,
@@ -3064,9 +3074,44 @@ describe('own-server target at the Action host boundary', () => {
                         // A held snapshot releases read custody without consuming the
                         // finite source, so the newly reviewed continuation can reacquire it.
                         expect(await readFile(artifact.filePath)).toEqual(sourceBytes);
-                        expect(await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
-                            { ...context, actionRequestId: 'upload-continue' }), accountId, caller.signal))
-                            .toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
+                        if (restoreActivationFailure) {
+                            // Docker is the boundary: recreate native containers, then lose the successful reply.
+                            const statePath = join(root, 'docker', 'docker-state.json');
+                            const state = JSON.parse(await readFile(statePath, 'utf8'));
+                            await writeFile(statePath, JSON.stringify({ ...state, activationCommandFailure: 'afterCreate' }));
+                        }
+                        const restored = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
+                            { ...context, actionRequestId: 'upload-continue' }), accountId, caller.signal);
+                        if (restoreActivationFailure) expect(restored).toMatchObject({ ok: true, result: { verified: false } });
+                        else expect(restored).toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
+                        if (uploadedVolume) {
+                            // Compose records this directory on its recreated container;
+                            // cold service recovery must be able to reopen that source.
+                            const activation = (await docker.readInvocations()).filter(call => call.args.includes('up')).at(-1);
+                            const selectedRoot = activation?.args[activation.args.indexOf('--project-directory') + 1];
+                            expect(selectedRoot).toBe(restorationRoot);
+                            await expect(realpath(selectedRoot!)).resolves.toBe(selectedRoot);
+                            if (restoreActivationFailure) {
+                                const state = JSON.parse(await readFile(join(root, 'docker', 'docker-state.json'), 'utf8')) as {
+                                    containers: Array<{ Config: { Labels: Record<string, string> } }> };
+                                expect(state.containers.map(container => container.Config.Labels['com.docker.compose.project.working_dir']))
+                                    .toContain(restorationRoot);
+                            }
+                            if (!restoreActivationFailure) {
+                                // The fixture's Home transition boundary persists into receipt;
+                                // serving remains the original immutable generation snapshot.
+                                const restoredReceipt = structuredClone(receipt);
+                                const readSource = createOwnServerSourceCustodyReader({
+                                    deploymentRoot: await resolveOwnServerDeploymentRootForHost(root, profile.id),
+                                    environmentId: environment.environment.id,
+                                    environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerIdentityId, environment.environment.id),
+                                    machineId: 'machine-a', installationId: 'installation-a',
+                                    history: (async function* () { yield restoredReceipt; })(),
+                                    async assertCurrent() { caller.signal.throwIfAborted(); },
+                                });
+                                await expect(readSource(restorationRoot)).resolves.toMatchObject({ rootPath: restorationRoot });
+                            }
+                        }
                         expect(nativeSnapshots).toBe(1);
                         // Every Action exit relinquishes custody; expiry now deletes bytes.
                         await uploads.cleanupExpired(Number.MAX_SAFE_INTEGER);
