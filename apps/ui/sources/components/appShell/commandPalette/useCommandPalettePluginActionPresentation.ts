@@ -97,11 +97,16 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
     const pluginUiProjection = activeSessionId
         ? projection.phase === 'ready' ? projection.inputs?.pluginUiProjection ?? null : null
         : appShellProjection.pluginUiProjection;
-    const appPluginProjectionById = React.useMemo(() => pluginUiProjection && !activeSessionId
-        ? buildV2PluginProjectionById({ generation: pluginUiProjection.generation,
-            actionsById: pluginUiProjection.actionsById, installedPackagesById: pluginUiProjection.installedPackagesById,
-            resourcesById: pluginUiProjection.resourcesById }) : null,
-    [activeSessionId, pluginUiProjection?.actionsById, pluginUiProjection?.installedPackagesById, pluginUiProjection?.resourcesById]);
+    // Keyed by the app projection alone: entering or leaving a Session does not change it, so it must not
+    // rebuild (a full presentation/schema pass over every projected Action) on each Session switch.
+    const appUiProjection = appShellProjection.pluginUiProjection;
+    const appPluginProjectionById = React.useMemo(() => appUiProjection
+        ? buildV2PluginProjectionById({ generation: appUiProjection.generation,
+            actionsById: appUiProjection.actionsById, installedPackagesById: appUiProjection.installedPackagesById,
+            resourcesById: appUiProjection.resourcesById }) : null,
+    [appUiProjection?.actionsById, appUiProjection?.installedPackagesById, appUiProjection?.resourcesById]);
+    // A Session palette never reads the app-scope map; its changes must not republish the Session snapshot.
+    const globalPluginProjectionById = activeSessionId ? null : appPluginProjectionById;
     const localize = usePluginLocalizedTextResolver({ projection: pluginUiProjection });
     const appShellProjectionRef = React.useRef(appShellProjection);
     appShellProjectionRef.current = appShellProjection;
@@ -129,7 +134,7 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
         )) {
             return null;
         }
-        const pluginProjectionById = activeSessionId ? inputs?.pluginProjectionById : appPluginProjectionById;
+        const pluginProjectionById = activeSessionId ? inputs?.pluginProjectionById : globalPluginProjectionById;
         if (!pluginProjectionById || !pluginUiProjection || !accountLifetime) return null;
         const resolveContributedAction = createPluginUiProjectedActionResolver(pluginUiProjection.actionsById);
         const current: PluginContributedActionCurrentSnapshot = {
@@ -173,7 +178,7 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
         return current;
     }, [
         accountLifetime,
-        appPluginProjectionById,
+        globalPluginProjectionById,
         actionScope,
         activeSessionId,
         currentUiContextReader,
