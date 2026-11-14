@@ -13,6 +13,7 @@ import {
 } from '@/components/widgets/frame/WidgetFrame';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSessionProjectScmSummarySnapshot } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -62,8 +63,10 @@ export function EnvironmentGlance(
     props.serverId,
   );
   const machineName = useSessionMachineName(props.sessionId, props.serverId);
-  const path = props.session.metadata?.path ?? null;
-  const homeDir = props.session.metadata?.homeDir ?? null;
+  // The Session's folder is an owner fact: read it where Session Info does (layout 1 keeps it in the owner view).
+  const ownerMetadata = readSessionOwnerMetadataView(props.session);
+  const path = ownerMetadata?.path ?? null;
+  const homeDir = ownerMetadata?.homeDir ?? null;
   const rows = React.useMemo(
     () =>
       resolveEnvironmentSectionRows({

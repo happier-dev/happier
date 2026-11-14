@@ -248,6 +248,22 @@ describe('Companion Environment section', () => {
     ).toBe(true);
   });
 
+  it('names the folder from the owner metadata view when the shared metadata carries none', async () => {
+    // Layout 1 keeps the owner's facts (path, homeDir) in the owner view, as Session Info reads them.
+    storage.getState().applySessions([
+      createSessionFixture({
+        id: 's1',
+        serverId: runtime.serverId,
+        active: true,
+        metadata: { machineId: 'm1', host: 'test-machine' },
+        metadataLayoutVersion: 1,
+        ownerMetadataView: { machineId: 'm1', path: '/repo/owner-folder', host: 'test-machine' },
+      } as Parameters<typeof createSessionFixture>[0]),
+    ]);
+    const { screen } = await renderEnvironment();
+    expect(screen.getTextContent()).toContain('/repo/owner-folder');
+  });
+
   it('starts no branch read until the row is opened, and a measuring pass draws no control', async () => {
     publishSnapshot(snapshotFixture());
     const { WorkspaceScmBranchPopover } =
