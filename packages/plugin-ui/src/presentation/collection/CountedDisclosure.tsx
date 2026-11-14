@@ -5,6 +5,9 @@ import type { HappierDisclosureHeaderState, HappierDisclosureProps } from './Dis
 /** A quiet aggregate row: its count or word summary stays visible while details are folded. */
 export type HappierCountedDisclosureContentProps = Readonly<{
   title: string;
+  /** A windowed host retains the fold state while its presentation is unmounted. */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   count?: number;
   subtitle?: string;
   /** A glyph in the row's leading column, when its siblings carry one. */
@@ -36,13 +39,14 @@ export type HappierCountedDisclosureProps = HappierCountedDisclosureContentProps
 
 /** One fold state and summary composition; the existing disclosure owns lazy mounting and motion. */
 export function HappierCountedDisclosure(props: HappierCountedDisclosureProps): ReactElement {
-  const [expanded, setExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = props.expanded ?? localExpanded;
   const Disclosure = props.Disclosure;
   return (
     <Disclosure
       testID={props.testID}
       expanded={expanded}
-      onExpandedChange={setExpanded}
+      onExpandedChange={props.onExpandedChange ?? setLocalExpanded}
       showDivider={props.showDivider ?? false}
       header={(state) => props.renderHeader({
         ...state,

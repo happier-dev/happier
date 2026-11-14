@@ -7,6 +7,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
+import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -172,26 +174,32 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
 }>) {
     const styles = stylesheet;
     const { brief } = props;
-    const groups = React.useMemo(() => ([
-        ['needs_you', t('voiceMoments.briefNeedsYou')],
-        ['failed', t('voiceMoments.briefFailed')],
-        ['ready', t('voiceMoments.briefReady')],
-    ] as const).map(([category, title]) => ({
-        category,
-        title,
-        items: brief.items.filter((item) => item.category === category),
-    })).filter((group) => group.items.length > 0).map((group) => {
-        // Occurrences keep their individual destinations. Identical presentation
-        // belongs in one counted fold, using the list owner's lazy disclosure.
-        const occurrences = new Map<string, VoiceBriefItem[]>();
-        for (const item of group.items) {
-            const key = JSON.stringify([item.destination.kind, item.title, item.subtitle ?? null]);
-            const rows = occurrences.get(key);
-            if (rows) rows.push(item);
-            else occurrences.set(key, [item]);
-        }
-        return { ...group, occurrences: [...occurrences.values()] };
-    }), [brief.items]);
+    const groups = React.useMemo(() => {
+        let rowIndex = 0;
+        return ([
+            ['needs_you', t('voiceMoments.briefNeedsYou')],
+            ['failed', t('voiceMoments.briefFailed')],
+            ['ready', t('voiceMoments.briefReady')],
+        ] as const).map(([category, title]) => ({
+            category,
+            title,
+            items: brief.items.filter((item) => item.category === category),
+        })).filter((group) => group.items.length > 0).map((group) => {
+            // Occurrences keep their individual destinations. Identical presentation
+            // belongs in one counted fold, using the list owner's lazy disclosure.
+            const occurrences = new Map<string, VoiceBriefItem[]>();
+            for (const item of group.items) {
+                const key = JSON.stringify([item.destination.kind, item.title, item.subtitle ?? null]);
+                const rows = occurrences.get(key);
+                if (rows) rows.push(item);
+                else occurrences.set(key, [item]);
+            }
+            return { ...group, occurrences: [...occurrences.values()].map(items => ({
+                items,
+                estimatedTop: rowIndex++ * PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
+            })) };
+        });
+    }, [brief.items]);
     return (
         <>
             {/* The head and its notes read in Home's column, on the same edge as the sheet below (lab B1). */}
@@ -213,14 +221,12 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
                             <Text testID={`voice-brief.group.${group.category}`} accessibilityRole="header" style={styles.groupTitle}>
                                 {group.title}
                             </Text>
-                            {group.occurrences.map((items) => items.length === 1 ? (
-                                <VoiceBriefRow key={items[0].key} item={items[0]} fallbackTitle={group.title} onOpen={props.onOpen} />
+                            {group.occurrences.map(({ items, estimatedTop }) => items.length === 1 ? (
+                                <VoiceBriefWindowRow key={items[0].key} item={items[0]} estimatedTop={estimatedTop}
+                                    fallbackTitle={group.title} onOpen={props.onOpen} />
                             ) : (
-                                <CountedDisclosureItem key={items[0].key}
-                                    testID={`voice-brief.occurrences.${items[0].key}`}
-                                    title={items[0].title} subtitle={items[0].subtitle} count={items.length}>
-                                    {items.map(item => <VoiceBriefRow key={item.key} item={item} fallbackTitle={group.title} onOpen={props.onOpen} />)}
-                                </CountedDisclosureItem>
+                                <VoiceBriefOccurrence key={items[0].key} items={items} estimatedTop={estimatedTop}
+                                    fallbackTitle={group.title} onOpen={props.onOpen} />
                             ))}
                         </React.Fragment>
                     ))}
@@ -229,6 +235,39 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
         </>
     );
 });
+
+/** The fold state belongs to the retained shell; only nearby row bodies are built. */
+const VoiceBriefOccurrence = React.memo(function VoiceBriefOccurrence(props: Readonly<{
+    items: readonly VoiceBriefItem[];
+    estimatedTop: number;
+    fallbackTitle: string;
+    onOpen: (item: VoiceBriefItem) => void;
+}>) {
+    const [expanded, setExpanded] = React.useState(false);
+    const first = props.items[0];
+    return <NearViewportWindow id={`voice-brief.occurrences.${first.key}`} testID={`voice-brief.occurrences.window.${first.key}`}
+        pinned={expanded} estimatedTop={props.estimatedTop} estimatedHeight={PAGE_ROW_TOUCH_MIN_HEIGHT_PX}>
+        <CountedDisclosureItem testID={`voice-brief.occurrences.${first.key}`}
+            title={first.title} subtitle={first.subtitle} count={props.items.length}
+            expanded={expanded} onExpandedChange={setExpanded}>
+            {props.items.map((item, index) => <VoiceBriefWindowRow key={item.key} item={item}
+                estimatedTop={props.estimatedTop + (index + 1) * PAGE_ROW_TOUCH_MIN_HEIGHT_PX}
+                fallbackTitle={props.fallbackTitle} onOpen={props.onOpen} />)}
+        </CountedDisclosureItem>
+    </NearViewportWindow>;
+});
+
+function VoiceBriefWindowRow(props: Readonly<{
+    item: VoiceBriefItem;
+    estimatedTop: number;
+    fallbackTitle: string;
+    onOpen: (item: VoiceBriefItem) => void;
+}>) {
+    return <NearViewportWindow id={`voice-brief.item.${props.item.key}`} testID={`voice-brief.window.${props.item.key}`}
+        pinned={false} estimatedTop={props.estimatedTop} estimatedHeight={PAGE_ROW_TOUCH_MIN_HEIGHT_PX}>
+        <VoiceBriefRow item={props.item} fallbackTitle={props.fallbackTitle} onOpen={props.onOpen} />
+    </NearViewportWindow>;
+}
 
 const VoiceBriefRow = React.memo(function VoiceBriefRow(props: Readonly<{
     item: VoiceBriefItem;

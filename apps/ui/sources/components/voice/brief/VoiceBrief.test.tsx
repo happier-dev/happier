@@ -959,6 +959,48 @@ describe('mounted Voice Brief request', () => {
             expect(opened.mock.lastCall?.[0].destination).toEqual({ kind: 'session', address });
         }
     });
+    it.each(['distinct', 'disclosed'] as const)('bounds census-sized %s Brief mounts by Home viewport and opens the last destination after scrolling', async (mode) => {
+        const { PluginUiScrollActivityProvider } = await import('@happier-dev/plugin-ui/advanced');
+        const { createNearViewportTracker } = await import('@/components/widgets/nearViewport');
+        const { PAGE_ROW_TOUCH_MIN_HEIGHT_PX: rowHeight } = await import('@/components/ui/lists/pageRowMetrics');
+        // Same 1,000-session Activity reference census used by the source-projection test above.
+        const items: VoiceBriefItem[] = Array.from({ length: 1_000 }, (_, index) => ({
+            key: `census-${index}`, category: 'ready', title: mode === 'distinct' ? `Result ${index}` : 'Repeated result',
+            destination: { kind: 'workflow', runId: `run-${index}` },
+        }));
+        let offset = 0;
+        const rect = (top: number) => ({ x: 0, y: top - offset, top: top - offset, left: 0, width: 400, height: rowHeight });
+        const content = { getBoundingClientRect: () => rect(0) };
+        const tracker = createNearViewportTracker({ quantum: rowHeight, initialViewportHeight: 400, readContentNode: () => content });
+        const opened = vi.fn();
+        const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
+            <VoiceBriefList brief={{ items, incomplete: true, caughtUp: false }} onOpen={opened} />
+        </PluginUiScrollActivityProvider>, { createNodeMock: node => {
+            const match = /^voice-brief.(?:occurrences.)?window.census-(\d+)$/.exec(node.props.testID ?? '');
+            return match ? { getBoundingClientRect: () => rect(Number(match[1]) * rowHeight) } : null;
+        } });
+        if (mode === 'disclosed') await screen.pressByTestIdAsync('voice-brief.occurrences.census-0.header');
+        const mountedRows = () => screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('voice-brief.item.')).length;
+        const windowRows = () => Math.ceil((tracker.getWindow()!.bottom - Math.max(0, tracker.getWindow()!.top)) / rowHeight) + 1;
+        expect(mountedRows()).toBeGreaterThan(0);
+        expect(mountedRows()).toBeLessThanOrEqual(windowRows());
+        expect(screen.findByTestId('voice-brief.item.census-999')).toBeNull();
+        await act(async () => {
+            offset = 999 * rowHeight;
+            tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } } as never);
+        });
+        expect(mountedRows()).toBeLessThanOrEqual(windowRows());
+        await screen.pressByTestIdAsync('voice-brief.item.census-999');
+        expect(opened).toHaveBeenLastCalledWith(items[999]);
+        await act(async () => {
+            offset = 0;
+            tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 0 } } } as never);
+        });
+        // Scrolling out and back retains the same disclosure, including its open state.
+        expect(screen.findByTestId('voice-brief.item.census-0')).not.toBeNull();
+        await screen.unmount();
+    });
+
     it('shows repeated occurrences once until expanded, retaining every exact destination', async () => {
         const items: VoiceBriefItem[] = Array.from({ length: 300 }, (_, index) => ({
             key: `run-${index}`, category: 'needs_you', title: 'Do an action',
