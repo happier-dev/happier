@@ -24,9 +24,9 @@ export type ClaudeNativeQuestionPresentation = Readonly<{
 const FOCUS = '[>›❯]';
 const ROW = new RegExp(`^\\s*(${FOCUS})?\\s*(\\d+)\\.(?:\\s+(.+?))?\\s*$`, 'u');
 const REVIEW_SUBMIT_ROW = new RegExp(`^\\s*${FOCUS}?\\s*1\\. Submit answers$`, 'u');
-const RULE = /^[\s─━]+$/u;
-const HEADER = /^\s*(?:←\s+)?[☐☒]\s+.+?\s*$/u;
-const HINT = /^Enter to select · (?:↑\/↓ to navigate|Tab\/Arrow keys to navigate)(?: · n to add notes)?(?: · Tab to switch questions)?(?: · ctrl\+g to edit in .+)? · Esc to cancel$/u;
+const RULE = /^[\s\u2500\u2501]+$/u;
+const HEADER = /^\s*(?:\u2190\s+)?[\u2610\u2612]\s+.+?\s*$/u;
+const HINT = /^Enter to select \u00B7 (?:\u2191\/\u2193 to navigate|Tab\/Arrow keys to navigate)(?: \u00B7 n to add notes)?(?: \u00B7 Tab to switch questions)?(?: \u00B7 ctrl\+g to edit in .+)? \u00B7 Esc to cancel$/u;
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
@@ -87,8 +87,8 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (HEADER.test(lines[index]!)) { headerIndex = index; break; }
   }
-  const boundary = /^([─━]+)(?:\s.*)?$/u.exec(lines[headerIndex - 1] ?? '')
-    ?? lines.map((line) => /^([─━]+)(?:\s.*)?$/u.exec(line)).reverse().find((match) => match !== null);
+  const boundary = /^([\u2500\u2501]+)(?:\s.*)?$/u.exec(lines[headerIndex - 1] ?? '')
+    ?? lines.map((line) => /^([\u2500\u2501]+)(?:\s.*)?$/u.exec(line)).reverse().find((match) => match !== null);
   // Claude's split view can place unrelated content beside its dialog. Crop to
   // the native rule before deciding which dialog rows are blank or continued.
   if (boundary) {
@@ -106,14 +106,14 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   const reviewClipped = headerIndex < 0 && !reviewHeading
     && tail[0]?.trim() === 'Ready to submit your answers?'
     && REVIEW_SUBMIT_ROW.test(tail[1] ?? '')
-    && /^\s*[>›❯]?\s*2\. Cancel$/u.test(tail[2] ?? '');
+    && /^\s*[>\u203A\u276F]?\s*2\. Cancel$/u.test(tail[2] ?? '');
   const review = reviewHeading || reviewClipped;
   if (!boundary && !review) return null;
   const header = lines[headerIndex] ?? '';
   let tabs: ClaudeNativeQuestionPresentation['tabs'] = null;
   if (multiple) {
-    if (!/→\s*$/u.test(header)) return null;
-    const markers = [...header.matchAll(/[☐☒✔]/gu)];
+    if (!/\u2192\s*$/u.test(header)) return null;
+    const markers = [...header.matchAll(/[\u2610\u2612\u2714]/gu)];
     if (markers.length < 2 || markers.at(-1)?.[0] !== '✔' || markers.slice(0, -1).some((match) => match[0] === '✔')) return null;
     // The checkbox has one leading cell of padding; wrapped text resumes there.
     const columns = [...markers.map((match) => stringWidth(header.slice(0, match.index)) - 1), stringWidth(header.slice(0, header.lastIndexOf('→')))];
@@ -124,7 +124,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     if (!matchesClaudeNativeQuestionText(captions.at(-1) ?? '', 'Submit')) return null;
     tabs = markers.slice(0, -1).map((match, index) => ({ header: captions[index]!, answered: match[0] === '☒' }));
   } else if (headerIndex >= 0) {
-    tabs = [...header.matchAll(/([☐☒])\s+([^☐☒]+?)(?=\s+[☐☒]|$)/gu)]
+    tabs = [...header.matchAll(/([\u2610\u2612])\s+([^\u2610\u2612]+?)(?=\s+[\u2610\u2612]|$)/gu)]
       .map((match) => ({ header: match[2]!.trim(), answered: match[1] === '☒' }));
   }
   if (tabs && (tabs.length === 0 || (!multiple && tabs.length !== 1))) return null;
@@ -136,7 +136,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   if (first < 0) return null;
   // A preview is a second column inside the native dialog, not part of an option.
   // Restrict clipping to the choices: the question and footer still span the dialog.
-  const box = / {2,}┌─+┐\s*$/u.exec(body[first]!);
+  const box = / {2,}\u250C\u2500+\u2510\s*$/u.exec(body[first]!);
   const previewColumn = !review && box ? stringWidth(body[first]!.slice(0, box.index + box[0].indexOf('┌'))) : null;
   let notes: ClaudeNativeQuestionPresentation['notes'] = 'none';
   if (previewColumn !== null) {
@@ -150,7 +150,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     for (let index = first; index < end; index += 1) body[index] = clipDialogLine(body[index]!, previewColumn).trimEnd();
   }
 
-  const heading = body.slice(0, first).map((line) => line.replace(/^( ?)│/u, '$1 ')).filter((line) => line.trim().length > 0);
+  const heading = body.slice(0, first).map((line) => line.replace(/^( ?)\u2502/u, '$1 ')).filter((line) => line.trim().length > 0);
   const options: { label: string; focused: boolean; checked: boolean | null; continuationLines: string[] }[] = [];
   let labelColumn = 0;
   let nextFocused = false;
@@ -176,14 +176,14 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
       lastNumber += 1;
       let label = match[3] ?? '';
       labelColumn = match[3] === undefined ? line.length + 1 : line.length - label.length;
-      const checkbox = /^\[([ ✔✓xX])\](?:\s+(.*))?$/u.exec(label);
+      const checkbox = /^\[([ \u2714\u2713xX])\](?:\s+(.*))?$/u.exec(label);
       let checked: boolean | null = null;
       if (checkbox) {
         multiSelect = true;
         checked = checkbox[1] !== ' ';
         label = checkbox[2] ?? '';
         labelColumn += 4;
-      } else if (/ ✔$/u.test(label)) {
+      } else if (/ \u2714$/u.test(label)) {
         checked = true;
         label = label.slice(0, -2);
       }
@@ -201,7 +201,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   if (review) {
     if ((tabs && !multiple) || options.length !== 2 || options[0]?.label !== 'Submit answers' || options[1]?.label !== 'Cancel') return null;
     if (body.slice(optionsEnd).some((line) => line.trim().length > 0)) return null;
-    const firstEntry = reviewClipped ? heading.findIndex((line) => /^\s*●\s+/u.test(line)) : 1;
+    const firstEntry = reviewClipped ? heading.findIndex((line) => /^\s*\u25CF\s+/u.test(line)) : 1;
     // Only the top viewport fragment may be missing. Never skip an entry in the middle.
     if (reviewClipped && (firstEntry < 0 || heading.slice(0, firstEntry).some((line) => !/^\s{3,}\S/u.test(line)))) return null;
     const entries = heading.slice(firstEntry);
@@ -209,19 +209,19 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     const incomplete = entries[0]?.trim() === '⚠ You have not answered all questions';
     if (incomplete) entries.shift();
     for (let index = 0; index < entries.length;) {
-      const question = /^\s*●\s+(.+)$/u.exec(entries[index] ?? '');
+      const question = /^\s*\u25CF\s+(.+)$/u.exec(entries[index] ?? '');
       if (!question) return null;
       const questionLines = [question[1]!];
       index += 1;
-      while (index < entries.length && /^\s{3,}\S/u.test(entries[index]!) && !/^\s*→/u.test(entries[index]!)) {
+      while (index < entries.length && /^\s{3,}\S/u.test(entries[index]!) && !/^\s*\u2192/u.test(entries[index]!)) {
         questionLines.push(entries[index]!.trim());
         index += 1;
       }
-      const answer = /^\s*→(?: (.*))?$/u.exec(entries[index] ?? '');
+      const answer = /^\s*\u2192(?: (.*))?$/u.exec(entries[index] ?? '');
       if (!answer) return null;
       index += 1;
       const continuation: string[] = [];
-      while (index < entries.length && entries[index]!.startsWith('   ') && !/^\s*●/u.test(entries[index]!)) {
+      while (index < entries.length && entries[index]!.startsWith('   ') && !/^\s*\u25CF/u.test(entries[index]!)) {
         continuation.push(entries[index]!.slice(3));
         index += 1;
       }

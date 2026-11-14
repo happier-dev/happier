@@ -12,7 +12,7 @@ function assertNativeCheckpointPath(path: string, symlinkTarget = false): void {
     if (platform() === 'win32' && path.split('/').some(part => {
         if (symlinkTarget && (part === '.' || part === '..')) return false;
         return /[\\<>:"|?*\x00-\x1f]|[. ]$/.test(part)
-            || /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part);
+            || /^(?:CON|PRN|AUX|NUL|COM[1-9\u00B9\u00B2\u00B3]|LPT[1-9\u00B9\u00B2\u00B3])(?:\.|$)/i.test(part);
     })) throw new Error('Checkpoint path cannot be represented exactly on this filesystem');
 }
 

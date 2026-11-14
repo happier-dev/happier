@@ -124,7 +124,7 @@ function normalizePosixRelativePath(raw: string, portable: boolean): { ok: true;
   for (const seg of segments) {
     if (seg === '.' || seg === '..') return { ok: false, message: 'path contains dot segment' };
     if (portable && (/[<>:"|?*\u0000-\u001f]/.test(seg) || /[. ]$/.test(seg)
-      || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(seg))) {
+      || /^(?:con|prn|aux|nul|com[1-9\u00B9\u00B2\u00B3]|lpt[1-9\u00B9\u00B2\u00B3])(?:\.|$)/i.test(seg))) {
       return { ok: false, message: 'path contains a Windows-invalid name' };
     }
   }

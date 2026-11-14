@@ -130,7 +130,7 @@ const ESC_TO_INTERRUPT = /esc to interrupt/i;
 // `✽ Billowing… (10m 24s · ↓ 20.4k tokens)`). Detect the spinner-line shape: an
 // animation glyph, a status word, an ellipsis, then a parenthesized status group. Completion lines
 // (`✳ Crunched for 6s`) have no parenthesized group and must NOT match.
-const GENERATING_SPINNER_LINE = /(?:^|\n)[^\S\n]*[\u2736\u273b\u273d\u2733·\u2217*][^\S\n]+\S+\u2026[^\S\n]*\(/u;
+const GENERATING_SPINNER_LINE = /(?:^|\n)[^\S\n]*[\u2736\u273b\u273d\u2733\u00B7\u2217*][^\S\n]+\S+\u2026[^\S\n]*\(/u;
 const QUEUED_MESSAGE_BANNER = /press up to edit queued messages/i;
 const SWITCH_MODEL_DIALOG = /switch model\?/i;
 // Claude renders the focused-row cursor according to terminal capabilities. Real captures include
@@ -261,7 +261,7 @@ function lastMatch(pattern: RegExp, text: string): RegExpExecArray | null {
 // rows and vertical-only box rows can be intentional blank paragraphs inside the composer.
 const COMPOSER_BORDER_LINE = /^[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*$/;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
-const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736·]|\u26a0)/;
+const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736\u00B7]|\u26a0)/;
 
 /**
  * Continuation lines of a soft-wrapped composer draft (remote-dev C11 live capture): a draft

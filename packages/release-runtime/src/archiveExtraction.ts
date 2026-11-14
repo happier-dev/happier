@@ -17,7 +17,7 @@ import { createTarDecompressionStreams, resolveReleaseArchiveFormat, type TarArc
 export { resolveReleaseArchiveFormat } from './archiveFormats.js';
 
 const WINDOWS_INVALID_PATH_CHARACTER = /[\u0000-\u001f<>:"|?*]/u;
-const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
+const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu;
 const MAX_TAR_METADATA_ENTRY_BYTES = 1024 * 1024;
 // A symlink target is a path, and the longest path any supported platform accepts is PATH_MAX
 // (4096 on Linux, 1024 on macOS). The target is read fully into memory before the link is created,

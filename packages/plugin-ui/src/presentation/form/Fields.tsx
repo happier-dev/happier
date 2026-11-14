@@ -309,7 +309,7 @@ function combineAccessibilityHints(...hints: readonly (string | undefined)[]): s
   if (present.length === 0) return undefined;
   return present.reduce((combined, hint) => {
     if (combined === '') return hint;
-    return /[.!?…:;]\s*$/u.test(combined) ? `${combined} ${hint}` : `${combined}. ${hint}`;
+    return /[.!?\u2026:;]\s*$/u.test(combined) ? `${combined} ${hint}` : `${combined}. ${hint}`;
   }, '');
 }
 

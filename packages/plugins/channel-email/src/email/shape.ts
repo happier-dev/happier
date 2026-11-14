@@ -10,11 +10,11 @@ import type { EmailContentOptions } from './parse.js';
 
 const signatureSelector = '#Signature, .gmail_signature, .AppleMailSignature, .moz-signature';
 const historySelector = '.gmail_quote, blockquote, .moz-cite-prefix, #divRplyFwdMsg, #appendonsend';
-const forwardMarker = /-{2,}\s*(?:Forwarded message|Message transf[ée]r[ée]|Weitergeleitete Nachricht)|Begin forwarded message\s*:|Début du message (?:transféré|réexpédié)\s*:|(?:Weitergeleitete Nachricht|Message transféré)\s*:/i;
+const forwardMarker = /-{2,}\s*(?:Forwarded message|Message transf[\u00E9e]r[\u00E9e]|Weitergeleitete Nachricht)|Begin forwarded message\s*:|D\u00E9but du message (?:transf\u00E9r\u00E9|r\u00E9exp\u00E9di\u00E9)\s*:|(?:Weitergeleitete Nachricht|Message transf\u00E9r\u00E9)\s*:/i;
 const forwardedSubject = /^\s*(?:fwd?|tr|wg)\s*:/i;
-const replyLine = /^\s*(?:On\b.+\bwrote\s*:|Le\b.+\ba écrit\s*:|Am\b.+\bschrieb\b.*:|[- ]*(?:Original Message|Message d'origine|Ursprüngliche Nachricht)[- ]*)\s*$/i;
-const outlookHeaderLine = /^\s*(?:\*\*|__)?(?:(From|De|Von)|(Sent|Envoyé|Gesendet|Date|Datum)|(To|Cc|À|An|Subject|Objet|Betreff))\s*:/i;
-const mobileSignatureLine = /^(?:Sent from my (?:iPhone|iPad)|Envoyé (?:de|depuis) mon (?:iPhone|iPad)|Von meinem (?:iPhone|iPad) gesendet|Envoyé à partir de Outlook pour iOS(?:<https?:\/\/[^>]+>)?)\s*$/i;
+const replyLine = /^\s*(?:On\b.+\bwrote\s*:|Le\b.+\ba \u00E9crit\s*:|Am\b.+\bschrieb\b.*:|[- ]*(?:Original Message|Message d'origine|Urspr\u00FCngliche Nachricht)[- ]*)\s*$/i;
+const outlookHeaderLine = /^\s*(?:\*\*|__)?(?:(From|De|Von)|(Sent|Envoy\u00E9|Gesendet|Date|Datum)|(To|Cc|\u00C0|An|Subject|Objet|Betreff))\s*:/i;
+const mobileSignatureLine = /^(?:Sent from my (?:iPhone|iPad)|Envoy\u00E9 (?:de|depuis) mon (?:iPhone|iPad)|Von meinem (?:iPhone|iPad) gesendet|Envoy\u00E9 \u00E0 partir de Outlook pour iOS(?:<https?:\/\/[^>]+>)?)\s*$/i;
 
 function normalizeText(text: string) {
   return text.replace(/\r\n?/g, '\n').replace(/[\t ]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();

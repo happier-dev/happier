@@ -1,5 +1,5 @@
 const WINDOWS_RESERVED_BASENAME =
-  /^(?:(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?|clock\$|conin\$|conout\$)$/iu;
+  /^(?:(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\..*)?|clock\$|conin\$|conout\$)$/iu;
 const WINDOWS_FORBIDDEN_CHARACTER = /[<>:"|?*]/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 const MAX_PORTABLE_SEGMENT_BYTES = 255;

@@ -20,7 +20,7 @@ function proposeMessageTaskTitle(quote: string | null | undefined): string | und
   const firstLine = quote?.split(/\r?\n/u).find(line => line.trim().length > 0)?.trim();
   if (firstLine === undefined) return undefined;
   // A sentence terminal proposes the title; unpunctuated text stays intact in every host.
-  return firstLine.match(/^.*?(?:[.!?](?=\s|$)|[。！？])/u)?.[0].trim() ?? firstLine;
+  return firstLine.match(/^.*?(?:[.!?](?=\s|$)|[\u3002\uFF01\uFF1F])/u)?.[0].trim() ?? firstLine;
 }
 
 export function createTriageMountedUiActionHandler(): PluginClientActionHandler<TriageMountedUiInputV1, TriageMountedUiResultV1> {

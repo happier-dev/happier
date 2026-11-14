@@ -28,13 +28,13 @@ const READ_OUTSIDE_CHOICES = [
 /** Native permission UI, characterized with Bash/Write on Claude 2.1.304 and Read on 2.1.310. */
 export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePermissionPresentation | null {
     const lines = readClaudeNativeDialogScreenLines(text);
-    const planFooter = lastLineIndex(lines, /^\s*ctrl\+g to edit in .+ ·(?: .*)?\s*$/u);
+    const planFooter = lastLineIndex(lines, /^\s*ctrl\+g to edit in .+ \u00B7(?: .*)?\s*$/u);
     const footerLines = planFooter >= 0 ? lines.slice(planFooter).filter((line) => line.trim()) : [];
     const planFooterComplete = footerLines.length > 0
-        && /^ctrl\+g to edit in .+ · .+$/u.test(footerLines.map((line) => line.trim()).join(' '))
+        && /^ctrl\+g to edit in .+ \u00B7 .+$/u.test(footerLines.map((line) => line.trim()).join(' '))
         && footerLines.slice(1).every((line) => /^\s{3,}\S/u.test(line));
     if (planFooterComplete) {
-        const firstOption = lastLineIndex(lines.slice(0, planFooter), /^\s*([>›❯])?\s*1\.\s+Yes\b/u);
+        const firstOption = lastLineIndex(lines.slice(0, planFooter), /^\s*([>\u203A\u276F])?\s*1\.\s+Yes\b/u);
         if (firstOption < 0) return null;
         let question = -1;
         for (let index = firstOption - 1; index >= 0; index -= 1) {
@@ -51,7 +51,7 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
                 continuation[options.length - 1]!.push(line.slice(8));
                 continue;
             }
-            const row = /^\s*([>›❯])?\s*(\d+)\.\s+(.+)$/u.exec(line);
+            const row = /^\s*([>\u203A\u276F])?\s*(\d+)\.\s+(.+)$/u.exec(line);
             if (!row || Number(row[2]) !== options.length + 1) return null;
             options.push({ label: row[3]!.trim(), focused: Boolean(row[1]) });
             continuation.push([]);
@@ -71,14 +71,14 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
             feedback: { optionIndex: options.length - 1, placeholder, text: feedbackText },
         };
     }
-    const footer = lastLineIndex(lines, /^\s*Esc to cancel(?: · Tab to amend)?\s*$/u);
+    const footer = lastLineIndex(lines, /^\s*Esc to cancel(?: \u00B7 Tab to amend)?\s*$/u);
     if (footer < 0 || lines.slice(footer + 1).some((line) => line.trim())) return null;
     const question = lastLineIndex(lines.slice(0, footer), /^\s*(?:Do you want to .+|Allow .+)\?\s*$/u);
     if (question < 0) return null;
     const options: { label: string; focused: boolean }[] = [];
     for (const line of lines.slice(question + 1, footer)) {
         if (!line.trim()) continue;
-        const row = /^\s*([>›❯])?\s*(\d+)\.\s+(.+)$/u.exec(line);
+        const row = /^\s*([>\u203A\u276F])?\s*(\d+)\.\s+(.+)$/u.exec(line);
         if (row) {
             if (Number(row[2]) !== options.length + 1) return null;
             options.push({ label: row[3]!.trim(), focused: Boolean(row[1]) });
@@ -90,9 +90,9 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
     }
     if (options.length < 2 || options.filter((option) => option.focused).length !== 1) return null;
     if (new Set(options.map((option) => option.label)).size !== options.length) return null;
-    const start = lastLineIndex(lines.slice(0, question), /^\s*[─━]{2,}\s*$/u);
+    const start = lastLineIndex(lines.slice(0, question), /^\s*[\u2500\u2501]{2,}\s*$/u);
     const context = lines.slice(start + 1, question + 1).map((line) => line.trimEnd()).join('\n').trim();
-    const commandEnd = lastLineIndex(lines.slice(start + 1, question), /^\s*╌{2,}\s*$/u);
+    const commandEnd = lastLineIndex(lines.slice(start + 1, question), /^\s*\u254C{2,}\s*$/u);
     const explanation = commandEnd >= 0
         ? lines.slice(start + commandEnd + 2, question + 1).map((line) => line.trimEnd()).join('\n').trim()
         : undefined;

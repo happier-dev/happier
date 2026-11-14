@@ -131,7 +131,7 @@ function buildNativeTerminalPermissionChoices(
   for (const [index, option] of dialog.options.entries()) {
     const feedback = presentation?.feedback?.optionIndex === index;
     const approved = !feedback && /^Yes\b/u.test(option.label);
-    const persistent = /^Yes, and don[’']t ask again for: .+$/u.test(option.label)
+    const persistent = /^Yes, and don[\u2019']t ask again for: .+$/u.test(option.label)
       || option.label === 'Yes, and keep allowing any reads outside the working directories'
       || option.label === 'No, and block reads outside the working directories from now on';
     const once = option.label === 'Yes' || option.label === 'No' || /ask again next time/u.test(option.label);

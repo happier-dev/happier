@@ -67,7 +67,7 @@ export function buildApprovalSummary(spec: ActionSpec, input?: unknown, preview?
 }
 
 function sentenceTerminated(value: string): string {
-  return /[.!?\u2026。！？]$/u.test(value) ? value : `${value}.`;
+  return /[.!?\u2026\u3002\uff01\uff1f]$/u.test(value) ? value : `${value}.`;
 }
 
 /** One canonical summary source for every approval and present-user confirmation; domain presenters refine exact effects. */
