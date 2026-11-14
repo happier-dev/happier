@@ -1,3 +1,4 @@
+import type { PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionSpawnNewIncompatibleTargetV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -137,6 +138,21 @@ export function resolveSessionSpawnNewResultFailureMessage(
 ): string {
     const message = resolveSessionSpawnNewResultFailureBody(result);
     return requestId ? `${message}\n\n${t('session.startFailure.requestId', { id: requestId })}` : message;
+}
+
+/** Retained inputs consume the same typed-cause copy as failed Session starts. */
+export function resolvePendingDeliveryFailureMessage(failure: PendingDeliveryFailureV1): string {
+    const label = t('session.pendingMessages.errors.sendFailed');
+    const detail = failure.errorDetail;
+    if (!detail) return label;
+    if (detail.kind === 'launch_error' || detail.kind === 'provider_error') {
+        return label + '\n' + resolveSessionSpawnNewResultFailureMessage({
+            type: 'error', code: 'spawn_failed', retryable: false,
+            ...(detail.kind === 'launch_error' ? { launchError: detail } : { providerError: detail.providerError }),
+        });
+    }
+    const diagnostic = resolveConnectedServiceUxDiagnosticPresentation('uxDiagnostic' in detail ? detail.uxDiagnostic : undefined);
+    return diagnostic ? label + '\n' + (presentSessionStartupFailureCause(diagnostic.code) ?? t(diagnostic.bodyKey)) : label;
 }
 
 function resolveSessionSpawnNewResultFailureBody(

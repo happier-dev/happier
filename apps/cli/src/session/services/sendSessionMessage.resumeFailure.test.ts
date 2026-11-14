@@ -412,7 +412,7 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
       return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
     }
     if (url.endsWith(`/pending/${localId}/discard`)) {
-      expect(body).toEqual({ reason: 'resume_failed' });
+      expect(body).toEqual({ reason: 'resume_failed', errorDetail });
       settled = true;
       return { status: 200, data: { ok: true, didUpdate: true } };
     }

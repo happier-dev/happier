@@ -505,6 +505,17 @@ describe('happier session send truthfulness over the canonical admission status'
     process.exitCode = undefined;
   });
 
+  it('retains the resume refusal cause in public error details', async () => {
+    const errorDetail = { kind: 'connected_service_resume_unreachable', continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'], diagnostics: { reason: 'gemini_resume_unreachable' } } };
+    execute.mockResolvedValueOnce({ ok: true, result: { status: 'failed', localId: 'local-9', code: 'resume_failed', errorDetail } });
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello', '--json'], credentials);
+      expect(output.json()).toMatchObject({ ok: false, error: { details: { status: 'failed', localId: 'local-9', errorDetail } } });
+    } finally { output.restore(); }
+  });
+
   it.each([
     {
       status: 'rejected',

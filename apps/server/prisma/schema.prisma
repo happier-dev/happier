@@ -2412,6 +2412,8 @@ model SessionPendingMessage {
     status           SessionPendingMessageStatus @default(queued)
     deliveryState         String?
     deliveryBlockedReason String?
+    /// Typed pre-runner refusal; separate from reply observation and encrypted content.
+    deliveryFailure Json?
     position         Int
     discardedAt      DateTime?
     discardedReason  String?

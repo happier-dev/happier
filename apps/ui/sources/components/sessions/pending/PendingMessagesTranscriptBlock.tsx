@@ -19,6 +19,7 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolvePendingDeliveryFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
@@ -1143,6 +1144,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
     const renderDiscardedMessage = React.useCallback((message: DiscardedPendingMessage, index: number, all: readonly DiscardedPendingMessage[]) => {
         const isLastDiscarded = index === all.length - 1;
+        const outcomeLabel = message.pendingFailure
+            ? resolvePendingDeliveryFailureMessage(message.pendingFailure)
+            : t('session.pendingMessages.discarded.label');
         const text = getPendingText(message).trim();
         const { isHostInput: isHostFollowInput, followInput } = resolvePendingMessageContentPresentation(message);
         const menuKey = `discarded:${message.id}`;
@@ -1227,7 +1231,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             }}
                             testID={`pendingMessages.discarded.message:${message.id}`}
                             accessibilityRole="button"
-                            accessibilityLabel={followInput ? t('session.pendingMessages.discarded.label') : text || t('session.pendingMessages.discarded.label')}
+                            accessibilityLabel={followInput ? outcomeLabel : [text, outcomeLabel].filter(Boolean).join(' ')}
                             style={({ pressed }) => ([
                                 !isHostFollowInput ? styles.userMessageBubbleBody : null,
                                 { opacity: pressed ? motionTokens.press.opacity : 1 },
@@ -1243,7 +1247,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 { marginTop: theme.space.s6, color: theme.colors.text.secondary, ...Typography.variant('meta', 'semiBold') },
                                 isHostFollowInput ? styles.hostDiscardedLabel : null,
                             ]}>
-                                {t('session.pendingMessages.discarded.label')}
+                                {outcomeLabel}
                             </Text>
                         </Pressable>
                         </PendingUtteranceSurface>
@@ -1369,9 +1373,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
     const maxHeight = isQueueExpanded ? Math.max(expandedMaxHeightPx, collapsedMaxHeight) : collapsedMaxHeight;
     // The section counts what it holds: the queue may continue in another section further down.
+    const retainedFailureOnly = displayedDiscarded.length > 0 && displayedDiscarded.every(message => Boolean(message.pendingFailure));
+    const retainedTitle = retainedFailureOnly ? t('session.pendingMessages.errors.sendFailed') : t('session.pendingMessages.discarded.title');
     const headerLabel = visiblePendingMessageIds.size > 0
         ? `${t('session.pendingMessages.title')} (${visiblePendingMessageIds.size})`
-        : t('session.pendingMessages.discarded.title');
+        : retainedTitle;
     const clampedViewportHeightPx = effectiveScrollContentHeightPx > 0
         ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
         : undefined;
@@ -1496,11 +1502,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 {displayedDiscarded.length > 0 ? (
                                     <View style={{ marginTop: theme.space.s4 }}>
                                         <Text style={[styles.discardedTitle, { color: theme.colors.text.secondary }]}>
-                                            {t('session.pendingMessages.discarded.title')}
+                                            {retainedTitle}
                                         </Text>
-                                        <Text style={[styles.discardedSubtitle, { color: theme.colors.text.secondary }]}>
+                                        {!retainedFailureOnly && <Text style={[styles.discardedSubtitle, { color: theme.colors.text.secondary }]}>
                                             {t('session.pendingMessages.discarded.subtitle')}
-                                        </Text>
+                                        </Text>}
                                         <View style={{ marginTop: theme.space.s10 }}>
                                             {displayedDiscarded.map(renderDiscardedMessage)}
                                         </View>

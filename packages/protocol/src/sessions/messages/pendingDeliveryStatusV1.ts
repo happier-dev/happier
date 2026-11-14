@@ -1,7 +1,15 @@
+import { SpawnSessionErrorDetailSchema } from '../spawnSession.js';
 import type { PendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
 import { normalizePendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+
+/** Definite pre-runner refusal retained with the original Pending input. */
+export const PendingDeliveryFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.literal('resume_failed'),
+  errorDetail: z.optional(SpawnSessionErrorDetailSchema),
+}));
+export type PendingDeliveryFailureV1 = z.infer<typeof PendingDeliveryFailureV1Schema>;
 
 /** Read-only custody eligibility; recovery mutations still check current server state. */
 export const PendingDeliveryRecoveryV1Schema = lazyZodSchema(() => z.strictObject({

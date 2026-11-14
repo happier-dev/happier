@@ -124,21 +124,34 @@ const updatePendingRequestedAction = (params: WithoutAuthentication<Parameters<t
     updatePendingRequestedActionWithAuthentication(withPresentUserAuthentication(params));
 
 describe("pendingMessageService (shared sessions)", () => {
-    it('settles a refused resume as failed through the existing Pending discard route', async () => {
+    it.each([true, false])('retains refused resume cause through the Pending route (reply observer %s)', async (observeReply) => {
+        const errorDetail = { kind: 'connected_service_resume_unreachable', continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'], diagnostics: { reason: 'gemini_resume_unreachable' } } } as const;
         const owner = await createAccount('resume-refused');
         const session = await createSession(owner.id);
         const localId = 'resume-refused-input';
         expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId,
-            ciphertext: 'retained-input', reply: { mode: 'wait' } })).toMatchObject({ ok: true });
+            ciphertext: 'retained-input', ...(observeReply ? { reply: { mode: 'wait' as const } } : {}) })).toMatchObject({ ok: true });
         await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
             const response = await app.inject({ method: 'POST',
                 url: `/v2/sessions/${session.id}/pending/${localId}/discard`,
-                headers: { 'x-test-user-id': owner.id }, payload: { reason: 'resume_failed' } });
+                headers: { 'x-test-user-id': owner.id }, payload: { reason: 'resume_failed', errorDetail } });
             expect(response.statusCode).toBe(200);
             expect(response.json()).toMatchObject({ ok: true, pendingCount: 0, pendingBlockedCount: 0 });
             const row = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } });
             expect(row).toMatchObject({ status: 'discarded', discardedReason: 'resume_failed',
-                replyProgress: { outcome: { kind: 'failed' } } });
+                deliveryFailure: { code: 'resume_failed', errorDetail } });
+            if (observeReply) expect(row.replyProgress).toMatchObject({ outcome: { kind: 'failed' } });
+            else expect(row.replyProgress).toBeNull();
+            const listed = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/pending?includeDiscarded=true`, headers: { 'x-test-user-id': owner.id } });
+            expect(listed.json()).toMatchObject({ pending: [ { failure: { code: 'resume_failed', errorDetail } } ] });
+            if (!observeReply) {
+                expect(await restorePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId }))
+                    .toMatchObject({ ok: true, pendingCount: 1 });
+                const restored = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } });
+                expect(restored.deliveryFailure).toBeNull();
+                const refreshed = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/pending?includeDiscarded=true`, headers: { 'x-test-user-id': owner.id } });
+                expect(refreshed.json().pending[0]).not.toHaveProperty('failure');
+            }
         });
     });
 

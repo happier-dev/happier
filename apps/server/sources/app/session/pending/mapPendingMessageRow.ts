@@ -1,3 +1,4 @@
+import { PendingDeliveryFailureV1Schema, type PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { normalizePendingDeliveryStatusV1, type PendingDeliveryStatusV1, type PendingDeliveryRecoveryV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { PendingRequestedActionV1Schema, PendingRequestedActionV1StoredSchema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -6,6 +7,7 @@ import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/s
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 
 export type PendingMessageRow = {
+    failure?: PendingDeliveryFailureV1;
     localId: string;
     /** Public original only; private rule/permission witnesses stay in admission custody. */
     hostFollowInput?: SessionFollowInputV1;
@@ -31,6 +33,7 @@ export type PendingMessageRow = {
 };
 
 export type PendingMessageRowRaw = {
+    deliveryFailure?: unknown;
     autonomousExchangeRootSessionId?: string | null;
     autonomousExchangeRootLocalId?: string | null;
     inputAdmissionReceipt?: unknown;
@@ -66,8 +69,11 @@ export function mapPendingMessageRow(row: PendingMessageRowRaw, accountActor: Se
     const deliveryBlockedReason =
         typeof row.deliveryBlockedReason === "string" && row.deliveryBlockedReason.length > 0 ? row.deliveryBlockedReason : null;
     const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
+    const failure = row.status === 'discarded' && row.discardedReason === 'resume_failed'
+        ? PendingDeliveryFailureV1Schema.parse(row.deliveryFailure ?? { code: 'resume_failed' }) : undefined;
     return {
         localId: row.localId,
+        ...(failure ? { failure } : {}),
         ...(receipt?.admittedTarget && receipt.followDeliveryV1 ? { hostFollowInput: receipt.followDeliveryV1 } : {}),
         ...(row.targetExecutionRunId == null ? {} : {
             recipient: { kind: "execution_run" as const, runId: row.targetExecutionRunId },

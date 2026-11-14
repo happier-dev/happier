@@ -1,3 +1,4 @@
+import { SpawnSessionErrorDetailSchema } from '@happier-dev/protocol/sessions/spawnSession';
 import { z } from "zod/mini";
 import { sendTransactionUnavailable } from '@/app/api/utils/sendTransactionUnavailable';
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
@@ -70,6 +71,7 @@ function toPendingJson(row: PendingMessageRow) {
         ...(row.autonomousExchangeRoot ? { autonomousExchangeRoot: row.autonomousExchangeRoot } : {}),
         status: row.status,
         deliveryStatus: row.deliveryStatus,
+        ...(row.failure ? { failure: row.failure } : {}),
         recovery: row.recovery,
         ...(row.deliveryState ? { deliveryState: row.deliveryState } : {}),
         ...(row.deliveryBlockedReason ? { deliveryBlockedReason: row.deliveryBlockedReason } : {}),
@@ -740,7 +742,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ runId, sessionId: z.string(), localId: PendingLocalIdSchema }),
-                body: z.optional(mutationBody({ reason: z.optional(z.string()) })),
+                body: z.optional(mutationBody({ reason: z.optional(z.string()), errorDetail: z.optional(SpawnSessionErrorDetailSchema) })),
             },
             config: {
                 rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
@@ -752,7 +754,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             const { sessionId, localId } = request.params;
             const reason = request.body?.reason;
 
-            const res = await discardPendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, reason });
+            const res = await discardPendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId, reason, ...(request.body?.errorDetail ? { errorDetail: request.body.errorDetail } : {}) });
             if (!res.ok) {
                 const authenticationStatus = pendingAuthenticationStatus(res.error);
                 if (authenticationStatus) return reply.code(authenticationStatus).send({ error: res.error });

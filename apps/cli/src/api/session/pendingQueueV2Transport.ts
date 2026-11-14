@@ -1034,6 +1034,7 @@ export async function discardPendingQueueV2Messages(params: {
     sessionId: string;
     localIds: string[];
     reason: 'switch_to_local' | 'manual' | 'session_input_cancelled' | 'resume_failed';
+    errorDetail?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryFailureV1['errorDetail'];
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<number> {
@@ -1042,7 +1043,7 @@ export async function discardPendingQueueV2Messages(params: {
     for (const localId of params.localIds) {
         try {
             const path = `/v2/sessions/${params.sessionId}/pending/${encodeURIComponent(localId)}/discard`;
-            const body = { reason: params.reason };
+            const body = { reason: params.reason, ...(params.errorDetail ? { errorDetail: params.errorDetail } : {}) };
             const authorization = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body });
             if (params.resolveAuthorizationHeaders && !authorization) throw new Error('Session input settlement authorization unavailable');
             await axios.post(

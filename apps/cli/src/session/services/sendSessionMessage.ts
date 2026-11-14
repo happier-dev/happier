@@ -2138,7 +2138,7 @@ export async function sendSessionMessage(
         // The Machine refused this attempt before a runner claimed the input.
         // Retire that exact custody through Pending's existing settlement owner.
         await discardPendingQueueV2Messages({ token: params.credentials.token, sessionId, localIds: [localId],
-          reason: 'resume_failed', ...(params.signal ? { signal: params.signal } : {}),
+          reason: 'resume_failed', ...(resumeResult.errorDetail ? { errorDetail: resumeResult.errorDetail } : {}), ...(params.signal ? { signal: params.signal } : {}),
           ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
       } else if (resumeResult.code === 'authority_unavailable') {
         // The input is already in custody. Keep it recoverable and visible as

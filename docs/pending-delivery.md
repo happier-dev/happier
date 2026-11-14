@@ -4,7 +4,12 @@
 
 A definite Machine refusal during resume-and-send settles the carried input as
 failed through the existing Pending discard owner (`resume_failed`), for every
-Agent. Send preserves the spawn owner’s typed cause. Inputs already claimed by a
+Agent. The nullable `deliveryFailure` column retains the spawn owner’s typed
+cause independently of reply observation. The server projects it as `failure`;
+the existing terminal storage bucket remains `discarded`, while the UI presents
+this input as failed with its typed cause rather than as a user discard. Restore
+clears the failure. CLI public send errors retain the cause in
+`error.details.errorDetail`. Inputs already claimed by a
 runner cannot be retired by this refusal. Transport uncertainty and informational
 deliveries retain their recoverable custody.
 

@@ -87,7 +87,8 @@ export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
     return {
       errorCode: code,
       errorMessage: `${UNDELIVERED_SEND_MESSAGES[status]} (${code}).`,
-      details: { status, ...(localId ? { localId } : {}) },
+      details: { status, ...(localId ? { localId } : {}),
+        ...(result.errorDetail !== undefined ? { errorDetail: result.errorDetail } : {}) },
     };
   },
   presentSuccess: async (payload, context) => {

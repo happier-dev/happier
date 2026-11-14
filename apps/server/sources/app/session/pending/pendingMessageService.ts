@@ -535,6 +535,7 @@ export async function listPendingMessages(params: {
         messageRole: true,
         providerAction: true,
         replyProgress: true,
+        deliveryFailure: true,
         content: true,
         requestedAction: true,
         status: true,
@@ -4555,6 +4556,7 @@ export async function discardPendingMessage(params: {
     targetExecutionRunId?: string | null;
     localId: string;
     reason?: string;
+    errorDetail?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryFailureV1['errorDetail'];
     now?: Date;
     authentication: SessionAccessAuthentication;
 }): Promise<DiscardPendingMessageResult> {
@@ -4622,6 +4624,7 @@ export async function discardPendingMessage(params: {
                     deliveryBlockedReason: persisted.deliveryBlockedReason,
                     discardedAt: now,
                     discardedReason: persisted.discardedReason,
+                    ...(reason === 'resume_failed' ? { deliveryFailure: { code: 'resume_failed', ...(params.errorDetail ? { errorDetail: params.errorDetail } : {}) } } : {}),
                 },
             });
             await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, reason === 'resume_failed' ? 'failed' : 'cancelled');
@@ -4698,6 +4701,7 @@ export async function restorePendingMessage(params: {
                         deliveryBlockedReason: persisted.deliveryBlockedReason,
                         discardedAt: null,
                         discardedReason: persisted.discardedReason,
+                        deliveryFailure: getActivePrismaRuntime().DbNull,
                         position,
                     },
                 });
