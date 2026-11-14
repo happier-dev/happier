@@ -138,13 +138,14 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       // The request itself is the spoken acknowledgement. Keep its original
       // synthesis/playback and listening rearm ahead of the model's final reply.
       await reading;
-      return true;
+      return prompt !== null;
     },
     async resumeReadout() {
       if (disposed || params.signal.aborted) return false;
       if (reading) {
         await reading;
-        return true;
+        // A UI answer can retire the prompt during readout; its caller then owns listening rearm.
+        return prompt !== null;
       }
       if (!prompt?.needsReadout) return false;
       const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: prompt.address,
@@ -153,7 +154,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       // A genuine playback interruption can still leave the request unheard.
       // Re-present it at the turn's existing settlement.
       await presentPrompt(prompt);
-      return true;
+      return prompt !== null;
     },
     captureResponse() {
       const selected = prompt;

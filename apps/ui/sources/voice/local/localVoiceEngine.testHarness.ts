@@ -14,7 +14,11 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } 
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS, SESSION_RPC_METHODS, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/rpc';
 import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
-import { ExecutionRunActionRequestSchema, ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExecutionRunActionRequestSchema, ExecutionRunActionResponseSchema, ExecutionRunStartResponseSchema,
+    ExecutionRunEnsureOrStartResponseSchema } from '@happier-dev/protocol/execution/runs/index';
 import { ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema,
     ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunUserTranscriptCommitResponseSchema,
     ExecutionRunTurnStreamStartRequestSchema, ExecutionRunTurnStreamStartV2RequestSchema,
@@ -43,9 +47,9 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSpawnNewActionResultV1, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { buildSessionTurnsProjectionV1, type SessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { Message } from '@happier-dev/session-core/messages';
@@ -662,6 +666,73 @@ async function createLocalVoiceAccountHarness() {
             const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => artifactRequestAccountId, encryptionMode: 'plain' });
             activeSessionMetadataHttp = metadataHttp;
             const accountSettings = normalizeVoiceSettingsLocalDelta(BASE_SETTINGS);
+            // Voice launch now crosses the signed Account HTTP front door. Keep
+            // its custody/crypto real and substitute only the receiving daemon.
+            const createRunBoundary = (actionId: 'execution.run.start' | 'execution.run.ensure') =>
+                createExternalActionAccountHttpBoundary({ serverUrl: 'https://local-voice-actions.example.test',
+                    serverIdentityId, accountId: 'account-a', machineId: 'machine-1', actionId, tokenEpoch: 0,
+                    async execute(input, context) {
+                        if (!input || typeof input !== 'object' || !('sessionId' in input) || typeof input.sessionId !== 'string') {
+                            throw new Error('Expected attached Voice Run admission');
+                        }
+                        const { sessionId, ...request } = input;
+                        const responding = sessionRpcWithServerScope({ sessionId, serverId: localVoiceHomeId,
+                            method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+                            payload: actionId === 'execution.run.start'
+                                ? { start: ExecutionRunStartRequestSchema.parse(request) } : request });
+                        publishLocalVoiceBoundaryEvent('agent-start');
+                        const result = await responding;
+                        if (result && typeof result === 'object' && 'ok' in result && result.ok === false) return result;
+                        const run = ExecutionRunEnsureOrStartResponseSchema.parse(result);
+                        if (!run.ok) return run;
+                        // The receiving daemon projects only portable invocation
+                        // identity; signed confirmation/custody stays at admission.
+                        const { caller, surface, authority } = context.invocation;
+                        const actionInvocation = { caller, surface, authority };
+                        return actionId === 'execution.run.start'
+                            ? { ...ExecutionRunStartResponseSchema.parse(run), actionInvocation }
+                            : { ok: true, runId: run.runId, actionInvocation };
+                    },
+                    failure(result) {
+                        const failed = ActionExecuteFailureSchema.safeParse(result);
+                        return failed.success ? failed.data : null;
+                    },
+                });
+            const runStart = await createRunBoundary('execution.run.start');
+            const runEnsure = await createRunBoundary('execution.run.ensure');
+            const createRunReadBoundary = (actionId: 'execution.run.get' | 'execution.run.list') =>
+                createExternalActionAccountHttpBoundary({ serverUrl: 'https://local-voice-actions.example.test',
+                    serverIdentityId, accountId: 'account-a', machineId: 'machine-1', actionId, tokenEpoch: 0,
+                    async execute(input) {
+                        if (!input || typeof input !== 'object' || !('sessionId' in input) || typeof input.sessionId !== 'string') {
+                            throw new Error('Expected attached retained Voice Run read');
+                        }
+                        const { sessionId, ...payload } = input;
+                        return await sessionRpcWithServerScope({ sessionId, serverId: localVoiceHomeId,
+                            method: actionId, payload });
+                    },
+                    failure(result) {
+                        const failed = ActionExecuteFailureSchema.safeParse(result);
+                        return failed.success ? failed.data : null;
+                    },
+                });
+            const runGet = await createRunReadBoundary('execution.run.get');
+            const runList = await createRunReadBoundary('execution.run.list');
+            const spawn = await createExternalActionAccountHttpBoundary({
+                serverUrl: 'https://local-voice-actions.example.test', serverIdentityId,
+                accountId: 'account-a', machineId: 'machine-1', actionId: 'session.spawn_new', tokenEpoch: 0,
+                async execute(input) {
+                    const result = await machineRpcWithServerScope({ serverId: localVoiceHomeId, machineId: 'machine-1',
+                        method: RPC_METHODS.SESSION_SPAWN_NEW,
+                        payload: admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input)) });
+                    const failed = ActionExecuteFailureSchema.safeParse(result);
+                    return failed.success ? failed.data : projectSessionSpawnNewActionResultV1(SessionSpawnNewResultV1Schema.parse(result));
+                },
+                failure(result) {
+                    const failed = ActionExecuteFailureSchema.safeParse(result);
+                    return failed.success ? failed.data : null;
+                },
+            });
             const { serveAccountHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
             const { profileDefaults } = await import('@/sync/domains/profiles/profile');
             const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
@@ -680,6 +751,12 @@ async function createLocalVoiceAccountHarness() {
                     const input = request.url;
                     const init = { method: request.method, headers: request.headers, signal: request.signal,
                         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) };
+                    if (path.startsWith('/v1/actions/')) {
+                        const response = await runStart.handle(input, init) ?? await runEnsure.handle(input, init)
+                            ?? await runGet.handle(input, init) ?? await runList.handle(input, init)
+                            ?? await spawn.handle(input, init);
+                        if (response) return response;
+                    }
                     if (path === '/v1/account/profile') return request.accountId
                         ? Response.json({ ...profileDefaults, id: request.accountId })
                         : Response.json({}, { status: 401 });
@@ -744,6 +821,7 @@ async function createLocalVoiceAccountHarness() {
                             daemonStateVersion: machine.daemonStateVersion,
                             revokedAt: machine.revokedAt ?? null, replacedByMachineId: machine.replacedByMachineId ?? null,
                             ...(machine.installationId ? { installationId: machine.installationId } : {}),
+                            installationPublicKey: runStart.machine.installationPublicKey,
                             ...(machine.operationProtocolCapabilities ? { operationProtocolCapabilities: machine.operationProtocolCapabilities,
                                 operationProtocolCapabilitiesRevision: machine.operationProtocolCapabilitiesRevision } : {}),
                             metadata: machine.metadata ? encodePlainMachineStoredContent(machine.metadata) : null,

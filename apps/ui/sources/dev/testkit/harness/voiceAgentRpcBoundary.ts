@@ -42,7 +42,8 @@ export async function createRetainedVoiceAgentRpcBoundary(params: Readonly<{
                 const request = ExecutionRunEnsureOrStartRequestSchema.parse(input);
                 const created = retainedRun === null;
                 if (request.runId) return retainedRun?.runId === request.runId
-                    ? ExecutionRunEnsureOrStartResponseSchema.parse({ ok: true, runId: retainedRun.runId, created: false })
+                    ? ExecutionRunEnsureOrStartResponseSchema.parse({ ok: true, runId: retainedRun.runId,
+                        callId: retainedRun.callId, sidechainId: retainedRun.sidechainId, created: false })
                     : { ok: false, error: 'Run not found', errorCode: 'execution_run_not_found' };
                 if (!request.start || request.start.intent !== 'voice_agent') {
                     throw new Error('Voice boundary requires its actual launch admission');
@@ -55,7 +56,8 @@ export async function createRetainedVoiceAgentRpcBoundary(params: Readonly<{
                     status: 'running', startedAtMs: 1,
                     voicePolicy: ExecutionRunVoiceAgentIntentInputV1Schema.parse(request.start.intentInput).voicePolicy,
                 });
-                return ExecutionRunEnsureOrStartResponseSchema.parse({ ok: true, runId: retainedRun.runId, created });
+                return ExecutionRunEnsureOrStartResponseSchema.parse({ ok: true, runId: retainedRun.runId,
+                    callId: retainedRun.callId, sidechainId: retainedRun.sidechainId, created });
             }
             if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
                 const request = ExecutionRunStopRequestSchema.parse(input);

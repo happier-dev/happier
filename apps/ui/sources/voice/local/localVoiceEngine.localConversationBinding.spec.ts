@@ -6,7 +6,9 @@ import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -14,8 +16,6 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/met
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { createDeferred, createMachineFixture, createSessionFixture, waitForTestEvent } from '@/dev/testkit';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { PartialOptions as ElevenLabsStartOptions } from '@elevenlabs/client';
 import {
     getStorage, loadLocalVoiceEngineWithCompatState, registerLocalVoiceEngineHarnessHooks,
@@ -38,6 +38,27 @@ vi.mock('@elevenlabs/client/internal', () => ({
 }));
 
 let localVoiceEngine: Awaited<ReturnType<typeof loadLocalVoiceEngineWithCompatState>>;
+
+function requireNativeVoiceSpawnReview() {
+    const incumbent = machineRpcWithServerScope.getMockImplementation();
+    if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
+    const createCarrier = vi.fn(incumbent);
+    let reviewRequired = true;
+    machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+        if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) return incumbent(request);
+        if (reviewRequired) {
+            reviewRequired = false;
+            // The receiving daemon carries its policy review back before creating the carrier.
+            const review = { actionArgs: request.payload, preview: { summary: 'Create the Voice conversation' } };
+            return ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_interactive_review_required',
+                error: 'action_interactive_review_required', details: {
+                    review, reviewDigest: computeActionReviewDigestV1('session.spawn_new', review),
+                } });
+        }
+        return createCarrier(request);
+    });
+    return createCarrier;
+}
 
 async function getLocalConversationSnapshot() {
     const { getVoiceAdapterRegistry } = await import('@/voice/session/voiceAdapterRegistry');
@@ -179,20 +200,6 @@ describe('local voice engine local conversation binding', () => {
 
     it.each(['', 'voice_tts_provider_unavailable'])('keeps a generated greeting speech failure typed through the real Local Voice start (%j)', async reason => {
         await configureAgentMode();
-        const runBoundary = await createExternalActionAccountHttpBoundary({
-            serverUrl: 'https://local-voice-actions.example.test', serverIdentityId: 'srv_local_voice_actions',
-            accountId: 'account-a', machineId: 'machine-1', actionId: 'execution.run.start', tokenEpoch: 0,
-            async execute(input) {
-                if (!input || typeof input !== 'object' || !('sessionId' in input)) throw new Error('Expected attached Voice Run');
-                const { sessionId: _sessionId, ...rawStart } = input;
-                await localVoiceAgentRpc.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, {
-                    start: ExecutionRunStartRequestSchema.parse(rawStart),
-                });
-                return { runId: 'local-agent-run', callId: 'local-call', sidechainId: 'local-sidechain' };
-            },
-        });
-        setLocalVoiceHttpResponder(async request => await runBoundary.handle(request.url, { method: request.method, headers: request.headers,
-                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined);
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
         const config = readLocalConversationVoiceSettings(voice);
@@ -380,16 +387,7 @@ describe('local voice engine local conversation binding', () => {
             method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
         }) ?? undefined);
-        // A fresh Machine has not created the old Voice-specific path. Keep
-        // the real Action preflight and policy beneath the Socket boundary.
-        const incumbent = machineRpcWithServerScope.getMockImplementation();
-        if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
-        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
-            const result = await incumbent(request);
-            return request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
-                ? SessionCreationTargetPreparationResultV1Schema.parse({ ...result, directoryCreationRequired: true })
-                : result;
-        });
+        const createCarrier = requireNativeVoiceSpawnReview();
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
         const { Modal } = await import('@/modal');
         const shown = createDeferred<Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0]>();
@@ -404,17 +402,18 @@ describe('local voice engine local conversation binding', () => {
             const confirmation = await Promise.race([shown.promise, starting.then(() => {
                 throw new Error('Start settled without its native UI confirmation');
             })]);
-            expect(confirmation.type).toBe('confirm');
+            expect(confirmation.type).toBe('custom');
             expect(artifacts.list()).toEqual([]);
-            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
-            Modal.resolveConfirm('home-carrier-confirmation', true);
+            expect(createCarrier).not.toHaveBeenCalled();
+            if (confirmation.type !== 'custom') throw new Error('Expected the receiving daemon review');
+            (confirmation.props as { onAnswer(confirmed: boolean): void }).onAnswer(true);
             await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({
                 status: 'connected', mode: 'listening', canStop: true,
             });
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
             expect(artifacts.list()).toEqual([]);
-            expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW))
+            expect(createCarrier.mock.calls)
                 .toEqual([[expect.objectContaining({ machineId: 'machine-1', serverId: localVoiceHomeId,
                     payload: expect.objectContaining({ directory: { kind: 'managed' } }),
                 })]]);
@@ -432,14 +431,7 @@ describe('local voice engine local conversation binding', () => {
             method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
         }) ?? undefined);
-        const incumbent = machineRpcWithServerScope.getMockImplementation();
-        if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
-        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
-            const result = await incumbent(request);
-            return request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
-                ? SessionCreationTargetPreparationResultV1Schema.parse({ ...result, directoryCreationRequired: true })
-                : result;
-        });
+        const createCarrier = requireNativeVoiceSpawnReview();
         const { Modal } = await import('@/modal');
         const shown = createDeferred<Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0]>();
         // Present through the real Modal owner, replacing only its mounted host.
@@ -457,17 +449,18 @@ describe('local voice engine local conversation binding', () => {
             const confirmation = await Promise.race([shown.promise, starting.then(() => {
                 throw new Error('Start settled without showing its native UI confirmation');
             })]);
-            expect(confirmation.type).toBe('confirm');
+            expect(confirmation.type).toBe('custom');
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true });
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
             // 02102e614e: present-user product confirmation has no agent approval Artifact.
             expect(artifacts.list()).toEqual([]);
-            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
-            Modal.resolveConfirm('carrier-review', false);
+            expect(createCarrier).not.toHaveBeenCalled();
+            if (confirmation.type !== 'custom') throw new Error('Expected the receiving daemon review');
+            (confirmation.props as { onAnswer(confirmed: boolean): void }).onAnswer(false);
             await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
-            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+            expect(createCarrier).not.toHaveBeenCalled();
         } finally {
             await lifecycle.dispose();
             setVoiceSessionLifecycleController(null);
@@ -828,7 +821,8 @@ describe('local voice engine local conversation binding', () => {
             if (ingress === 'lazy-run' && (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
                 || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
                 signedOut = true;
-                return { ok: false, errorCode: 'agent_signed_out', error: 'agent_signed_out' };
+                return { ok: false, errorCode: 'agent_signed_out', error: 'agent_signed_out',
+                    details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
             }
             return sessionIncumbent(request);
         });
