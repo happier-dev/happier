@@ -1,7 +1,6 @@
-import { releaseLessDeclarationIdentitySql, selectedDeclarationBodySql } from './declarationReadRows';
+import { releaseLessDeclarationIdentitySql } from './declarationReadRows';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
-import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { CurrentPluginDeclarationV1 } from './currentDeclaration';
 import { readReleaseLessDeclarationListSummary } from './currentDeclaration';
 
@@ -28,6 +27,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
     pluginId?: string;
     after?: string;
     take?: number;
+    /** Read declaration identities only (the body-free storage summary), never bodies. */
     list?: boolean;
     omitDeclarations?: boolean;
 }>): Promise<readonly IntentReadRow[]> {
@@ -65,46 +65,20 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
 
 type CapturedListDeclaration = Readonly<{
     machineDeclarations: ReturnType<typeof readReleaseLessDeclarationListSummary>['machineDeclarations'];
-    currentDeclaration: Readonly<{ declarationDigestSha256: CurrentPluginDeclarationV1['declarationDigestSha256']; manifestText: string }> | null;
+    currentDeclaration: Readonly<{ declarationDigestSha256: CurrentPluginDeclarationV1['declarationDigestSha256'] }> | null;
 }>;
 
-/** Resolve selected bodies as one set within the original cursor snapshot. */
-export async function readIntentListDeclarations(tx: Tx, accountId: string, rows: readonly IntentReadRow[]): Promise<ReadonlyMap<string, CapturedListDeclaration>> {
-    const summaries = rows.flatMap(row => row.pluginId !== null && row.releaseLessDeclarationSummaryText !== undefined
+/** Declaration identities from the body-free storage summary; no manifest body is read. */
+export function readIntentListDeclarations(rows: readonly IntentReadRow[]): ReadonlyMap<string, CapturedListDeclaration> {
+    return new Map<string, CapturedListDeclaration>(rows.flatMap(row => row.pluginId !== null && row.releaseLessDeclarationSummaryText !== undefined
         && row.enabled && row.desiredVersion === null
-        ? [{ pluginId: row.pluginId, summary: readReleaseLessDeclarationListSummary(
-            row.releaseLessDeclarationSummaryText === null ? null : JSON.parse(row.releaseLessDeclarationSummaryText), row.pluginId) }]
-        : []);
-    const selected = summaries.flatMap(({ pluginId, summary }) => summary.currentDeclaration
-        ? [{ pluginId, path: summary.currentDeclaration.manifestPath, digest: summary.currentDeclaration.manifestDigestSha256 }] : []);
-    const prisma = getActivePrismaRuntime();
-    const bodies = selected.length === 0 ? [] : await tx.$queryRaw<Readonly<{ pluginId: string; manifestText: string }>[]>(prisma.sql`
-        SELECT i."pluginId", CAST(${selectedDeclarationBodySql(
-            'i."releaseLessDeclaration" #> ARRAY(SELECT jsonb_array_elements_text(r.path))', 'r.digest')} AS TEXT) AS "manifestText"
-        FROM jsonb_to_recordset(CAST(${JSON.stringify(selected)} AS jsonb)) AS r("pluginId" text, path jsonb, digest text)
-        JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r."pluginId"
-    `);
-    const manifests = new Map(bodies.map(row => [row.pluginId, row.manifestText]));
-    return new Map<string, CapturedListDeclaration>(summaries.map(({ pluginId, summary }) => [pluginId, {
+        ? [[row.pluginId, readReleaseLessDeclarationListSummary(
+            row.releaseLessDeclarationSummaryText === null ? null : JSON.parse(row.releaseLessDeclarationSummaryText), row.pluginId)] as const]
+        : []).map(([pluginId, summary]) => [pluginId, {
         machineDeclarations: summary.machineDeclarations,
-        currentDeclaration: summary.currentDeclaration ? {
-            declarationDigestSha256: summary.currentDeclaration.manifestDigestSha256,
-            manifestText: manifests.get(pluginId)!,
-        } : null,
+        currentDeclaration: summary.currentDeclaration
+            ? { declarationDigestSha256: summary.currentDeclaration.manifestDigestSha256 } : null,
     }]));
-}
-
-/** Decode only consumed bodies after releasing the database snapshot. */
-export function decodeIntentListDeclaration(captured: CapturedListDeclaration): Readonly<{
-    machineDeclarations: CapturedListDeclaration['machineDeclarations'];
-    currentDeclaration: CurrentPluginDeclarationV1 | null;
-}> {
-    return { machineDeclarations: captured.machineDeclarations,
-        currentDeclaration: captured.currentDeclaration ? {
-            declarationDigestSha256: captured.currentDeclaration.declarationDigestSha256,
-            // The same-snapshot body belongs to the identity selected by the domain owner.
-            manifest: JSON.parse(captured.currentDeclaration.manifestText) as ParsedPluginManifestV2,
-        } : null };
 }
 
 /** Called only after the read snapshot returns its captured strings. */

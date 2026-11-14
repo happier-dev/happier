@@ -25,18 +25,24 @@ import {
   PluginReleaseVersionV1Schema,
 } from './index.js';
 
-it('reads an exact current declaration independently of portable release custody', () => {
+it('reads the current declaration as an identity, and named bodies once each', () => {
   const declaration = availability.PluginPortableReleaseManifestV1Schema.parse(manifest());
+  const digest = `sha256:${'c'.repeat(64)}`;
   const read = { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
-    release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: {
-      manifest: declaration, declarationDigestSha256: `sha256:${'c'.repeat(64)}`,
-    } };
+    release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: { declarationDigestSha256: digest } };
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(read).currentDeclaration)
     .toEqual(read.currentDeclaration);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...read, currentDeclaration: null }))
     .toHaveProperty('currentDeclaration', null);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
     currentDeclaration: { ...read.currentDeclaration, ignoredAuthority: true } }).success).toBe(false);
+  // Identities never carry bodies; bodies arrive only as named declarationBodies.
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
+    currentDeclaration: { ...read.currentDeclaration, manifest: declaration } }).success).toBe(false);
+  const withBodies = { ...read, declarationBodies: [{ declarationDigestSha256: digest, manifest: declaration }] };
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(withBodies)).toEqual(withBodies);
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...withBodies,
+    declarationBodies: [{ declarationDigestSha256: digest, manifest: { ...declaration, version: 'invalid-semver' } }] }).success).toBe(false);
 });
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -52,9 +58,8 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-it('reads per-Machine declarations without inventing an Account-selected declaration', () => {
-  const declaration = { manifest: availability.PluginPortableReleaseManifestV1Schema.parse(manifest()),
-    declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
+it('reads per-Machine declaration identities without inventing an Account-selected declaration', () => {
+  const declaration = { declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
   const read = { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
     release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: null,
     machineDeclarations: [{ machineId: 'machine-a', machineInstallationId: 'installation-a', declaration }] };
@@ -63,13 +68,11 @@ it('reads per-Machine declarations without inventing an Account-selected declara
     machineDeclarations: [{ ...read.machineDeclarations[0], ignoredAuthority: true }] }).success).toBe(false);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
     machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration, ignoredAuthority: true } }] }).success).toBe(false);
-  const censusRead = { ...read,
-    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { declarationDigestSha256: declaration.declarationDigestSha256 } }] };
-  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(censusRead)).toEqual(censusRead);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
-    currentDeclaration: censusRead.machineDeclarations[0]!.declaration }).success).toBe(false);
+    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration,
+      manifest: availability.PluginPortableReleaseManifestV1Schema.parse(manifest()) } }] }).success).toBe(false);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
-    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration, declarationDigestSha256: 'invalid' } }] }).success).toBe(false);
+    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { declarationDigestSha256: 'invalid' } }] }).success).toBe(false);
 });
 
 function contractDigest(fill: string): string {

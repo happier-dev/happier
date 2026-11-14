@@ -14,14 +14,19 @@ import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManife
 import { PluginManifestV2LoadSchema } from '../manifest/load.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import {
+  PluginAccountAvailabilityMaterializationsReadWireEnvelopeV1Schema,
   PluginMachineMaterializationSnapshotV1LoadSchema,
+  PluginMachineMaterializationSnapshotV1ReadSchema,
   PluginMachineMaterializationV1LoadSchema,
   PluginReleaseFactsV1LoadSchema,
+  expandPluginMachineUiArtifactSetsV1,
 } from './load.js';
 export {
   PluginMachineMaterializationSnapshotV1LoadSchema,
   PluginMachineMaterializationV1LoadSchema,
   PluginReleaseFactsV1LoadSchema,
+  encodePluginAccountAvailabilityMaterializationsReadV1,
+  isAdmittedPluginMachineUiArtifactSetV1,
 } from './load.js';
 export {
   PluginPortableReleaseManifestV1Schema,
@@ -537,33 +542,42 @@ export const PluginMachineMaterializationSnapshotV1Schema: z.ZodMiniType<PluginM
  * intent/release/link data controls which immutable Artifact is current, while
  * a complete machine snapshot only reports exact installation correspondence.
  */
-export type PluginAccountCurrentDeclarationV1 = Readonly<{
-  manifest: PluginPortableReleaseManifestV1;
+/**
+ * Release-less Account declarations are content-addressed by their canonical
+ * digest. Intent reads (census and exact) carry identities only; a reader that
+ * consumes a body names the digests it does not hold and receives each body
+ * once, however many Machines declare it. A selected release's declaration is
+ * its release facts' normalized manifest, never a second body.
+ */
+export type PluginAccountDeclarationIdentityV1 = Readonly<{
   declarationDigestSha256: PluginUiArtifactDigestV1;
 }>;
-// Lists carry Machine identities/digests; exact reads supply opaque bodies for
-// semantic admission. Account-current declarations remain discovery inputs.
-const PluginAccountDeclarationEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
-  manifest: z.optional(z.unknown()),
+export const PluginAccountDeclarationIdentityV1Schema: z.ZodMiniType<PluginAccountDeclarationIdentityV1> = lazyZodSchema(() => z.strictObject({
   declarationDigestSha256: PluginUiArtifactDigestV1Schema,
 }));
-export const PluginAccountCurrentDeclarationV1Schema: z.ZodMiniType<PluginAccountCurrentDeclarationV1> = lazyZodSchema(() => z.extend(
-  PluginAccountDeclarationEnvelopeV1Schema, { manifest: PluginManifestV2LoadSchema },
-));
+export type PluginAccountDeclarationBodyV1 = Readonly<{
+  declarationDigestSha256: PluginUiArtifactDigestV1;
+  manifest: PluginPortableReleaseManifestV1;
+}>;
+export const PluginAccountDeclarationBodyV1Schema: z.ZodMiniType<PluginAccountDeclarationBodyV1> = lazyZodSchema(() => z.strictObject({
+  declarationDigestSha256: PluginUiArtifactDigestV1Schema,
+  manifest: PluginManifestV2LoadSchema,
+}));
 
 export type PluginAccountAvailabilityIntentReadResponseV1 = {
   availabilityCursor: number;
   hostingCapability: PluginUiArtifactHostingCapabilityV1;
   intent: PluginAccountPluginIntentV1 | null;
   release: PluginReleaseFactsV1 | null;
-  /** Omitted by older producers; null explicitly means no Account-selected declaration. */
-  currentDeclaration?: PluginAccountCurrentDeclarationV1 | null;
-  /** List envelopes omit bodies; exact-read bodies require admission before use. */
+  /** Omitted when declarations were not read; null explicitly means no Account-selected declaration. */
+  currentDeclaration?: PluginAccountDeclarationIdentityV1 | null;
   machineDeclarations?: readonly Readonly<{
     machineId: string;
     machineInstallationId: string;
-    declaration: z.infer<typeof PluginAccountDeclarationEnvelopeV1Schema>;
+    declaration: PluginAccountDeclarationIdentityV1;
   }>[];
+  /** Present only on an exact read that named digests: each held body once. */
+  declarationBodies?: readonly PluginAccountDeclarationBodyV1[];
   uiArtifacts: readonly PluginAccountPluginUiArtifactLinkV1[];
   packageAssets: readonly PluginAccountPluginPackageAssetLinkV1[];
   managedResources?: readonly ManagedResourceDependencyV1[];
@@ -574,12 +588,13 @@ export const PluginAccountAvailabilityIntentReadResponseV1Schema: z.ZodMiniType<
   hostingCapability: PluginUiArtifactHostingCapabilityV1Schema,
   intent: z.nullable(PluginAccountPluginIntentV1Schema),
   release: z.nullable(PluginReleaseFactsV1LoadSchema),
-  currentDeclaration: z.optional(z.nullable(PluginAccountCurrentDeclarationV1Schema)),
+  currentDeclaration: z.optional(z.nullable(PluginAccountDeclarationIdentityV1Schema)),
   machineDeclarations: z.optional(z.readonly(z.array(z.strictObject({
     machineId: z.string().check(z.minLength(1)),
     machineInstallationId: z.string().check(z.minLength(1)),
-    declaration: PluginAccountDeclarationEnvelopeV1Schema,
+    declaration: PluginAccountDeclarationIdentityV1Schema,
   })))),
+  declarationBodies: z.optional(z.readonly(z.array(PluginAccountDeclarationBodyV1Schema))),
   uiArtifacts: z.readonly(z.array(PluginAccountPluginUiArtifactLinkV1Schema)),
   packageAssets: z.readonly(z.array(PluginAccountPluginPackageAssetLinkV1Schema)),
   managedResources: z.optional(z.readonly(z.array(ManagedResourceDependencyV1Schema))),
@@ -662,14 +677,24 @@ export type PluginAccountAvailabilityMaterializationsReadResponseV1 = Readonly<{
   inventoryComplete?: boolean;
   releases?: readonly PluginReleaseFactsV1[];
 }>;
-export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityMaterializationsReadResponseV1> = lazyZodSchema(() => z.strictObject({
-  availabilityCursor: MachineMaterializationRevisionSchema,
-  snapshots: z.readonly(z.array(PluginMachineMaterializationSnapshotV1LoadSchema)),
-  /** Omitted machine rows are unknown if any complete machine snapshot could not be read. */
-  inventoryComplete: z.optional(z.boolean()),
-  /** Immutable facts for reported portable coordinates, independent of enabled selection intent. */
-  releases: z.optional(z.readonly(z.array(PluginReleaseFactsV1LoadSchema))),
-}));
+/**
+ * Decodes the `materializations.read` transport: Machines reporting the same
+ * bundled plugin carry identical UI-artifact lists, so the server sends each
+ * distinct list once (`uiArtifactSets`) and rows name it (`uiArtifactSet`).
+ * Each list is admitted once and shared by every row; see
+ * `encodePluginAccountAvailabilityMaterializationsReadV1`.
+ */
+export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityMaterializationsReadResponseV1> = lazyZodSchema(() => z.pipe(
+  z.pipe(PluginAccountAvailabilityMaterializationsReadWireEnvelopeV1Schema, z.transform(expandPluginMachineUiArtifactSetsV1)),
+  z.strictObject({
+    availabilityCursor: MachineMaterializationRevisionSchema,
+    snapshots: z.readonly(z.array(PluginMachineMaterializationSnapshotV1ReadSchema)),
+    /** Omitted machine rows are unknown if any complete machine snapshot could not be read. */
+    inventoryComplete: z.optional(z.boolean()),
+    /** Immutable facts for reported portable coordinates, independent of enabled selection intent. */
+    releases: z.optional(z.readonly(z.array(PluginReleaseFactsV1LoadSchema))),
+  }),
+));
 
 function normalizePluginMachineMaterializationV1(
   input: PluginMachineMaterializationV1,

@@ -1,5 +1,5 @@
 import { readDeclarationIntentIdentitiesTx } from './declarationReadRows';
-import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations, decodeIntentListDeclaration } from './intentReadRows';
+import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations } from './intentReadRows';
 import { updateIntentRow } from './intentWriteRows';
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod/mini";
@@ -68,6 +68,7 @@ import {
     readCurrentReleaseLessDeclarationV1,
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
+    readReleaseLessDeclarationBodiesV1,
     readReleaseLessDeclarationsV2,
     readReleaseLessDeclarationListSummary,
     mergeReleaseLessDeclarationV2,
@@ -2082,6 +2083,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const input = params.selection.kind === "read" ? params.selection.input : undefined;
         const list = params.selection.kind === "list" ? params.selection.input : undefined;
         const omitDeclarations = input?.omitDeclarations === true || list?.omitDeclarations === true;
+        // Declarations are content-addressed: reads project digests from the
+        // body-free storage summary; only named digests read the stored bodies.
+        const bodyDigests = input?.declarationDigests;
         const [capability, current] = await Promise.all([
             // A hosting failure still refuses each selected plugin without
             // preventing an empty list or hiding the Account-not-found error.
@@ -2103,7 +2107,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ...(input ? { pluginId: input.pluginId } : {}),
                     ...(list?.cursor ? { after: list.cursor } : {}),
                     ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
-                    ...(list ? { list: true } : {}),
+                    ...(bodyDigests ? {} : { list: true }),
                     ...(omitDeclarations ? { omitDeclarations: true } : {}),
                 });
                 const account = capturedRows[0];
@@ -2117,9 +2121,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
                 const pageIds = new Set(readPluginIds);
                 const intentRows = rows.filter(row => pageIds.has(row.pluginId));
-                const listDeclarations: Awaited<ReturnType<typeof readIntentListDeclarations>> = omitDeclarations
-                    ? new Map()
-                    : await readIntentListDeclarations(tx, params.accountId, intentRows);
                 const coordinates = intentRows.flatMap(row => row.desiredVersion
                     ? [{ pluginId: row.pluginId, version: row.desiredVersion }] : []);
                 const releases = coordinates.length > 0
@@ -2162,7 +2163,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
                         ...(input.controller ? { controller: input.controller } : {}) })
                     : undefined;
-                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds, listDeclarations,
+                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds,
                     pluginIds: intentRows.map(row => row.pluginId),
                     ...(candidates.length > readPluginIds.length ? { nextCursor: readPluginIds.at(-1)! } : {}),
                     ...(managedResources !== undefined ? { managedResources,
@@ -2170,6 +2171,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             }),
         ]);
         const intents = new Map(current.intentRows.map(row => [row.pluginId, decodeIntentReadRow(row)]));
+        const listDeclarations: ReturnType<typeof readIntentListDeclarations> = omitDeclarations
+            ? new Map() : readIntentListDeclarations(current.intentRows);
         const releases = new Map(current.releases.map(row => [row.pluginId, row]));
         const results = await Promise.allSettled(current.readPluginIds.map(async pluginId => {
             const hosting = capability[0]!;
@@ -2177,10 +2180,13 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             const intentRow = intents.get(pluginId);
             const release = releases.get(pluginId);
             const intent = intentRow ? intentFromRow(intentRow) : null;
-            const capturedDeclaration = current.listDeclarations.get(pluginId);
-            const listDeclaration = capturedDeclaration ? decodeIntentListDeclaration(capturedDeclaration) : undefined;
+            const listDeclaration = listDeclarations.get(pluginId);
             const machineDeclarations = omitDeclarations ? []
-                : listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
+                : listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId).map(entry => ({
+                    machineId: entry.machineId, machineInstallationId: entry.machineInstallationId,
+                    declaration: { declarationDigestSha256: entry.declaration.declarationDigestSha256 } }));
+            const currentDeclaration = listDeclaration ? listDeclaration.currentDeclaration
+                : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release });
             // Releases written before package assets have no immutable descriptor.
             // They are intentionally unavailable to the current release-facts ABI
             // rather than being populated with a guessed empty archive.
@@ -2197,14 +2203,11 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 intent,
                 release: facts,
                 ...(omitDeclarations ? {} : {
-                    currentDeclaration: listDeclaration ? listDeclaration.currentDeclaration
-                        : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
+                    currentDeclaration: currentDeclaration
+                        ? { declarationDigestSha256: currentDeclaration.declarationDigestSha256 } : null,
                 }),
-                ...(machineDeclarations.length > 0 ? { machineDeclarations: list
-                    ? machineDeclarations.map(entry => ({ machineId: entry.machineId,
-                        machineInstallationId: entry.machineInstallationId,
-                        declaration: { declarationDigestSha256: entry.declaration.declarationDigestSha256 } }))
-                    : machineDeclarations } : {}),
+                ...(machineDeclarations.length > 0 ? { machineDeclarations } : {}),
+                ...(bodyDigests ? { declarationBodies: readReleaseLessDeclarationBodiesV1(intentRow, pluginId, bodyDigests) } : {}),
                 uiArtifacts: facts ? release!.uiArtifacts.map((row) => {
                     const slot = facts.uiSlots.find((candidate) => (
                         candidate.contributionId === row.contributionId

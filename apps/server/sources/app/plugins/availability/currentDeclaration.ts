@@ -253,6 +253,26 @@ export function readCurrentMachinePluginDeclarationsV1(
 }
 
 /**
+ * Content-addressed bodies of the release-less declarations an enabled intent
+ * currently holds (Machine entries and the legacy declaration), each requested
+ * digest at most once. A selected release's body is its release facts.
+ */
+export function readReleaseLessDeclarationBodiesV1(
+    intent: StoredDeclarationIntentRow | null | undefined,
+    pluginId: string,
+    digests: readonly PluginUiArtifactDigestV1[],
+): readonly CurrentPluginDeclarationV1[] {
+    if (!intent?.enabled || intent.desiredVersion !== null) return [];
+    const store = readReleaseLessDeclarationsV2(intent.releaseLessDeclaration, pluginId);
+    const held = new Map([...store.machines.map(entry => entry.declaration),
+        ...(store.legacyDeclaration ? [store.legacyDeclaration] : [])].map(declaration => [declaration.manifestDigestSha256, declaration.manifest]));
+    return [...new Set(digests)].flatMap(digest => {
+        const manifest = held.get(digest);
+        return manifest ? [{ declarationDigestSha256: digest, manifest }] : [];
+    });
+}
+
+/**
  * The release-less declaration of an intent, only while no release is
  * selected: a present-user release selection always wins over a claim.
  */

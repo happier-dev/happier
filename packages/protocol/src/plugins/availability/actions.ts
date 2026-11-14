@@ -84,6 +84,8 @@ export const PluginAvailabilityIntentReadActionInputV1Schema = lazyZodSchema(() 
   pluginId: asProtocolZod(PluginIdSchema),
   /** The caller needs intent and release facts without Machine declaration bodies or digests. */
   omitDeclarations: z.optional(z.literal(true)),
+  /** Release-less declaration bodies the caller consumes and does not hold, by canonical digest. */
+  declarationDigests: z.optional(z.readonly(z.array(PluginUiArtifactDigestV1Schema).check(z.minLength(1)))),
   includeManagedResources: z.optional(z.literal(true)),
   controller: mini.optional(ManagedControllerV1Schema),
   homeId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -94,6 +96,9 @@ export const PluginAvailabilityIntentReadActionInputV1Schema = lazyZodSchema(() 
   }
   if (input.homeId !== undefined && input.controller === undefined) {
     context.addIssue({ code: 'custom', path: ['homeId'], message: 'Local resource review requires its controller installation.' });
+  }
+  if (input.declarationDigests !== undefined && input.omitDeclarations === true) {
+    context.addIssue({ code: 'custom', path: ['declarationDigests'], message: 'Declaration bodies require the declaration read.' });
   }
 })));
 export type PluginAvailabilityIntentReadActionInputV1 = z.infer<typeof PluginAvailabilityIntentReadActionInputV1Schema>;

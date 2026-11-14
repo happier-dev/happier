@@ -73,7 +73,10 @@ describe("plugin Availability report transaction contract", () => {
         const changed = await operations.claimCollectionWriters({ accountId, input: { manifest: { ...manifest, version: "1.0.1" } } });
         expect(changed.intent).toMatchObject({ revision: "1", desiredVersion: null, enabled: true, writableCollections: [] });
         const stored = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
-        expect(stored.releaseLessDeclaration).toMatchObject({ manifest: { version: "1.0.1" } });
+        expect(stored.releaseLessDeclaration).toMatchObject({
+            schemaVersion: 3,
+            legacyDeclaration: { manifest: { version: "1.0.1" } },
+        });
         expect(stored.updatedAt.getTime()).toBeGreaterThanOrEqual(initial.updatedAt.getTime());
         const facts = PluginReleaseFactsV1Schema.parse({ ref: { pluginId, version: manifest.version },
             archiveDigestSha256: `sha256:${"a".repeat(64)}`, normalizedManifest: manifest, collectionContracts: [], uiSlots: [],

@@ -4,7 +4,7 @@ import { inTx } from '@/storage/inTx';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { createReleaseLessDeclarationV1, resolveCurrentPluginDeclarationsTx } from './currentDeclaration';
 import { createPluginAvailabilityOperations } from './operations';
-import { readIntentRows, readIntentListDeclarations, decodeIntentListDeclaration } from './intentReadRows';
+import { readIntentRows, readIntentListDeclarations } from './intentReadRows';
 import { backfillPluginDeclarations } from './declarationBackfill';
 
 describe('Account declaration body deduplication PostgreSQL contract', () => {
@@ -34,11 +34,8 @@ describe('Account declaration body deduplication PostgreSQL contract', () => {
         expect(JSON.stringify(stored.releaseLessDeclaration).split('stored-body-marker').length - 1).toBe(1);
         const refs = [{ pluginId: manifest.id, version: manifest.version }];
         expect([...(await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id, refs }))).values()][0]?.manifest).toEqual(manifest);
-        const listed = await inTx(async tx => {
-            const rows = await readIntentRows(tx, { accountId: account.id, list: true });
-            return readIntentListDeclarations(tx, account.id, rows);
-        });
-        expect(decodeIntentListDeclaration(listed.get(manifest.id)!).currentDeclaration?.manifest).toEqual(manifest);
+        const listed = await inTx(async tx => readIntentListDeclarations(await readIntentRows(tx, { accountId: account.id, list: true })));
+        expect(listed.get(manifest.id)?.currentDeclaration).toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
         expect((await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: other.id, refs }))).size).toBe(0);
         await expect(operations.claimCollectionWriters({ accountId: other.id, input: {
             pluginId: manifest.id, manifestDigestSha256: declaration.manifestDigestSha256,

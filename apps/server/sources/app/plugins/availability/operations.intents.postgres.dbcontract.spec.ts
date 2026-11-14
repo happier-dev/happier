@@ -227,12 +227,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 data: { enabled: true } });
 
             const agreed = await read();
-            expect(agreed.declarationStatements).toBe(2);
+            // The census carries declaration digests only: no body is read or sent.
+            expect(agreed.declarationStatements).toBe(1);
             expect(agreed.result.failedPluginIds).toEqual([]);
-            expect(agreed.result.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(declaration.manifest);
+            expect(agreed.result.intentReads[0]?.response.currentDeclaration)
+                .toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
             expect(agreed.result.intentReads[0]?.response.machineDeclarations).toHaveLength(490);
-            expect.soft(agreed.bodyCopies).toBe(1);
-            expect.soft(agreed.statements).toBeLessThanOrEqual(2);
+            expect.soft(agreed.bodyCopies).toBe(0);
+            expect.soft(agreed.statements).toBe(1);
             expect(agreed.fetchedBytes).toBeLessThan(Buffer.byteLength(JSON.stringify(stored)));
 
             const secondPluginId = "com.acme.wide-intent-second";
@@ -242,11 +244,16 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 releaseLessDeclaration: JSON.parse(JSON.stringify(secondDeclaration)) } });
             const multiple = await read();
             expect(multiple.result.intentReads).toHaveLength(2);
-            expect(multiple.bodyCopies).toBe(2);
-            expect(multiple.statements).toBe(2);
+            expect(multiple.bodyCopies).toBe(0);
+            expect(multiple.statements).toBe(1);
             await db.accountPluginIntent.delete({ where: { accountId_pluginId: { accountId: account.id, pluginId: secondPluginId } } });
             const exact = await operations.readIntent({ accountId: account.id, input: { pluginId } });
-            expect(exact.machineDeclarations?.at(-1)?.declaration.manifest).toEqual(declaration.manifest);
+            expect(exact.machineDeclarations?.at(-1)?.declaration).toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
+            expect(JSON.stringify(exact)).not.toContain(bodyMarker);
+            // 490 Machines share one digest: the requested body is sent once.
+            const bodies = await operations.readIntent({ accountId: account.id,
+                input: { pluginId, declarationDigests: [declaration.manifestDigestSha256] } });
+            expect(JSON.stringify(bodies).split(bodyMarker).length - 1).toBe(1);
 
             const divergent = createReleaseLessDeclarationV1({ ...declaration.manifest, version: "2.0.0" });
             const changed = mergeReleaseLessDeclarationV2({ stored, declaration: divergent,
@@ -261,7 +268,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 .toBe(divergent.manifestDigestSha256);
             expect.soft(mixed.bodyCopies).toBe(0);
             expect.soft(mixed.statements).toBe(1);
-            expect(mixed.fetchedBytes).toBeLessThan(agreed.fetchedBytes);
+            expect(mixed.fetchedBytes).toBeLessThan(Buffer.byteLength(JSON.stringify(changed)));
             console.info("INTENT_PAGE_BYTES", JSON.stringify({ physicalStatements: true, agreed: { statements: agreed.statements, bytes: agreed.fetchedBytes,
                 bodyCopies: agreed.bodyCopies }, multiple: { statements: multiple.statements, bodyCopies: multiple.bodyCopies },
                 divergent: { statements: mixed.statements, bytes: mixed.fetchedBytes, bodyCopies: mixed.bodyCopies } }));
@@ -411,7 +418,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 expect(entry.response.intent).toMatchObject({ enabled: true,
                     desiredVersion: source === "claim" && entry.pluginId === pluginIds[0] ? null : "1.0.0", revision: "0" });
             }
-            if (source === "claim") expect(listed.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(declaration.manifest);
+            if (source === "claim") expect(listed.intentReads[0]?.response.currentDeclaration)
+                .toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
             const fresh = await operations.listIntentIds({ accountId, input: {} });
             expect(fresh.availabilityCursor).toBeGreaterThan(listed.availabilityCursor);
             expect(fresh.intentReads[0]?.response.intent).toMatchObject({ enabled: false, desiredVersion: null, revision: "1" });

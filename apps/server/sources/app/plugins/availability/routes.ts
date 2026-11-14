@@ -1,5 +1,6 @@
 import type { Fastify } from "@/app/api/types";
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
+import { encodePluginAccountAvailabilityMaterializationsReadV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { FastifyReply } from "fastify";
 import { EPHEMERAL_HOSTED_WEB_ASSET_DELIVERY_HEADERS_V1 } from '@happier-dev/protocol/plugins/ui/hostedWebAssetPolicy';
 
@@ -249,10 +250,11 @@ export function registerPluginAvailabilityRoutes(
         preHandler: app.authenticate,
     }, async (request, reply) => {
         try {
-            return await operations.readMaterializations({
+            // Transport encoding: identical Machine UI-artifact lists are sent once.
+            return encodePluginAccountAvailabilityMaterializationsReadV1(await operations.readMaterializations({
                 accountId: requestUserId(request),
                 input: request.body,
-            });
+            }));
         } catch (error) {
             await sendOperationError(reply, error);
             return;

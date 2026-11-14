@@ -85,6 +85,15 @@ const RELEASE = { pluginId: PLUGIN_ID, version: "1.2.3" } as const;
 const DISABLED_PLUGIN_ID = "com.acme.disabled";
 const DISABLED_RELEASE = { pluginId: DISABLED_PLUGIN_ID, version: "1.2.3" } as const;
 
+/** Exact reads carry declaration digests; a consumer requests the current body by its digest. */
+async function readCurrentDeclarationBody(service: ReturnType<typeof createPluginAvailabilityOperations>, pluginId: string) {
+    const read = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId } });
+    const digest = read.currentDeclaration?.declarationDigestSha256;
+    if (!digest) return { read, declaration: null };
+    const withBody = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId, declarationDigests: [digest] } });
+    return { read, declaration: withBody.declarationBodies?.[0] ?? null };
+}
+
 function releaseFacts(overrides: Record<string, unknown> = {}) {
     return {
         ref: RELEASE,
@@ -490,33 +499,81 @@ describe("plugin Availability operations", () => {
         });
         try {
             const listed = await operations().listIntentIds({ accountId: ACCOUNT_ID, input: {} });
-            expect(listed.intentReads[0]?.response.currentDeclaration?.manifest.description).toBe(manifest.description);
+            expect(listed.intentReads[0]?.response.currentDeclaration)
+                .toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
             expect(statements).toBe(1);
             expect(declarationDecodes).toBe(1);
         } finally { observed.mockRestore(); decoding.mockRestore(); }
     });
 
-    it('lists Machine declaration identities without bodies and retains bodies on exact reads', async () => {
+    it('sends each distinct Machine UI-artifact list once per materializations read, however many Machines report it', async () => {
         await seedAccountAndMachine();
-        const manifest = releaseFacts().normalizedManifest;
+        const service = operations();
+        const machineIds = [MACHINE_ID, ...Array.from({ length: 7 }, (_, index) => `machine-ui-set-${index}`)];
+        for (const machineId of machineIds.slice(1)) {
+            await db.machine.create({ data: { id: machineId, accountId: ACCOUNT_ID, metadata: "{}", installationId: `${machineId}-installation` } });
+        }
+        const marker = (index: number) => `sha256:${index.toString(16).padStart(2, '0')}${'e'.repeat(62)}`;
+        const uiArtifacts = Array.from({ length: 6 }, (_, index) => ({ contributionId: `panel-${index}`, artifactId: `panel-${index}`,
+            tier: 'reactNative' as const, platform: 'web' as const, artifactDigest: marker(index), hostUiApiRange: '^1.0.0' }));
+        for (const machineId of machineIds) {
+            await service.reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: machineId,
+                input: { expectedRevision: null, snapshot: { serverIdentityId: SERVER_IDENTITY_ID, machineId, materializations: [{
+                    serverIdentityId: SERVER_IDENTITY_ID, machineId, materializationId: `bundled-${machineId}`, pluginId: PLUGIN_ID,
+                    version: RELEASE.version, sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts,
+                    enabled: true, trustState: 'trusted', observedAt: 1,
+                }] } } });
+        }
+        const canonical = await service.readMaterializations({ accountId: ACCOUNT_ID, input: {} });
+        await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
+            const response = await app.inject({ method: 'POST', headers: { 'x-test-user-id': ACCOUNT_ID }, payload: {},
+                url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'] });
+            expect(response.statusCode, response.body).toBe(200);
+            // Delivery: one copy of the shared list instead of one per Machine.
+            expect(response.body.split(marker(0)).length - 1).toBe(1);
+            // The canonical reader decodes the same inventory, sharing one list across Machines.
+            const decoded = PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(response.json());
+            expect(decoded).toEqual(JSON.parse(JSON.stringify(canonical)));
+            const lists = decoded.snapshots.map(snapshot => snapshot.materializations[0]!.uiArtifacts);
+            expect(lists).toHaveLength(machineIds.length);
+            expect(new Set(lists).size).toBe(1);
+        });
+    });
+
+    it('reads declaration digests only and sends each requested body once, however many Machines share it', async () => {
+        await seedAccountAndMachine();
+        const manifest = { ...releaseFacts().normalizedManifest, description: 'declaration-body-marker' };
         const declaration = { manifest, manifestDigestSha256: `sha256:${'a'.repeat(64)}` };
+        const machineIds = Array.from({ length: 8 }, (_, index) => `machine-${index}`);
         await db.accountPluginIntent.create({ data: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID,
             desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [],
             releaseLessDeclaration: { schemaVersion: 2, legacyDeclaration: null,
-                machines: [{ machineId: MACHINE_ID, machineInstallationId: 'installation-a', declaration }] } } });
+                machines: machineIds.map(machineId => ({ machineId, machineInstallationId: `${machineId}-installation`, declaration })) } } });
         const service = operations();
+        const bodies = (value: unknown) => JSON.stringify(value).split('declaration-body-marker').length - 1;
         const listed = await service.listIntentIds({ accountId: ACCOUNT_ID, input: {} });
         const exact = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+        // Delivery follows consumption: the census and plain exact reads carry identities only.
+        expect({ list: bodies(listed), exact: bodies(exact) }).toEqual({ list: 0, exact: 0 });
+        const withBodies = await service.readIntent({ accountId: ACCOUNT_ID,
+            input: { pluginId: PLUGIN_ID, declarationDigests: [declaration.manifestDigestSha256] } });
+        expect(bodies(withBodies)).toBe(1);
         // CLI execution selection and UI hydration consume these strict Action readers.
         // Exercise the real producer so adding a declaration cannot leave its reader behind.
         expect(PluginAvailabilityIntentReadActionOutputV1Schema.parse(exact)).toMatchObject(exact);
+        expect(PluginAvailabilityIntentReadActionOutputV1Schema.parse(withBodies)).toMatchObject(withBodies);
         expect(PluginAvailabilityIntentsListActionOutputV1Schema.parse(listed)).toMatchObject(listed);
-        expect(listed.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(manifest);
-        expect(exact.machineDeclarations?.[0]?.declaration.manifest).toEqual(manifest);
-        expect(listed.intentReads[0]?.response.machineDeclarations).toEqual([{
-            machineId: MACHINE_ID, machineInstallationId: 'installation-a',
-            declaration: { declarationDigestSha256: declaration.manifestDigestSha256 },
-        }]);
+        const identities = machineIds.map(machineId => ({ machineId, machineInstallationId: `${machineId}-installation`,
+            declaration: { declarationDigestSha256: declaration.manifestDigestSha256 } }));
+        for (const response of [listed.intentReads[0]!.response, exact, withBodies]) {
+            expect(response.currentDeclaration).toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
+            expect(response.machineDeclarations).toEqual(identities);
+        }
+        expect(withBodies.declarationBodies).toEqual([{ declarationDigestSha256: declaration.manifestDigestSha256, manifest }]);
+        // A digest the plugin row does not hold is not resolved from another row.
+        const unknown = await service.readIntent({ accountId: ACCOUNT_ID,
+            input: { pluginId: PLUGIN_ID, declarationDigests: [`sha256:${'b'.repeat(64)}`] } });
+        expect(unknown.declarationBodies).toEqual([]);
     });
 
     it('lists canonical intent projections including hosted archives, machine-only plugins and deleted known intents', async () => {
@@ -2280,8 +2337,8 @@ describe("plugin Availability operations", () => {
                 const unrelated = await operations().claimCollectionWriters({ accountId: 'another-declaration-account', input: identity })
                     .then(() => null, (error: unknown) => error);
                 expect(unrelated).toMatchObject({ code: 'plugin_declaration_not_found' });
-                const read = await operations().readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
-                expect(read.currentDeclaration?.manifest.displayName).toBe('Same-version declaration edit');
+                const { declaration } = await readCurrentDeclarationBody(operations(), PLUGIN_ID);
+                expect(declaration?.manifest.displayName).toBe('Same-version declaration edit');
             });
         });
 
@@ -2358,12 +2415,15 @@ describe("plugin Availability operations", () => {
                 archiveDigestSha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
             });
             expect(first.event).toMatchObject({ id: EVENT_LOCAL_ID, kind: "event" });
-            const firstRead = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
-            expect(firstRead).toMatchObject({ release: null, currentDeclaration: {
+            const firstRead = await readCurrentDeclarationBody(service, PLUGIN_ID);
+            expect(firstRead.read).toMatchObject({ release: null, currentDeclaration: {
+                declarationDigestSha256: first.caller.eventDeclarationRelease.archiveDigestSha256,
+            } });
+            expect(firstRead.declaration).toMatchObject({
                 manifest: { id: PLUGIN_ID, version: DECLARED_VERSION,
                     contributes: { events: [expect.objectContaining({ id: EVENT_LOCAL_ID, title: "Repository event" })] } },
                 declarationDigestSha256: first.caller.eventDeclarationRelease.archiveDigestSha256,
-            } });
+            });
 
             // A development edit that keeps its version re-claims in place, and
             // the Event declaration identity follows the new declaration.
@@ -2375,10 +2435,10 @@ describe("plugin Availability operations", () => {
             expect(edited.event).toMatchObject({ title: "Edited repository event" });
             expect(edited.caller.eventDeclarationRelease.archiveDigestSha256)
                 .not.toBe(first.caller.eventDeclarationRelease.archiveDigestSha256);
-            expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
-                .toMatchObject({ currentDeclaration: { manifest: { contributes: { events: [
+            expect((await readCurrentDeclarationBody(service, PLUGIN_ID)).declaration)
+                .toMatchObject({ manifest: { contributes: { events: [
                     expect.objectContaining({ id: EVENT_LOCAL_ID, title: "Edited repository event" }),
-                ] } }, declarationDigestSha256: edited.caller.eventDeclarationRelease.archiveDigestSha256 } });
+                ] } }, declarationDigestSha256: edited.caller.eventDeclarationRelease.archiveDigestSha256 });
         });
 
         it("reads an externally authored admitted declaration without reparsing its body and keeps fresh authority checks", async () => {
@@ -2416,7 +2476,7 @@ describe("plugin Availability operations", () => {
                     const listed = await service.listIntentIds({ accountId: ACCOUNT_ID, input: {} });
                     expect(listed.failedPluginIds).toEqual([]);
                     expect(listed.intentReads.find(entry => entry.pluginId === PLUGIN_ID)?.response.currentDeclaration)
-                        .toMatchObject({ manifest: { version: DECLARED_VERSION } });
+                        .toEqual({ declarationDigestSha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) });
                     manifestAdmissions.list += parse.mock.calls.length;
                     parse.mockClear();
                     expect((await service.readRelease({ accountId: ACCOUNT_ID, input: { release: portableFacts.ref } })).facts)
@@ -2514,8 +2574,8 @@ describe("plugin Availability operations", () => {
                 input: { manifest: declaredManifest() },
             })).rejects.toMatchObject({ code: "plugin_intent_release_selected" });
             expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
-                .toMatchObject({ currentDeclaration: { manifest: { id: PLUGIN_ID, version: RELEASE.version },
-                    declarationDigestSha256: facts.archiveDigestSha256 } });
+                .toMatchObject({ release: { normalizedManifest: { id: PLUGIN_ID, version: RELEASE.version } },
+                    currentDeclaration: { declarationDigestSha256: facts.archiveDigestSha256 } });
 
             await reportMaterialization(service, {
                 sourceClass: "registryPackage",
