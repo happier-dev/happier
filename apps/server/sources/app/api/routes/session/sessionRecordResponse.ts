@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { V2SessionRecordSchema, V2SessionByIdResponseSchema, SessionLookupByTagsResponseV2Schema, SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2 } from '@happier-dev/protocol/sessions/control/contract';
-import { SessionReadBatchDetailV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { SessionReadBatchDetailV1Schema, type SessionReadBatchDetailV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import type { SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { orderAsDeclared } from '@/app/api/utils/enableSchemaValidation';
 
@@ -50,6 +50,6 @@ export function parseProjectedSessionLookupResponse(body: Readonly<{
 }
 
 /** Compatibility projections return `unknown`; this parse is their typed admission. */
-export function parseProjectedSessionBatchDetail(detail: unknown) {
+export function parseProjectedSessionBatchDetail(detail: unknown): SessionReadBatchDetailV1 {
     return batchDetailResponse.parse(detail);
 }

@@ -474,7 +474,7 @@ export function createSessionReadBatchResponseFixture(params: Readonly<{
     failures?: ReadonlyMap<string, SessionReadBatchDetailFailureFixture>;
     turns?: ReadonlyMap<string, NonNullable<SessionReadBatchResponseV1['results'][number]['turns']>>;
     messages?: ReadonlyMap<string, NonNullable<SessionReadBatchResponseV1['results'][number]['messages']>>;
-}>) {
+}>): SessionReadBatchResponseV1 {
     const demand = SessionReadBatchRequestV1Schema.parse(params.request);
     const byId = new Map(params.sessions.map(session => [session.id, session]));
     return SessionReadBatchResponseV1Schema.parse({ results: demand.sessionIds.map(sessionId => {

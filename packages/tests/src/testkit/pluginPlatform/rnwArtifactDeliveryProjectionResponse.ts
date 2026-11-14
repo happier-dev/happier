@@ -1,6 +1,6 @@
-import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, type DaemonContributionRegistryProjectionDescribeResponse } from '@happier-dev/protocol';
 
-export function parseRnwArtifactDeliveryProjectionDescribeResponse(value: unknown) {
+export function parseRnwArtifactDeliveryProjectionDescribeResponse(value: unknown): DaemonContributionRegistryProjectionDescribeResponse {
     if (
         typeof value === 'object'
         && value !== null

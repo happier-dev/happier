@@ -22,8 +22,16 @@ const PREFIX = 'happier://watch/';
 type Snapshot = Readonly<{ target: WaitActionInputV1['target']; condition: WaitActionInputV1['condition']; snapshot: unknown }>;
 type Observation = Readonly<{ controller: AbortController; baseline: Promise<Snapshot>; done: Promise<void> }>;
 
+export type McpWatchSession = {
+  signal: AbortSignal;
+  subscriptions: Map<string, Observation>;
+  attachNotificationStream(send: (uri: string) => Promise<void>): void;
+  notify(uri: string): Promise<void>;
+  close(): Promise<void>;
+};
+
 /** One passive feed set per MCP notification session; never a second wait owner. */
-export function createMcpWatchSession(initialNotify?: (uri: string) => Promise<void>) {
+export function createMcpWatchSession(initialNotify?: (uri: string) => Promise<void>): McpWatchSession {
   const controller = new AbortController();
   const subscriptions = new Map<string, Observation>();
   let notify = initialNotify;
@@ -41,7 +49,6 @@ export function createMcpWatchSession(initialNotify?: (uri: string) => Promise<v
     },
   };
 }
-export type McpWatchSession = ReturnType<typeof createMcpWatchSession>;
 
 function resourceUri(input: WaitActionInputV1): string {
   return PREFIX + Buffer.from(JSON.stringify(input)).toString('base64url');

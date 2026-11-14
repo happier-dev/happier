@@ -68,7 +68,11 @@ export const CODER_CONNECTED_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
 };
 
 /** Capture the selected account once. All finite native steps share its private material. */
-export async function prepareCoderConnection(accounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'>, http: HttpService, signal: AbortSignal) {
+export async function prepareCoderConnection(accounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'>, http: HttpService, signal: AbortSignal): Promise<{
+  endpoint: string;
+  token: string;
+  request(path: string, init?: RequestInit): Promise<Response>;
+}> {
   signal.throwIfAborted();
   const binding = await accounts.getBinding(ACCOUNT_PURPOSE, { signal });
   if (!binding || binding.account.service.pluginId !== ACCOUNT_SERVICE.pluginId || binding.account.service.localId !== ACCOUNT_SERVICE.localId) throw coderCredentialUnavailable();

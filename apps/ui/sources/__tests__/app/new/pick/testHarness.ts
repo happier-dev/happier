@@ -1,7 +1,7 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 import React from 'react';
 import { afterEach, beforeEach, vi } from 'vitest';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -523,7 +523,7 @@ export function createSupportedClaudeProjection(params: Readonly<{
      * Happier" only, with no link identity and no follow/takeover claim.
      */
     resumeOnlySource?: boolean;
-}> = {}) {
+}> = {}): PluginProjectionV2 {
     return PluginProjectionV2Schema.parse({
         v: 2,
         generation: 1,
@@ -651,7 +651,7 @@ export function createReviewBotPluginProjectionContributions() {
  * fall back to the preferred built-in target when route params only carry a
  * legacy `customAcp` carrier, rather than adopting a discovered plugin backend.
  */
-export function createDiscoveredPluginBackendDescribeResult() {
+export function createDiscoveredPluginBackendDescribeResult(): Readonly<{ supported: true; projection: PluginProjectionV2 }> {
     return {
         supported: true,
         projection: createSupportedClaudeProjection(createReviewBotPluginProjectionContributions()),

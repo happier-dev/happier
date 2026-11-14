@@ -63,7 +63,17 @@ export function workspaceCheckoutFilesystemBoundary(actual: typeof import('node:
   } as typeof actual;
 }
 
-export function spawnWorkspaceCheckoutNativeBoundary() {
+export type WorkspaceCheckoutNativeChild = EventEmitter & {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  pid: undefined;
+  exitCode: number | null;
+  signalCode: null;
+  killed: boolean;
+};
+
+export function spawnWorkspaceCheckoutNativeBoundary(): WorkspaceCheckoutNativeChild {
   const boundary = workspaceCheckoutNativeBoundary;
   boundary.phases.push('native_spawn');
   const input = new PassThrough();

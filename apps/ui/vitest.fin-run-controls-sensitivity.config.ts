@@ -1,8 +1,9 @@
 import base from './vitest.config';
+import type { UserConfig } from 'vitest/config';
 
 // Sensitivity mutation only: restore the prior admission closure in memory.
 // Shared source stays fixed while the real screen, Actions and push path run.
-export default {
+const config: UserConfig = {
     ...base,
     plugins: [...(base.plugins ?? []), {
         name: 'fin-run-controls-prior-admission-sensitivity',
@@ -34,3 +35,5 @@ export default {
         },
     }],
 };
+
+export default config;

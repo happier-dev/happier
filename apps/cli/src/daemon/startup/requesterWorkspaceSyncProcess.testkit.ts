@@ -1,5 +1,6 @@
 import { expect } from 'vitest';
-import { spawnWorkspaceCheckoutNativeBoundary, workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
+import { spawnWorkspaceCheckoutNativeBoundary, workspaceCheckoutNativeBoundary as native, type WorkspaceCheckoutNativeChild } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
+import type { ChildProcess } from 'node:child_process';
 
 /** Real OS adapters are retained unless the fixture owns that native account or worker. */
 export async function requesterWorkspaceSyncExecBoundary(
@@ -22,7 +23,7 @@ export async function requesterWorkspaceSyncExecBoundary(
 export function spawnRequesterWorkspaceSyncProcessBoundary(
   actual: typeof import('node:child_process'), command: string, args: readonly string[],
   options: import('node:child_process').SpawnOptions, member: boolean,
-) {
+): ChildProcess | WorkspaceCheckoutNativeChild {
   if (command === 'sudo' && args.at(-1) === 'agent-launch') return spawnWorkspaceCheckoutNativeBoundary();
   if (args.includes('synchronizer')) {
     expect(native.identity.getStore()).toBe(member ? 'member' : undefined);

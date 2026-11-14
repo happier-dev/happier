@@ -86,8 +86,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ExternalActionMachineBootstrapV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { bindProcessLogger, Logger } from '@/ui/logger';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -1367,6 +1368,12 @@ export async function createGenericComposedJourney(occurrence: 'external', manag
     reloadConfiguration();
     expect(configuration.happyHomeDir).toBe(happyHomeDir);
     expect(configuration.activeServerId).toBe('generic-home');
+    const logPath = join(directory, 'rpc-diagnostics.log');
+    await writeFile(logPath, '', { mode: 0o600 });
+    const fileLogger = new Logger({ logFilePath: logPath, redactFileOutput: true,
+      allowDangerousRemoteLogging: false, pruneCurrentProcessLogs: false });
+    // The real process logger follows this fixture's filesystem custody and is restored before that boundary is disposed.
+    disposals.push(bindProcessLogger(fileLogger));
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(61));
     const installationIdentityFile = configuration.installationIdentityFile;
     await writeFile(installationIdentityFile, JSON.stringify({ version: 1, createdAt: 1, installationId,
@@ -1473,6 +1480,27 @@ export async function createGenericComposedJourney(occurrence: 'external', manag
     console.info('Generic public journey stage', { stage: 'fixture_ready', atMs: Date.now() });
     return { occurrence, directory, filesystem, hostNative, elevation, identity, home, metadata, runtime, publications, os,
       authoredProvider: options.authoredProvider,
+      async readRpcCompletionDiagnostics() {
+        fileLogger.flushSync();
+        const knownMethods = new Set<string>(Object.values(RPC_METHODS));
+        return (await readFile(logPath, 'utf8')).split('\n').flatMap(line => {
+          const marker = ' [RPC] Request completed ';
+          const start = line.indexOf(marker);
+          if (start < 0) return [];
+          let value: unknown;
+          try { value = JSON.parse(line.slice(start + marker.length)); } catch { return []; }
+          if (!value || typeof value !== 'object' || Array.isArray(value)
+            || !('method' in value) || typeof value.method !== 'string' || !knownMethods.has(value.method)
+            || !('outcomeCode' in value) || typeof value.outcomeCode !== 'string') return [];
+          const cause = 'failureCause' in value ? value.failureCause : undefined;
+          const parsedCause = ActionFailureCauseV1Schema.safeParse(cause);
+          return [{ method: value.method, outcomeCode: value.outcomeCode,
+            causeState: cause === undefined ? 'absent' : parsedCause.success ? 'valid' : 'invalid',
+            ...(parsedCause.success ? { causePhase: parsedCause.data.phase } : {}),
+            ...('effectAttempted' in value && (typeof value.effectAttempted === 'boolean' || value.effectAttempted === null)
+              ? { effectAttempted: value.effectAttempted } : {}) }];
+        });
+      },
       approvalCreates, approvalRows, operationSnapshots, context, dependencies, inspect, configure, configureInput,
       privateSetupKey, happyHomeDir, accountRuntime, installationIdentityFile, installationPublicKey: keys.publicKey,
       allowConfigure() { settings = setActionApprovalOverride({ settings, actionId: 'machines.reachability.configure', surface: 'agent', approvalRequired: false }); },
@@ -1511,6 +1539,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
   const sockets: ReturnType<typeof createApiSessionSocketStub>[] = [];
   const pendingRpc = new Set<Promise<unknown>>();
   const lifetime = new AbortController();
+  const lifetimeSignal: AbortSignal = lifetime.signal;
   let receivingRpc: RpcHandlerManager | undefined;
   let receivingSocket: ReturnType<typeof createApiSessionSocketStub> | undefined;
   let machineTransportConnected = false;
@@ -1935,7 +1964,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
         await vi.waitFor(() => expect(installed.isMachineControlRegistrationReady()).toBe(true));
       },
       requesterAdmission: signedHome.manageGrantee?.machineAdmission,
-      signal: lifetime.signal,
+      signal: lifetimeSignal,
       async trackCompletion<T>(work: () => Promise<T>): Promise<T> {
         lifetime.signal.throwIfAborted();
         const pending = work();
@@ -2325,6 +2354,7 @@ async function executeReviewedReachabilityConfigureTask(
     result: { ok: true as const, result: execution.result } };
   const failure = readActionFailureEnvelope(execution);
   if (!failure) throw new Error('The retained execution has no canonical failure code');
+  console.info('Reachability scoped RPC completion diagnostics', await fixture.readRpcCompletionDiagnostics());
   if (failure.errorCode === 'machine_reachability_unavailable') {
     const diagnostic = await api.readFailureDiagnostic(failure.error);
     console.info('Reachability retained failure boundary', {

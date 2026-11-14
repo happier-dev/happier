@@ -12,6 +12,7 @@ import {
     AutomationTriggerDetailSchema,
     type AutomationDefinitionDetail,
     type AutomationDefinitionListResponse,
+    type AutomationDefinitionDetailsResponse,
 } from '@happier-dev/protocol/automations/automationApiV3';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
@@ -35,7 +36,7 @@ export function selectWorkflowAutomationListFixture(rows: readonly AutomationDef
 }
 
 /** Private detail demand uses the same selection and page boundary as the public census. */
-export function selectWorkflowAutomationDetailsFixture(rows: readonly AutomationDefinitionDetail[], raw: unknown) {
+export function selectWorkflowAutomationDetailsFixture(rows: readonly AutomationDefinitionDetail[], raw: unknown): AutomationDefinitionDetailsResponse {
     const { details: _details, ...selection } = AutomationDefinitionDetailsRequestSchema.parse(raw);
     const page = selectWorkflowAutomationListFixture(rows, selection);
     const byId = new Map(rows.map(row => [row.id, row]));
