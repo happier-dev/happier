@@ -587,12 +587,7 @@ export function DeploymentDatabasePage(
               title={t('projects.deployments.dataBackups')}
               description={t('projects.deployments.databaseBackupsUnprotected')}
             >
-              <Item
-                testID={`${id}.lastGood`}
-                title={t('projects.deployments.databaseLastBackup')}
-                mode="info"
-                detail={t('projects.deployments.databaseNoBackupYet')}
-              />
+              {/* Last backup is said once, in the facts row under the header (lab dDb). */}
               {detail.environment.capabilities.manage ? (
                 <Item
                   testID={`${id}.backups.setUp`}
@@ -619,18 +614,6 @@ export function DeploymentDatabasePage(
                 ) : undefined
               }
             >
-              <Item
-                testID={`${id}.lastGood`}
-                title={t('projects.deployments.databaseLastBackup')}
-                mode="info"
-                detail={
-                  facts?.status === 'loading'
-                    ? undefined
-                    : lastGood
-                      ? formatAsOfTime(lastGood.completedAt)
-                      : t('projects.deployments.databaseNoBackupYet')
-                }
-              />
               <Item
                 testID={`${id}.destination`}
                 title={t('projects.deployments.backupDestination')}

@@ -156,7 +156,9 @@ export const SharedSavedSecretValueItem = React.memo(
         mode="info"
         showChevron={false}
         showDivider={props.showDivider ?? false}
-        accessoryLayout="adaptive"
+        // The eye (and copy) are icon controls that stay beside the value on a phone, like a switch; only a row that
+        // also offers Replace has controls wide enough to move beneath its value there.
+        {...(replace ? { accessoryLayout: 'adaptive' as const } : {})}
         rightElementOutsidePressable
         rightElement={
           canReveal && readable ? (

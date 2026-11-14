@@ -1240,8 +1240,8 @@ describe('Environment → Data → Database page (P9)', () => {
       await view.screen.pressByTestIdAsync(`${page}.missed.action`);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
       const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
-      expect(view.screen.findAllByProps({ testID: `${page}.lastGood`,
-        detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
+      // Last backup is said once, in the facts row (PFC-FIDELITY G18): the Backups section repeats no Last backup row.
+      expect(view.screen.findAllByProps({ testID: `${page}.lastGood` })).toHaveLength(0);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
       const { t } = await import('@/text');
@@ -1337,8 +1337,11 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(view.effects.find((effect) => effect.actionId === 'deployments.backups.run')?.input).toEqual(history);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
       const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
-      expect(view.screen.findAllByProps({ testID: `${page}.lastGood`,
-        detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
+      // Back up now's run settles the facts row's Last backup, the one place it is said.
+      await vi.waitFor(() => expect((view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0]?.props.facts as
+        readonly { key: string; value: string }[]).find(fact => fact.key === 'lastBackup')?.value)
+        .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z'))));
+      expect(view.screen.findAllByProps({ testID: `${page}.lastGood` })).toHaveLength(0);
       expect(view.effects.filter((effect) => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
     } finally {
       await view.dispose();
@@ -1406,8 +1409,10 @@ describe('Environment → Data → Database page (P9)', () => {
   it('says an unprotected database is not backed up and leads to Set up backups', async () => {
     const view = await renderDatabase({ noBackup: true });
     try {
-      expect(await view.settle(`${page}.lastGood`)).not.toBeNull();
-      expect(view.screen.getTextContent()).toContain('None yet');
+      expect(await view.settle(`${page}.backups.setUp`)).not.toBeNull();
+      // "None yet" is said once, by the facts row; the Backups section leads straight to Set up backups.
+      expect(view.screen.getTextContent().split('None yet')).toHaveLength(2);
+      expect(view.screen.findAllByProps({ testID: `${page}.lastGood` })).toHaveLength(0);
       await view.screen.pressByTestIdAsync(`${page}.backups.setUp`);
       expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'backups' });
     } finally { await view.dispose(); }
