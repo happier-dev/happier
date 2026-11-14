@@ -437,14 +437,16 @@ it('ignores unclassified Artifact deletion receipts and keeps explicit Workflow 
     expect(hook.getCurrent().deletedDefinitionId).toBeNull();
     await hook.unmount();
     resetWorkflowLibraryReadsForTests();
-    const { Modal } = await import('@/modal');
-    const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
-    try {
-        await act(async () => { await deleteWorkflowDefinition({ definitionId, title: 'Saved' }); });
-        const landed = await renderHook(() => useWorkflowDefinitionLibrary());
-        expect(landed.getCurrent().deletedDefinitionId).toBe(definitionId);
-        expect(landed.getCurrent().deletedDefinitionTitle).toBe('Saved');
-    } finally { confirmation.mockRestore(); }
+    const { ModalProvider } = await import('@/modal');
+    const confirmation = await renderScreen(<ModalProvider />);
+    const deletion = deleteWorkflowDefinition({ definitionId, title: 'Saved' });
+    await waitForHomeGovernance(() => expect(confirmation.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+    await confirmation.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await act(async () => { await deletion; });
+    await confirmation.unmount();
+    const landed = await renderHook(() => useWorkflowDefinitionLibrary());
+    expect(landed.getCurrent().deletedDefinitionId).toBe(definitionId);
+    expect(landed.getCurrent().deletedDefinitionTitle).toBe('Saved');
 });
 const artifactHeaderRoute = '/v1/artifacts?limit=500&kinds=%5B%22workflow-definition.v1%22%5D';
 
