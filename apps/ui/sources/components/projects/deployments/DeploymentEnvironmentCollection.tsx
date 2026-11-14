@@ -221,6 +221,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       && currentDeployment.steps && currentDeployment.steps.length > 0 ? currentDeployment.steps : null;
     const caption = working ? deploymentStepCaption(working) : null;
     const step = working ? currentStep(working) : null;
+    // A failed deploy keeps its steps beside the row, so the step that stopped it shows (lab svcApps Staging).
+    const steps = working ?? (currentDeployment?.state === 'failed' && currentDeployment.steps && currentDeployment.steps.length > 0
+      ? currentDeployment.steps : null);
     return {
       environmentId: environment.id,
       projectSourceId: environment.projectSourceId,
@@ -228,6 +231,18 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       projectName: projectSourceName ?? null,
       title,
       titleQualifier: productionQualifier(environment.protection, title),
+      // The table's facts, one per column (Services, a Machine's What runs here): where it runs, what was deployed
+      // last, the state word that needs the person and the steps of a deploy at work or stopped.
+      runsOn: platform ?? machine,
+      platform: platform !== null,
+      /** How it runs on a Machine target ("Compose"); a platform names itself in Runs on. */
+      runtimeKind: compose,
+      // What was deployed last (its receipt's title), else what is live; never one that only repeats the row's name.
+      deploymentTitle: [currentDeployment?.title, liveVersionTitle]
+        .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,
+      state: latest,
+      steps,
+      stepCaption: steps ? deploymentStepCaption(steps) : null,
       // A running deploy's line names the step it waits on; the Machine returns when it settles.
       subtitle: working
         ? [latest?.text, caption].filter(Boolean).join(' · ')

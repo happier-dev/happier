@@ -2066,11 +2066,14 @@ function VirtualizedList<Item>(
                             {/* The sheet bar stands above the first group's sub-heading, inside its group (no pause above it). */}
                             {index === 0 ? sheetHeader : null}
                             {/* A sub-heading names one part of its section, so it keeps its end (the part) and shrinks
-                                its shared start first ("customer-portal · Production"). */}
-                            <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
-                              style={index === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
-                              {...(section.description === undefined ? {} : { description: section.description })}
-                              {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />
+                                its shared start first ("customer-portal · Production"). An untitled group groups its
+                                rows without a label, so it draws none. */}
+                            {section.title === '' ? null : (
+                              <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
+                                style={index === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
+                                {...(section.description === undefined ? {} : { description: section.description })}
+                                {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />
+                            )}
                           </>
                         )}>
                           <View>{rowsOf(section)}</View>

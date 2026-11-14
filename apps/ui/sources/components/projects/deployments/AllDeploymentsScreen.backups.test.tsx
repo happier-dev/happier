@@ -165,7 +165,7 @@ const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => [
       .findAll(
         (node) =>
           typeof node.props.testID === 'string' &&
-          /^all-deployments\.row\.[^.]+$/.test(node.props.testID),
+          /^all-deployments\.row\.[^.:]+$/.test(node.props.testID),
       )
       .map((node) => node.props.testID as string),
   ),
@@ -201,7 +201,9 @@ describe('All deployments → Not backed up', () => {
       expect(rowIds(screen)).toHaveLength(3);
       // The filter sits inline in the list, one press away, never folded into the header's phone overflow (DEPLOY-REACCEPT-1113 D3).
       const { PageHeader } = await import('@/components/ui/layout/PageHeader');
-      expect(screen.findAllByType(PageHeader).map((node) => node.props.actions ?? null)).toEqual([null]);
+      expect(screen.findAllByType(PageHeader).flatMap((node) => node.findAll((child) =>
+        child.props.testID === 'all-deployments.notBackedUp'))).toEqual([]);
+      expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull();
 
       await act(async () => {
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');

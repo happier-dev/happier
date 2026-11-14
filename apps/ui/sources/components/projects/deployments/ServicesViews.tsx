@@ -5,11 +5,17 @@ import type {
 } from '@happier-dev/deployments';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { formatHappierDataBytesParts } from '@happier-dev/plugin-ui/presentation';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -18,6 +24,8 @@ import { t } from '@/text';
 
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import { DeploymentDomainRow } from './DeploymentDomainRow';
+import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
+import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import {
   useDeploymentDataServicePage,
@@ -30,6 +38,8 @@ import {
  */
 export type ServicesView = 'apps' | 'databases' | 'domains' | 'checks' | 'watched';
 const VIEWS: readonly ServicesView[] = ['apps', 'databases', 'domains', 'checks', 'watched'];
+/** A view's count line, from its own read's reported rows (the page's head draws it, MainScreenHeader `count`). */
+export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (string | null)[] }>;
 
 /** The route's `view`, read once: anything else is the Apps view. */
 export function readServicesView(
@@ -62,7 +72,8 @@ export function ServicesViewTabs(
     [],
   );
   return (
-    <ItemGroup surface="none" testID="services.views">
+    // The page head's band places it on the sheets' edge (MainScreenHeader).
+    <View testID="services.views">
       <SegmentedTabBar<ServicesView>
         role="tablist"
         segmentSizing="content"
@@ -73,7 +84,7 @@ export function ServicesViewTabs(
         activeTabId={props.active}
         onSelectTab={props.onSelect}
       />
-    </ItemGroup>
+    </View>
   );
 }
 
@@ -91,22 +102,101 @@ function describeDatabaseGrowth(
   });
 }
 
-/** Databases: every Environment's data services with the size DB-SIZE-1113's read reports; a row opens its database page. */
+type DatabaseRow = Readonly<{
+  key: string;
+  environmentId: string;
+  projectSourceId: string;
+  service: string;
+  engine: string | null;
+  growth: string | null;
+  size: string;
+}>;
+const keyOfDatabase = (row: DatabaseRow) => row.key;
+const groupOfDatabase = (row: DatabaseRow) => row.environmentId;
+const NO_DATABASES: readonly DatabaseRow[] = Object.freeze([]);
+
+/**
+ * Databases (lab svcDb): every Environment's data services with the size DB-SIZE-1113's read reports and the
+ * Environment's backup coverage from its owner, banded by Environment on one sheet; a row opens its database page.
+ */
 export function ServicesDatabasesView(
   props: Readonly<{
     controller: DeploymentReadControllerV1 | null;
     demand: DeploymentReadDemandV1;
     serverId: string;
+    lifetime: ServerAccountScopeLifetime | null;
+    onCount: (count: ServicesViewCount) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const read = useDeploymentDataServicePage(props.controller, props.demand);
   const items = read.snapshot.value?.items ?? NO_ITEMS;
-  const icon = React.useMemo(
-    () => <Icon name="stack" size={18} color={theme.colors.text.secondary} />,
-    [theme.colors.text.secondary],
-  );
+  const withData = React.useMemo(() => items.filter((item) => (item.databaseSizes?.length ?? 0) > 0), [items]);
+  const environments = React.useMemo(() => withData.map((item) => item.environment), [withData]);
+  const backups = useVisibleBackupCoverage(props.lifetime, environments, props.demand.visible);
+  const coverage = React.useMemo(() => new Map(backups.coverage?.rows.map((row) => [row.environment.id, row.status])),
+    [backups.coverage]);
+  const rows = React.useMemo<readonly DatabaseRow[]>(() => withData.length === 0 ? NO_DATABASES : withData.flatMap((item) =>
+    item.databaseSizes!.map((database) => {
+      const declared = item.content.template?.data?.find((data) => data.service === database.service);
+      return {
+        key: `${item.environment.id}:${database.service}`,
+        environmentId: item.environment.id,
+        projectSourceId: item.environment.projectSourceId,
+        service: database.service,
+        engine: declared ? databaseEngineTitle(declared) : null,
+        growth: describeDatabaseGrowth(database.growth),
+        size: describeDatabaseSize(database.size),
+      };
+    })), [withData]);
+  const groups = React.useMemo(() => ({
+    axis: withData.map((item) => ({ key: item.environment.id, title: item.title, section: SERVICES_ONE_SHEET })),
+    groupOf: groupOfDatabase,
+  }), [withData]);
+  const { serverId } = props;
+  const open = React.useCallback((key: string | number | null) => {
+    const row = key === null ? undefined : rows.find((candidate) => candidate.key === String(key));
+    if (!row) return;
+    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId,
+      environmentId: row.environmentId, database: row.service }));
+  }, [router, rows, serverId]);
+  const model = useHappierCollection<DatabaseRow>({ items: rows, keyOf: keyOfDatabase, groups, openKey: null, onOpenChange: open });
+  const anatomy = React.useMemo<CollectionAnatomy<DatabaseRow>>(() => {
+    const meta = { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 } as const;
+    const backupWord = (row: DatabaseRow) => {
+      const status = coverage.get(row.environmentId);
+      return status === 'uncovered' ? <Status tone="warning" label={t('projects.deployments.notBackedUp')} presentation="inline" />
+        : status === 'covered' ? t('projects.deployments.services.backupCovered')
+        : status === 'notNeeded' ? t('projects.deployments.services.backupNotNeeded') : null;
+    };
+    return {
+      glyph: () => <Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+      title: (row) => row.service,
+      // Line 2: the engine and how it grew; a phone also says its size.
+      byline: (row, layout) => {
+        const line = [row.engine, row.growth, layout?.fieldColumns === true ? null : row.size].filter(Boolean).join(' · ');
+        return line ? <Text style={meta} numberOfLines={1}>{line}</Text> : null;
+      },
+      titleMeta: (row) => coverage.get(row.environmentId) === 'uncovered' ? backupWord(row) : null,
+      titleMetaAlign: 'row',
+      fields: [
+        { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
+          render: (row) => row.size },
+        { key: 'backups', title: t('projects.deployments.services.columnBackups'), minWidth: 140, priority: 1, align: 'end',
+          listColumn: true, render: backupWord },
+      ],
+      accessibilityLabel: (row) => [row.service, row.engine, row.size].filter(Boolean).join(', '),
+      testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
+      columnTitles: { title: t('projects.deployments.services.columnDatabase') },
+    };
+  }, [coverage, theme.colors.text.secondary]);
+  const uncovered = backups.coverage?.rows.filter((row) => row.status === 'uncovered').length ?? 0;
+  const countParts = React.useMemo(() => read.snapshot.value ? [
+    rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,
+    uncovered > 0 ? t('projects.deployments.notBackedUpCount', { count: uncovered }) : null,
+  ] : null, [read.snapshot.value, rows.length, uncovered]);
+  useReportViewCount('databases', countParts, props.onCount);
   if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
@@ -116,12 +206,7 @@ export function ServicesDatabasesView(
           size="line"
           title={t('projects.deployments.unavailableTitle')}
           diagnosticCode={read.snapshot.failure?.code ?? null}
-          action={{
-            label: t('common.retry'),
-            onPress: () => {
-              void read.refresh();
-            },
-          }}
+          action={{ label: t('common.retry'), onPress: () => { void read.refresh(); } }}
         />
       </ItemGroup>
     ) : (
@@ -130,66 +215,69 @@ export function ServicesDatabasesView(
       </ItemGroup>
     );
   }
-  const withData = items.filter(
-    (item) => (item.databaseSizes?.length ?? 0) > 0,
-  );
-  if (withData.length === 0) {
+  if (rows.length === 0 && !read.snapshot.value.hasNextPage && !read.snapshot.value.hasPreviousPage) {
     return (
-      <ItemGroup surface="none">
-        <SurfaceStateCard
-          testID="services.databases.empty"
-          scene="shipped"
-          kind="empty"
-          size="page"
-          title={t('projects.deployments.services.noDatabases')}
-          reason={t('projects.deployments.services.noDatabasesBody')}
-        />
-      </ItemGroup>
+      <EmptyState
+        testID="services.databases.empty"
+        layout="page"
+        scene="shipped"
+        title={t('projects.deployments.services.noDatabases')}
+        subtitle={t('projects.deployments.services.noDatabasesBody')}
+      />
     );
   }
   return (
     <>
-      {withData.map((item) => (
-        <ItemGroup
-          key={item.environment.id}
-          testID={`services.databases.environment.${item.environment.id}`}
-          title={item.title}
-        >
-          {item.databaseSizes!.map((database) => {
-            const declared = item.content.template?.data?.find(
-              (data) => data.service === database.service,
-            );
-            return (
-              <Item
-                key={database.service}
-                testID={`services.databases.row.${item.environment.id}.${database.service}`}
-                title={database.service}
-                subtitle={
-                  [
-                    declared ? databaseEngineTitle(declared) : null,
-                    describeDatabaseGrowth(database.growth),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || undefined
-                }
-                detail={describeDatabaseSize(database.size)}
-                icon={icon}
-                onPress={() =>
-                  router.push(
-                    deploymentEnvironmentRoute({
-                      serverId: props.serverId,
-                      projectSourceId: item.environment.projectSourceId,
-                      environmentId: item.environment.id,
-                      database: database.service,
-                    }),
-                  )
-                }
-              />
-            );
-          })}
+      {backups.readers}
+      {rows.length === 0 ? (
+        // A page whose Environments hold no databases still leads on to the next one.
+        <ItemGroup surface="none">
+          <SurfaceStateCard testID="services.databases.pageEmpty" kind="empty" size="line"
+            title={t('projects.deployments.services.pageEmpty')} />
         </ItemGroup>
-      ))}
+      ) : (
+        <ServicesPageList<DatabaseRow> testID="services.databases" model={model} anatomy={anatomy}
+          accessibilityLabel={t('projects.deployments.services.databases')} />
+      )}
+      <ServicesPaging testID="services.databases.paging" page={read.snapshot.value}
+        onNewer={read.previousPage} onOlder={read.nextPage} />
     </>
+  );
+}
+
+/** A view publishes its count line to the page head when its words change (MainScreenHeader `count`). */
+export function useReportViewCount(view: ServicesView, parts: readonly (string | null)[] | null,
+  onCount: (count: ServicesViewCount) => void) {
+  const signature = parts ? parts.join('\u0000') : null;
+  const latest = React.useRef(parts);
+  latest.current = parts;
+  React.useEffect(() => {
+    if (latest.current) onCount({ view, parts: latest.current });
+  }, [onCount, signature, view]);
+}
+
+/** Newer / Older under a paged view's sheet (the Apps paging pattern): only the way that exists is offered. */
+export function ServicesPaging(props: Readonly<{
+  testID: string;
+  page: Readonly<{ hasNextPage: boolean; hasPreviousPage: boolean }>;
+  onNewer: () => void;
+  onOlder: () => void;
+}>) {
+  const { theme } = useUnistyles();
+  if (!props.page.hasNextPage && !props.page.hasPreviousPage) return null;
+  return (
+    <ItemGroup surface="none" testID={props.testID}>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: theme.space.s8 }}>
+        {props.page.hasPreviousPage ? (
+          <SectionActionButton testID={`${props.testID}.newer`} title={t('projects.deployments.pageNewer')}
+            icon="caret-left" onPress={props.onNewer} />
+        ) : null}
+        {props.page.hasNextPage ? (
+          <SectionActionButton testID={`${props.testID}.older`} title={t('projects.deployments.pageOlder')}
+            icon="caret-right" onPress={props.onOlder} />
+        ) : null}
+      </View>
+    </ItemGroup>
   );
 }
 

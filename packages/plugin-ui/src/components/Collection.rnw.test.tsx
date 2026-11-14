@@ -3270,6 +3270,23 @@ describe('render scope', () => {
       expect(subHeadings).not.toContain('');
     } finally { view.unmount(); }
   });
+  it('leads a shared sheet with an untitled group under no sub-heading of its own', () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      // The untitled group's rows lead the sheet; the titled group keeps its sub-heading.
+      grouping: { ...groups, axis: [{ key: 'needs', title: '' }, { key: 'rest', title: 'Everything else' }]
+        .map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
+    });
+    try {
+      view.measure(1200);
+      // The sheet both groups share: the nearest ancestor of a row of each.
+      let sheet = view.query('row:a')!.parentElement!;
+      while (!sheet.contains(view.query('row:c'))) sheet = sheet.parentElement!;
+      const subHeadings = [...sheet.querySelectorAll('[role="group"][aria-label]')].map((group) => group.getAttribute('aria-label'));
+      expect(subHeadings).toContain('Everything else');
+      expect(subHeadings).not.toContain('');
+    } finally { view.unmount(); }
+  });
   it.each([false, true])('publishes real divider membership changes even when the membership size is unchanged (totals: %s)', async totals => {
     const items = [...entries, { ...entries[2]!, id: 'd' }];
     const view = mount({
