@@ -113,6 +113,7 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
             }
             return await invokeWrite(() => context.services.actions.executeAdmittedTargetedOperation(operation, {
                 v: 1, instance: configured, kindId: request.input.kindId, fields: request.input.fields,
+                ...(request.input.placeId === undefined ? {} : { placeId: request.input.placeId }),
                 ...(request.input.initialStatusId === undefined ? {} : { initialStatusId: request.input.initialStatusId }),
             }, options));
         }

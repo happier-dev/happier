@@ -372,7 +372,8 @@ describe('Tasks through a separately authored source and registered aggregate Ac
     it.each(['notStarted', 'responseLost', 'denied', 'cancelled'] as const)('preserves the source write transport outcome through registered create, edit and transition: %s', async sourceWriteTransport => {
         await withExternalTaskSource(async ({ aggregate, writes }) => {
             const expected = sourceWriteTransport === 'notStarted'
-                ? { kind: 'refused', reason: 'unavailable' }
+                // 8db81218583 preserves the host's author payload and retryability.
+                ? { kind: 'refused', reason: 'unavailable', details: {}, retryable: false }
                 : { kind: 'uncertain', failure: { class: 'unknown', code: sourceWriteTransport === 'responseLost' ? 'unavailable' : sourceWriteTransport } };
             expect(await aggregate.invokeAction('tasks/create-v1', {
                 v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'A task' },
@@ -525,11 +526,12 @@ describe('Tasks through a separately authored source and registered aggregate Ac
     it.each(['plain', 'e2ee'] as const)('creates once with an exact origin error and keeps it readable after unpinning the task (%s)', async (accountEncryptionMode) => {
         await withExternalTaskSource(async ({ aggregate, writes }) => {
             const result = await aggregate.invokeAction('tasks/create-v1', {
-                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Fix checkout' }, originError,
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', placeId: 'native-project/native-type', fields: { title: 'Fix checkout' }, originError,
             }, { surface: 'agent' });
             expect(result).toMatchObject({ kind: 'createdAndLinkAttempted', originErrorLink: 'linked',
                 creation: { kind: 'applied', observation: { localRef: initialTask.localRef } } });
             expect(writes.map(write => write.role)).toEqual(['create']);
+            expect(writes[0]!.input).toMatchObject({ placeId: 'native-project/native-type' });
             expect(await aggregate.invokeAction('tasks/read-origin-error-v1', { v: 1, entryRef }, { surface: 'agent' }))
                 .toEqual({ v: 1, originError });
             await aggregate.invokeAction('marks/set-pinned-v1', { v: 1, entryRef, pinned: true,

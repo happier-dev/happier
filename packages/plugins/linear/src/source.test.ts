@@ -7,6 +7,7 @@ import { getLinearEntry, listLinearInstances, listLinearScopeUnits, scanLinearSo
 import { account, instance, localRef, issue, page, host } from './fixtures.test-support.js';
 import { writeLinearScopeSelection } from './contracts.js';
 import { LINEAR_ACTIONS } from './contracts.js';
+import { LINEAR_ACCOUNT_ACTIONS } from './accountActions.js';
 import { LINEAR_PLUGIN } from './manifest.js';
 
 const workspaceInstance = (teams: unknown) => ({ ...instance, localInstanceKey: 'linear',
@@ -290,5 +291,35 @@ describe('Linear source through provider HTTP', () => {
     expect(result.snapshot.taskCapabilities).not.toHaveProperty('completingTransitionId');
     expect(result.snapshot.taskCapabilities?.transitions?.map(transition => transition.id))
       .toEqual(['state-1', ...Array.from({ length: doneStates }, (_, index) => `done-${index}`)]);
+  });
+});
+
+
+describe('task creation places', () => {
+  it('exposes named included teams and preserves refusal reasons for excluded teams', async () => {
+    const h = host(() => ({ teams: page([
+      { id: 'team-1', name: 'Engineering', key: 'ENG' },
+      { id: 'team-2', name: 'Support', key: 'SUP' },
+    ]) }));
+    const action = LINEAR_ACCOUNT_ACTIONS[LINEAR_ACTIONS.listCreationPlaces];
+    expect(action).toBeDefined();
+    const result = await action.run({ v: 1, instance }, h.context);
+    expect(result.kind, JSON.stringify(result)).toBe('page');
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [
+      { id: 'team-1', label: 'Engineering', kindId: 'issue', fields: { scopeId: 'team-1' } },
+      { id: 'team-2', label: 'Support', refusal: { reason: 'linear/teamMismatch' } },
+    ] });
+  });
+  it('pages named projects only on demand and keeps their team create operand', async () => {
+    const h = host(({ operationName, variables }) => {
+      expect(operationName).toBe('LinearCreationProjects');
+      expect(variables.id).toBe('team-1');
+      return { team: { id: 'team-1', projects: page([{ id: 'project-1', name: 'Autumn' }], true, 'next') } };
+    });
+    expect(await LINEAR_ACCOUNT_ACTIONS[LINEAR_ACTIONS.listCreationPlaces].run({ v: 1, instance, scopeId: 'team-1' }, h.context))
+      .toMatchObject({ kind: 'page', status: 'partial', nextCursor: { token: 'next' }, places: [
+        { label: 'Autumn', fields: { scopeId: 'team-1', projectId: 'project-1' } },
+      ] });
+    expect(h.request).toHaveBeenCalledTimes(1);
   });
 });

@@ -29,6 +29,29 @@ duplicate id refuses the whole result with
 Composer; the same id in separate snapshots remains valid. This is a Triage
 domain rule, independent of the JSON Schema transport.
 
+## Task creation places (0.3 development source)
+
+Sources may advertise the optional `listCreationPlaces` task operation. Invoke it
+only while choosing a place. Root pages reuse the source's scope directory and
+retain its continuation, partial results and failure. A place supplies a name,
+kind, create fields and an optional refusal reason. `childScopeId` requests the
+selected place's children through the same operation: Linear team projects,
+Jira project issue types, or GitHub repository creation details. These are live
+source facts, not cached write permission; the existing create Action remains
+authoritative.
+
+Each picker read consumes one native directory page, with continuation through
+the same operation. There is no eager per-place read or whole-directory drain.
+Jira's existing full-directory consumers still traverse the same page owner.
+
+Linear places supply the team and optional project fields. Jira's issue-type
+places supply an opaque `placeId` for the existing create Action; the source
+resolves it inside the configured project selection. A Jira project with a
+configured issue type remains directly selectable. GitHub supplies repository
+fields and, on selected-repository expansion, archived/issues-disabled reasons.
+The picker consumes these operands rather than parsing labels or accepting raw
+native IDs. Rendering of the picker is a separate pending consumer change.
+
 ## Unavailable source diagnostics (0.3 development source)
 
 Plugin admission and loading own unavailable-plugin causes. Registration carries

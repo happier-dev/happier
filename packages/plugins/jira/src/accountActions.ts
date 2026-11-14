@@ -1,3 +1,4 @@
+import { listJiraCreationPlaces } from './source/creationPlaces.js';
 /** Finite Account HTTP operations; shared by declarations and portable activation. */
 import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1, TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from './contracts.js';
@@ -11,6 +12,13 @@ const sources = TriageSourcesContributionProtocolV1;
 const access = [JIRA_ACCOUNT_PURPOSE, 'jira-api'];
 const bindings = [{ path: 'instance.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }];
 export const JIRA_ACCOUNT_ACTIONS = {
+    [JIRA_ACTIONS.listCreationPlaces]: {
+        execution: ACCOUNT_EXECUTION, title: 'List Jira task creation places', placementBindings: [],
+        surfaces: sources.operations.listCreationPlaces.declaration.surfaces, dangerLevel: 'safe',
+        inputSchema: TriageSourceConnectedAccountInputsV1.listCreationPlaces.jsonSchema,
+        resultSchema: sources.operations.listCreationPlaces.declaration.resultSchema.jsonSchema,
+        hostAccess: access, connectedAccountPurposeBindings: bindings, run: listJiraCreationPlaces,
+    },
     [JIRA_ACTIONS.issueTypes]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Read Jira issue types', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],

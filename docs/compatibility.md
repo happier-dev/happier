@@ -43,6 +43,41 @@ integer counts; stored readers discard a malformed optional summary while keepin
 other Machine facts. Matching 0.3 Protocol, daemon and UI reload together. This adds
 no poller, inventory store, migration, permission decision or compatibility shim.
 
+## Daemon Voice inference failure causes (unreleased 0.3)
+
+Inference RPC errors and TTS stream error events accept optional `failureCause`
+through the existing content-free `ActionFailureCauseV1` schema. Native runtime
+loading and audio decoding retain their causes; worker IPC and RPC projection preserve
+typed phase, class, closed native codes and HTTP status without publishing
+exception text or arbitrary native code strings. Authored typed causes retain
+their declared codes.
+Replies without a cause remain valid. Matching 0.3 daemon and UI peers reload
+together; no persisted format, error-code vocabulary or retry policy changes.
+
+## Agent preflight failure causes (unreleased 0.3)
+
+Capability invocation errors accept optional `failureCause` using the existing
+Session runtime cause contract. Native preparation retains its original cause;
+the capability invocation owner projects otherwise unclassified exceptions
+through the same runtime cause owner. CLI and UI inventory Actions carry this
+runtime diagnostic in their existing opaque `details.failureCause` field.
+Replies without a cause remain valid. Matching Protocol, daemon and UI peers
+reload together under the unpublished 0.3 direct cut. No persisted format,
+released SDK contract, retry policy or compatibility adapter changes.
+
+Model and configuration preflight observations also retain optional
+`failureCause` through their existing strict observation schemas and the SDK's
+ACP session-controls result. A refused configuration refresh keeps the accepted
+catalog and original native diagnostic. Existing observations without a cause
+remain valid. Matching SDK, Agent plugins, Protocol, daemon and UI peers reload
+together because older strict development observation readers reject the new
+field; no released predecessor adapter or persisted format is added.
+
+Passive realtime setup results retain optional `failureCause` through the
+existing Action cause schema while preserving their setup status. Native
+exceptions expose only closed diagnostic codes, class, phase and HTTP status;
+authored typed causes remain authoritative. The SDK derives this result from
+Protocol, and matching development peers reload together.
 
 ## Retained resume refusal causes (unreleased 0.3)
 
@@ -149,6 +184,19 @@ and replies without a cause are unchanged. Runner and daemon readers reload
 together under the unpublished 0.3 direct cut; older strict development readers
 reject the added field. This is the current CLI process seam, with no separate
 released predecessor or persisted representation to migrate.
+
+## Triage task creation places (unreleased 0.3)
+
+The source contribution V1 epoch adds optional `listCreationPlaces`; package
+versions remain independent. Its request, page/failure union, places, create
+operands and nested refusals are closed objects. Sources without the operation
+remain admitted. The existing create request accepts optional source-owned
+`placeId`, forwarded by Triage unchanged and interpreted by Jira inside its
+configured project selection; omission keeps configured create defaults.
+Matching source plugins, Triage and protocol readers load together under the
+unpublished development direct cut; no persisted format, wire epoch, gate or
+adapter changes. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no triage-protocol package.
 
 ## Triage source caller diagnostics (unreleased 0.3)
 
@@ -1256,6 +1304,10 @@ The shared credential-carrier policy also selects credential-free transport for
 Services inventory reads (`machines.services.list`, `machines.services.discovery`
 and `machines.services.detail`). CLI and browser dispatch consume that same
 policy; logs and watch effects retain requester credential consent and custody.
+The browser's Services inventory Resource continuation consumes that same
+verified invocation codec and requester identity without acquiring full Account
+credential custody. Its Resource target and input must match the admitted Action;
+log Resources retain their requester credential requirement.
 Foreign-Machine dispatch uses the existing sealed
 invocation codec carrier; it conveys a fresh request/reply key and invocation,
 never the requester's ordinary bearer or Account encryption key. Omission keeps
@@ -5979,9 +6031,11 @@ or removing an active member records a manual replacement through this same
 owner. No V3 switch header or legacy group transport is added on this line.
 
 With priority strategy and `autoRestorePrimaryWhenReset` enabled, the canonical
-candidate selector can restore an eligible primary from fresh healthy quota
-observed after an automatic limit fallback, without requiring a provider reset
-time or surviving member failure marker. Manual provenance prevents the override.
+candidate selector can restore the highest-priority eligible member ahead of
+the active member from fresh healthy quota observed after an automatic limit
+fallback, even while the first member remains exhausted and without a provider
+reset time or surviving member failure marker. Restoration requires headroom
+above the soft-switch threshold. Manual provenance prevents the override.
 Older rows without provenance retain the landed-reset proof; unknown history is
 not treated as an automatic fallback. Existing quota freshness and member
 eligibility policies are unchanged.
@@ -8603,6 +8657,17 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 `automation.event.sources.list` adds optional closed `source`
+selection (`eventRef`, `sourceInstanceId`, `sourceContractVersion`). Admission
+queries only matching definitions from the existing adopted snapshot; omission
+retains full discovery and reconciliation. Selection narrows the existing caller
+and transport scope and binds pagination cursors. The request, source and event
+identity remain closed; unknown fields reject. Matching Protocol, host and SDK
+source reload together under the unpublished 0.3 direct cut; earlier strict
+development readers reject the field. This adds no persistence, epoch, capability
+or adapter. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has neither affected source module.
 
 Unreleased 0.3 Usage analytics token aggregates add optional closed
 `measured: { total, fromParts: true }`. Each admitted contribution contributes

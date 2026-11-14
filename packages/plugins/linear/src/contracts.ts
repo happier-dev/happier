@@ -23,6 +23,7 @@ export const LINEAR_PURPOSE = 'linear-api';
 export const LINEAR_PERSONAL_KEY = 'personal-api-key';
 export const LINEAR_ORIGIN = 'https://api.linear.app';
 export const LINEAR_ACTIONS = {
+  listCreationPlaces: 'linear/list-creation-places',
   listInstances: 'linear/list-instances', scan: 'linear/scan', get: 'linear/get',
   detail: 'linear/detail', create: 'linear/create', edit: 'linear/edit',
   transition: 'linear/transition', comment: 'linear/comment',

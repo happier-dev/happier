@@ -1,3 +1,4 @@
+import { TriageTaskCreationPlacesInputV1Schema, TriageTaskCreationPlacesConnectedAccountInputV1Schema, TriageTaskCreationPlacesCredentialInputV1Schema, TriageTaskCreationPlacesResultV1Schema } from './creationPlaces.js';
 import {
     defineContributionPoint,
     defineContributionProtocol,
@@ -214,6 +215,12 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
     version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     descriptor: TriageSourceDescriptorV1Schema,
     operations: {
+        listCreationPlaces: {
+            required: false,
+            input: { kind: 'protocolDefined', schema: TriageTaskCreationPlacesInputV1Schema },
+            resultSchema: TriageTaskCreationPlacesResultV1Schema,
+            action: { surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe' },
+        },
         resolveResource: {
             required: false,
             input: { kind: 'protocolDefined', schema: TriageResolveResourceInputV1Schema },
@@ -323,6 +330,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
 
 /** Exact V1 Action inputs for sources that support connected Accounts only. */
 export const TriageSourceConnectedAccountInputsV1 = {
+    listCreationPlaces: TriageTaskCreationPlacesConnectedAccountInputV1Schema,
     resolveResource: TriageResolveResourceConnectedAccountInputV1Schema,
     readAttention: TriageReadAttentionConnectedAccountInputV1Schema,
     listScopeUnits: TriageListScopeUnitsConnectedAccountInputV1Schema,
@@ -342,6 +350,7 @@ export const TriageSourceConnectedAccountInputsV1 = {
 
 /** Exact inputs for a source that materializes connected or machine-native credentials. */
 export const TriageSourceCredentialInputsV1 = {
+    listCreationPlaces: TriageTaskCreationPlacesCredentialInputV1Schema,
     resolveResource: TriageResolveResourceCredentialInputV1Schema,
     readAttention: TriageReadAttentionCredentialInputV1Schema,
     listScopeUnits: TriageListScopeUnitsCredentialInputV1Schema,

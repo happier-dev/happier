@@ -1,3 +1,4 @@
+import { listLinearCreationPlaces } from './creationPlaces.js';
 /** Finite Account HTTP operations; shared by declarations and portable activation. */
 import { TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 import { LINEAR_PURPOSE, LINEAR_ACTIONS, LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema } from './contracts.js';
@@ -8,6 +9,13 @@ const sources = TriageSourcesContributionProtocolV1;
 const hostAccess = [LINEAR_PURPOSE, 'linear-graphql'];
 const bindings = [{ path: 'instance.binding.account', purpose: LINEAR_PURPOSE }];
 export const LINEAR_ACCOUNT_ACTIONS = {
+    [LINEAR_ACTIONS.listCreationPlaces]: {
+        execution: ACCOUNT_EXECUTION, title: 'List Linear task creation places', placementBindings: [],
+        surfaces: sources.operations.listCreationPlaces.declaration.surfaces, dangerLevel: 'safe',
+        inputSchema: TriageSourceConnectedAccountInputsV1.listCreationPlaces.jsonSchema,
+        resultSchema: sources.operations.listCreationPlaces.declaration.resultSchema.jsonSchema,
+        hostAccess: hostAccess, connectedAccountPurposeBindings: bindings, run: listLinearCreationPlaces,
+    },
     [LINEAR_ACTIONS.listInstances]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Discover Linear workspaces', description: 'List the workspace for each connected Linear account.', placementBindings: [],

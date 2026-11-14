@@ -80,7 +80,9 @@ export const JIRA_PLUGIN = definePlugin({
                 kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues',
                     task: true, taskCapabilities: { completedScan: true, createFields: JIRA_TASK_FIELDS, editFields: JIRA_TASK_FIELDS },
                     detailTabs: [{ kind: 'shared', id: 'overview' }] }] },
-            operations: { listInstances: sources.operations.listInstances.bind(JIRA_ACTIONS.listInstances),
+            operations: {
+                listCreationPlaces: sources.operations.listCreationPlaces.bind(JIRA_ACTIONS.listCreationPlaces),
+                listInstances: sources.operations.listInstances.bind(JIRA_ACTIONS.listInstances),
                 listScopeUnits: sources.operations.listScopeUnits.bind(JIRA_ACTIONS.listScopeUnits),
                 scan: sources.operations.scan.bind(JIRA_ACTIONS.scan), get: sources.operations.get.bind(JIRA_ACTIONS.get),
                 create: sources.operations.create.bind(JIRA_ACTIONS.create), edit: sources.operations.edit.bind(JIRA_ACTIONS.edit),

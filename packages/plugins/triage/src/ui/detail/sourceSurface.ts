@@ -174,7 +174,7 @@ export function resolveTriageSourcePrepareReviewWorkspaceOperationV1(
 export function resolveTriageSourceTaskOperationV1(
   targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
-  role: 'create' | 'edit' | 'transition' | 'readSessionLinks',
+  role: 'listCreationPlaces' | 'create' | 'edit' | 'transition' | 'readSessionLinks',
 ) : PluginUiTargetedContributionOperationV1 | undefined {
   if (targetedContributions === undefined) return undefined;
   return selectTargetedContributionOperation(targetedContributions, { ...triageSourceSelectorV1(source), role });

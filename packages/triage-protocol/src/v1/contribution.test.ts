@@ -17,7 +17,7 @@ describe('Triage sources contribution protocol', () => {
     it('declares required reads plus optional prepare and final verification roles', () => {
         const operations = TriageSourcesContributionProtocolV1.operations;
         expect(Object.keys(operations).sort())
-            .toEqual(['create', 'edit', 'get', 'linkSession', 'listInstances', 'listScopeUnits', 'prepareReviewWorkspace', 'readAttention', 'readFixPullRequests', 'readPullRequestStatus', 'readSessionLinks', 'resolveResource', 'scan', 'transition', 'verifyReviewWorkspace']);
+            .toEqual(['create', 'edit', 'get', 'linkSession', 'listCreationPlaces', 'listInstances', 'listScopeUnits', 'prepareReviewWorkspace', 'readAttention', 'readFixPullRequests', 'readPullRequestStatus', 'readSessionLinks', 'resolveResource', 'scan', 'transition', 'verifyReviewWorkspace']);
         expect(operations.resolveResource.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin', 'ui'] });
         expect(operations.readAttention.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin'] });
         expect(operations.listInstances.declaration).toMatchObject({

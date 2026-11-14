@@ -17,6 +17,14 @@ const available = Object.freeze({ kind: 'available' as const });
 const unsupported = Object.freeze({ kind: 'unavailable' as const, code: 'repository_unsupported' as const });
 const archived = Object.freeze({ kind: 'denied' as const, code: 'repository_archived' as const });
 
+export function projectGithubRepositoryWriteAvailability(
+  repository: Extract<GithubRepositoryReadV1, { kind: 'readable' }>,
+  kind: 'issue' | 'pull-request',
+): GithubCapabilityAvailabilityV1 {
+  return repository.archived === true ? archived
+    : kind === 'issue' && repository.hasIssues === false ? unsupported : available;
+}
+
 export function projectGithubRepositoryCapabilities(
   repository: Extract<GithubRepositoryReadV1, { kind: 'readable' }>,
   entryKind: GithubTriageKindIdV1 = 'issue',
@@ -28,9 +36,8 @@ export function projectGithubRepositoryCapabilities(
   // facts, not authoritative preflights for comment, review, state, reviewer,
   // branch, or merge operations. When GitHub exposes no decisive negative fact,
   // the confirmed Action remains the permission owner.
-  const operation = (issue: boolean): GithubCapabilityAvailabilityV1 => allArchived
-    ? archived
-    : issue && repository.hasIssues === false ? unsupported : available;
+  const operation = (issue: boolean): GithubCapabilityAvailabilityV1 =>
+    projectGithubRepositoryWriteAvailability(repository, issue ? 'issue' : 'pull-request');
   const operations = Object.freeze({
     pullRequestPreviewStatus: operation(false),
     closingReferenceAdd: operation(true),

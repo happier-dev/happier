@@ -1,3 +1,4 @@
+import { listJiraCreationPlaces } from './creationPlaces.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate as activateAccount } from '../accountRuntime.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -443,7 +444,7 @@ describe('Jira source through provider HTTP', () => {
         expect(result.lanes[0]).toMatchObject({ exhausted: true });
     });
 
-    it('creates once using configured issue type and provider required-field metadata, then verifies the returned issue', async () => {
+    it('creates once using the selected creation place and provider required-field metadata, then verifies the returned issue', async () => {
         const configured = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1, projectId: '10000', involvement: 'mine', issueTypeId: '10002' }) } };
         const h = host((url, body) => {
             if (url.pathname.includes('/createmeta/')) return { body: { fields: [
@@ -461,7 +462,7 @@ describe('Jira source through provider HTTP', () => {
         expect(await createJiraIssue({ v: 1, instance: configured, kindId: 'issue', initialStatusId: 'native-state',
             fields: { title: 'Repair custody' } }, h.context)).toEqual({ kind: 'refused', reason: 'jira/unsupportedField' });
         expect(h.request).not.toHaveBeenCalled();
-        const result = TriageTaskWriteResultV1Schema.parse(await createJiraIssue({ v: 1, instance: configured, kindId: 'issue', fields: { title: 'Repair custody' } }, h.context));
+        const result = TriageTaskWriteResultV1Schema.parse(await createJiraIssue({ v: 1, instance, kindId: 'issue', placeId: '10000/10002', fields: { title: 'Repair custody' } }, h.context));
         expect(result).toMatchObject({ kind: 'applied', observation: { localRef: ref, snapshot: { title: 'Repair custody' } } });
         expect(h.request.mock.calls.filter(([r]) => new URL(r.url).pathname === '/rest/api/3/issue')).toHaveLength(1);
     });
@@ -710,4 +711,57 @@ describe('Jira source through provider HTTP', () => {
         expect(await read?.({ binding: instance.binding, localInstanceKey: instance.localInstanceKey, configuration: instance.configuration }, h.context))
             .toEqual({ kind: 'complete', issueTypes: [{ id: '10002', name: 'Task' }, { id: '10003', name: 'Task' }] });
     });
+});
+
+describe('Jira task creation places', () => {
+  it.each([
+    ['20000/10002', 'jira/projectMismatch'],
+    ['10000/not-a-type', 'jira/createPlaceInvalid'],
+  ])('refuses an invalid selected place %s before a provider write', async (placeId, reason) => {
+    const h = host(() => { throw new Error('An invalid place must not reach Jira'); });
+    expect(await createJiraIssue({ v: 1, instance, kindId: 'issue', placeId, fields: { title: 'Repair queue' } }, h.context))
+      .toEqual({ kind: 'refused', reason });
+    expect(h.request).not.toHaveBeenCalled();
+  });
+  it.each([undefined, '10002'])('offers named projects and preserves the configured issue type %s', async (issueTypeId) => {
+    const h = host(() => ({ body: { startAt: 0, maxResults: 2, isLast: true, values: [
+      { id: '10000', name: 'Platform', key: 'ABC' }, { id: '20000', name: 'Service', key: 'SVC' },
+    ] } }));
+    const configured = { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1, projectId: '10000', involvement: 'mine', issueTypeId }) } };
+    const result = await listJiraCreationPlaces({ v: 1, instance: configured }, h.context);
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [
+      { id: '10000', label: 'Platform', childScopeId: '10000',
+        ...(issueTypeId === undefined ? { refusal: { reason: 'jira/issueTypeRequired' } } : { placeId: '10000/10002' }) },
+      { id: '20000', label: 'Service', refusal: { reason: 'jira/projectMismatch' } },
+    ] });
+    if (result.kind !== 'page') throw new Error('Expected creation directory');
+    expect(result.places[0]!.refusal?.reason).toBe(issueTypeId === undefined ? 'jira/issueTypeRequired' : undefined);
+    expect(h.request).toHaveBeenCalledTimes(1);
+  });
+  it('produces a source-owned place operand for the selected project and issue type', async () => {
+    const h = host(url => {
+      expect(url.pathname).toBe('/rest/api/3/issue/createmeta/10000/issuetypes');
+      return { body: { startAt: 0, maxResults: 1, total: 1, issueTypes: [{ id: '10002', name: 'Task' }] } };
+    });
+    const result = await listJiraCreationPlaces({ v: 1, instance, scopeId: '10000' }, h.context);
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [{ id: '10000/10002', placeId: '10000/10002', label: 'Task', kindId: 'issue' }] });
+    if (result.kind !== 'page') throw new Error('Expected creation directory');
+    expect(result.places[0]!.placeId).toBe('10000/10002');
+    expect(h.request).toHaveBeenCalledTimes(1);
+  });
+  it('reads one native issue-type page per picker request and resumes only on demand', async () => {
+    const h = host(url => {
+      const startAt = Number(url.searchParams.get('startAt'));
+      return { body: { startAt, maxResults: 1, total: 2, issueTypes: [
+        { id: startAt === 0 ? '10002' : '10003', name: startAt === 0 ? 'Task' : 'Bug' },
+      ] } };
+    });
+    const first = await listJiraCreationPlaces({ v: 1, instance, scopeId: '10000' }, h.context);
+    expect(first).toMatchObject({ kind: 'page', status: 'partial', places: [{ label: 'Task' }], nextCursor: { token: '1' } });
+    expect(h.request).toHaveBeenCalledTimes(1);
+    if (first.kind !== 'page') throw new Error('Expected creation directory');
+    expect(await listJiraCreationPlaces({ v: 1, instance, scopeId: '10000', cursor: first.nextCursor }, h.context))
+      .toMatchObject({ kind: 'page', status: 'complete', places: [{ label: 'Bug' }] });
+    expect(h.request).toHaveBeenCalledTimes(2);
+  });
 });

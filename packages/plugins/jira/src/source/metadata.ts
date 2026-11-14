@@ -74,19 +74,28 @@ export async function readJiraTaskCapabilities(client: JiraClient, issue: JiraIs
 }
 
 /** Jira's offset-paged create-metadata resources. No local page ceiling. */
+export async function readJiraCreateDirectoryPage(client: JiraClient, path: string, key: 'fields' | 'issueTypes', startAt = 0): Promise<Readonly<{
+    rows: readonly Record<string, unknown>[]; nextStartAt: number | undefined;
+}>> {
+    const page = object(await client.request(`${path}?startAt=${startAt}`));
+    const values = page[key];
+    if (!Array.isArray(values) || !Number.isSafeInteger(page.total) || !Number.isSafeInteger(page.startAt)
+        || !Number.isSafeInteger(page.maxResults) || Number(page.startAt) !== startAt
+        || Number(page.total) < 0) throw invalidJira('jira/createMetadataInvalid');
+    const rows = values.map(object);
+    if (Number(page.startAt) + values.length >= Number(page.total)) return { rows, nextStartAt: undefined };
+    const nextStartAt = Number(page.startAt) + Number(page.maxResults);
+    if (nextStartAt <= startAt || values.length === 0) throw invalidJira('jira/createMetadataPageInvalid');
+    return { rows, nextStartAt };
+}
+
 export async function readJiraCreateDirectory(client: JiraClient, path: string, key: 'fields' | 'issueTypes'): Promise<readonly Record<string, unknown>[]> {
     const rows: Record<string, unknown>[] = [];
     let startAt = 0;
     for (;;) {
-        const page = object(await client.request(`${path}?startAt=${startAt}`));
-        const values = page[key];
-        if (!Array.isArray(values) || !Number.isSafeInteger(page.total) || !Number.isSafeInteger(page.startAt)
-            || !Number.isSafeInteger(page.maxResults) || Number(page.startAt) !== startAt
-            || Number(page.total) < 0) throw invalidJira('jira/createMetadataInvalid');
-        rows.push(...values.map(object));
-        if (Number(page.startAt) + values.length >= Number(page.total)) return rows;
-        const next = Number(page.startAt) + Number(page.maxResults);
-        if (next <= startAt || values.length === 0) throw invalidJira('jira/createMetadataPageInvalid');
-        startAt = next;
+        const page = await readJiraCreateDirectoryPage(client, path, key, startAt);
+        rows.push(...page.rows);
+        if (page.nextStartAt === undefined) return rows;
+        startAt = page.nextStartAt;
     }
 }

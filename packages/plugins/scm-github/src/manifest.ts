@@ -2204,6 +2204,7 @@ function createGithubPlugin(): GithubPlugin {
             create: sources.operations.create.bind(GITHUB_TRIAGE_ACTION_IDS_V1.create),
             edit: sources.operations.edit.bind(GITHUB_TRIAGE_ACTION_IDS_V1.edit),
             transition: sources.operations.transition.bind(GITHUB_TRIAGE_ACTION_IDS_V1.transition),
+            listCreationPlaces: sources.operations.listCreationPlaces.bind(GITHUB_TRIAGE_ACTION_IDS_V1.listCreationPlaces),
             listScopeUnits: sources.operations.listScopeUnits.bind(GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits),
             listInstances: sources.operations.listInstances
               .bind(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances),

@@ -1,3 +1,4 @@
+import { listGithubCreationPlaces } from './creationPlaces.js';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -1913,5 +1914,28 @@ describe('GitHub Triage source operations', () => {
       failure: { class: 'unsupportedContract', code: 'github_kind_undeclared' },
     });
     expect(stub.requests).toHaveLength(0);
+  });
+});
+
+describe('GitHub task creation places', () => {
+  it('lists named repository places before loading repository creation details', async () => {
+    const stub = createStubGithubTransport({ respond: () => ({ status: 200, body: [GITHUB_REPOSITORY_RESPONSE] }) });
+    const result = await listGithubCreationPlaces({ v: 1, instance: configuredInstance({ scope: 'account' }) }, stub.context);
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [{
+      id: REPOSITORY_KEY, label: REPOSITORY_KEY, childScopeId: REPOSITORY_KEY, fields: { scopeId: REPOSITORY_KEY },
+    }] });
+    expect(stub.requests).toHaveLength(1);
+  });
+  it.each([
+    [{ archived: true, has_issues: true }, 'repository_archived'],
+    [{ archived: false, has_issues: false }, 'repository_unsupported'],
+    [{ archived: false, has_issues: true }, undefined],
+  ])('retains the repository name and native creation refusal %j', async (facts, reason) => {
+    const stub = createStubGithubTransport({ respond: () => ({ status: 200, body: { ...GITHUB_REPOSITORY_RESPONSE, ...facts } }) });
+    const result = await listGithubCreationPlaces({ v: 1, instance: configuredInstance({ scope: 'repository' }), scopeId: REPOSITORY_KEY }, stub.context);
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [{ id: REPOSITORY_KEY, fields: { scopeId: REPOSITORY_KEY } }] });
+    if (result.kind !== 'page') throw new Error('Expected repository place');
+    expect(result.places[0]!.refusal?.reason).toBe(reason);
+    expect(stub.requests).toHaveLength(1);
   });
 });

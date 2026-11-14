@@ -6,6 +6,7 @@ import {
 import {
     TriageEntryLocatorV1Schema, TriageEntryRefV1Schema, TriageIdentifierV1ProtocolSchema,
     TriageSourceEntryLocalRefV1Schema,
+    TriageSourceScopeUnitIdV1Schema,
 } from './identity.js';
 import { TriageConfiguredSourceInstanceV1Schema, TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceCredentialInstanceV1Schema } from './instances.js';
 import { TriageSourcePresentObservationV1Fields } from './observations.js';
@@ -54,6 +55,8 @@ function createInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput,
     return defineProtocolObject({
         v: defineProtocolLiteral(1), instance, kindId: TriageIdentifierV1ProtocolSchema,
         fields: TriageTaskCreateFieldsV1Schema,
+        /** Opaque source-owned selection returned by listCreationPlaces. */
+        placeId: TriageSourceScopeUnitIdV1Schema.optional(),
         /** A source-owned initialStatuses id; omission retains the source's default. */
         initialStatusId: TriageIdentifierV1ProtocolSchema.optional(),
     }, { policy: 'closed' });

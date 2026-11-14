@@ -29,6 +29,14 @@ type ReadDefinition = Omit<AccountReadDeclaration, 'execution'> & Readonly<{
   nativeObserveRead?: PluginActionReadObserver;
 }>;
 const definitions = {
+[GITHUB_TRIAGE_ACTION_IDS_V1.listCreationPlaces]: {
+      readOnly: true, title: 'List GitHub task creation places', placementBindings: [],
+      surfaces: sources.operations.listCreationPlaces.declaration.surfaces, dangerLevel: 'safe',
+      inputSchema: TriageSourceCredentialInputsV1.listCreationPlaces.jsonSchema,
+      resultSchema: sources.operations.listCreationPlaces.declaration.resultSchema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./creationPlaces.js')).listGithubCreationPlaces(input, context),
+    },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readIssueFacts]: {
       title: 'Read GitHub issue notification and pin facts',
       description: 'Reads the current viewer subscription and repository pin state of one issue.',

@@ -1,3 +1,4 @@
+import { jiraProjectIncluded } from './configurationContract.js';
 import type { JiraSourceContext } from '../api.js';
 import {
     defineProtocolObject, defineProtocolString,
@@ -111,7 +112,15 @@ export async function createJiraIssue(raw: unknown, context: JiraSourceContext):
     if (input.initialStatusId !== undefined) return { kind: 'refused', reason: 'jira/unsupportedField' };
     try {
         if (input.kindId !== 'issue') refusal('jira/kindUnsupported');
-        const { client, configuration } = await openJiraInstance(input.instance, context);
+        const opened = await openJiraInstance(input.instance, context);
+        let configuration = opened.configuration;
+        const { client } = opened;
+        if (input.placeId !== undefined) {
+            const [projectId, issueTypeId, extra] = input.placeId.split('/');
+            if (!numericId(projectId) || !numericId(issueTypeId) || extra !== undefined) refusal('jira/createPlaceInvalid');
+            if (!jiraProjectIncluded(configuration, projectId)) refusal('jira/projectMismatch');
+            configuration = { ...configuration, projectId, issueTypeId };
+        }
         if (!configuration.projectId) refusal('jira/createProjectRequired');
         if (!configuration.issueTypeId) refusal('jira/issueTypeRequired');
         const fields = { ...nativeFields(input.fields, client.origin), project: { id: configuration.projectId }, issuetype: { id: configuration.issueTypeId } };

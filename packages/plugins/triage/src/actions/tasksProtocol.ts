@@ -5,6 +5,7 @@ import {
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
     TriageSourceInstanceIdV1Schema,
+    TriageSourceScopeUnitIdV1Schema,
     TriageTaskCreateFieldsV1Schema,
     TriageTaskFieldsV1Schema,
     TriageTaskWriteResultV1Schema,
@@ -53,6 +54,8 @@ export const TriageCreateTaskActionInputV1Schema = defineProtocolObject({
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
     kindId: TriageListKindIdV1Schema,
     fields: TriageTaskCreateFieldsV1Schema,
+    /** Source-owned selection returned by listCreationPlaces. */
+    placeId: TriageSourceScopeUnitIdV1Schema.optional(),
     /** An id from this place's taskCapabilities.initialStatuses; absent uses its default. */
     initialStatusId: TriageIdentifierV1ProtocolSchema.optional(),
     /** A separate, optional relationship write after confirmed creation only. */

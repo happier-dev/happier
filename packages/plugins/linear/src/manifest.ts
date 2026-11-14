@@ -80,6 +80,7 @@ export const LINEAR_PLUGIN = definePlugin({
           ],
         }] },
       operations: {
+        listCreationPlaces: sources.operations.listCreationPlaces.bind(LINEAR_ACTIONS.listCreationPlaces),
         listInstances: sources.operations.listInstances.bind(LINEAR_ACTIONS.listInstances),
         listScopeUnits: sources.operations.listScopeUnits.bind(LINEAR_ACTIONS.listScopeUnits),
         scan: sources.operations.scan.bind(LINEAR_ACTIONS.scan), get: sources.operations.get.bind(LINEAR_ACTIONS.get),

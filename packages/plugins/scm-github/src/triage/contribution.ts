@@ -28,6 +28,7 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
   transition: 'github/issue/transition',
   listInstances: 'triage/list-github-instances',
   listScopeUnits: 'triage/list-github-scope-units',
+  listCreationPlaces: 'triage/list-github-creation-places',
   scan: 'triage/scan-github',
   get: 'triage/get-github-entry',
   resolveResource: 'triage/resolve-github-resource',
