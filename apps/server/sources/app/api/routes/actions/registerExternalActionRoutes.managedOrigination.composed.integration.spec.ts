@@ -75,7 +75,10 @@ import { prepareRequesterAccountActionContext } from '../../../../../../cli/src/
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
 import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
 import { createRequesterCurrentnessSocketHarness } from '../../../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
+import { captureStdout } from '../../../../../../cli/src/testkit/logger/captureOutput';
 import { artifactsRoutes } from '../artifacts/artifactsRoutes';
+import { openArtifactStoredContentBytes } from '@/app/artifacts/artifactStoredContent';
+import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { initEncrypt } from '@/modules/encrypt';
 import { dispatchOriginalAccountAction, dispatchLocalManagedMachineAgentIsolation, verifyExternalActionExecutionAuthorizationCurrent, createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -106,6 +109,11 @@ import { createEnrollmentJourneyProviderAuthority } from '../../../../../../cli/
 import { createHostActionOperationRuntime } from '../../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
 
 const nativeVendor = vi.hoisted(() => ({ request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }));
+// Terminal input is the OS boundary; keep the real presenter and approval decision.
+vi.mock('../../../../../../cli/src/terminal/prompts/promptInput', async importOriginal => ({
+    ...await importOriginal<typeof import('../../../../../../cli/src/terminal/prompts/promptInput')>(),
+    promptInput: async () => 'no',
+}));
 
 describe('composed CLI managed Action origination', () => {
     const homeId = managedQb56Input.selection.homeId;
@@ -209,9 +217,17 @@ describe('composed CLI managed Action origination', () => {
             owned: true, role: 'manage', encryptionMode: mode, accessState: 'ready', installationId: controller.installationId,
         });
         if (qb56) {
-            await seedBundledManagedAvailability(account.id, homeId, controller);
+            await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
             const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-            return { account, controller, keys, token, input: managedQb56Input, requestId: managedQb56RequestId };
+            // The current Lima contract derives native identity from allocation;
+            // retain the capture's user choices without its old instance identity.
+            const { instance: _legacyInstance, ...choices } = managedQb56Input.selection.launch.choices;
+            const launch = { ...managedQb56Input.selection.launch, choices };
+            const parsed = ManagedAcquireInputV1Schema.parse({ ...managedQb56Input,
+                selection: { ...managedQb56Input.selection, launch },
+                reviewedFacts: { ...managedQb56Input.reviewedFacts, launch } });
+            if (parsed.selection.kind !== 'one-off') throw new Error('QB56 replay must retain one-off selection');
+            return { account, controller, keys, token, input: { ...parsed, selection: parsed.selection }, requestId: managedQb56RequestId };
         }
         const manifest = nativeControls ? fixtureManifests.native : fixtureManifests.daemon;
         const declaration = createReleaseLessDeclarationV1(manifest);
@@ -736,7 +752,7 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
-    it.each(['valid', 'invalid', 'qb56'] as const)('invokes managed Create through CLI, Home and the real approval executor with %s refreshed policy', async policy => {
+    it.each(['valid', 'invalid-envelope', 'qb56'] as const)('invokes managed Create through CLI and Home with %s Settings', async policy => {
         const selected = await fixture(true, 'plain', policy === 'qb56');
         const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
         const storedSettings = { actionsSettingsV1: { v: 1, actions: {
@@ -748,13 +764,19 @@ describe('composed CLI managed Action origination', () => {
         const approvals: unknown[] = [];
         const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
         let effects = 0;
-        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
-            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'http://managed-seam.test',
-            runtimeActionMachineId: selected.controller.machineId,
-            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
-            externalActionMachineInstallationId: selected.controller.installationId,
-            managedMachineAction: async () => { effects++; throw new Error('Create must ask before native execution'); },
-        });
+        function createReceiver(context?: RequesterAccountActionContext) {
+            const requester = context ? { token: context.credentials.token, credentials: context.credentials,
+                savedSecretOperationContext: context.savedSecretOperationContext, isCredentialCurrent: context.isCurrent }
+                : { token: credentials.token, credentials };
+            return createCliActionExecutor({ ...requester, sessionId: '', mode: 'plain', ctx: null,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'http://managed-seam.test',
+                runtimeActionMachineId: selected.controller.machineId,
+                externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                externalActionMachineInstallationId: selected.controller.installationId,
+                managedMachineAction: async () => { effects++; throw new Error('Create must ask before native execution'); },
+            });
+        }
+        const receiver = createReceiver();
         let deliveryFailure: unknown;
         const instance = await app(async request => {
             try {
@@ -771,9 +793,15 @@ describe('composed CLI managed Action origination', () => {
                         purpose: { kind: 'external_action' }, machineId: selected.controller.machineId,
                         installationId: selected.controller.installationId, installationPrivateKey: selected.keys.secretKey,
                         serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'http://managed-seam.test',
-                        ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => receiver }),
+                        ownCredentials: credentials, isCurrent: async () => true, createExecutor: createReceiver }),
                     resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
                 });
+                if (policy === 'invalid-envelope') {
+                    // Requester custody refuses malformed Settings before the
+                    // approval executor can acquire policy or create an artifact.
+                    expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+                    return { ok: true, result };
+                }
                 if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind} (${result.errorCode}): ${JSON.stringify(result.failureCause)}`);
                 return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
             } catch (error) { deliveryFailure = error; throw error; }
@@ -781,19 +809,14 @@ describe('composed CLI managed Action origination', () => {
             registerAccountProfileRoute(http);
             registerAccountEncryptionRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings },
-                version: policy === 'invalid' ? 'invalid' : 2 }));
+                version: policy === 'invalid-envelope' ? 'invalid' : 2 }));
             artifactsRoutes(http);
         }, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: 'http://managed-seam.test' });
         const sockets = await createRequesterCurrentnessSocketHarness();
         const began = performance.now();
-        let output = '';
-        const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
-            output += String(chunk);
-            const callback = args.find(argument => typeof argument === 'function');
-            if (typeof callback === 'function') callback();
-            return true;
-        });
+        const stdout = captureStdout();
+        const notices = vi.spyOn(console, 'error').mockImplementation(() => {});
         const previousExitCode = process.exitCode;
         try {
             await handleActionsCommand(['invoke', 'machines.managed.acquire', '--machine-id', selected.controller.machineId,
@@ -805,16 +828,26 @@ describe('composed CLI managed Action origination', () => {
             });
             if (deliveryFailure) throw deliveryFailure;
             phases.push({ phase: 'cli-create-to-ask', elapsedMs: performance.now() - began });
-            expect(JSON.parse(output), output).toMatchObject(policy === 'invalid'
-                ? { ok: false, kind: 'actions_invoke', error: { code: 'ACCOUNT_SETTINGS_CONTENT_INVALID' } }
-                : { ok: true, kind: 'actions_invoke', data: { kind: 'approval_request_created', actionId: 'machines.managed.acquire' } });
+            expect(JSON.parse(stdout.text()), stdout.text()).toMatchObject(policy === 'invalid-envelope'
+                ? { ok: false, kind: 'actions_invoke', error: { code: 'invalid_envelope' } }
+                : { ok: false, kind: 'actions_invoke', error: { code: 'approval_rejected' } });
             for (const artifact of await db.artifact.findMany({ where: { accountId: selected.account.id } })) {
-                const stored = decodePlainArtifactStoredContent(Buffer.from(artifact.body).toString('base64'));
-                if (stored && typeof stored === 'object' && 'body' in stored && typeof stored.body === 'string') {
-                    approvals.push(ApprovalRequestV2Schema.parse(JSON.parse(stored.body)));
-                }
+                const opened = openArtifactStoredContentBytes({ accountId: artifact.accountId, artifactId: artifact.id,
+                    mode: 'plain', field: 'body', dataEncryptionKey: artifact.dataEncryptionKey, content: artifact.body });
+                if (!opened) throw new Error('Approval Artifact must open in its Account mode');
+                const stored = ArtifactBodyEnvelopeV1StoredSchema.parse(
+                    decodePlainArtifactStoredContent(Buffer.from(opened).toString('base64')));
+                if (typeof stored.body !== 'string') throw new Error('Approval Artifact must contain a text body');
+                approvals.push(ApprovalRequestV2Schema.parse(JSON.parse(stored.body)));
             }
-            expect(approvals).toHaveLength(policy === 'invalid' ? 0 : 1);
+            expect(approvals).toHaveLength(policy === 'invalid-envelope' ? 0 : 1);
+            if (policy !== 'invalid-envelope') {
+                expect(approvals[0]).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
+                expect(notices.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual({
+                    v: 1, ok: true, kind: 'actions_invoke', data: { kind: 'approval_request_created',
+                        artifactId: expect.any(String), actionId: 'machines.managed.acquire' },
+                });
+            }
             expect(effects).toBe(0);
             // Home admission precedes controller policy preparation. A refused
             // refresh cannot roll back that already committed request.
@@ -836,8 +869,10 @@ describe('composed CLI managed Action origination', () => {
                     .toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent', intentRevision: 1 });
             }
         } finally {
-            stdout.mockRestore(); process.exitCode = previousExitCode;
-            await sockets.close(); restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
+            notices.mockRestore();
+            stdout.restore(); process.exitCode = previousExitCode;
+            await sockets.close();
+            restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
             if (policy === 'qb56') console.info('qb58-replay-phases', JSON.stringify(phases));
         }
     });
