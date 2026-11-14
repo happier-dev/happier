@@ -12,7 +12,8 @@ vi.mock('axios', () => {
   const isAxiosError = (err: any) => Boolean(err?.isAxiosError);
   return {
     __esModule: true,
-    default: { get: vi.fn(), isAxiosError },
+    // The credential request scope reads the client's defaults and request URI (credentialAxios.ts).
+    default: { get: vi.fn(), isAxiosError, defaults: {}, getUri: (config?: { url?: string }) => config?.url ?? '' },
     isAxiosError,
   };
 });

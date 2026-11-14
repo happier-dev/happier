@@ -61,6 +61,19 @@ describe('bundled plugin admission enablement', () => {
         }
     });
 
+    it('resolves the built-in declarations once for equal enablement and again only when enablement changes', () => {
+        const ids = ['happier.agent.pi', 'happier.channels'];
+        const admitted = (piEnabled: boolean) => getResolvedContributionRegistry({ pluginEnablementById: resolveBundledPluginEnablement({
+            pluginIds: ids, accountEnabledById: new Map([['happier.agent.pi', piEnabled]]) }) });
+        const first = admitted(true);
+        // A fresh but equal enablement (every boot consumer reads its own) reuses the same declarations.
+        expect(admitted(true).pluginDeclarations).toBe(first.pluginDeclarations);
+        const changed = admitted(false);
+        expect(changed.pluginDeclarations).not.toBe(first.pluginDeclarations);
+        expect(changed.pluginDeclarations?.some(plugin => plugin.pluginId === 'happier.agent.pi')).toBe(false);
+        expect(admitted(false).pluginDeclarations).toBe(changed.pluginDeclarations);
+    });
+
     it('reads each scope once per admission and shares the result across consumers', () => {
         let accountReads = 0;
         let machineReads = 0;

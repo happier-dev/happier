@@ -33,7 +33,7 @@ import { isImmutablePluginModuleLoaded, loadPluginModule } from './loadPluginMod
 import type { createBundledActivationSourceResolver } from './bundledActivationSource';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { resolveUnavailableAgentPluginsByBackendId } from '@/plugins/projection/registry/builtIn/snapshot';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
 type AccountReadBinding = Readonly<{ credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal }>;
@@ -357,7 +357,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
     const resources = contributes.resources.filter(resource => 'execution' in resource.definition
         && resource.definition.execution?.target === 'account');
     return { contributes: { ...contributes, agents: [], resources, activationTargets, pluginEnablementById,
-        unavailableAgentPluginsByBackendId: getResolvedContributionRegistry({ pluginEnablementById }).unavailableAgentPluginsByBackendId,
+        unavailableAgentPluginsByBackendId: resolveUnavailableAgentPluginsByBackendId(pluginEnablementById),
     }, sourcesByPluginId, isCurrent, revalidate,
         readSelection: pluginId => selected.get(pluginId)?.selection ?? null };
 }

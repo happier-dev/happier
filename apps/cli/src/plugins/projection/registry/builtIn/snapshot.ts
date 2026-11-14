@@ -64,6 +64,42 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
  */
 let builtInResolvedContributionRegistry: ResolvedContributionRegistry | null = null;
 
+/**
+ * The bundled declarations are a pure function of the admitted enablement: the bundled
+ * assets are immutable for the process. Boot consumers each read an equal enablement, so the
+ * last resolution is kept by enablement content (one entry: a change resolves again).
+ */
+let lastBuiltInDeclarations: Readonly<{ key: string; declarations: ResolvedContributionRegistry }> | null = null;
+
+function resolveBuiltInDeclarations(
+  pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>,
+): ResolvedContributionRegistry {
+  const key = JSON.stringify(Object.keys(pluginEnablementById).sort().map(pluginId => [pluginId, pluginEnablementById[pluginId]]));
+  if (lastBuiltInDeclarations?.key === key) return lastBuiltInDeclarations.declarations;
+  const declarations = createResolvedContributionRegistry(resolveBuiltInContributions({ pluginEnablementById }));
+  lastBuiltInDeclarations = { key, declarations };
+  return declarations;
+}
+
+/** Agent backends withdrawn by plugin enablement: a projection of enablement and the generated bindings only. */
+export function resolveUnavailableAgentPluginsByBackendId(
+  pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>,
+): Readonly<Record<string, UnavailableAgentPlugin>> {
+  const unavailableAgentPluginsByBackendId: Record<string, UnavailableAgentPlugin> = {};
+  const definitions = new Map(getAllAgentDefinitionContracts().map(definition => [definition.id, definition]));
+  for (const binding of BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS) {
+    const pluginId = binding.identity.pluginId;
+    const fact = pluginEnablementById[pluginId];
+    if (!fact || fact.enabled) continue;
+    const unavailable = Object.freeze({ ...fact, pluginId, code: fact.unavailableCode ?? 'plugin_disabled' as const });
+    const definition = definitions.get(binding.implementationOwnerId);
+    for (const backendId of new Set([binding.implementationOwnerId, ...(definition?.ownedBackendIds ?? [])])) {
+      unavailableAgentPluginsByBackendId[backendId] = unavailable;
+    }
+  }
+  return Object.freeze(unavailableAgentPluginsByBackendId);
+}
+
 export function getResolvedContributionRegistry(params?: Readonly<{
   pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): ResolvedContributionRegistry {
@@ -79,24 +115,12 @@ export function getResolvedContributionRegistry(params?: Readonly<{
       }),
     });
   }
-  const declarations = createResolvedContributionRegistry(resolveBuiltInContributions(params));
+  const declarations = resolveBuiltInDeclarations(params.pluginEnablementById);
   // Machine roles need the admitted declarations, so they join the fact after admission.
   const pluginEnablementById = applyMachineRoleAdmission({ pluginEnablementById: params.pluginEnablementById,
     machineRoles: declarations.machineRoles ?? [] });
-  const unavailableAgentPluginsByBackendId: Record<string, UnavailableAgentPlugin> = {};
-  const definitions = new Map(getAllAgentDefinitionContracts().map(definition => [definition.id, definition]));
-  for (const binding of BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS) {
-    const pluginId = binding.identity.pluginId;
-    const fact = params.pluginEnablementById[pluginId];
-    if (!fact || fact.enabled) continue;
-    const unavailable = Object.freeze({ ...fact, pluginId, code: fact.unavailableCode ?? 'plugin_disabled' as const });
-    const definition = definitions.get(binding.implementationOwnerId);
-    for (const backendId of new Set([binding.implementationOwnerId, ...(definition?.ownedBackendIds ?? [])])) {
-      unavailableAgentPluginsByBackendId[backendId] = unavailable;
-    }
-  }
   return Object.freeze({ ...declarations, pluginEnablementById,
-    unavailableAgentPluginsByBackendId: Object.freeze(unavailableAgentPluginsByBackendId) });
+    unavailableAgentPluginsByBackendId: resolveUnavailableAgentPluginsByBackendId(params.pluginEnablementById) });
 }
 
 export function getBuiltInCatalogEntries(): Record<CatalogAgentId, AgentCatalogEntry> {

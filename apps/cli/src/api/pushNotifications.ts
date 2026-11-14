@@ -3,7 +3,7 @@ import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import axios from '@/api/client/credentialAxios';
 import { boundExpoPushMessage } from './boundExpoPushMessage'
 import { logger } from '@/ui/logger'
-import { Expo, type ExpoPushErrorTicket, type ExpoPushMessage, type ExpoPushReceipt } from 'expo-server-sdk'
+import type { Expo, ExpoPushErrorTicket, ExpoPushMessage, ExpoPushReceipt } from 'expo-server-sdk'
 import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
@@ -141,12 +141,20 @@ function resolveIosSubtitleFromPushData(data: Record<string, unknown> | undefine
     return tool ? tool : undefined
 }
 
+// The Expo SDK (with node-fetch, whatwg-url and tr46) is only needed to send. Every daemon and
+// Session host constructs a push client, so the SDK loads with the first send, once per process.
+let expoSdk: Promise<typeof import('expo-server-sdk')> | undefined
+function loadExpoSdk(): Promise<typeof import('expo-server-sdk')> {
+    expoSdk ??= import('expo-server-sdk').catch((error: unknown) => { expoSdk = undefined; throw error })
+    return expoSdk
+}
+
 export class PushNotificationClient {
     private readonly token: string
     private readonly baseUrl: string
     private readonly notificationServerUrl: string
     readonly serverId: string
-    private readonly expo: Expo
+    private expo: Expo | undefined
     private pushTokenFetchFailureCooldownUntilMs = 0
     private didLogPushTokenFetchCooldown = false
 
@@ -162,7 +170,6 @@ export class PushNotificationClient {
         // may use a process-local carrier that cannot be shared with a device.
         this.notificationServerUrl = notificationServerUrl
         this.serverId = serverId
-        this.expo = new Expo()
     }
 
     async fetchSessionNotificationContext(sessionId: string): Promise<RawSessionRecord | null> {
@@ -298,6 +305,8 @@ export class PushNotificationClient {
         let acceptedCount = 0
         const targetCount = messages.reduce((count, message) => count + (Array.isArray(message.to) ? message.to.length : 1), 0)
 
+        const { Expo } = await loadExpoSdk()
+        const expo = this.expo ??= new Expo()
         // Filter out invalid push tokens
         const validMessages = messages.filter(message => {
             if (Array.isArray(message.to)) {
@@ -324,7 +333,7 @@ export class PushNotificationClient {
             }
         }
         if (boundedMessages.length === 0) throw payloadError
-        const chunks = this.expo.chunkPushNotifications(boundedMessages)
+        const chunks = expo.chunkPushNotifications(boundedMessages)
 
         for (const chunk of chunks) {
             // Retry with exponential backoff for 5 minutes
@@ -335,7 +344,7 @@ export class PushNotificationClient {
             
             while (true) {
                 try {
-                    const ticketChunk = await this.expo.sendPushNotificationsAsync(retryChunk)
+                    const ticketChunk = await expo.sendPushNotificationsAsync(retryChunk)
                     let receipts: Record<string, ExpoPushReceipt> | undefined
                     const receiptIds = ticketChunk
                         .map((ticket) => typeof (ticket as { id?: unknown })?.id === 'string' ? (ticket as { id: string }).id : null)
@@ -343,7 +352,7 @@ export class PushNotificationClient {
 
                     if (receiptIds.length > 0) {
                         try {
-                            receipts = await this.expo.getPushNotificationReceiptsAsync(receiptIds)
+                            receipts = await expo.getPushNotificationReceiptsAsync(receiptIds)
                         } catch (error) {
                             logger.debug('[PUSH] Failed to fetch Expo push receipts:', serializeAxiosErrorForLog(error))
                         }
