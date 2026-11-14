@@ -27,10 +27,8 @@ describe('transport boundary import order', () => {
         }
     });
 
-    it('rejects RPC installation after a static consumer has captured the disconnected transport', () => {
+    it('installs the RPC boundary after a static consumer has loaded the Socket SDK', () => {
         expect(typeof machineRpcWithServerScope).toBe('function');
-        expect(() => installProviderSettingsRpcBoundary(createProviderSettingsHarness())).toThrowError(
-            /installDisconnectedServerSocketBoundary.*socket\.io-client.*before.*dynamic import/s,
-        );
+        expect(() => installProviderSettingsRpcBoundary(createProviderSettingsHarness())).not.toThrow();
     });
 });

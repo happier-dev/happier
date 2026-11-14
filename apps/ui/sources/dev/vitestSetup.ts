@@ -265,6 +265,12 @@ const sessionStorageBacking = new Map<string, string>();
 
 vi.mock('expo-notifications', async () => await import('./expoNotificationsStub'));
 
+// One Socket.IO SDK boundary for every suite, registered before any test file import so
+// static transport consumers (the sync-client barrel, auth storage) reach it. It stays
+// real until a suite calls installDisconnectedServerSocketBoundary.
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('./testkit/harness/serverAccountConnectionHarness')).createDormantSocketIoClientBoundary(importOriginal));
+
 // AsyncStorage's web adapter reads `window.localStorage` during module evaluation. Most UI tests
 // run in a pure Node environment, so keep that native persistence boundary deterministic and
 // resettable here. Focused storage tests can still replace this module with a file-local mock.

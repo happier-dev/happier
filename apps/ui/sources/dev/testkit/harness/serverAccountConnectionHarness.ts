@@ -79,10 +79,15 @@ export function configureConnectedServerSocketBoundary(socket: Socket): void {
 }
 
 type SocketResponder = Readonly<{ configure: ConfigureSocketBoundary }>;
+type SocketIoClientFactory = (...args: Parameters<typeof import('socket.io-client').io>) => Socket;
 const socketBoundary = vi.hoisted(() => ({
     configure: undefined as ConfigureSocketBoundary | undefined,
     responders: new Map<string, SocketResponder>(),
     realOrigins: new Set<string>(),
+    /** The suite-wide dormant registration stays real until a suite installs this boundary. */
+    installed: false,
+    /** A fixture that serves every dial from its own stub sockets (session operations). */
+    factory: undefined as SocketIoClientFactory | undefined,
 }));
 let currentRuntimeFetchBoundary: object | undefined;
 
@@ -98,11 +103,30 @@ function socketResponderKey(serverUrl: string, token: string): string {
 }
 
 /** Also reusable by cross-package suites whose host imports Socket before the UI harness. */
-export async function createSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
+export async function createSocketIoClientBoundary(importOriginal: <T>() => Promise<T>): Promise<typeof import('socket.io-client')> {
+    return await createSocketIoClientModuleBoundary(importOriginal, () => true);
+}
+
+/**
+ * The UI Vitest setup registers this for every suite before any test file import,
+ * so a consumer that loads the SDK statically (for example through the
+ * `@happier-dev/sync-client` barrel) still reaches the boundary a suite installs
+ * later. Until `installDisconnectedServerSocketBoundary` runs, the SDK stays real.
+ */
+export async function createDormantSocketIoClientBoundary(importOriginal: <T>() => Promise<T>): Promise<typeof import('socket.io-client')> {
+    return await createSocketIoClientModuleBoundary(importOriginal, () => socketBoundary.installed);
+}
+
+async function createSocketIoClientModuleBoundary(
+    importOriginal: <T>() => Promise<T>,
+    isInstalled: () => boolean,
+): Promise<typeof import('socket.io-client')> {
     const actual = await importOriginal<typeof import('socket.io-client')>();
     recordBoundaryImportOriginal(actual);
     const createSocket = (...args: Parameters<typeof actual.io>) => {
+        if (socketBoundary.factory) return socketBoundary.factory(...args);
         const socket = actual.io(...args);
+        if (!isInstalled()) return socket;
         if (socketBoundary.realOrigins.size > 0 && typeof args[0] === 'string'
             && socketBoundary.realOrigins.has(new URL(args[0]).origin)) return socket;
         // Capture the physical transport principal before a fixture configures
@@ -156,10 +180,10 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
  * Keep the real Socket and Sync owners; only the external transport is replaced.
  *
  * Install only when requested: importing this harness through a barrel must not
- * replace another suite's Socket.IO boundary. A test that statically imports a
- * transport owner also registers the boundary itself, hoisted above every import:
- * `vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal))`.
- * This call then only configures it.
+ * replace another suite's Socket.IO boundary. The UI Vitest setup already
+ * registers the dormant boundary before every test file import, so transport
+ * owners imported statically reach it once this call activates it. A suite's own
+ * `vi.mock('socket.io-client', …)` still replaces that registration.
  * An optional Home/auth scope owns one external responder. Matching retained
  * physical sockets resolve its replacement at request time; other principals
  * retain their own responder. Disposal never removes a later replacement.
@@ -169,6 +193,7 @@ export function installDisconnectedServerSocketBoundary(configure?: ConfigureSoc
     token: string;
 }>): Readonly<{ dispose(): void }> {
     assertBoundaryImportOrder('installDisconnectedServerSocketBoundary', ['socket.io-client']);
+    socketBoundary.installed = true;
     const responder = configure && scope ? Object.freeze({ configure }) : null;
     const key = scope ? socketResponderKey(scope.serverUrl, scope.token) : null;
     if (responder && key) socketBoundary.responders.set(key, responder);
@@ -176,6 +201,16 @@ export function installDisconnectedServerSocketBoundary(configure?: ConfigureSoc
     vi.doMock('socket.io-client', createSocketIoClientBoundary);
     return { dispose() {
         if (key && socketBoundary.responders.get(key) === responder) socketBoundary.responders.delete(key);
+    } };
+}
+
+/** Serve every Socket.IO dial from a fixture's own stub sockets until disposed. */
+export function installSocketIoClientFactoryBoundary(factory: SocketIoClientFactory): Readonly<{ dispose(): void }> {
+    assertBoundaryImportOrder('installSocketIoClientFactoryBoundary', ['socket.io-client']);
+    socketBoundary.factory = factory;
+    vi.doMock('socket.io-client', createDormantSocketIoClientBoundary);
+    return { dispose() {
+        if (socketBoundary.factory === factory) socketBoundary.factory = undefined;
     } };
 }
 
