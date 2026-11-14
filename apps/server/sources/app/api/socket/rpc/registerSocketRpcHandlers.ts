@@ -712,15 +712,16 @@ function writeSocketRegisteredRpcMethods(socket: Socket, methods: ReadonlySet<st
     ensureMutableSocketData(socket)[RPC_REGISTERED_METHODS_SOCKET_DATA_KEY] = [...methods];
 }
 
-function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode): Readonly<{
-    ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1;
+function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: string): Readonly<{
+    ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1; effectAttempted?: false;
 }> {
     return {
         ok: false,
         error: RPC_ERROR_MESSAGES.FORBIDDEN,
         errorCode: RPC_ERROR_CODES.FORBIDDEN,
-        ...(reason ? { failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error' as const,
-            errorCode: reason, httpStatus: 403 } } : {}),
+        ...(reason || phase ? { failureCause: { phase: phase ?? 'rpc.admission.machine', errorClass: 'Error' as const,
+            errorCode: reason ?? RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 } } : {}),
+        ...(phase ? { effectAttempted: false as const } : {}),
     };
 }
 
@@ -1346,7 +1347,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 || originalActionEnvelopeKind === null
                 || transferRouting || workspaceSyncRouting || workspaceSyncSourceWriterTargetRouting || workspaceSyncSeedRouting || viewer)) {
                 logDeploymentChildRefusal('original_action_shape');
-                callback?.(buildForbiddenRpcResponse());
+                callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.original_action'));
                 return;
             }
             const originalActionEnvelope = parsedOriginalActionEnvelope?.success ? parsedOriginalActionEnvelope.data : undefined;
@@ -1400,7 +1401,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                                 && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) === workspaceSyncSourceWriterTargetRouting.sourceWriter.installationId))))
             ) {
                 logDeploymentChildRefusal('external_action_execution');
-                callback?.(buildForbiddenRpcResponse());
+                callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.execution'));
                 return;
             }
             if (originalActionEnvelope) {
@@ -1439,7 +1440,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         : params.userId !== binding.custodianAccountId || readMachineScopedSocketMachineId(params.socket) !== binding.machineId
                             || readVerifiedMachineSocketInstallationIdFromSocketData(socketData) !== binding.installationId)) {
                     logDeploymentChildRefusal('original_action_envelope');
-                    callback?.(buildForbiddenRpcResponse());
+                    callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.original_action'));
                     return;
                 }
             }

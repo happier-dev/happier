@@ -1,5 +1,6 @@
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
@@ -369,16 +370,15 @@ export function createCliMachineActionTransport(
     }
     const invoke = input.exactMachine ? callExactMachineRpc : callMachineRpc;
     const requestId = input.requestId ?? input.context?.actionRequestId;
-    const reviewedOpinionDirectoryRead = input.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
-      && input.effectActionId === 'session.spawn_new'
-      && requester?.authorization.binding.actionId === 'discussion.second_opinion.start';
+    const reviewedCreationRead = input.effectActionId === readSessionActionChildCreationRpcEffectV1(input.method,
+      requester?.authorization.binding, undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined);
     const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: requester?.authorization.binding.actionId,
       effectActionId: input.effectActionId, method: input.method });
     const reviewedReadiness = readSessionAgentReadinessChildActionV1(requester?.authorization.binding,
       readHostAdmittedReviewedChildV1(input.context) ?? undefined);
     const readinessEffect = reviewedReadiness && resolveMachineRpcExternalActionEffectV1(input.method, requester?.authorization.binding,
       undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined) === input.effectActionId;
-    const credentials = reviewedOpinionDirectoryRead || reviewedSetupPlanRead || readinessEffect ? requester!.credentials : params.credentials;
+    const credentials = reviewedCreationRead || reviewedSetupPlanRead || readinessEffect ? requester!.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,

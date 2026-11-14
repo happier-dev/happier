@@ -47,7 +47,7 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import * as installationStore from '@/daemon/identity/store';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { createPrepareSessionCreationAuthorization, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createPrepareSessionCreationAuthorization, isReviewedSessionActionCreationChild, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
@@ -58,7 +58,7 @@ import { ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol
 import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
-import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
@@ -70,7 +70,9 @@ import { SessionLookupByTagsRequestV2Schema } from '@happier-dev/protocol/sessio
 import { managedMachineActionEndpointPathV1, ManagedListInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -79,6 +81,7 @@ import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/ext
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ExternalActionApprovalReplay } from '@/rpc/handlers/externalAction';
+import { logger } from '@/ui/logger';
 
 afterEach(() => {
   vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
@@ -160,7 +163,8 @@ async function createPreparationNativeRpc(input: Readonly<{
 }
 
 function attachPreparationRpcPeer(socket: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>,
-  machineAdmission: SocketRpcMachineAdmissionContextV1, native: RpcHandlerManager) {
+  machineAdmission: SocketRpcMachineAdmissionContextV1, native: RpcHandlerManager,
+  admission?: Readonly<{ enforce: boolean; refuseOriginalAction?: boolean; record: (method: string, kind: string | null, executionParsed: boolean, envelopeParsed: boolean, rootActionId?: string) => void }>) {
   const machineId = machineAdmission.machineId;
   socket.server.on('connection', peer => peer.on('rpc-call', async (packet: unknown, acknowledge: (result: unknown) => void) => {
     try {
@@ -170,10 +174,30 @@ function attachPreparationRpcPeer(socket: Awaited<ReturnType<typeof createReques
       // and add its authenticated Machine admission before real daemon ingress.
       const execution = ExternalActionMachineRpcExecutionV1Schema.safeParse(Reflect.get(packet, 'externalActionExecution'));
       const envelope = ExternalActionRequestEnvelopeSchema.safeParse(Reflect.get(packet, 'originalActionEnvelope'));
-      const retainedChild = execution.success && envelope.success && readOriginalActionEnvelopeMachineRpcKindV1({
+      const kind = execution.success && envelope.success ? readOriginalActionEnvelopeMachineRpcKindV1({
         method: packet.method.slice(machineId.length + 1), machineId, execution: execution.data,
         envelope: envelope.data, params: packet.params,
-      }) === 'child' ? WorkspaceSyncSourceExecutionV1Schema.parse({ method: packet.method,
+      }) : null;
+      admission?.record(packet.method, kind, execution.success, envelope.success,
+        execution.success ? execution.data.authorization.binding.actionId : undefined);
+      if (admission?.enforce && execution.success) {
+        const purpose = resolveMachineRpcExternalActionEffectV1(packet.method.slice(machineId.length + 1),
+          execution.data.authorization.binding, { machineId, installationId: execution.data.installationId }, execution.data.reviewedChild);
+        const isChild = execution.data.authorization.binding.actionId !== execution.data.effectActionId;
+        if (purpose !== execution.data.effectActionId || isChild && kind !== 'child' || envelope.success && kind === null) {
+          acknowledge({ ok: false, error: 'Home refused the original Action RPC child', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+          return;
+        }
+      }
+      if (admission?.refuseOriginalAction) {
+        // Mirror Home's typed network refusal; all downstream transport,
+        // Session projection and approved-receipt persistence stay real.
+        acknowledge({ ok: false, error: 'Home refused the original Action', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+          failureCause: { phase: 'rpc.admission.original_action', errorClass: 'UnknownThrownValue',
+            errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null }, effectAttempted: false });
+        return;
+      }
+      const retainedChild = execution.success && envelope.success && kind === 'child' ? WorkspaceSyncSourceExecutionV1Schema.parse({ method: packet.method,
         requestId: Reflect.get(packet, 'requestId'), params: packet.params,
         externalActionExecution: execution.data, originalActionEnvelope: envelope.data }) : null;
       // Match registerSocketRpcHandlers' admitted child forwarding; these are
@@ -194,7 +218,10 @@ function attachPreparationRpcPeer(socket: Awaited<ReturnType<typeof createReques
   }));
 }
 
-function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal?: AbortSignal; onSourceRead?: () => void }> = {}) {
+function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal?: AbortSignal; onSourceRead?: () => void; enforceHomeRpcAdmission?: boolean; refuseHomeOriginalAction?: boolean }> = {}) {
+  // Observe the real logger's I/O boundary without replacing transport decisions.
+  const log = vi.spyOn(logger, 'debug');
+  const phaseLog = vi.spyOn(logger, 'warnLocalFile');
   const rootPath = createGitWorkspace('happier-prepare-');
   onTestFinished(() => removeTempDir(rootPath));
   runGit(rootPath, ['commit', '--allow-empty', '-m', 'base']);
@@ -219,6 +246,11 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
   const launches: unknown[] = [];
   const accepted: ReturnType<typeof UserMessageSchema.parse>[] = [];
   const boundReads: BoundRead[] = [];
+  const rpcAdmissions: Array<Readonly<{ method: string; kind: string | null; executionParsed: boolean; envelopeParsed: boolean; rootActionId?: string }>> = [];
+  const homeRpcAdmission = { enforce: options.enforceHomeRpcAdmission === true,
+    refuseOriginalAction: options.refuseHomeOriginalAction === true,
+    record: (method: string, kind: string | null, executionParsed: boolean, envelopeParsed: boolean, rootActionId?: string) =>
+      rpcAdmissions.push({ method, kind, executionParsed, envelopeParsed, ...(rootActionId ? { rootActionId } : {}) }) };
   const recordReadCustody = (read: typeof boundReads[number]) => {
     if (!requireBoundReads) return;
     boundReads.push(read);
@@ -356,7 +388,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       serverHttpBaseUrl: 'https://prepare-home.test', daemonToken: token, privateKey: installationKeys.secretKey });
     const socket = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => socket.close());
-    attachPreparationRpcPeer(socket, machineAdmission, native);
+    attachPreparationRpcPeer(socket, machineAdmission, native, homeRpcAdmission);
     const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
       serverId: workspace.serverId, serverIdentityId: 'prepare-home', serverHttpBaseUrl: 'https://prepare-home.test',
       isCredentialCurrent: options.isCredentialCurrent, sessionSpawnDirectTargetTransport: sessionTransport, machineAdmissionTransport,
@@ -367,7 +399,9 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       externalActionTarget: { kind: 'machine', machineId: workspace.machineId } }));
   };
   const { sessionDraft: _sessionDraft, ...continuationInput } = input;
-  return { input, continuationInput, execute, dispatched, prepareDispatches, prepareInvocations, post, rootPath, environment, targetLink, boundReads, launches, accepted, boundaryErrors,
+  return { input, continuationInput, execute, dispatched, prepareDispatches, prepareInvocations, post, rootPath, environment, targetLink, boundReads, launches, accepted, boundaryErrors, rpcAdmissions,
+    targetRefusals: () => log.mock.calls.filter(([message]) => message === '[MachineRPC] exact target refused'),
+    phaseRefusals: () => phaseLog.mock.calls.filter(([message]) => message === '[external-action-phase]'),
     executeRoot: (context: ActionExecutorContext) => createActionExecutor(createCliActionDeps({ token,
       credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null, serverId: workspace.serverId,
       serverIdentityId: workspace.serverId, serverHttpBaseUrl: 'https://prepare-home.test' })).execute('deployments.prepare', input,
@@ -390,7 +424,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       onTestFinished(() => socket.close());
       const native = await createPreparationNativeRpc({ machineAdmission, serverId: workspace.serverId,
         serverHttpBaseUrl: 'https://prepare-home.test', daemonToken, privateKey: installationKeys.secretKey });
-      attachPreparationRpcPeer(socket, machineAdmission, native);
+      attachPreparationRpcPeer(socket, machineAdmission, native, homeRpcAdmission);
       let current = true;
       const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'prepare-request',
         target: { kind: 'machine', machineId: workspace.machineId }, input: next });
@@ -429,9 +463,9 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
         ...(getCurrentTurnWorkDepth ? { getCurrentTurnWorkDepth } : {}),
         externalActionMachineInstallationId: 'workspace-installation', externalActionMachineRequestPrivateKey: installationKeys.secretKey,
         sessionSpawnDirectTargetTransport: sessionTransport, machineAdmissionTransport,
-        serverHttpBaseUrl: 'https://prepare-home.test', machineActionDirectTargetTransport: {
+        serverHttpBaseUrl: 'https://prepare-home.test', ...(options.enforceHomeRpcAdmission ? {} : { machineActionDirectTargetTransport: {
           machineId: workspace.machineId, invoke: (method, request, options) => native.invokeLocal(method, request, options),
-        } });
+        } }) });
       const ingress = { machineAdmission, verifyMachineAdmissionCurrent: async () => current };
       return { authorization: carrier, envelope, receiver, ingress, accountSettings: admitted.accountSettingsContext.settings,
         approveAndReplay: async (retainIngress = true) => {
@@ -528,6 +562,33 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
 }
 
 function sessionCallerRegression() {
+  it('refuses an unreviewed Session preflight operand under a signed Prepare child', async () => {
+    const f = fixture();
+    const custody = await f.admit();
+    const identity = deriveDeploymentPrepareSessionCreationIdentityV1(custody.authorization.binding);
+    const recipe = deriveDeploymentPrepareSessionSpawnInputV1(f.input);
+    if (!identity || !recipe) throw new Error('Missing signed Prepare Session recipe');
+    const childInput = SessionSpawnNewActionInputV2Schema.parse(recipe);
+    const result = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.prepare', input: f.input },
+      context: { ...custody.ingress, runtimeAccountId: 'prepare-account', actionRequestId: identity.requestId,
+        originalActionEnvelope: custody.envelope, externalActionTarget: { kind: 'machine', machineId: 'workspace-daemon' },
+        externalActionExecutionAuthorization: custody.authorization },
+      child: { action: 'session.spawn_new', role: 'prepare-session', input: childInput },
+      admittedReview: { action: 'session.spawn_new', role: 'prepare-session', surface: 'agent' },
+      execute: async (_input, context) => {
+        const reviewedChild = readHostAdmittedReviewedChildV1(context) ?? undefined;
+        const review = { authorization: custody.authorization, envelope: custody.envelope, actionId: 'session.spawn_new',
+          machineId: 'workspace-daemon', method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT, reviewedChild };
+        const params = { directory: recipe.directory, prepareAgentIsolationMember: true };
+        expect(await isReviewedSessionActionCreationChild({ ...review, params })).toBe(true);
+        expect(await isReviewedSessionActionCreationChild({ ...review,
+          params: { ...params, sessionCreationTag: identity.sessionCreationTag } })).toBe(false);
+        return { ok: true as const, result: {} };
+      },
+    });
+    expect(result).toMatchObject({ ok: true });
+  });
+
   it('binds the full reviewed Prepare recipe before issuing a Session birth proof', async () => {
     const f = fixture();
     const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, memoryEnabled: true,
@@ -777,6 +838,35 @@ describe('Prepare native workspace to normal Session handoff', () => {
     const result = await (await f.admit()).approveAndReplay(false);
     expect(result.request.execution, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'permission_denied',
       effectAttempted: false, failureCause: { phase: 'session.creation.authorization', errorCode: 'permission_denied' } });
+    expect(f.launches).toEqual([]);
+    expect(f.accepted).toEqual([]);
+  });
+
+  it.each([false, true])('replays approved fresh Prepare/Import through Home RPC child admission (import=%s)', async importTool => {
+    const f = fixture({ enforceHomeRpcAdmission: true });
+    const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, permissionMode: 'read-only' as const },
+      ...(importTool ? { importFrom: { tool: 'Docker Compose', configurationPaths: ['compose.yaml'] } } : {}) };
+    const result = await (await f.admit(false, input)).approveAndReplay();
+    expect(f.rpcAdmissions, JSON.stringify({ result, targetRefusals: f.targetRefusals(), phaseRefusals: f.phaseRefusals(), execution: result.request.execution, decision: result.decision,
+      boundaryErrors: f.boundaryErrors, rpcAdmissions: f.rpcAdmissions })).toContainEqual(expect.objectContaining({
+      method: `workspace-daemon:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`,
+      executionParsed: true, rootActionId: 'deployments.prepare' }));
+    expect(result.request.execution, JSON.stringify({ result, targetRefusals: f.targetRefusals(), phaseRefusals: f.phaseRefusals(), execution: result.request.execution, decision: result.decision,
+      boundaryErrors: f.boundaryErrors, rpcAdmissions: f.rpcAdmissions })).toMatchObject({ ok: true,
+      result: { kind: 'handedOff', sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } } });
+    expect(f.launches).toHaveLength(1);
+    expect(f.accepted).toHaveLength(1);
+  });
+
+  it('retains Home original-Action refusal cause and no-effect metadata in the approved Prepare receipt', async () => {
+    const f = fixture({ enforceHomeRpcAdmission: true, refuseHomeOriginalAction: true });
+    const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, permissionMode: 'read-only' as const } };
+    const result = await (await f.admit(false, input)).approveAndReplay();
+    expect(f.rpcAdmissions).toContainEqual(expect.objectContaining({
+      method: `workspace-daemon:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`,
+      executionParsed: true, envelopeParsed: true, kind: 'child' }));
+    expect(result.request.execution, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'permission_denied',
+      failureCause: { phase: 'rpc.admission.original_action', errorCode: RPC_ERROR_CODES.FORBIDDEN }, effectAttempted: false });
     expect(f.launches).toEqual([]);
     expect(f.accepted).toEqual([]);
   });

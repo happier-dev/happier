@@ -32,6 +32,7 @@ import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineD
 import { createAccountScopedCryptoMaterialSnapshotV1, type AccountScopedCryptoMaterial,
   type AccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
   type ExternalActionRequesterAccountContextPurposeV1,
   type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -395,10 +396,9 @@ export function readAdmittedRequesterAccountReadRuntime(input: Readonly<{
   // job before opening requester custody. The retained packet keeps E2EE bytes.
   const deploymentChild = packet?.externalActionExecution.deploymentChildRouting;
   const forwardedMove = (authorization?.binding.actionId === 'projects.service.relocate'
-    || authorization?.binding.actionId === 'discussion.second_opinion.start'
-      && packet?.externalActionExecution.effectActionId === 'session.spawn_new'
-      && (packet.method === `${input.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`
-        || packet.method === `${input.machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)
+    || packet !== undefined && packet.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
+      packet.method.slice(packet.method.indexOf(':') + 1), authorization?.binding,
+      { machineId: input.machineId, installationId: input.installationId }, packet.externalActionExecution.reviewedChild)
     || isSessionStopChildRootV1(authorization?.binding.actionId)
       && packet?.method === `${input.machineId}:${RPC_METHODS.STOP_SESSION}`
       && isSessionStopChildV1({ rootActionId: authorization.binding.actionId,
@@ -833,9 +833,8 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     const setupPlanChild = setupPlan?.success && setupPlan.data.homeId === input.serverIdentityId
       && setupPlan.data.machineId === moveRecipient?.machineId;
     if (moveRecipient && !(root.data.binding.actionId === 'projects.service.relocate'
-      || root.data.binding.actionId === 'discussion.second_opinion.start'
-        && input.purpose.kind === 'machine_rpc' && (input.purpose.method === RPC_METHODS.SESSION_SPAWN_NEW
-          || input.purpose.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)
+      || input.purpose.kind === 'machine_rpc' && readSessionActionChildCreationRpcEffectV1(
+        input.purpose.method, root.data.binding, moveRecipient, input.purpose.reviewedChild) !== null
       || stopChildTarget !== null || deploymentChild !== null || setupPlanChild)) return refused('requester_move_root');
     if (preparation && (!isProjectWorkspaceSyncPreparationActionV1(root.data.binding.actionId)
       || root.data.binding.target.kind !== 'machine' || root.data.binding.target.machineId !== root.data.binding.machineId)) return refused('requester_workspace_preparation_root');
@@ -886,7 +885,9 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
           target: stopChildTarget ?? bound.binding.target, installationId: input.installationId,
           privateKey: input.installationPrivateKey, isCurrent: context.isCustodyCurrent ?? context.isCurrent,
           ...(rootAdmitted ? { rootAdmitted: true } : {}),
-          ...(moveRecipient ? { forwardedMove: { credentials: context.credentials, isCurrent: context.isCurrent } } : {}),
+          ...(moveRecipient ? { forwardedMove: { credentials: context.credentials, isCurrent: context.isCurrent,
+            ...(input.purpose.kind === 'machine_rpc' ? { method: input.purpose.method,
+              reviewedChild: input.purpose.reviewedChild } : {}) } } : {}),
           ...(deploymentChild ? { forwardedDeploymentChild: deploymentChild } : {}),
           ...(deploymentChild && input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
           ...(signal ? { signal } : {}) }));

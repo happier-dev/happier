@@ -167,6 +167,8 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     retryable: z.boolean(),
     /** Content-free lower-layer cause, retaining its original admission phase. */
     failureCause: z.optional(ActionFailureCauseV1Schema),
+    /** Explicit producer evidence; absence says nothing about attempted effects. */
+    effectAttempted: z.optional(z.boolean()),
     agentId: z.optional(z.string().check(z.refine((value) => value.trim().length > 0))),
     providerError: z.optional(ProviderErrorV1Schema),
     terminalHostError: z.optional(TerminalHostUnavailableSpawnErrorDetailSchema),

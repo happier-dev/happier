@@ -54,6 +54,8 @@ import { readHostReviewedParentV1, readHostAdmittedReviewedChildV1,
 import { readHostAdmittedReviewedRootV1, readHostAdmittedReviewedChildHttpProofV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 
 import { deriveDeploymentPrepareSessionSpawnInputV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { isSessionActionChildCreationRootV1, readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -112,7 +114,7 @@ import { classifyServerEndpointError } from '@/api/client/classifyServerEndpoint
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
-import { readDiscussionSecondOpinionModelChildV1, isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
+import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { DiscussionDetailsResponseV1Schema, DiscussionListResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -354,12 +356,36 @@ export async function readReviewedServiceMoveInput(input: Readonly<{
 }
 
 /** A source signature alone never authorizes arbitrary Session creation at another installation. */
-export async function isReviewedSecondOpinionModelSpawnChild(input: Readonly<{
+export async function isReviewedSessionActionCreationChild(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
-  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal; reviewedChild?: ReviewedActionChildHttpProofV1;
+  onRefused?: (reason: DeploymentChildDerivationRefusal) => void;
 }>): Promise<boolean> {
-  if (input.authorization.binding.actionId !== 'discussion.second_opinion.start' || input.actionId !== 'session.spawn_new') return false;
+  const refuse = (reason: DeploymentChildDerivationRefusal) => { input.onRefused?.(reason); return false; };
+  const method = input.method ?? RPC_METHODS.SESSION_SPAWN_NEW;
+  const binding = input.authorization.binding;
+  if (input.actionId !== readSessionActionChildCreationRpcEffectV1(method, binding,
+    { machineId: input.machineId, installationId: binding.installationId }, input.reviewedChild)) return refuse('child_invalid');
   const wrapper = TargetedActionRpcRequestV1Schema.safeParse(input.params);
+  if (binding.actionId !== 'discussion.second_opinion.start') {
+    const root = DeploymentPrepareInputV1Schema.safeParse(await readReviewedExternalActionInput(input));
+    const identity = deriveDeploymentPrepareSessionCreationIdentityV1(binding);
+    const recipe = root.success ? deriveDeploymentPrepareSessionSpawnInputV1(root.data) : null;
+    if (!root.success || !identity || !recipe || recipe.executionTarget.machineId !== input.machineId) return refuse('child_invalid');
+    // Directory preflight precedes Session admission's creation-key materialization.
+    // Its private proof still binds the root-derived recipe; birth binds the admitted input.
+    const spawn = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT ? recipe
+      : materializeSessionCreationActionInput('session.spawn_new', recipe, { actionRequestId: identity.requestId });
+    if (computeActionInputApprovalDigestV1('session.spawn_new', spawn) !== input.reviewedChild?.inputDigest) return refuse('child_input_mismatch');
+    const params = wrapper.success ? wrapper.data.input : input.params;
+    if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+      const preflight = SessionCreationTargetPreparationRequestV1Schema.safeParse(params);
+      return preflight.success && recipe.directory.kind === 'path' && !recipe.checkoutCreationDraft
+        && sameStrictJsonValue(preflight.data, { directory: recipe.directory, prepareAgentIsolationMember: true })
+        || refuse('child_input_mismatch');
+    }
+    return sameStrictJsonValue(spawn, params);
+  }
   const derived = readDiscussionSecondOpinionModelChildV1(await readReviewedExternalActionInput(input),
     input.machineId, wrapper.success ? wrapper.data.input : input.params, input.method);
   const requester = readRequesterAccountActionContext(input.authorization);
@@ -395,7 +421,6 @@ export async function isReviewedSecondOpinionModelSpawnChild(input: Readonly<{
       && !input.signal?.aborted;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return false; }
 }
-
 /** The admitted Prepare receiver binds its one canonical Session child to the actual birth body. */
 export function createPrepareSessionCreationAuthorization(input: Readonly<{
   context: ActionExecutorContext & Partial<Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
@@ -467,7 +492,7 @@ export function createReviewedSecondOpinionSessionCreationAuthorization(input: R
     || !sameStrictJsonValue(sourceExecution.originalActionEnvelope, input.context.originalActionEnvelope)) return null;
   return { token: authorization.token, prepareRequestProof: async body => {
     if (!await input.context.verifyMachineAdmissionCurrent!()
-      || !await isReviewedSecondOpinionModelSpawnChild({ authorization, envelope: input.context.originalActionEnvelope,
+      || !await isReviewedSessionActionCreationChild({ authorization, envelope: input.context.originalActionEnvelope,
         machineId: machineAdmission.machineId, actionId: 'session.spawn_new', params: input.publicInput,
         ...(input.context.signal ? { signal: input.context.signal } : {}) })
       || body.originKind !== 'discussion' || !sameStrictJsonValue(body.discussionParticipant, ref)
@@ -1298,6 +1323,9 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
     managedAdmission: input.managedAdmission, params: input.params });
   const readinessProof = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
+  const creationEffect = readSessionActionChildCreationRpcEffectV1(input.method.slice(input.method.indexOf(':') + 1),
+    binding, input.target.kind === 'machine' ? { machineId: input.target.machineId,
+      installationId: binding.installationId } : undefined, readinessProof);
   const readinessChild = readSessionAgentReadinessChildActionV1(binding, readinessProof,
     { machineId: input.sourceMachineId, installationId: input.sourceInstallationId });
   const signedReadinessChild = readinessChild === input.effectActionId
@@ -1313,13 +1341,12 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       || !externalActionTargetsEqualV1(binding.target, input.target))
     || binding.actionId === 'projects.service.relocate'
       && readProjectServiceMoveChildEffectV1(input.method.slice(input.method.indexOf(':') + 1)) !== input.effectActionId
-    || binding.actionId === 'discussion.second_opinion.start'
-      && (input.effectActionId !== 'session.spawn_new' || !isDiscussionSecondOpinionModelRpcMethodV1(input.method.slice(input.method.indexOf(':') + 1)))
+    || isSessionActionChildCreationRootV1(binding.actionId) && input.effectActionId !== creationEffect
     || (binding.deploymentChildRoot === true) && (!deploymentChild
       || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, deploymentChild.actionId)
       || input.effectActionId !== deploymentChild.actionId
       || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
-    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !stopChild && !deploymentChild && !nativeCredentialChild && !setupPlanChild
+    || binding.actionId !== 'projects.service.relocate' && !creationEffect && !stopChild && !deploymentChild && !nativeCredentialChild && !setupPlanChild
       && !input.method.startsWith(`${binding.machineId}:`)) return null;
   return createExternalActionMachineRpcExecution({
     context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },
@@ -1411,17 +1438,22 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   /** The calling ingress already spent Home admission on this exact root. */
   rootAdmitted?: true;
   /** Exact child ingress already rechecks the retained SOURCE packet at Home. */
-  forwardedMove?: Readonly<{ credentials: StoredCredentials; isCurrent(): Promise<boolean> }>;
+  forwardedMove?: Readonly<{ credentials: StoredCredentials; isCurrent(): Promise<boolean>;
+    method?: string; reviewedChild?: ReviewedActionChildHttpProofV1 }>;
   /** Present only after exact installed child ingress and its sealed purpose were admitted. */
   forwardedDeploymentChild?: DeploymentChildRpcV1;
   deploymentChildExecution?: WorkspaceSyncSourceExecutionV1;
   signal?: AbortSignal;
 }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
+  const creationEffect = parsed.success && input.forwardedMove
+    ? readSessionActionChildCreationRpcEffectV1(input.forwardedMove.method ?? '', parsed.data.binding,
+      input.target.kind === 'machine' ? { machineId: input.target.machineId, installationId: input.installationId } : undefined,
+      input.forwardedMove.reviewedChild) : null;
   if (!parsed.success || parsed.data.binding.serverIdentityId !== input.serverIdentityId
     || (parsed.data.binding.installationId !== input.installationId && !input.forwardedMove)
     || input.forwardedMove && parsed.data.binding.actionId !== 'projects.service.relocate'
-      && parsed.data.binding.actionId !== 'discussion.second_opinion.start'
+      && !creationEffect
       && !isSessionStopChildRootV1(parsed.data.binding.actionId)
       && !isMachineSetupPlanRpcChildV1({ rootActionId: parsed.data.binding.actionId,
         effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
@@ -1434,7 +1466,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || !sameStrictJsonValue(requesterContext.authorization.binding, authorization.binding))) return null;
   const admittedCustody = requesterContext?.isCustodyCurrent;
   const nativePreparationReadCustody = authorization.binding.actionId === 'projects.service.relocate'
-    || authorization.binding.actionId === 'discussion.second_opinion.start'
+    || isSessionActionChildCreationRootV1(authorization.binding.actionId)
     || isSessionStopChildRootV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'execution.run.start'
     || authorization.binding.actionId === 'execution.run.ensure'
@@ -1562,7 +1594,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
           ? { Authorization: `Bearer ${projectMachineReadCustody.credentials.token}` } : null;
       }
       if (nativePreparationReadCustody && (authorization.binding.actionId === 'projects.service.relocate'
-        || authorization.binding.actionId === 'discussion.second_opinion.start' && request.effectActionId === 'session.spawn_new'
+        || isSessionActionChildCreationRootV1(authorization.binding.actionId) && request.effectActionId === 'session.spawn_new'
         || isSessionStopChildRootV1(authorization.binding.actionId) && request.effectActionId === 'session.stop'
         || request.effectActionId === authorization.binding.actionId)) {
         // Native preparation consumes its original requester's private Account

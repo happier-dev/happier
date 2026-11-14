@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
@@ -741,13 +742,9 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
       originalRoot &&
       (readinessSource || originalRoot.binding.actionId === 'projects.service.relocate' ||
         deploymentChild ||
-        (originalRoot?.binding.actionId === 'discussion.second_opinion.start' &&
-          sourceExecution?.externalActionExecution.effectActionId ===
-            'session.spawn_new' &&
-          (input.method ===
-            `${context.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}` ||
-            input.method ===
-              `${context.machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)) ||
+        (sourceExecution !== undefined && sourceExecution.externalActionExecution.effectActionId ===
+          readSessionActionChildCreationRpcEffectV1(input.method?.slice(input.method.indexOf(':') + 1) ?? '',
+            originalRoot.binding, context, sourceExecution.externalActionExecution.reviewedChild)) ||
         (isSessionStopChildRootV1(originalRoot?.binding.actionId) &&
           input.method === `${context.machineId}:${RPC_METHODS.STOP_SESSION}` &&
           sourceExecution &&

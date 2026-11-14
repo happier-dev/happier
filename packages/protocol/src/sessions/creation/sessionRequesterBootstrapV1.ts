@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SessionHandoffPrepareTargetPrivateRequestV1Schema, SessionHandoffExistingStateCheckRequestV3Schema } from '../control/handoff/handoffSchemas.js';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionTargetV1Schema,
   isExternalActionRequestVersionAllowedForAccountModeV1,
-  type ExternalActionExecutionAuthorizationV1, type ExternalActionManagedAdmissionV1,
+  type ExternalActionExecutionAuthorizationV1, type ExternalActionManagedAdmissionV1, type ReviewedActionChildHttpProofV1,
   type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
 import { readExternalActionBindingAuthority } from '../../actions/externalActionBindingAuthority.js';
@@ -28,7 +28,7 @@ import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraint
 import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
-import { isDiscussionSecondOpinionModelRpcMethodV1 } from '../../discussions/secondOpinionActions.js';
+import { readSessionActionChildCreationRpcEffectV1 } from './sessionCreationActionIdsV1.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/projectActionIdsV1.js';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
@@ -87,6 +87,8 @@ export type SessionRequesterBootstrapV1 = Readonly<z.infer<typeof SessionRequest
 /** Private invocation scope, independent of Session birth or custody. Every boundary is closed. */
 export type ExternalActionRequesterAccountContextPurposeV1 = Readonly<
   { kind: 'external_action' } | { kind: 'machine_rpc'; method: string; params: unknown;
+    /** Private ingress proof; the signed RPC packet carries it, not the sealed purpose. */
+    reviewedChild?: ReviewedActionChildHttpProofV1;
     recipient?: Readonly<{ machineId: string; installationId: string }> }
   | { kind: 'managed_finite_wake'; target: ManagedWakeTargetV1 }
   | { kind: 'workspace_sync_prepare'; controller: Readonly<{ machineId: string; installationId: string }>;
@@ -549,8 +551,8 @@ function isReviewedChildRecipientPurpose(authorization: ExternalActionExecutionA
       && purpose.recipient.installationId === child.installationId;
   }
   return authorization.binding.actionId === 'projects.service.relocate'
-    || authorization.binding.actionId === 'discussion.second_opinion.start'
-      && purpose.kind === 'machine_rpc' && isDiscussionSecondOpinionModelRpcMethodV1(purpose.method)
+    || purpose.kind === 'machine_rpc' && readSessionActionChildCreationRpcEffectV1(
+      purpose.method, authorization.binding, purpose.recipient, purpose.reviewedChild) !== null
     || isSessionStopChildRootV1(authorization.binding.actionId)
       && purpose.kind === 'machine_rpc' && purpose.method === RPC_METHODS.STOP_SESSION
       && readSessionStopChildTargetV1(purpose.params) !== null;

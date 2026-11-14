@@ -1,4 +1,5 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
+import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
@@ -1138,6 +1139,8 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  const creation = readSessionActionChildCreationRpcEffectV1(method, binding, selectedTarget, reviewedChild);
+  if (creation !== null) return creation;
   if (method === RPC_METHODS.CAPABILITIES_DESCRIBE && binding && isExecutionRunStartActionIdV1(binding.actionId)) {
     // Passive preflight spends the existing Run root on its exact installation;
     // it grants neither capability detection nor a different Machine effect.

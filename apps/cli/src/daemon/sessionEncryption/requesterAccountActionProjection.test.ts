@@ -17,7 +17,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { bindRequesterSessionCredentialScope, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import * as persistence from '@/persistence';
 import { projectRequesterAccountActionAuthorization } from './requesterSessionCredentials';
-import { createExternalActionMachineRpcExecution, createExternalActionAuthorizedRequestHeaders, dispatchOriginalAccountAction, projectExternalActionRequesterHttpAuthorization, isReviewedSecondOpinionModelSpawnChild, createReviewedSecondOpinionSessionCreationAuthorization, isReviewedDeploymentChild } from '@/api/externalActionExecutionAuthorization';
+import { createExternalActionMachineRpcExecution, createExternalActionAuthorizedRequestHeaders, dispatchOriginalAccountAction, projectExternalActionRequesterHttpAuthorization, isReviewedSessionActionCreationChild, createReviewedSecondOpinionSessionCreationAuthorization, isReviewedDeploymentChild } from '@/api/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { buildDiscussionModelSessionCreationProofPayloadV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
@@ -448,7 +448,7 @@ describe('admitted requester Action projection', () => {
     const spawn = { ...launch, creationKey: 'reviewed-slot', initialTriggers: [],
       discussionParticipant: { discussionId: 'created-opinion', participantSlotId: 'reviewed-slot' } };
     const verify = (params: unknown = spawn, method: string = RPC_METHODS.SESSION_SPAWN_NEW, original: unknown = envelope) =>
-      isReviewedSecondOpinionModelSpawnChild({ authorization: admitted.authorization, envelope: original,
+      isReviewedSessionActionCreationChild({ authorization: admitted.authorization, envelope: original,
         machineId: 'model-machine', actionId: 'session.spawn_new', params, method });
     try {
       expect(await verify()).toBe(true);
@@ -553,6 +553,8 @@ describe('admitted requester Action projection', () => {
     { mode: 'e2ee', failure: 'network', expected: 'project_requester_home_unavailable' },
     { mode: 'plain', failure: 'authentication', expected: 'invalid_envelope' },
     { mode: 'e2ee', failure: 'authentication', expected: 'invalid_encrypted_envelope' },
+    { mode: 'plain', failure: 'authorization', expected: 'machine_admission_after_principal' },
+    { mode: 'e2ee', failure: 'authorization', expected: 'machine_admission_after_principal' },
   ] as const)('preserves unavailable Home admission without accepting refused custody ($mode/$failure)', async ({ mode, failure, expected }) => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(45));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,
@@ -574,7 +576,9 @@ describe('admitted requester Action projection', () => {
       throw new Error('Unexpected Home read');
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
-      if (url.endsWith('/verify')) return { status: 200, data: { ok: true } };
+      if (url.endsWith('/verify')) return failure === 'authorization'
+        ? { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'machine_admission_after_principal' } }
+        : { status: 200, data: { ok: true } };
       const envelope = ExternalActionRequestEnvelopeSchema.parse(raw);
       expect(envelope.v).toBe(mode === 'plain' ? 1 : 2);
       const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'send-root', binding: {

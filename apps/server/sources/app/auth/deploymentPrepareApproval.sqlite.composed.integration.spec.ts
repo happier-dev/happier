@@ -28,6 +28,15 @@ import { readS0ControllerCredentials } from '../../../../cli/src/deployments/dep
 import { resetInMemoryAccountSettingsContextForTests } from '../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';
+import type { Socket } from 'socket.io';
+import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol';
+import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
+import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
@@ -122,6 +131,48 @@ it.each([false, true])('approves host Prepare/Import and executes its reviewed s
                     readSource: input => inTx(tx => readProjectSourceInTx(tx, home.accountId, input)) }),
                 sessionSpawnNew: async args => {
                     expect(ApprovalRequestV2Schema.parse(stored).decision).toMatchObject({ kind: 'approve', authority: 'present_user' });
+                    const method = `${home.machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`;
+                    const params = { directory: input.sessionDraft!.directory };
+                    const compatibility = evaluateAccountStoredContentSocketCompatibility(
+                        buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)).evaluation;
+                    const forwarded: SocketRpcRequestPayload[] = [];
+                    // Only the reached daemon is substituted. Exercise the real Home
+                    // relay, root/child signature and retained-envelope admission.
+                    const daemon = createAuthenticatedFakeSocket({ id: randomUUID(), data: { clientType: 'machine-scoped',
+                        userId: home.accountId, machineId: home.machineId, verifiedMachineInstallationId: home.installationId,
+                        accountStoredContentCompatibility: compatibility }, timeout: () => ({ emitWithAck: async (_event: string, packet: SocketRpcRequestPayload) => {
+                            forwarded.push(packet); return { accepted: true };
+                        } }) });
+                    const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id || room === `rpc:${home.accountId}:${method}` ? [daemon] : []);
+                    const caller = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: {
+                        clientType: 'machine-scoped', userId: home.accountId, machineId: home.machineId, verifiedMachineInstallationId: home.installationId,
+                        authTokenKind: 'account', authAuthority: 'present_user', accountStoredContentCompatibility: compatibility,
+                    } }), { handshake: { auth: { token: credentials.token } } });
+                    registerSocketRpcHandlers({ userId: home.accountId, socket: caller as unknown as Socket, io });
+                    const invoke = async (originalActionEnvelope = envelope, childRole?: string) => {
+                        const requestId = randomUUID();
+                        const admittedChild = readHostAdmittedReviewedChildV1(args.context);
+                        const reviewedChild = admittedChild ? { actionId: admittedChild.actionId,
+                            role: childRole ?? admittedChild.role, inputDigest: admittedChild.inputDigest } : undefined;
+                        const externalActionExecution = { v: 1 as const, authorization: root, effectActionId: 'session.spawn_new',
+                            target, installationId: home.installationId, reviewedChild,
+                            machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: root.token,
+                                effectActionId: 'session.spawn_new', target, installationId: home.installationId,
+                                event: SOCKET_RPC_EVENTS.CALL, method, requestId, params, reviewedChild, privateKey: home.keys.secretKey }) };
+                        const callback = vi.fn();
+                        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL,
+                            { method, params, requestId, externalActionExecution, originalActionEnvelope }, callback);
+                        return callback;
+                    };
+                    expect(await invoke({ ...envelope, requestId: randomUUID() })).toHaveBeenCalledWith(
+                        expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+                            failureCause: expect.objectContaining({ phase: 'rpc.admission.execution', errorCode: RPC_ERROR_CODES.FORBIDDEN }) }));
+                    expect(forwarded).toEqual([]);
+                    expect(await invoke(envelope, 'unreviewed')).toHaveBeenCalledWith(expect.objectContaining({
+                        ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false }));
+                    expect(forwarded).toEqual([]);
+                    expect(await invoke()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
+                    expect(forwarded).toHaveLength(1);
                     for (const path of [`/v1/machines/${randomUUID()}`, '/v1/account/profile']) {
                         const denied = resolveExternalActionServerRequestHeaders({ context: args.context, effectActionId: 'session.spawn_new',
                             method: 'GET', path, daemonToken: credentials.token, serverIdentityId: home.serverId,

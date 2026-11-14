@@ -110,17 +110,21 @@ export function projectSessionCreationTargetPreparationRpcFailureV1(
   const carriedCause = ActionFailureCauseV1Schema.safeParse(
     error !== null && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
   );
-  const failureCause = carriedCause.success ? { failureCause: carriedCause.data } : {};
+  const failureEvidence = {
+    ...(carriedCause.success ? { failureCause: carriedCause.data } : {}),
+    ...(error !== null && typeof error === 'object' && 'effectAttempted' in error
+      && typeof error.effectAttempted === 'boolean' ? { effectAttempted: error.effectAttempted } : {}),
+  };
   const { httpStatus } = projectActionFailureCauseV1(error);
   if (code === RPC_ERROR_CODES.FORBIDDEN || httpStatus === 401 || httpStatus === 403) {
-    return { type: 'error', code: 'permission_denied', retryable: false, ...failureCause };
+    return { type: 'error', code: 'permission_denied', retryable: false, ...failureEvidence };
   }
   if (code === 'checkout_failed' || code === 'checkout_unavailable') {
-    return { ...projectSessionCreationTargetPreparationFailureV1({ ok: false, code }), ...failureCause };
+    return { ...projectSessionCreationTargetPreparationFailureV1({ ok: false, code }), ...failureEvidence };
   }
   return code === 'agent_isolation_unavailable' || code === 'filesystem_identity_custody_unavailable'
     || code === 'MACHINE_ENCRYPTION_UNAVAILABLE'
-    ? { type: 'error', code: 'spawn_failed', retryable: false, ...failureCause,
+    ? { type: 'error', code: 'spawn_failed', retryable: false, ...failureEvidence,
       launchError: { kind: 'launch_error', code, message: code } }
     : null;
 }

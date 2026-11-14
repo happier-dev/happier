@@ -121,6 +121,8 @@ export function createPrepareDeployment(host: PrepareHost): NonNullable<ActionEx
         childOperationRefs: settled.data.operation ? [settled.data.operation] : [] };
       if (settled.data.type !== 'success') return { ok: false, errorCode: settled.data.code, error: settled.data.code,
         details: settled.data,
+        ...('effectAttempted' in settled.data && typeof settled.data.effectAttempted === 'boolean'
+          ? { effectAttempted: settled.data.effectAttempted } : {}),
         ...('failureCause' in settled.data && settled.data.failureCause ? { failureCause: settled.data.failureCause } : {}) };
       const sessionRef = { serverId: settled.data.executionTarget.serverId, sessionId: settled.data.sessionId };
       if (settled.data.executionTarget.machineId !== workspace.machineId

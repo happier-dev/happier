@@ -1,4 +1,5 @@
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -58,7 +59,7 @@ import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeAct
 import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
 import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, managedChildRequiresRequesterMaterial,
-  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
+  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
 import type { ActionExecutorDeps, RuntimeActionExecute } from "@happier-dev/protocol/actions";
@@ -284,11 +285,13 @@ resolveServerFeaturesSnapshot?: () =>
         const movePacket = context.workspaceSyncSourceExecution;
         const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
           effectActionId: actionId, method: RPC_METHODS.MACHINE_SETUP_PLAN });
+        const creationChild = movePacket && actionId === readSessionActionChildCreationRpcEffectV1(RPC_METHODS.SESSION_SPAWN_NEW,
+          binding, context.machineAdmission, movePacket.externalActionExecution.reviewedChild);
         // A Move child is deliberately SOURCE-bound. The receiving RPC owner
         // has already opened its exact requester/recipient custody; keep that
         // root while executing the reviewed child at this installed native owner.
         const admittedMoveChild = (binding.machineId !== params.machineId || setupPlanChild)
-          && (binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start' && actionId === 'session.spawn_new'
+          && (binding.actionId === 'projects.service.relocate' || creationChild
             || isSessionStopChildRootV1(binding.actionId) && actionId === 'session.stop' || setupPlanChild) && movePacket
           && context.machineAdmission?.machineId === params.machineId
           && context.machineAdmission.installationId === readInstallationIdentityIfExistsSync()?.installationId
@@ -300,8 +303,9 @@ resolveServerFeaturesSnapshot?: () =>
           && sameStrictJsonValue(movePacket.externalActionExecution.authorization.binding, binding)
           && sameStrictJsonValue(movePacket.originalActionEnvelope, context.originalActionEnvelope)
           && await (setupPlanChild ? isReviewedMachineSetupPlanChild : isSessionStopChildRootV1(binding.actionId) ? isReviewedSessionStopChild
-            : binding.actionId === 'discussion.second_opinion.start' ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild)({ authorization: context.externalActionExecutionAuthorization,
+            : creationChild ? isReviewedSessionActionCreationChild : isReviewedServiceMoveChild)({ authorization: context.externalActionExecutionAuthorization,
             envelope: context.originalActionEnvelope, actionId, machineId: params.machineId, params: input,
+            ...(creationChild ? { reviewedChild: movePacket.externalActionExecution.reviewedChild } : {}),
             ...(isSessionStopChildRootV1(binding.actionId) ? { target: context.externalActionTarget } : {}),
             ...(context.signal ? { signal: context.signal } : {}) });
         if (setupPlanChild && movePacket && !admittedMoveChild) {

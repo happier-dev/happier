@@ -43,7 +43,7 @@ describe('retained original Action envelopes through the Home relay', () => {
             userId: fixture.account.id, machineId: input.receiverMachineId, verifiedMachineInstallationId: input.receiverInstallationId,
             accountStoredContentCompatibility: compatibility }, timeout: () => ({ emitWithAck: effect }) });
         const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id || room === `rpc:${fixture.account.id}:${method}` ? [daemon] : []);
-        const caller = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: {
+        const caller = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: fixture.account.id,
             ...(input.controllerSocket ? { clientType: 'machine-scoped', machineId: fixture.machine.id,
                 verifiedMachineInstallationId: fixture.machine.installationId } : { clientType: 'user-scoped' }),
             authTokenKind: 'account', authAuthority: 'present_user', accountStoredContentCompatibility: compatibility } }),

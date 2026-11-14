@@ -92,7 +92,7 @@ export function isRpcError(error: unknown): error is RpcError {
   return carrier.name === 'RpcError' && typeof carrier.rpcErrorCode === 'string' && carrier.rpcErrorCode.trim().length > 0;
 }
 
-export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown; details?: unknown }): Error {
+export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown; effectAttempted?: unknown; details?: unknown }): Error {
   const failureCause = ActionFailureCauseV1Schema.safeParse(opts.failureCause);
   // Home owns availability; retain only its closed diagnostic, never infer one from the code.
   const details = opts.errorCode === 'target_unavailable' && opts.details !== undefined
@@ -100,6 +100,7 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
   const failure = typeof opts.errorCode === 'string' && opts.errorCode.length > 0
     ? new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined)
     : Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
+  if (typeof opts.effectAttempted === 'boolean') Object.assign(failure, { effectAttempted: opts.effectAttempted });
   return details?.success ? Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: details.data }) : failure;
 }
 

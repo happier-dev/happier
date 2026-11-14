@@ -43,7 +43,7 @@ export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissio
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectWorkspaceSyncOpenActionV1 } from '../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '../actions/operations/methodsV1.js';
 import { readDeploymentArchiveRpcEffectV1 } from '../deployments/deploymentArchiveRpcV1.js';
-import { isDiscussionSecondOpinionModelRpcMethodV1 } from '../discussions/secondOpinionActions.js';
+import { readSessionActionChildCreationRpcEffectV1 } from '../sessions/creation/sessionCreationActionIdsV1.js';
 import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1 } from '../machines/managed/actionsV1.js';
 import { resolveMachineRpcExternalActionEffectV1 } from '../machines/peer/mediation/rpc/routePolicyV1.js';
 import { readProjectServiceMoveChildEffectV1 } from '../workspaces/projectServiceRelocationV1.js';
@@ -74,9 +74,8 @@ export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
   const readiness = readSessionAgentReadinessChildActionV1(binding, execution.reviewedChild, target);
   if (readiness !== null) return readiness === effect
     && resolveMachineRpcExternalActionEffectV1(method, binding, target, execution.reviewedChild) === readiness ? 'child' : null;
-  if (root === 'discussion.second_opinion.start') {
-    return effect === 'session.spawn_new' && isDiscussionSecondOpinionModelRpcMethodV1(method) ? 'child' : null;
-  }
+  const creation = readSessionActionChildCreationRpcEffectV1(method, binding, target, execution.reviewedChild);
+  if (creation !== null) return effect === creation ? 'child' : null;
   if (isMachineSetupPlanRpcChildV1({ rootActionId: root, effectActionId: effect, method })) {
     if (typeof params === 'string') return 'child';
     const plan = MachineSetupPlanInputV1Schema.safeParse(params);
@@ -241,13 +240,10 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
   || readSessionAgentReadinessChildActionV1(value.externalActionExecution.authorization.binding,
     value.externalActionExecution.reviewedChild, { machineId: value.method.slice(0, value.method.indexOf(':')),
       installationId: value.externalActionExecution.installationId }) === value.externalActionExecution.effectActionId
-  || value.externalActionExecution.authorization.binding.actionId === 'discussion.second_opinion.start'
-    && value.externalActionExecution.effectActionId === 'session.spawn_new'
-    && (value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
-      || value.method.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
-  || value.externalActionExecution.authorization.binding.actionId === 'deployments.prepare'
-    && value.externalActionExecution.effectActionId === 'session.spawn_new'
-    && value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
+  || value.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
+    value.method.slice(value.method.indexOf(':') + 1), value.externalActionExecution.authorization.binding,
+    { machineId: value.method.slice(0, value.method.indexOf(':')), installationId: value.externalActionExecution.installationId },
+    value.externalActionExecution.reviewedChild)
   || value.externalActionExecution.deploymentChildRouting !== undefined
     && value.method === `${value.externalActionExecution.deploymentChildRouting.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
     && value.externalActionExecution.effectActionId === value.externalActionExecution.deploymentChildRouting.actionId
