@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
@@ -17,6 +17,8 @@ export type HappierThreadMessageProps = Readonly<{
   selectionColors: Readonly<{ background: string; foreground: string }>;
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
+  /** Touch hosts open the row's actions on a long press (a phone row keeps no action column). */
+  onLongPress?: () => void;
 }>;
 
 /**
@@ -25,7 +27,10 @@ export type HappierThreadMessageProps = Readonly<{
  */
 export function HappierThreadMessage(props: HappierThreadMessageProps): ReactElement {
   const { space } = props;
-  return <View testID={props.testID}
+  // One frame either way; a host that offers a long press keeps it for the row's lifetime (no type swap per render).
+  const Root = props.onLongPress ? Pressable : View;
+  return <Root testID={props.testID}
+    {...(props.onLongPress ? { onLongPress: props.onLongPress, delayLongPress: 450 } : {})}
     onPointerEnter={props.onPointerEnter} onPointerLeave={props.onPointerLeave}
     style={[
       messageStyle,
@@ -40,7 +45,7 @@ export function HappierThreadMessage(props: HappierThreadMessageProps): ReactEle
       {props.children}
     </View>
     {props.trailing}
-  </View>;
+  </Root>;
 }
 
 const messageStyle = {

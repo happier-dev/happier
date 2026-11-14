@@ -9,6 +9,7 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { t } from '@/text';
+import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
 export const APPROVAL_PROFILE_INHERIT_OPTION_ID = 'inherit';
 
@@ -16,6 +17,36 @@ type Choice =
     | Readonly<{ mode: 'required'; value: string; onChange: (value: string) => void }>
     | Readonly<{ mode: 'session'; value: string | null; onChange: (value: string | null) => void }>
     | Readonly<{ mode: 'authoring'; value: string | null | undefined; onChange: (value: string | null | undefined) => void }>;
+
+type ChoiceMode = 'required' | 'session' | 'authoring';
+
+/** The one approval-profile choice list: the field's menu and the composer chip row offer the same rows. */
+export function buildApprovalProfileChoices(mode: ChoiceMode, profiles: readonly ApprovalProfileV1[], testID: string): DropdownMenuItem[] {
+    const result: DropdownMenuItem[] = [];
+    if (mode === 'authoring') result.push({ id: APPROVAL_PROFILE_INHERIT_OPTION_ID,
+        title: t('workflows.triggers.guided.profile.inheritSessionProfile') });
+    if (mode !== 'required') result.push({ id: SESSION_AUTHORING_NONE_OPTION_ID,
+        title: t('workflows.triggers.guided.profile.noExplicitSessionProfile') });
+    for (const profile of profiles) {
+        const presented = presentApprovalProfile(profile);
+        result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title: presented.title,
+            ...(presented.subtitle ? { subtitle: presented.subtitle } : {}) });
+    }
+    return result;
+}
+
+/** The choice row a stored value selects: undefined inherits, null is "no explicit profile". */
+export function approvalProfileChoiceId(mode: ChoiceMode, value: string | null | undefined): string {
+    return value === undefined && mode === 'authoring' ? APPROVAL_PROFILE_INHERIT_OPTION_ID
+        : value === null || value === undefined ? SESSION_AUTHORING_NONE_OPTION_ID : value;
+}
+
+/** Apply a chosen row through the caller's change, in the stored value's own shape. */
+export function applyApprovalProfileChoice(mode: ChoiceMode, id: string, onChange: (value: string | null | undefined) => void): void {
+    if (id === APPROVAL_PROFILE_INHERIT_OPTION_ID && mode === 'authoring') onChange(undefined);
+    else if (id === SESSION_AUTHORING_NONE_OPTION_ID && mode !== 'required') onChange(null);
+    else onChange(id);
+}
 
 /** The profile owner's typed selection drives both the picker and its missing-reference warning. */
 export function ApprovalProfileSelect(props: Choice & Readonly<{
@@ -27,19 +58,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
 }>) {
     const [open, setOpen] = React.useState(false);
     const missing = props.source.selection?.resolution.status === 'missing';
-    const items = React.useMemo(() => {
-        const result: DropdownMenuItem[] = [];
-        if (props.mode === 'authoring') result.push({ id: APPROVAL_PROFILE_INHERIT_OPTION_ID,
-            title: t('workflows.triggers.guided.profile.inheritSessionProfile') });
-        if (props.mode !== 'required') result.push({ id: SESSION_AUTHORING_NONE_OPTION_ID,
-            title: t('workflows.triggers.guided.profile.noExplicitSessionProfile') });
-        for (const profile of props.source.profiles) {
-            const presented = presentApprovalProfile(profile);
-            result.push({ id: profile.id, testID: `${props.testID}:${profile.id}`, title: presented.title,
-                ...(presented.subtitle ? { subtitle: presented.subtitle } : {}) });
-        }
-        return result;
-    }, [props.mode, props.source.profiles, props.testID]);
+    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, props.source.profiles, props.testID),
+        [props.mode, props.source.profiles, props.testID]);
     const disabled = props.disabled === true || !props.source.ready;
     const select = (id: string) => {
         if (disabled) return;

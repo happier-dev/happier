@@ -194,6 +194,10 @@ const styles = StyleSheet.create((theme) => ({
     meta: {  color: theme.colors.text.secondary, ...Typography.variant('meta') },
     timestamp: {  color: theme.colors.text.tertiary, ...Typography.variant('meta'), fontVariant: ['tabular-nums'] },
     selectAffordance: { alignSelf: 'center' },
+    // The phone ⋯ closes the speaker line, on its baseline row, without widening it.
+    attributionMenu: { marginLeft: 'auto', marginVertical: -6 },
+    continuationMenu: { position: 'absolute', top: -4, right: 0 },
+    continuationMenuIdle: { opacity: 0 },
     rowActions: { flexDirection: 'row', alignItems: 'center' },
     savedDecision: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
     stateLine: { width: '100%', alignSelf: 'center', paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
@@ -1752,10 +1756,20 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     const speaker = props.speakerLabel;
     const actions = props.selectable && notice === null;
     const toggleSelection = selection.toggle;
+    // A phone reserves no action column (UI refinements 21:36Z): the body takes the row's width, the ⋯ ends the
+    // speaker line and holds Reply, and a long press opens it. Wider layouts keep Reply + ⋯ revealed on hover.
+    const phoneActions = useDeviceType() === 'phone' && actions && !selection.isSelectionMode;
+    const { onReply } = props;
     const chooseMenuItem = React.useCallback((id: DiscussionMessageMenuItemId) => {
-        if (id === 'saveDecision') setDecisionOpen(true);
+        if (id === 'reply') onReply?.(message.id);
+        else if (id === 'saveDecision') setDecisionOpen(true);
         else toggleSelection();
-    }, [toggleSelection]);
+    }, [message.id, onReply, toggleSelection]);
+    const messageMenu = <View ref={decisionAnchorRef} collapsable={false}>
+        <DiscussionMessageMenu messageId={message.id} speakerLabel={speaker}
+            saveDecision={decisionSource !== null && !decisionSaved} reply={phoneActions && onReply !== undefined}
+            open={menuOpen} onOpenChange={setMenuOpen} onSelect={chooseMenuItem} />
+    </View>;
     return <SentMessageRise rises={pendingMutation?.status === 'sending'}><HappierThreadMessage
         testID={`session-discussion-message-group-${props.startsGroup ? 'start' : 'continuation'}-${message.id}`}
         startsGroup={props.startsGroup}
@@ -1764,6 +1778,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
         selectionColors={theme.colors.state.active}
         style={contentWidth}
         {...(actions ? hover.hoverProps : null)}
+        {...(phoneActions ? { onLongPress: () => setMenuOpen(true) } : {})}
         face={props.startsGroup
                 ? <DiscussionSpeakerFace message={message} serverId={props.serverId} viewerAccountId={props.viewerAccountId}
                     agentId={props.agentId} size={SPEAKER_FACE_PX} markSize={ICON_SIZE.md}
@@ -1779,8 +1794,9 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                 {pendingMutation && isTransientMutationStatus(pendingMutation)
                     ? <Text testID={`session-discussion-message-status-${message.localId}`} accessibilityLiveRegion="polite" style={styles.timestamp}>{mutationStatusLabel(pendingMutation)}</Text>
                     : message.createdAt > 0 ? <DiscussionMessageTimestamp messageId={message.id} createdAt={message.createdAt} enabled={props.clockEnabled} /> : null}
+                {phoneActions ? <View style={styles.attributionMenu}>{messageMenu}</View> : null}
         </> : null}
-        trailing={actions ? <RowActionRevealSlot revealed={selectRevealed || decisionOpen || menuOpen} style={styles.selectAffordance} testID={`session-discussion-select-slot-${message.id}`}>
+        trailing={actions && !phoneActions ? <RowActionRevealSlot revealed={selectRevealed || decisionOpen || menuOpen} style={styles.selectAffordance} testID={`session-discussion-select-slot-${message.id}`}>
             {/* CR5: Reply plus one ⋯; while selecting, each row carries only its select mark. */}
             {selection.isSelectionMode
                 ? <View style={styles.rowActions}>
@@ -1797,14 +1813,12 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                         <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.state.success.foreground} />
                     </View> : null}
                     {/* The decision sheet anchors to the ⋯ it was chosen from. */}
-                    <View ref={decisionAnchorRef} collapsable={false}>
-                        <DiscussionMessageMenu messageId={message.id} speakerLabel={speaker}
-                            saveDecision={decisionSource !== null && !decisionSaved}
-                            open={menuOpen} onOpenChange={setMenuOpen} onSelect={chooseMenuItem} />
-                    </View>
+                    {messageMenu}
                 </View>}
         </RowActionRevealSlot> : null}
     >
+            {phoneActions && !props.startsGroup ? <View pointerEvents={menuOpen ? 'auto' : 'none'}
+                style={[styles.continuationMenu, menuOpen ? null : styles.continuationMenuIdle]}>{messageMenu}</View> : null}
             {/* Passed, failed or stopped with nothing kept: one quiet line under the speaker's byline (lab T2-A),
                 nothing anyone has to read past. A stopped reply that kept a partial answer reads as the answer it is. */}
             {notice ? <View style={styles.outcomeLine} testID={`session-discussion-outcome-${notice}-${message.id}`}>

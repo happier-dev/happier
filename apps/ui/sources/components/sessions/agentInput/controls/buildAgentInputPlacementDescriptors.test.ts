@@ -163,6 +163,9 @@ describe('composer control catalog', () => {
         expect(buildAgentInputPlacementCatalog({ context: 'discussion' }).map(control => control.id)).toContain('shortcuts:mention');
         const newSession = buildAgentInputPlacementCatalog({ context: 'newSession' });
         expect(newSession.map(control => control.id)).not.toContain('connectedServices');
+        // The approval profile is a New Session setup choice in the chip row (UI refinements 21:36Z, lab composer P3).
+        expect(newSession.find(control => control.id === 'approvalProfile')?.defaultPlacement).toBe('pinned');
+        expect(buildAgentInputPlacementCatalog({ context: 'session' }).map(control => control.id)).not.toContain('approvalProfile');
         expect(newSession.find(control => control.id === 'path')?.allowedPlacements).toEqual(['pinned', 'overflow']);
         // "Runs through" defaults to In + (plan P3 §3.4, lab Kdef; owner 11-07), one registry decision for a running Session and a new one.
         expect(buildAgentInputPlacementCatalog({ context: 'session' }).find(control => control.id === 'connectedServices')?.defaultPlacement).toBe('overflow');

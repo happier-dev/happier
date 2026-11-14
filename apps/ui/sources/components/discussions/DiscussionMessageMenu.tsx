@@ -9,7 +9,7 @@ import {
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-export type DiscussionMessageMenuItemId = 'saveDecision' | 'select';
+export type DiscussionMessageMenuItemId = 'reply' | 'saveDecision' | 'select';
 
 /**
  * A Discussion message's one ⋯ (CR5): everything a message offers beyond Reply waits here, so a row
@@ -22,6 +22,8 @@ export function DiscussionMessageMenu(
     /** Who said the message, so each row's ⋯ has its own spoken name. */
     speakerLabel: string;
     saveDecision: boolean;
+    /** A phone row keeps no Reply button beside the message, so Reply leads its ⋯. */
+    reply?: boolean;
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSelect: (id: DiscussionMessageMenuItemId) => void;
@@ -31,6 +33,16 @@ export function DiscussionMessageMenu(
   const iconColor = theme.colors.text.secondary;
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
+      ...(props.reply
+        ? [
+            {
+              id: 'reply',
+              testID: `session-discussion-message-menu-${props.messageId}:reply`,
+              title: t('session.collaboration.discussion.replyDraft.action'),
+              icon: <Icon name="arrow-elbow-up-left" size={ICON_SIZE.xs} color={iconColor} />,
+            },
+          ]
+        : []),
       ...(props.saveDecision
         ? [
             {
@@ -56,13 +68,13 @@ export function DiscussionMessageMenu(
         ),
       },
     ],
-    [iconColor, props.messageId, props.saveDecision],
+    [iconColor, props.messageId, props.reply, props.saveDecision],
   );
   const { onOpenChange, onSelect } = props;
   const select = React.useCallback(
     (id: string) => {
       onOpenChange(false);
-      if (id === 'saveDecision' || id === 'select') onSelect(id);
+      if (id === 'reply' || id === 'saveDecision' || id === 'select') onSelect(id);
     },
     [onOpenChange, onSelect],
   );

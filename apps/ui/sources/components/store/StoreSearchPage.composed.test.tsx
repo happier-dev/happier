@@ -171,6 +171,21 @@ it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial
     }
 });
 
+it('does not call catalogs that wait for a Machine unreachable in the all-kind results (F2b)', async () => {
+    await setup('search-needs-machine');
+    // Search and Discover's catalog shelves both read every kind through this Directory: a catalog that waits for a
+    // Machine is that kind page's prerequisite, not "Couldn't reach N sources" (QA-SHELL-1114 F2/F2b).
+    const screen = await renderScreen(<Directory kind="search" rows={[]} groups={[]} query="review" sourceTitle={id => id}
+        list={{ loading: false, hasNextPage: false, sourceFailures: [
+            { sourceId: 'builtin:skills-sh', status: { state: 'needs_machine' }, onRetry: () => {} },
+            { sourceId: 'builtin:chrome-web-store', status: { state: 'needs_machine' }, onRetry: () => {} },
+            { sourceId: 'builtin:mcp-registry', status: { state: 'unreachable' }, onRetry: () => {} },
+        ] }} />);
+    const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+    const failures = screen.root.findAllByType(RegistrySourcesUnavailable).flatMap(node => node.props.failures.map((failure: { key: string }) => failure.key));
+    expect(failures).toEqual(['builtin:mcp-registry']);
+});
+
 it('keeps a cold failed Skills read distinct from empty and retries the existing owner', async () => {
     await setup('skill-failed-state');
     const retry = vi.fn();

@@ -414,10 +414,9 @@ export function StoreCatalogShelves(props: SearchSectionsInput & Readonly<{
   }, [onOpenKind]);
   // One outage line for the page: the curated sources and the other named catalogs together (the Directory keeps one
   // entry per catalog). A kind read that failed without naming a catalog is that same outage reaching it, so it doesn't
-  // add another. A catalog that waits for a Machine (needs_machine) is not out: its kind page says what it needs, so it
-  // isn't "Couldn't reach" here. Shelves preview; each kind's All › pages the rest, so there is no Load more here.
+  // add another. Shelves preview; each kind's All › pages the rest, so there is no Load more here.
   const shown: DirectoryList = { ...list, hasNextPage: false, sourceFailures: [...curationFailures, ...(list.sourceFailures ?? [])]
-    .filter(failure => failure.sourceId !== null && failure.status?.state !== 'needs_machine') };
+    .filter(failure => failure.sourceId !== null) };
   if (Object.values(byKind).every(kindRows => kindRows.length === 0) && !list.loading && shown.sourceFailures!.length === 0) return null;
   return (
     <Directory kind="search" label={t('capabilities.store.discover.title')} rows={rows} groups={groups} list={shown}

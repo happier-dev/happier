@@ -61,6 +61,7 @@ export type AgentInputHostControlId =
     | 'files'
     | 'reviewComments'
     | 'storage'
+    | 'approvalProfile'
     | 'windowsRemoteSessionMode'
     | 'providerOption'
     | 'shortcuts'

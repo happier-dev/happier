@@ -1860,6 +1860,27 @@ describe('DiscussionDetailsView selection', () => {
     );
   });
 
+  it('on a phone keeps no invisible action slot: the ⋯ ends the speaker line and holds Reply (UI refinements 21:36Z, F6)', async () => {
+    deviceType.current = 'phone';
+    const screen = await renderScreen(
+      <DiscussionDetailsView
+        target={{
+          kind: 'discussion',
+          address: { serverId: 'srv_discussion_selection_a' },
+          discussionId: 'discussion-a',
+        }}
+        active
+      />,
+    );
+    // The body takes the row's full width: nothing reserves the trailing column on a phone.
+    expect(screen.findByTestId('session-discussion-select-slot-message-a')).toBeNull();
+    expect(screen.findByTestId('session-discussion-reply-message-a')).toBeNull();
+    const more = screen.findByTestId('session-discussion-message-more-message-a');
+    expect(more).not.toBeNull();
+    const menu = dropdownProps.byKey.get('session-discussion-message-menu-message-a') as { items: ReadonlyArray<{ id: string }> } | undefined;
+    expect(menu?.items.map(item => item.id)).toContain('reply');
+  });
+
   it('keeps the select mark out of the reading until a fine pointer hovers the row or selection mode starts', async () => {
     const screen = await renderScreen(
       <DiscussionDetailsView

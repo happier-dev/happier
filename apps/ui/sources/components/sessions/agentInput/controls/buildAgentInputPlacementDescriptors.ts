@@ -178,7 +178,7 @@ type CatalogInput = Readonly<{
 }>;
 
 const WORKFLOW_CONTROL_IDS = new Set<AgentInputControlId>(['workflow', 'workflowInputs', 'workflowRoles', 'workflowTargets']);
-const NEW_SESSION_CONTROL_IDS = new Set<AgentInputControlId>(['server', 'storage', 'windowsRemoteSessionMode', 'checkout', 'organization', 'automation']);
+const NEW_SESSION_CONTROL_IDS = new Set<AgentInputControlId>(['server', 'storage', 'approvalProfile', 'windowsRemoteSessionMode', 'checkout', 'organization', 'automation']);
 
 export function buildAgentInputPlacementCatalog(params: CatalogInput = {}): readonly AgentInputPlacementDescriptor[] {
     const context = params.context ?? (params.newSession ? 'newSession' : 'session');

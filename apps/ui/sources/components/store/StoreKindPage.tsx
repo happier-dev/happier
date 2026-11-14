@@ -937,8 +937,9 @@ export function Directory(
       setLoadingMore(false);
     }
   }, [loadMore]);
-  // One line per failing catalog, however many kinds asked it.
-  const sourceFailures = props.list.sourceFailures ?? [];
+  // One line per failing catalog, however many kinds asked it. Across every kind (Search, Discover's shelves) a catalog
+  // that waits for a Machine is not "Couldn't reach": its own kind page says what it needs.
+  const sourceFailures = (props.list.sourceFailures ?? []).filter(failure => props.kind !== 'search' || failure.status?.state !== 'needs_machine');
   const readFailures = props.list.error && !props.list.loading && sourceFailures.length === 0 && props.list.refresh
     ? [{ sourceId: null, status: props.list.status ?? null, onRetry: props.list.refresh }] : [];
   const failures = [...sourceFailures, ...readFailures].filter((failure, index, all) =>

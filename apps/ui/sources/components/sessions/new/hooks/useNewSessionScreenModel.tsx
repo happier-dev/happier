@@ -1,4 +1,5 @@
-import { SessionAuthoringApprovalProfileField } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { createApprovalProfileComposerChip } from '@/components/approvals/createApprovalProfileComposerChip';
+import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
@@ -4337,9 +4338,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getName: sessionNameStore.getPrompt,
         bridge: instructionsChipBridge,
     }) : null, [draftServerId, instructionsCreation, isBotDraft, sessionNameStore.getPrompt, instructionsChipBridge]);
+    // The approval profile is one chip of the row (UI refinements 21:36Z), offering the field's own choices.
+    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId);
+    const approvalProfileChip = React.useMemo(() => createApprovalProfileComposerChip({
+        value: approvalProfileId, profiles: approvalProfiles.profiles, ready: approvalProfiles.ready, onChange: changeApprovalProfile,
+    }), [approvalProfileId, approvalProfiles.profiles, approvalProfiles.ready, changeApprovalProfile]);
     const composerExtraActionChips = React.useMemo(
-        () => instructionsChip ? [...agentInputExtraActionChips, instructionsChip] : agentInputExtraActionChips,
-        [agentInputExtraActionChips, instructionsChip],
+        () => [...agentInputExtraActionChips, ...(instructionsChip ? [instructionsChip] : []), approvalProfileChip],
+        [agentInputExtraActionChips, instructionsChip, approvalProfileChip],
     );
     const composerBottomContent = React.useMemo(() => draftScope && hasActionDefault ? <>
         {input?.composerBottomContent}
@@ -4347,11 +4353,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             getCurrentDraft={buildCurrentPersistedDraft} execute={authoringExecution.executeValue} onProfileSaved={setSelectedProfileId} />
     </> : input?.composerBottomContent, [authoringExecution.executeValue, buildCurrentPersistedDraft, draftId, draftScope, hasActionDefault, input?.composerBottomContent, setSelectedProfileId]);
 
-    const composerTopContent = React.useMemo(() => <>
-        {input?.composerTopContent}
-        <SessionAuthoringApprovalProfileField testID="new-session-approval-profile" presentation="chips"
-            value={approvalProfileId} serverId={targetServerId} onChange={changeApprovalProfile} />
-    </>, [approvalProfileId, changeApprovalProfile, input?.composerTopContent, targetServerId]);
+    const composerTopContent = input?.composerTopContent;
 
     const {
         layout: wizardLayoutProps,

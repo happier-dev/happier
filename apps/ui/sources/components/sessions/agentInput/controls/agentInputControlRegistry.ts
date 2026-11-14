@@ -43,6 +43,8 @@ export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'delivery', line: 'primary', defaultPlacement: 'overflow' },
     { id: 'reviewComments', line: 'primary', defaultPlacement: 'overflow' },
     { id: 'storage', line: 'primary', titleKey: 'settingsSession.defaultStorage.title', icon: 'floppy-disk', defaultPlacement: 'overflow' },
+    // A New Session's approval profile rides the chip row beside the permission it complements (UI refinements 21:36Z).
+    { id: 'approvalProfile', line: 'primary', titleKey: 'workflows.triggers.guided.profile.title', icon: 'list-checks', defaultPlacement: 'pinned' },
     { id: 'windowsRemoteSessionMode', line: 'primary', titleKey: 'machine.windows.remoteSessionModeTitle', icon: 'windows-logo', defaultPlacement: 'overflow' },
     { id: 'providerOption', line: 'primary', defaultPlacement: 'overflow' },
     { id: 'shortcuts', line: 'primary', defaultPlacement: 'overflow' },
