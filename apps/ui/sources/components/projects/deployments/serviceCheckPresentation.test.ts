@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   readServiceCheckFacts,
+  readServiceCheckSettings,
   serviceCheckHistoryStrip,
 } from './serviceCheckPresentation';
 
@@ -86,5 +87,56 @@ describe('Services → Checks (UPTIME-HISTORY-1113 history)', () => {
       uptimePercent: null,
     });
     expect(strip[0]!.dayStartAt).toBe(today - 29 * DAY);
+  });
+});
+
+describe('A Check’s settings come from its saved source (the edit seed), as saved', () => {
+  const seed = (sourceConfig: unknown, observation: unknown = {
+    kind: 'socket', watcherMaterializationRef: { machineId: 'machine-observer', pluginId: 'p', materializationId: 'm' },
+  }) => ({
+    automationId: 'automation-a', triggerId: 'trigger-a', expectedTriggerRevision: 1, enabled: true,
+    eventRef: { pluginId: 'happier.health', localId: 'changed' },
+    source: { v: 1, sourceInstanceId: 'health:x', sourceContractVersion: 1, sourceConfig, displayLabel: 'n8n from outside' },
+    observation, filter: null, maximumObservationAgeMs: null,
+  }) as never;
+  const check = (checkId: string, config: unknown, extra: Record<string, unknown> = {}) => ({
+    checkId, kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' }, config,
+    periodMs: 300_000, consecutiveFailuresBeforeAlerting: 2, ...extra,
+  });
+  const source = (checks: unknown[], alerts?: unknown) => ({
+    v: 1, subject: { kind: 'machineService', machineId: 'machine-service', serviceId: 'n8n' }, checks,
+    ...(alerts ? { alerts } : {}),
+  });
+
+  it('reads address, expectation, cadence, alerting and the observing Machine for the shown check', () => {
+    const settings = readServiceCheckSettings(seed(source([
+      check('first', { endpoint: 'https://first.example', expectStatus: 204 }),
+      check('second', { endpoint: 'https://n8n.example', expectStatus: 200, keyword: 'n8n' }),
+    ], { channels: [{ channelId: 'inbox' }, { channelId: 'slack' }], phases: ['open'] })), 'second');
+    expect(settings).toEqual({
+      kind: 'http',
+      address: 'https://n8n.example',
+      expectStatus: 200,
+      keyword: 'n8n',
+      periodMs: 300_000,
+      failuresBeforeAlert: 2,
+      alertChannels: 2,
+      observerMachineId: 'machine-observer',
+      subjectMachineId: 'machine-service',
+      label: 'n8n from outside',
+    });
+  });
+
+  it('says nothing it cannot read: an unparsable source or a missing seed yields no settings', () => {
+    expect(readServiceCheckSettings(null, null)).toBeNull();
+    expect(readServiceCheckSettings(seed({ v: 2 }), null)).toBeNull();
+  });
+
+  it('a TCP check has an address but no HTTP expectation; a webhook-delivered source has no observing Machine', () => {
+    const settings = readServiceCheckSettings(seed(source([
+      check('tcp', { host: 'db.internal', port: 5432 }, { kind: { pluginId: 'happier.machine.services', localId: 'tcp' } }),
+    ]), { kind: 'durablePush', webhookEndpointId: 'w', webhookRoutingSourceInstanceId: 'health:x' }), null);
+    expect(settings).toMatchObject({ kind: 'tcp', address: 'db.internal:5432', expectStatus: null, keyword: null,
+      observerMachineId: null, alertChannels: 0 });
   });
 });
