@@ -326,6 +326,57 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
     expect(selectConnectedServiceAuthGroupCandidate({ ...input, lastSwitchAt: 950 }).selected?.profileId).toBe('backup');
   });
 
+  it('restores a recovered higher-priority member while the first member remains exhausted', () => {
+    const input = {
+      nowMs: 1_000,
+      quotaFreshnessMs: 500,
+      activeProfileId: 'active',
+      allowCurrentProfileRetry: true,
+      lastSwitchReason: 'usage_limit',
+      lastSwitchAt: 400,
+      policy: { ...basePolicy, strategy: 'priority' as const, autoRestorePrimaryWhenReset: true, softSwitchRemainingPercent: 0 },
+      members: [member('active', 300, 3), member('primary', 100, 1), member('recovered', 200, 2)],
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
+        ['primary', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 0, exhausted: true } }],
+        ['recovered', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 42 } }],
+        ['active', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 5 } }],
+      ]),
+    };
+    const result = selectConnectedServiceAuthGroupCandidate(input);
+    expect(result.selected?.profileId).toBe('recovered');
+    expect(result.decisionTrace.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ profileId: 'primary', decision: 'excluded', exclusionReason: 'quota_exhausted' }),
+      expect.objectContaining({ profileId: 'recovered', decision: 'selected' }),
+    ]));
+
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, lastSwitchReason: 'manual' }).selected?.profileId).toBe('active');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, lastSwitchAt: 950 }).selected?.profileId).toBe('active');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input,
+      policy: { ...input.policy, autoRestorePrimaryWhenReset: false },
+    }).selected?.profileId).toBe('active');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input,
+      members: input.members.map((candidate) => candidate.profileId === 'recovered' ? { ...candidate, priority: 400 } : candidate),
+    }).selected?.profileId).toBe('active');
+
+    for (const recoveredState of [
+      { quotaSnapshot: { capturedAtMs: 100, effectiveRemainingPercent: 42 } },
+      { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 0 } },
+      { credentialHealthStatus: 'needs_reauth', quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 42 } },
+    ] satisfies ConnectedServiceAuthGroupMemberRuntimeState[]) {
+      expect(selectConnectedServiceAuthGroupCandidate({ ...input,
+        memberStatesByProfileId: new Map([...input.memberStatesByProfileId, ['recovered', recoveredState]]),
+      }).selected?.profileId).toBe('active');
+    }
+
+    const legacyInput = { ...input, lastSwitchReason: undefined };
+    expect(selectConnectedServiceAuthGroupCandidate(legacyInput).selected?.profileId).toBe('active');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...legacyInput,
+      memberStatesByProfileId: new Map([...input.memberStatesByProfileId, ['recovered', {
+        ...input.memberStatesByProfileId.get('recovered'), lastFailureKind: 'usage_limit', providerResetsAtMs: 500,
+      }]]),
+    }).selected?.profileId).toBe('recovered');
+  });
+
   it('does not restore the primary when autoRestorePrimaryWhenReset is disabled (default)', () => {
     const states = new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
       ['primary', {
