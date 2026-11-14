@@ -327,14 +327,15 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         await act(async () => storage.getState().applySettingsLocal({ sessionListStatusWords: false }));
         expect(screen.findHostByTestId(wordId)).toBeNull();
     });
-    it('names the Session whose draft waits in the row\u2019s attention line, and keeps the generic line until it is known', async () => {
+    it('presents a waiting draft through row status while retaining the conversation subtitle', async () => {
         const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
         const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
         discussionApi.list.mockImplementation(() => succeededList([summary('draft-waits', { title: 'Release notes wording' })], null));
-        const { profile, screen } = await renderConversations({ homeList: true, column: true });
+        const { screen } = await renderConversations({ homeList: true, column: true });
         const rowSubtitle = () => JSON.stringify(screen.findHostByTestId('session-discussion-row-subtitle-draft-waits')?.props.children ?? null);
         await vi.waitFor(() => expect(screen.findByTestId('session-discussion-row-draft-waits')).not.toBeNull());
+        const conversation = rowSubtitle();
         const sessionId = 'release-bot-session';
         const actionArgs = { discussionId: 'draft-waits', localId: 'draft-local',
             content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'A private answer' }] },
@@ -352,11 +353,8 @@ describe('DiscussionsList and its Session anchor consumer', () => {
             header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), isDecrypted: true,
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } as never]));
         const generic = resolveWorkStatusTone({ kind: 'discussion', facts: { attentionReason: 'draft_waiting', attentionType: 'approval' } }).word!;
-        await vi.waitFor(() => expect(rowSubtitle()).toContain(generic));
-        await act(async () => storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: profile.id,
-            metadata: { path: '/repo', host: 'box', machineId: 'machine', flavor: 'codex', homeDir: '/home/a',
-                summary: { text: 'Release bot', updatedAt: 1 } } })]));
-        await vi.waitFor(() => expect(rowSubtitle()).toContain('Release bot'));
+        await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-row-draft-waits')?.props.accessibilityLabel).toContain(generic));
+        expect(rowSubtitle()).toBe(conversation);
         expect(rowSubtitle()).not.toContain(generic);
     });
     it('counts the held ordinary Discussion corpus on value demand without reading or inventing attention facts', async () => {
