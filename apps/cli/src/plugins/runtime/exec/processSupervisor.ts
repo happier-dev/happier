@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import type {
     ExecService,
@@ -21,6 +22,7 @@ import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type Spaw
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { observeProcessLaunch } from '@/processes/launchNotification';
+import { adoptSessionHolderChild, SessionHolderChild, spawnSessionHolderChild, type AgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
 import { logger } from '@/ui/logger';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
@@ -143,6 +145,15 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     secretRedactionLease?: ProviderRedactionLease;
     /** Generic daemon-scoped IO observes leftovers; it has no exclusive Run/Service identity. */
     rootExitObservation?: Readonly<{ owner: Extract<ProcessOwnerRef, { kind: 'happier' }>; ownerRemainder: OwnerRemainderPort }>;
+    /**
+     * Agent custody: the per-Session holder starts the command and owns its pipes
+     * and process group, so this process can end without ending the Agent.
+     * `adopt` attaches to an Agent a previous runner started (by holder address
+     * from the launch decision, or an already attached child).
+     */
+    sessionHolder?: AgentSessionHolderLaunch
+        | Readonly<{ kind: 'spawn'; executablePath: string; socketPath: string }>
+        | Readonly<{ kind: 'adopt'; child: SessionHolderChild }>;
 }>;
 
 function appendBounded(
@@ -199,7 +210,7 @@ function terminationIncompleteError(cause?: unknown): PluginError {
 export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcessInput): SupervisedPluginProcess {
     const terminateCustody = input.processTreeSystemBoundary
         ? createProcessTreeTerminator(input.processTreeSystemBoundary) : terminateProcessTree;
-    const ownerTag = (input.env ?? process.env)[PROCESS_OWNER_ENV_KEY];
+    const ownerTag = (input.env ?? sessionProcessEnvironment())[PROCESS_OWNER_ENV_KEY];
     const processOwner = parseProcessOwnerTag(ownerTag)?.owner;
     const sharedOwner = ownerTag === undefined || processOwner?.kind === 'session'
         || (processOwner?.kind === 'happier' && processOwner.component === undefined);
@@ -219,13 +230,23 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     );
     const recordRuntimeLimitMeasurement = input.recordRuntimeLimitMeasurement;
     const spawnStartedAt = performance.now();
-    const child = spawn(input.command, [...input.args], {
-        cwd: input.cwd,
-        env: input.env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        ...input.spawnOptions,
-        windowsHide: true,
-    });
+    const holder = input.sessionHolder;
+    const child: ChildProcessWithoutNullStreams = holder?.kind === 'adopt'
+        ? 'child' in holder ? holder.child : adoptSessionHolderChild({ socketPath: holder.socketPath, role: holder.role,
+            ...('turnId' in holder && holder.turnId ? { turnId: holder.turnId } : {}),
+            ...('target' in holder && holder.target ? { target: holder.target } : {}) })
+        : holder?.kind === 'spawn' ? spawnSessionHolderChild({ executablePath: holder.executablePath, socketPath: holder.socketPath,
+            ...('role' in holder ? { role: holder.role } : {}),
+            command: input.command, args: input.args, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.env ? { env: input.env } : {}),
+            ...(input.spawnOptions?.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+            ...('target' in holder && holder.target ? { target: holder.target } : {}) })
+        : spawn(input.command, [...input.args], {
+            cwd: input.cwd,
+            env: input.env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            ...input.spawnOptions,
+            windowsHide: true,
+        });
     observeProcessLaunch(child);
     child.once('spawn', () => logger.infoFile('[PluginExec] Process launched', {
         phase: 'launcher_spawn',
@@ -467,6 +488,11 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             };
             const terminate = input.terminateProcessTree
                 ?? (async (target: ChildProcessWithoutNullStreams) => {
+                    // A target-held Agent's pids belong to the target: Stop goes through its holder.
+                    if (target instanceof SessionHolderChild && target.target) {
+                        await target.terminateGroup(terminationOptions());
+                        return;
+                    }
                     if (input.processCustody) {
                         // Native custody establishes this generation-unique Job.
                         // One terminator rereads its membership and each native identity.
@@ -585,7 +611,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         }, Math.max(0, input.timeoutMs));
         timeout.unref?.();
     }
-    if (input.stdinPreamble !== undefined) {
+    // The launch preamble belongs to the Agent's start; an adopted Agent already consumed it.
+    if (input.stdinPreamble !== undefined && holder?.kind !== 'adopt') {
         child.stdin.write(input.stdinPreamble);
     }
     if (input.stdin !== undefined) {
@@ -650,6 +677,9 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         dispose: () => dispose('caller'),
     });
     associateSupervisedPluginProcessHandleForHost(handle, child);
+    // An adopted Agent's replay and any exit that happened while no runner was
+    // attached are delivered only now that every listener above is wired.
+    if (holder?.kind === 'adopt') (child as SessionHolderChild).resumeDelivery();
     return Object.freeze({
         child,
         handle,

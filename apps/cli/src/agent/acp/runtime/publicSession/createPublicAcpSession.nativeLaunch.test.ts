@@ -1,4 +1,4 @@
-import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { readHostedSessionScope, runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -7,8 +7,10 @@ import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import { expect, it, vi } from 'vitest';
 
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
-import { createStablePluginExecService, type HostProjectNativeLaunchAdmission } from '@/plugins/runtime/invocation/services/exec';
+import type { AgentAcpRuntimeOptions, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createStablePluginExecService, issueAgentNativeLaunchQualifierForHost, type HostProjectNativeLaunchAdmission } from '@/plugins/runtime/invocation/services/exec';
+import { handOverSessionHolderClients, SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
+import { waitForCondition } from '@/testkit/async/waitFor';
 import { resolveAcpTransportLaunch } from '@/agent/acp/runtime/launch/acpTransportLaunch';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -17,6 +19,12 @@ import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/prov
 import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 
 const runAsBoundary = vi.hoisted(() => ({ script: '' }));
+// The runner's report of its held primary Agent to the daemon (a control-API boundary).
+const heldAgentReports = vi.hoisted(() => [] as Array<Readonly<{ heldAgentsV1: ReadonlyArray<Readonly<{ socketPath: string; holderPid: number; agentPid: number }>> }>>);
+vi.mock('@/daemon/controlClient', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  notifyDaemonSessionHolder: async (body: (typeof heldAgentReports)[number]) => { heldAgentReports.push(body); },
+}));
 // The OS substitute receives the real launch frame and ACP stream, without
 // simulating sudo's UID switch or filesystem permission enforcement.
 // The Agent starts inside the real Session holder; only the holder's final
@@ -281,3 +289,96 @@ it('opens a remote ACP transport without preparing a local native launch', async
     finally { await runtime.dispose(); }
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+// `streaming`: the Agent is still answering when the next runner adopts it; `finished`: it
+// answered the whole prompt while no runner was attached.
+it.each([
+  { shape: 'streaming', total: 60, intervalMs: 30 },
+  { shape: 'finished', total: 20, intervalMs: 15 },
+] as const)('publishes the held Agent output an adopting runner receives after a runner loss, once each ($shape)', async ({ shape, total, intervalMs }) => {
+  await withTempDir('happier-acp-adopt-replay-', async dir => {
+    const chunkLog = join(dir, 'chunks.log');
+    // A create-only ACP Agent: one prompt streams `total` chunks, logging each as it is written.
+    const script = writeAcpTestAgentScript({ dir, fileName: 'agent.mjs', source: `
+      import { appendFileSync } from 'node:fs';
+      import { createInterface } from 'node:readline';
+      const send = message => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\\n');
+      for await (const line of createInterface({ input: process.stdin })) {
+        const r = JSON.parse(line);
+        if (r.id === undefined) continue;
+        if (r.method === 'initialize') send({ id: r.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        else if (r.method === 'session/new') send({ id: r.id, result: { sessionId: 'held-session' } });
+        else if (r.method === 'session/prompt') {
+          let n = 0;
+          const timer = setInterval(() => {
+            n += 1;
+            send({ method: 'session/update', params: { sessionId: 'held-session',
+              update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'c' + n + '|' } } } });
+            appendFileSync(${JSON.stringify(chunkLog)}, n + '\\n');
+            if (n === ${total}) { clearInterval(timer); send({ id: r.id, result: { stopReason: 'end_turn' } }); }
+          }, ${intervalMs});
+        } else send({ id: r.id, result: {} });
+      }
+    ` });
+    const readProduced = () => existsSync(chunkLog) ? readFileSync(chunkLog, 'utf8').trim().split('\n').length : 0;
+    const chunksOf = (events: readonly AgentSessionRuntimeEvent[]) => events
+      .flatMap(event => event.kind === 'message-delta' ? [...event.text.matchAll(/c(\d+)\|/g)].map(match => Number(match[1])) : []);
+    const openRunner = async (environment: NodeJS.ProcessEnv, request: Parameters<typeof createPublicAcpSession>[0]) => {
+      const signal = new AbortController().signal;
+      const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+        prepareAgentNativeLaunch: async () => undefined,
+        resolveExecutable: async () => { throw new Error('Resolved launch only'); }, resolvePath: async () => dir });
+      const events: AgentSessionRuntimeEvent[] = [];
+      const runtime = await runAddedHostedSession({ environment, workingDirectory: dir, end() {} }, async () => {
+        readHostedSessionScope()!.sessionId = 'session';
+        return await createPublicAcpSession(request, { transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } } }, {
+          pluginId: 'fixture', agentId: 'fixture', signal, isCurrent: () => true, exec,
+          nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec, undefined, undefined, undefined, 'primary'),
+          resolveHostLaunch: () => ({ command: process.execPath, args: [script], env: {}, unsetEnv: [], timeouts: {}, release() {} }),
+          systemTools: { resolve: async () => { throw new Error('Resolved launch only'); } },
+          interactions: { async request() { throw new Error('Unexpected interaction'); } },
+          media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+          models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+        });
+      });
+      runtime.watch(event => { events.push(event as AgentSessionRuntimeEvent); });
+      return { runtime, events };
+    };
+    heldAgentReports.length = 0;
+    const started: number[] = [];
+    try {
+      // Runner 1 starts the turn, publishes a few chunks, then loses its holder connection.
+      const first = await openRunner({ ...process.env }, { kind: 'create', sessionId: 'session', cwd: dir });
+      await waitForCondition(() => heldAgentReports.length > 0, { timeoutMs: 10_000, intervalMs: 10, label: 'held Agent report' });
+      const held = heldAgentReports.at(-1)?.heldAgentsV1[0];
+      if (!held) throw new Error('The primary Agent was not reported as held');
+      started.push(held.holderPid, held.agentPid);
+      expect(await first.runtime.send({ inputIds: ['input'], input: { text: 'stream' },
+        delivery: { kind: 'newTurn', turnId: 'turn-1' } })).toEqual({ status: 'admitted' });
+      await waitForCondition(() => chunksOf(first.events).length >= 5, { timeoutMs: 10_000, intervalMs: 10, label: 'runner 1 output' });
+      await handOverSessionHolderClients();
+      const producedAtLoss = readProduced();
+      // The Agent keeps answering while no runner is attached.
+      await waitForCondition(() => readProduced() >= (shape === 'finished' ? total : producedAtLoss + 8),
+        { timeoutMs: 10_000, intervalMs: 10, label: 'held output' });
+      if (shape === 'streaming') expect(readProduced()).toBeLessThan(total);
+
+      // Runner 2 adopts the held Agent through the daemon's hand-off token.
+      const second = await openRunner({ ...process.env, [SESSION_HOLDER_ADOPT_ENV_KEY]: JSON.stringify({ ...held, turnId: 'turn-1' }) },
+        { kind: 'resume', sessionId: 'session', providerSessionId: 'held-session', cwd: dir });
+      try {
+        await waitForCondition(() => second.events.some(event => event.kind === 'turn-complete'), { timeoutMs: 15_000, intervalMs: 10,
+          label: 'adopted turn complete', debug: () => JSON.stringify({ kinds: second.events.map(event => event.kind), produced: readProduced() }) });
+        // Runner 1 publishes what it received before the hand-over (acknowledged, so never replayed).
+        const all = [...chunksOf(first.events), ...chunksOf(second.events)];
+        // Every chunk the Agent produced is published exactly once across the two runners.
+        expect({ missing: Array.from({ length: total }, (_, index) => index + 1).filter(n => !all.includes(n)).length,
+          repeated: all.length - new Set(all).size, published: all.length })
+          .toEqual({ missing: 0, repeated: 0, published: total });
+        expect(readProduced()).toBe(total);
+      } finally { await second.runtime.dispose(); }
+    } finally {
+      for (const pid of started) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    }
+  });
+}, 60_000);

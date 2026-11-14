@@ -3,6 +3,8 @@ import { createWriteStream, type WriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { SessionHolderAdoption } from '@/subprocess/supervision/sessionHolderAdoption';
+
 export class AcpNdJsonProtocolError extends Error {
   readonly code = 'acp_ndjson_protocol_error' as const;
 
@@ -17,8 +19,16 @@ export function createAcpNdJsonStream(
   input: ReadableStream<Uint8Array>,
   options?: Readonly<{
     onMessageWritten?: (message: AnyMessage) => void;
+    /**
+     * A held Agent's adopt contract, applied below the ACP SDK (which owns its
+     * own request ids): handshake answers, id shifting and held requests.
+     */
+    sessionHolderAdoption?: (
+      deliver: (message: Record<string, unknown>) => void,
+      settleInOrder: (settle: () => void) => void,
+    ) => SessionHolderAdoption | null;
   }>,
-): Stream {
+): Stream & Readonly<{ sessionHolderAdoption: SessionHolderAdoption | null }> {
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
   const messageCapture: WriteStream | null =
@@ -26,18 +36,32 @@ export function createAcpNdJsonStream(
       ? createWriteStream(join(tmpdir(), 'acp.client.messages.raw'), { flags: 'a' })
       : null;
 
-  const readable = new ReadableStream<AnyMessage>({
+  let adoption: SessionHolderAdoption | null = null;
+  // A held request's answer settles when the SDK reads past every frame before it, the
+  // order in which the SDK dispatches a live answer and its preceding notifications.
+  type InOrderSettlement = Readonly<{ settleInOrder: () => void }>;
+  const isSettlement = (item: unknown): item is InOrderSettlement =>
+    typeof item === 'object' && item !== null && typeof (item as InOrderSettlement).settleInOrder === 'function';
+  const source = new ReadableStream<AnyMessage | InOrderSettlement>({
     async start(controller) {
       let content = '';
       const reader = input.getReader();
+      adoption = options?.sessionHolderAdoption?.(message => {
+        try { controller.enqueue(message as AnyMessage); } catch { /* the stream already ended */ }
+      }, settle => {
+        try { controller.enqueue({ settleInOrder: settle }); } catch { settle(); }
+      }) ?? null;
       const enqueueLine = (line: string): void => {
         const trimmed = line.trim();
         if (!trimmed) return;
+        let message: AnyMessage;
         try {
-          controller.enqueue(JSON.parse(trimmed) as AnyMessage);
+          message = JSON.parse(trimmed) as AnyMessage;
         } catch (cause) {
           throw new AcpNdJsonProtocolError({ cause });
         }
+        const routed = adoption ? adoption.incoming(message as Record<string, unknown>) : message;
+        if (routed) controller.enqueue(routed as AnyMessage);
       };
       let terminalError: unknown = null;
       try {
@@ -73,6 +97,16 @@ export function createAcpNdJsonStream(
     },
   });
 
+  // Only a holder-launched stream can carry settlements; every other stream is read as is.
+  const readable = options?.sessionHolderAdoption
+    ? source.pipeThrough(new TransformStream<AnyMessage | InOrderSettlement, AnyMessage>({
+      transform(item, controller) {
+        if (isSettlement(item)) item.settleInOrder();
+        else controller.enqueue(item);
+      },
+    }))
+    : source as ReadableStream<AnyMessage>;
+
   let outputWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   const getOutputWriter = (): WritableStreamDefaultWriter<Uint8Array> => {
     if (outputWriter) return outputWriter;
@@ -86,11 +120,16 @@ export function createAcpNdJsonStream(
   };
 
   const writer = {
-    async write(message: AnyMessage) {
+    async write(original: AnyMessage) {
+      const message = adoption ? await adoption.outgoing(original as Record<string, unknown>) as AnyMessage | null : original;
+      if (!message) {
+        options?.onMessageWritten?.(original);
+        return;
+      }
       const content = JSON.stringify(message) + '\n';
       messageCapture?.write(content);
       await getOutputWriter().write(textEncoder.encode(content));
-      options?.onMessageWritten?.(message);
+      options?.onMessageWritten?.(original);
     },
     async close() {
       const writer = getOutputWriter();
@@ -142,5 +181,5 @@ export function createAcpNdJsonStream(
     },
   } as unknown as WritableStream<AnyMessage>;
 
-  return { readable, writable };
+  return { readable, writable, get sessionHolderAdoption() { return adoption; } };
 }
