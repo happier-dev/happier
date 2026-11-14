@@ -23,6 +23,7 @@
     "./happier-plugin-ui/cli-install": "./src/ui/cliInstall.ts"
   },
   "files": [
+    "src",
     "dist",
     ".happier-plugin",
     ".happier-plugin-build",
