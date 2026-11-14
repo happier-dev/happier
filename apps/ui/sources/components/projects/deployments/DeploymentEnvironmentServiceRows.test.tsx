@@ -395,12 +395,13 @@ describe('Environment service row ⋯ (P1 §3)', () => {
       environmentId={detail.environment.id} demand={{ mounted: true, visible: true, focused: true }} accountId={accountId}
       serverId={serverId} phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }}
       onOpenReceipt={() => {}} />);
-    const line = `project-deployments.environment.services.${service}.connections`;
+    // The row names its declared Domain (Reached at, or the line under its name on a phone) and its volume mount.
+    const row = () => screen.findAll(node => node.props.testID === `project-deployments.environment.services.${service}`)[0];
+    const rowText = () => JSON.stringify(row()?.findAll(node => typeof node.props.children === 'string').map(node => node.props.children) ?? []);
     try {
-      await waitForHomeGovernance(() => expect(screen.findByTestId(line)?.props.children).toContain('app.example.test'));
-      const text = String(screen.findByTestId(line)!.props.children);
-      expect(text).toContain('/data');
-      expect(text).not.toContain('loose.example.test');
+      await waitForHomeGovernance(() => expect(rowText()).toContain('app.example.test'));
+      expect(String(screen.findByTestId(`project-deployments.environment.services.${service}.connections`)!.props.children)).toContain('/data');
+      expect(rowText()).not.toContain('loose.example.test');
     } finally { await act(async () => { controller.retire(); }); }
   });
 

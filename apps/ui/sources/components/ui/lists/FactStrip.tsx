@@ -47,6 +47,8 @@ export const FactStrip = React.memo(function FactStrip(
           props.narrow ? (fact.wide ? styles.narrowWide : styles.narrowCell) : fact.wide ? styles.cellWide : styles.cell,
           props.divided ? styles.cellDivided : null,
           props.divided && (props.narrow ? index % 2 === 0 || fact.wide : index === 0) ? styles.cellLeading : null,
+          // Two to a row on a phone: each later row is ruled from the one above.
+          props.divided && props.narrow && index >= 2 ? styles.cellNextRow : null,
         ] : null]}>
           <Text variant="meta" style={styles.label} numberOfLines={1}>
             {fact.label}
@@ -96,6 +98,7 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.colors.border.subtle,
   },
   cellLeading: { borderLeftWidth: 0 },
+  cellNextRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.subtle },
   detail: { color: theme.colors.text.secondary },
   label: { color: theme.colors.text.tertiary },
   value: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'] },

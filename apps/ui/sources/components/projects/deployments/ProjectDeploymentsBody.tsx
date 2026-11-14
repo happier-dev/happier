@@ -51,6 +51,7 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
@@ -203,6 +204,7 @@ const ProjectDeploymentsPage = React.memo(
     const router = useRouter();
     const { fontScale } = useWindowDimensions();
     const phone = useDeviceType() === 'phone';
+    const shellColumnVisible = useAppShellColumn().columnVisible;
     const pageStateSize = usePageSurfaceStateSize();
     const railWidth = useCollectionRailWidth('project-deployments');
     // The open Environment, its receipt, tab and Settings section live in the URL, so a link opens them.
@@ -547,6 +549,23 @@ const ProjectDeploymentsPage = React.memo(
         />
       ));
     const scale = Math.max(1, fontScale);
+    // The Machines index's rule (AllMachinesIndex `besideList`): on the Services door the shell column already lists
+    // these Environments while it shows, so the page stands alone beside it (lab `envOv`); collapsed, on a phone or
+    // inside a Project, this list is the only one and stays.
+    if (props.workspaceRef == null && shellColumnVisible && items.length > 0) {
+      return (
+        <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
+          <LandOnFirstEnvironment
+            key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
+            split
+            selected={environmentId !== null || selection.drafting === true || selection.defaults === true}
+            firstId={items[0]?.environment.id ?? null}
+            onLand={(id) => setSelection({ environmentId: id, deploymentId: null })}
+          />
+          {detail}
+        </View>
+      );
+    }
     return (
       <View
         testID="project-deployments"

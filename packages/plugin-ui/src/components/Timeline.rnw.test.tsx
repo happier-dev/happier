@@ -53,4 +53,39 @@ describe('Timeline', () => {
       await page.dispose();
     }
   });
+  it('draws a bounded stream in place, with its heading on the sentences and each time in the end column', async () => {
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'timeline-inline', mountNonce: 'timeline-inline' },
+      authorPlugin: { id: 'example.timeline', version: '0.0.0' },
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      surface: defineUiSurface(() => (
+        <Timeline
+          inline
+          timeAlign="end"
+          accessibilityLabel="Today"
+          header={<Text variant="meta">Today</Text>}
+          items={['deployed', 'backed up', 'rolled back']}
+          keyForItem={(item) => item}
+          renderItem={(item) => ({
+            glyph: <Icon name="check" />,
+            heading: <Text variant="label">{item}</Text>,
+            time: <Text variant="meta">{`at ${item}`}</Text>,
+          })}
+        />
+      )),
+    });
+    try {
+      await expect(page.getByText('deployed')).resolves.toBeDefined();
+      const list = document.querySelector('[role="list"][aria-label="Today"]');
+      const rows = list!.querySelectorAll('[role="listitem"]');
+      // Every event of a bounded stream is present at once, in the author's order.
+      expect([...rows].map(row => row.textContent)).toEqual(['deployedat deployed', 'backed upat backed up', 'rolled backat rolled back']);
+      // The day heading leads the stream, outside its rows.
+      expect(document.body.textContent!.indexOf('Today')).toBeLessThan(document.body.textContent!.indexOf('deployed'));
+      expect(list!.textContent).not.toContain('Today');
+    } finally {
+      await page.dispose();
+    }
+  });
 });

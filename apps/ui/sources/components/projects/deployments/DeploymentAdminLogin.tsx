@@ -5,6 +5,7 @@ import type { DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -27,7 +28,10 @@ export function DeploymentAdminLogin(props: Readonly<{
     && row.phase === 'runtime' && row.name === fields.password && row.source.kind === 'secret') : undefined;
   const passwordRef = password?.source.kind === 'secret' ? password.source.ref : null;
   const usernameRef = username?.source.kind === 'secret' ? username.source.ref : null;
-  return <>
+  // Its own sheet under What runs, drawn only when the app has a login, a first-run step or catalog images to say.
+  if (username?.source.kind !== 'value' && !usernameRef && !passwordRef && !props.template?.firstRunSetup
+    && !(props.template && props.images.length > 0)) return null;
+  return <ItemGroup header="none">
     {username?.source.kind === 'value' ? <Item testID="project-deployments.environment.services.login.username"
       title={t('projects.deployments.databaseUsername')} subtitle={username.source.value} mode="info" showChevron={false} /> : null}
     {usernameRef ? <DeploymentAdminLoginSecret refId={usernameRef} scope={props.scope} active={props.active}
@@ -49,7 +53,7 @@ export function DeploymentAdminLogin(props: Readonly<{
     {props.template && props.images.length > 0 ? <Item
       testID="project-deployments.environment.services.image.notice"
       title={t('projects.deployments.overviewStatus.catalogImageBody')} titleLines={0} mode="info" showChevron={false} /> : null}
-  </>;
+  </ItemGroup>;
 }
 
 function DeploymentAdminLoginSecret(props: Readonly<{

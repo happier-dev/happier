@@ -94,4 +94,30 @@ describe('Environment detail in a split pane', () => {
             expect(screen.findByTestId('project-deployments.environment') !== null).toBe(visible);
         } finally { await screen.unmount(); controller.retire(); }
     });
+    it.each([[true, false], [false, true]] as const)('drops its own Environments list where the Services column stands beside it (column %s), keeping the Environment page', async (columnVisible, listShown) => {
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const transport: DeploymentReadTransportV1 = {
+            listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Staging' }], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: receipt }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [receipt.deployment], nextCursor: null } }),
+        };
+        const controller = createDeploymentReadControllerV1({ scope: { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' }, transport });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible }}>
+                <DestinationInstanceContext.Provider value={{ tabId: 'pane-a', ref: { kind: 'route', params: { deploymentEnvironment: detail.environment.id } } as never,
+                    pathname: '/deployments/source-app', focused: true, visible: true, isFocused: () => true, navigation }}>
+                    <Page controller={controller} />
+                </DestinationInstanceContext.Provider>
+            </AppShellColumnContext.Provider>
+        </AccountNoticeInvestigationBoundary>);
+        try {
+            await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+            expect(screen.findByTestId('project-deployments.environment')).not.toBeNull();
+            expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}`) !== null).toBe(listShown);
+        } finally { await screen.unmount(); controller.retire(); }
+    });
 });

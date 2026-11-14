@@ -102,7 +102,11 @@ import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredD
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
+import { DeploymentServingReceipt } from './DeploymentServingReceipt';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
+import { DeploymentActivityTimeline } from './DeploymentActivityTimeline';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
@@ -141,6 +145,14 @@ import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
+import { useOpenProject } from '@/components/projects/useOpenProject';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
+import { selectSourceCheckoutWorkspaceRefs } from '@/sync/domains/workspaces/workspaceRefs';
+import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { machineServiceIcon, machineServiceRunFacts, machineServiceStateTone } from '@/components/machines/services/machineServicesPresentation';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
@@ -244,6 +256,12 @@ export const DeploymentEnvironmentDetail = React.memo(
     const detail = environment.snapshot.value;
     const definitionDocument = useStoredDefinitionDocument(props.environmentId, detail?.content.definition);
     const projectSource = useProjectSource(props.lifetime ?? null, detail?.environment.projectSourceId ?? null);
+    // Outside its Project (the Services door) the header names the Project this Environment deploys and opens it
+    // (lab `envOv`): the person's checkout of that Source on this Home, through the shared Project opener.
+    const projectSourceId = detail?.environment.projectSourceId ?? null;
+    const projectRefId = getStorage()((state) => props.workspaceRef || !projectSourceId ? null
+      : selectSourceCheckoutWorkspaceRefs(readProjectWorkspaceRefs(state), projectSourceId, props.serverId)[0]?.id ?? null);
+    const openProject = useOpenProject();
     // "Point at another service" offers this Environment's declared exports (L-C variables/refpick).
     const serviceExports = detail?.content.ownServer?.serviceExports;
     const detailEnvironmentId = detail?.environment.id ?? null;
@@ -474,12 +492,16 @@ export const DeploymentEnvironmentDetail = React.memo(
     const platformName = platform?.title ?? null;
     // Where it runs, what defines it, then where people reach it (lab d1 header): vps-2 · Compose · compose.yaml · address.
     const composeHosted = runtime ? runtime.source.kind === 'host' : definition !== null;
+    const projectName = projectSource.source?.source.name ?? null;
     const meta: PageHeaderMetaFact[] = [
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
       ...machineIds.flatMap((machineId) => {
         const name = knownMachine(machineId);
         return name ? [{ key: `machine:${machineId}`, text: name, icon: 'hard-drives' as const }] : [];
       }),
+      ...(projectRefId && projectName ? [{ key: 'project', text: projectName, testID: 'project-deployments.environment.project',
+        accessibilityLabel: t('projects.deployments.overviewStatus.openProject', { project: projectName }),
+        onPress: () => { void openProject(projectRefId, { serverId: props.serverId }); } }] : []),
       ...(composeHosted ? [{ key: 'compose', text: t('projects.deployments.compose') }] : []),
       ...(composeHosted && definition ? [{ key: 'definition', text: definition, mono: true }] : []),
       // Overview's live row says the address once it serves; elsewhere the header still names where it is reached.
@@ -710,16 +732,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const machineLabel = machineName(machineIds[0] ?? '');
     const receipts = history.result.items;
     const recentReceipts = receipts.filter((receipt) => receipt.id !== activeId).slice(0, RECENT_COUNT);
-    const receiptRow = (receipt: DeploymentReceiptHeaderV1) => (
-      <DeploymentReceiptRow
-        key={receipt.id}
-        receipt={receipt}
-        live={receipt.id === activeId}
-        byYou={receipt.requestedByAccountId === props.accountId}
-        phone={props.phone}
-        onOpen={openReceipt}
-      />
-    );
+    const openServingReceipt = () => { if (activeReceipt) props.onOpenReceipt(activeReceipt.deployment.id); };
     const servingNotice = activeReceipt ? deploymentStateNotice(activeReceipt.deployment.state) : null;
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
     const overview = tab === 'overview';
@@ -935,116 +948,70 @@ export const DeploymentEnvironmentDetail = React.memo(
                   testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
                   onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
               </ItemGroup> : null}
-              {/* The hero (lab d1 `dk-now`): what serves now, how it got there, then the four facts that say how it is.
-                  Flat, so its glyph, name and facts start on the section headings' edge rather than a card's inner one. */}
-              <ItemGroupDefaultSurfaceProvider value="flat">
-              <ItemGroup
-                testID="project-deployments.environment.serving"
-                // "Serving now" heads only something that serves; an undeployed environment says so on its own.
-                {...(activeId ? { title: t('projects.deployments.servingNow') } : { header: 'none' as const })}
-              >
-                {activeReceipt ? (
-                  <>
-                    {liveUrl ? (
-                      <Item
-                        testID="project-deployments.environment.live"
-                        title={t('projects.deployments.liveAt', { address: formatDeploymentLiveAddress(liveUrl) })}
+              {/* Serving now (lab `envOv` hero, owner 22:35Z): the address, the serving version's labelled cells and the
+                  last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}
+              {activeReceipt ? (
+                <>
+                  <ItemGroup testID="project-deployments.environment.serving" header="none">
+                    <DeploymentServingReceipt receipt={activeReceipt}
+                      still={attention?.kind === 'latestFailed'}
+                      address={liveUrl ? {
+                        text: formatDeploymentLiveAddress(liveUrl),
                         // The Domain's own line, as the Domains tab says it, at the address it is about.
-                        subtitle={liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : undefined}
-                        showChevron={false}
-                        // A phone keeps only a short control beside a label; the address's actions sit beneath it,
-                        // on the title's edge rather than the row's (DEPLOY-ACCEPT-143 A5).
-                        {...(props.phone ? { bottomElement: liveActions(liveUrl), bottomElementInset: 'text' as const }
-                          : { rightElement: liveActions(liveUrl) })}
-                      />
-                    ) : null}
-                    <Item
-                      testID="project-deployments.environment.serving.receipt"
-                      contentAlign="start"
-                      leftElement={
-                        <WorkStatusGlyph
-                          status={deploymentWorkStatus(
-                            activeReceipt.deployment.state,
-                          )}
-                          testIDSuffix={`deployment-${activeReceipt.deployment.id}`}
-                        />
-                      }
-                      // The commit's subject names the version when it has one, and its short id leads the facts;
-                      // without a subject the short id is the title and is not repeated beneath it.
-                      title={
-                        activeReceipt.content.commitSubject ??
-                        deploymentSourceLabel(activeReceipt.content)
-                      }
-                      subtitle={
-                        <ReceiptFactsLine
-                          sha={
-                            activeReceipt.content.commitSubject
-                              ? deploymentSourceLabel(activeReceipt.content)
-                              : null
-                          }
-                          facts={servingFacts(
-                            activeReceipt.deployment,
-                            activeReceipt.deployment.requestedByAccountId ===
-                              props.accountId,
-                          )}
-                        />
-                      }
-                      // The steps belong to the version they deployed: one hero block, no divider between them.
-                      bottomElement={activeReceipt.content.steps.length > 0 ? (
-                        <View style={styles.strip}>
-                          <DeploymentStepStrip
-                            variant={props.phone ? 'compact' : 'full'}
-                            captioned
-                            steps={activeReceipt.content.steps}
-                            testID="project-deployments.environment.serving.steps"
-                          />
-                        </View>
-                      ) : undefined}
-                      showChevron={false}
-                      onPress={() =>
-                        props.onOpenReceipt(activeReceipt.deployment.id)
-                      }
+                        attention: liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : null,
+                        actions: liveActions(liveUrl),
+                      } : null}
+                      byYou={activeReceipt.deployment.requestedByAccountId === props.accountId}
+                      phone={props.phone}
+                      onOpenReceipt={openServingReceipt} />
+                  </ItemGroup>
+                  <ItemGroup header="none" style={styles.factsGroup}>
+                    <FactStrip
+                      testID="project-deployments.environment.facts"
+                      layout="columns" divided narrow={props.phone}
+                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state,
+                        attention?.kind === 'runningUnverified' && servingNotice !== null)}
                     />
-                    <View style={styles.facts}>
-                      <FactStrip
-                        testID="project-deployments.environment.facts"
-                        facts={overviewFacts(detail, services.length, props.phone, activeReceipt?.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state,
-                          attention?.kind === 'runningUnverified' && servingNotice !== null)}
-                      />
-                    </View>
-                  </>
-                ) : activeId && active.snapshot.status === 'unavailable' ? (
-                  <SurfaceStateCard
-                    testID="project-deployments.environment.serving.error"
-                    size="line"
-                    kind="error"
-                    title={t('projects.deployments.servingErrorTitle')}
-                    diagnosticCode={active.snapshot.failure?.code ?? null}
-                    action={{
-                      label: t('common.retry'),
-                      testID:
-                        'project-deployments.environment.serving.error.retry',
-                      onPress: () => active.refresh(),
-                    }}
-                  />
-                ) : activeId ? (
-                  // The serving version's own shape (glyph, commit, facts) while its receipt reads (R5).
-                  <SkeletonRows testID="project-deployments.environment.serving.loading" rows={1}
-                    accessibilityLabel={t('common.loading')} />
-                ) : (
-                  <Item
-                    testID="project-deployments.environment.serving.none"
-                    title={t('projects.deployments.nothingDeployedTitle')}
-                    // The linked target decides what deploys it; only an unlinked Environment falls back to its definition.
-                    subtitle={(runtime ? runtime.source.kind === 'plugin' : !definition)
-                      ? t('projects.deployments.platformLink.nothingDeployedBody')
-                      : knownMachine(machineIds[0])
-                        ? t('projects.deployments.nothingDeployedBody', { machine: knownMachine(machineIds[0])! })
-                        : t('projects.deployments.nothingDeployedBodyAny')}
-                    mode="info"
-                  />
-                )}
-                {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
+                  </ItemGroup>
+                </>
+              ) : (
+                <ItemGroupDefaultSurfaceProvider value="flat">
+                <ItemGroup testID="project-deployments.environment.serving" header="none">
+                  {activeId && active.snapshot.status === 'unavailable' ? (
+                    <SurfaceStateCard
+                      testID="project-deployments.environment.serving.error"
+                      size="line"
+                      kind="error"
+                      title={t('projects.deployments.servingErrorTitle')}
+                      diagnosticCode={active.snapshot.failure?.code ?? null}
+                      action={{
+                        label: t('common.retry'),
+                        testID: 'project-deployments.environment.serving.error.retry',
+                        onPress: () => active.refresh(),
+                      }}
+                    />
+                  ) : activeId ? (
+                    // The serving version's own shape while its receipt reads (R5).
+                    <SkeletonRows testID="project-deployments.environment.serving.loading" rows={2}
+                      accessibilityLabel={t('common.loading')} />
+                  ) : (
+                    <Item
+                      testID="project-deployments.environment.serving.none"
+                      title={t('projects.deployments.nothingDeployedTitle')}
+                      // The linked target decides what deploys it; only an unlinked Environment falls back to its definition.
+                      subtitle={(runtime ? runtime.source.kind === 'plugin' : !definition)
+                        ? t('projects.deployments.platformLink.nothingDeployedBody')
+                        : knownMachine(machineIds[0])
+                          ? t('projects.deployments.nothingDeployedBody', { machine: knownMachine(machineIds[0])! })
+                          : t('projects.deployments.nothingDeployedBodyAny')}
+                      mode="info"
+                    />
+                  )}
+                </ItemGroup>
+                </ItemGroupDefaultSurfaceProvider>
+              )}
+              {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
+              <ItemGroup surface="none" header="none">
                 <View style={styles.agentActions}>
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
                     controllerMachineId={detail.environment.controllerMachineId}
@@ -1053,7 +1020,61 @@ export const DeploymentEnvironmentDetail = React.memo(
                     compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} />
                 </View>
               </ItemGroup>
-              </ItemGroupDefaultSurfaceProvider>
+              {services.length > 0 ? (
+                <ItemGroup
+                  testID="project-deployments.environment.services"
+                  title={t('projects.deployments.overviewStatus.whatRunsTitle')}
+                  titleAccessory={<ManagedSectionCount count={services.length} />}
+                  description={knownMachine(machineIds[0])
+                    ? t('projects.deployments.overviewStatus.servicesRun', { machine: knownMachine(machineIds[0])! })
+                    : t('projects.deployments.overviewStatus.servicesRunAny')}
+                  surface="none"
+                  action={machineIds.length === 1 ? (
+                    <SectionActionButton
+                      testID="project-deployments.environment.services.open"
+                      // The description already names the Machine; the action says where it goes.
+                      title={t('projects.deployments.openMachineServices')}
+                      destination
+                      onPress={() => router.push(machinePageHref({
+                        door: 'rail', target: { machineId: machineIds[0]!, serverId: props.serverId }, tab: { id: 'services' },
+                      }) as never)}
+                    />
+                  ) : undefined}
+                >
+                  <EnvironmentServiceRows
+                    services={services}
+                    serverId={props.serverId}
+                    environmentId={props.environmentId}
+                    // Row operations act on one Machine's live rows; several servers keep the rows as facts.
+                    machineId={machineIds.length === 1 && runtime?.source.kind === 'host' ? machineIds[0]! : null}
+                    machineName={machineLabel}
+                    place={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                    targetLinkId={runtime?.id ?? null}
+                    restart={machineOnline === false ? null : props.restart ?? null}
+                    review={review}
+                    active={props.demand.mounted && props.demand.visible}
+                    onOpenLogs={logsOffered ? openLogs : null}
+                    connections={connections}
+                  />
+                </ItemGroup>
+              ) : null}
+              {services.length > 0 && props.lifetime ? (
+                  <DeploymentAdminLogin
+                    template={detail.content.template ?? null}
+                    bindings={detail.content.bindings}
+                    scope={props.lifetime.scope}
+                    images={activeReceipt?.content.images ?? []}
+                    active={props.demand.mounted && props.demand.visible}
+                    servingUrl={adminServingUrl}
+                    onOpenDomains={() => openTab('domains')}
+                    onOpenServing={openAdminAddress}
+                  />
+              ) : null}
+              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
+                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
+                onOpen={props.onOpenDatabase}
+                onBackups={() => openTab('settings', 'backups')}
+                onAdd={() => { openAddDatabase?.(); }} />
               {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
                 revision={detail.content.definition.contentRevision}
                 editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
@@ -1091,60 +1112,27 @@ export const DeploymentEnvironmentDetail = React.memo(
                   onManage={openFleet ?? (() => openTab('settings', 'servers-build'))}
                 />
               ) : null}
-              {services.length > 0 ? (
+              {/* Recent activity (lab `envOv`): the receipts before the serving one, as the shared Timeline. */}
+              {recentReceipts.length > 0 ? (
                 <ItemGroup
-                  testID="project-deployments.environment.services"
-                  title={t('projects.deployments.servicesTitle')}
-                  titleAccessory={<ManagedSectionCount count={services.length} />}
-                  description={knownMachine(machineIds[0])
-                    ? t('projects.deployments.overviewStatus.servicesRun', { machine: knownMachine(machineIds[0])! })
-                    : t('projects.deployments.overviewStatus.servicesRunAny')}
-                  action={machineIds.length === 1 ? (
+                  testID="project-deployments.environment.recent"
+                  title={t('projects.deployments.overviewStatus.activityTitle')}
+                  description={t('projects.deployments.overviewStatus.activityDescription')}
+                  action={
                     <SectionActionButton
-                      testID="project-deployments.environment.services.open"
-                      // The description already names the Machine; the action says where it goes.
-                      title={t('projects.deployments.openMachineServices')}
+                      testID="project-deployments.environment.recent.history"
+                      title={t('projects.deployments.history')}
                       destination
-                      onPress={() => router.push(machinePageHref({
-                        door: 'rail', target: { machineId: machineIds[0]!, serverId: props.serverId }, tab: { id: 'services' },
-                      }) as never)}
+                      onPress={() => openTab('history')}
                     />
-                  ) : undefined}
+                  }
                 >
-                  <EnvironmentServiceRows
-                    services={services}
-                    serverId={props.serverId}
-                    environmentId={props.environmentId}
-                    // Row operations act on one Machine's live rows; several servers keep the rows as facts.
-                    machineId={machineIds.length === 1 && runtime?.source.kind === 'host' ? machineIds[0]! : null}
-                    machineName={machineLabel}
-                    place={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
-                    targetLinkId={runtime?.id ?? null}
-                    restart={machineOnline === false ? null : props.restart ?? null}
-                    review={review}
-                    active={props.demand.mounted && props.demand.visible}
-                    onOpenLogs={logsOffered ? openLogs : null}
-                    connections={connections}
-                  />
-                  {props.lifetime ? (
-                    <DeploymentAdminLogin
-                      template={detail.content.template ?? null}
-                      bindings={detail.content.bindings}
-                      scope={props.lifetime.scope}
-                      images={activeReceipt?.content.images ?? []}
-                      active={props.demand.mounted && props.demand.visible}
-                      servingUrl={adminServingUrl}
-                      onOpenDomains={() => openTab('domains')}
-                      onOpenServing={openAdminAddress}
-                    />
-                  ) : null}
+                  <SectionContentRow>
+                    <DeploymentActivityTimeline receipts={recentReceipts} accountId={props.accountId}
+                      lifetime={props.lifetime ?? null} onOpen={openReceipt} />
+                  </SectionContentRow>
                 </ItemGroup>
               ) : null}
-              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
-                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
-                onOpen={props.onOpenDatabase}
-                onBackups={() => openTab('settings', 'backups')}
-                onAdd={() => { openAddDatabase?.(); }} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
@@ -1173,22 +1161,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                       ? t('projects.deployments.settingsSections.previewsOn')
                       : t('projects.deployments.settingsSections.previewsOff')}
                     onPress={() => openTab('settings', 'previews')} />
-                </ItemGroup>
-              ) : null}
-              {recentReceipts.length > 0 ? (
-                <ItemGroup
-                  testID="project-deployments.environment.recent"
-                  title={t('projects.deployments.recent')}
-                  action={
-                    <SectionActionButton
-                      testID="project-deployments.environment.recent.history"
-                      title={t('projects.deployments.history')}
-                      destination
-                      onPress={() => openTab('history')}
-                    />
-                  }
-                >
-                  {recentReceipts.map(receiptRow)}
                 </ItemGroup>
               ) : null}
               {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
@@ -1511,15 +1483,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.s8,
   },
   // The row already insets its bottom content; the strip only keeps its distance from the commit line.
-  strip: { paddingTop: theme.space.s12 },
-  facts: {
-    paddingHorizontal: theme.space.s16,
-    paddingTop: theme.space.s12,
-    paddingBottom: theme.space.s8,
-  },
   factsLine: { color: theme.colors.text.secondary },
   agentActions: { paddingHorizontal: theme.space.s16, alignItems: 'flex-start', gap: theme.space.s8 },
   mono: Typography.mono(),
+  // The facts are their own card a grid gap under the receipt (lab `envOv`), not a second half of it.
+  factsGroup: { marginTop: PAGE_LIST_METRICS.cardGapPx },
+  cellQuiet: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
+  serviceByline: { minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' },
   danger: { color: theme.colors.state.danger.textForeground },
   warning: { color: theme.colors.state.attention.textForeground },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s16 },
@@ -1546,18 +1516,8 @@ function deploymentServices(content: DeploymentContentV1): readonly DeploymentSe
   });
 }
 
-/** The serving version's facts after its commit: who asked, when it settled, how long it took. */
-function servingFacts(receipt: DeploymentReceiptHeaderV1, byYou: boolean): string[] {
-  const facts: string[] = [];
-  if (byYou) facts.push(t('projects.deployments.byYou'));
-  facts.push(formatAsOfTime(receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs));
-  const duration = deploymentDurationMs(receipt);
-  if (duration !== null) facts.push(t('projects.deployments.took', { duration: formatElapsedDuration(duration) }));
-  return facts;
-}
-
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
-function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, phone: boolean, kept: number | null,
+function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, kept: number | null,
   servingState: DeploymentReceiptHeaderV1['state'],
   /** The notice above already says how this version's health stands (no health check); the facts don't repeat it. */
   healthSaidByNotice: boolean): FactStripFact[] {
@@ -1572,8 +1532,6 @@ function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: numb
     facts.push({ key: 'services', label: t('projects.deployments.servicesTitle'),
       value: t('projects.deployments.servicesFact', { count: serviceCount }) });
   }
-  // A phone keeps the two facts a glance needs (lab d1p); rollout and rollback live in Settings.
-  if (phone) return facts;
   if (detail.content.ownServer) {
     facts.push({ key: 'rollout', label: t('projects.deployments.sectionRollout'),
       value: detail.content.ownServer.rollout === 'startFirst'
@@ -2050,10 +2008,21 @@ function EnvironmentServersSection(
 type ServiceRestartState = 'idle' | 'running' | 'approval' | 'failed' | 'unknown' | 'unsupported';
 
 /**
- * The serving services (P1 §3), each with its ⋯: Restart (`deployments.restart`), Run a command… (the shared sheet,
- * `machines.services.exec`) and Open on the Machine, whose service page holds its logs. The live rows come from the
- * Machine's one admitted services list, read only while this section is shown.
+ * What runs (lab `envOv`, P1 §3): the serving services as the shared Collection's list with columns, each with its
+ * mark, name and what it is, where it is reached, its memory now and its state, and its ⋯: Restart
+ * (`deployments.restart`), Run a command… (the shared sheet, `machines.services.exec`) and Open on the Machine, whose
+ * service page holds its logs. The live rows come from the Machine's one admitted services list, read only while this
+ * section is shown; a service the list doesn't know yet keeps its row with an em dash.
  */
+type EnvironmentServiceItem = Readonly<{
+  service: DeploymentService;
+  row: MachineServiceRowV1 | null;
+  serves: readonly string[];
+  stores: readonly string[];
+}>;
+type ServiceRestartFeedback = Readonly<{ state: ServiceRestartState; code: string | null }>;
+const NO_RESTART_FEEDBACK: ReadonlyMap<string, ServiceRestartFeedback> = new Map();
+
 function EnvironmentServiceRows(
   props: Readonly<{
     services: readonly DeploymentService[];
@@ -2072,48 +2041,129 @@ function EnvironmentServiceRows(
     connections: readonly DeploymentConnection[];
   }>,
 ) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId ?? '',
     environmentId: props.environmentId, active: props.active && props.machineId !== null });
   const rows = props.machineId ? list.rows : null;
+  const [feedback, setFeedback] = React.useState(NO_RESTART_FEEDBACK);
+  const onFeedback = useEventCallback((service: string, next: ServiceRestartFeedback) => setFeedback((current) => {
+    const copy = new Map(current);
+    if (next.state === 'idle' || next.state === 'running') copy.delete(service); else copy.set(service, next);
+    return copy;
+  }));
+  const items = React.useMemo((): readonly EnvironmentServiceItem[] => props.services.map((service) => ({
+    service,
+    row: rows?.find((row) => row.deployment?.service.composeService === service.name) ?? null,
+    ...serviceConnections(props.connections, service.name),
+  })), [props.services, rows, props.connections]);
+  const { machineId, serverId } = props;
+  const openOnMachine = React.useCallback((item: EnvironmentServiceItem) => item.row && machineId ? () => router.push(machinePageHref({
+    door: 'rail', target: { machineId, serverId }, tab: { id: 'services', page: 'service', service: item.row!.serviceId },
+  }) as never) : null, [machineId, router, serverId]);
+  const model = useHappierCollection<EnvironmentServiceItem>({
+    items,
+    keyOf: serviceItemKey,
+    openKey: null,
+    onOpenChange: (key) => {
+      const item = key === null ? undefined : items.find((candidate) => candidate.service.name === String(key));
+      if (item) openOnMachine(item)?.();
+    },
+  });
+  const anatomy = React.useMemo<CollectionAnatomy<EnvironmentServiceItem>>(() => ({
+    glyph: (item) => <Icon name={item.row ? machineServiceIcon(item.row) : 'cube'} size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+    title: (item) => item.service.name,
+    // What it is, then (on a phone, where the columns drop) where it is reached; volumes always stay on this line.
+    byline: (item, layout) => <EnvironmentServiceByline item={item} columns={layout?.fieldColumns === true} />,
+    fields: [
+      { key: 'reachedAt', title: t('projects.deployments.overviewStatus.columnReachedAt'), minWidth: 160, priority: 3, listColumn: true,
+        render: (item) => item.serves.length > 0
+          ? <Text variant="meta" style={[styles.mono, styles.cellQuiet]} numberOfLines={1}>{item.serves.join(', ')}</Text>
+          : <Text variant="meta" style={styles.cellQuiet}>—</Text> },
+      { key: 'memory', title: t('machineServices.columns.memory'), align: 'end', minWidth: 72, priority: 2, listColumn: true,
+        render: (item) => {
+          const memoryBytes = item.row ? machineServiceRunFacts(item.row, Date.now()).memoryBytes : null;
+          return <Text variant="meta" style={styles.cellQuiet}>{memoryBytes === null ? '—' : formatMachineBytes(memoryBytes, 'memory')}</Text>;
+        } },
+      { key: 'state', title: t('projects.deployments.overviewStatus.columnState'), align: 'end', minWidth: 88, priority: 1, listColumn: true,
+        render: (item) => item.row
+          ? <Status tone={machineServiceStateTone(item.row.state)} label={t(`machineServices.state.${item.row.state}`)} presentation="inline" />
+          : <Text variant="meta" style={styles.cellQuiet}>—</Text> },
+    ],
+    action: (item) => (
+      <EnvironmentServiceMenu item={item} serverId={props.serverId} environmentId={props.environmentId} machineId={props.machineId}
+        machineName={props.machineName} place={props.place} targetLinkId={props.targetLinkId} restart={props.restart}
+        review={props.review} onRestarted={list.refresh} onOpenLogs={props.onOpenLogs} openOnMachine={openOnMachine(item)}
+        onFeedback={onFeedback} />
+    ),
+    accessibilityLabel: (item) => item.row ? `${item.service.name}, ${t(`machineServices.state.${item.row.state}`)}` : item.service.name,
+    testID: (item) => `project-deployments.environment.services.${item.service.name}`,
+    columnTitles: { title: t('machineServices.columns.service') },
+  }), [list.refresh, onFeedback, openOnMachine, props.environmentId, props.machineId, props.machineName, props.onOpenLogs,
+    props.place, props.restart, props.review, props.serverId, props.targetLinkId, theme.colors.text.secondary]);
   return (
     <>
-      {props.services.map((service) => (
-        <EnvironmentServiceRow
-          key={service.name}
-          service={service}
-          row={rows?.find((row) => row.deployment?.service.composeService === service.name) ?? null}
-          serverId={props.serverId}
-          environmentId={props.environmentId}
-          machineId={props.machineId}
-          machineName={props.machineName}
-          place={props.place}
-          targetLinkId={props.targetLinkId}
-          restart={props.restart}
-          review={props.review}
-          onRestarted={list.refresh}
-          onOpenLogs={props.onOpenLogs}
-          connections={describeServiceConnections(props.connections, service.name)}
+      <CoreCollectionScope>
+          <Collection<EnvironmentServiceItem>
+            testID="project-deployments.environment.services.table"
+            model={model}
+            anatomy={anatomy}
+            accessibilityLabel={t('projects.deployments.overviewStatus.whatRunsTitle')}
+            presentation="list"
+            detail="none"
+            scroll="page"
+            minListWidth={0}
+            minDetailWidth={0}
+            preferredListRatio={1}
+          />
+      </CoreCollectionScope>
+      {[...feedback].map(([service, { state, code }]) => (
+        <SurfaceStateCard
+          key={service}
+          testID={`project-deployments.environment.services.${service}.restart.${state}`}
+          size="line"
+          kind={state === 'approval' ? 'loading' : 'warning'}
+          diagnosticCode={state === 'failed' ? code : null}
+          title={state === 'approval' ? t('machineServices.control.approval')
+            : state === 'unknown' ? t('machineServices.control.unknown', { machine: props.machineName })
+              : state === 'unsupported' ? t('machineServices.control.unsupported', { machine: props.machineName, service })
+                : t('machineServices.control.failed', { service })}
         />
       ))}
     </>
   );
 }
 
-/** One line for a service's declared Domains and volume mounts; Environment-level edges stay on their own cards. */
-function describeServiceConnections(connections: readonly DeploymentConnection[], service: string): string | null {
-  const hosts = connections.filter(edge => edge.kind === 'domain' && edge.service === service).map(edge => edge.resource);
-  const paths = connections.filter(edge => edge.kind === 'volume' && edge.service === service).map(edge => edge.resource);
-  const parts = [
-    ...(hosts.length ? [t('projects.deployments.overviewStatus.serviceServes', { hosts: hosts.join(', ') })] : []),
-    ...(paths.length ? [t('projects.deployments.overviewStatus.serviceStores', { paths: paths.join(', ') })] : []),
-  ];
-  return parts.length ? parts.join(' · ') : null;
+const serviceItemKey = (item: EnvironmentServiceItem) => item.service.name;
+
+/** A service's declared Domains and volume mounts; Environment-level edges stay on their own cards. */
+function serviceConnections(connections: readonly DeploymentConnection[], service: string): Pick<EnvironmentServiceItem, 'serves' | 'stores'> {
+  return {
+    serves: connections.filter(edge => edge.kind === 'domain' && edge.service === service).map(edge => edge.resource),
+    stores: connections.filter(edge => edge.kind === 'volume' && edge.service === service).map(edge => edge.resource),
+  };
 }
 
-function EnvironmentServiceRow(
+function EnvironmentServiceByline(props: Readonly<{ item: EnvironmentServiceItem; columns: boolean }>) {
+  const { service, serves, stores } = props.item;
+  const connections = [
+    ...(!props.columns && serves.length ? [t('projects.deployments.overviewStatus.serviceServes', { hosts: serves.join(', ') })] : []),
+    ...(stores.length ? [t('projects.deployments.overviewStatus.serviceStores', { paths: stores.join(', ') })] : []),
+  ].join(' · ');
+  return (
+    <View style={styles.serviceByline}>
+      {service.reference
+        ? <Text variant="meta" style={[styles.cellQuiet, styles.mono]} numberOfLines={1}>{service.reference}</Text>
+        : <Text variant="meta" style={styles.cellQuiet} numberOfLines={1}>{t('projects.deployments.serviceBuiltHere')}</Text>}
+      {connections ? <Text testID={`project-deployments.environment.services.${service.name}.connections`}
+        variant="meta" style={styles.cellQuiet} numberOfLines={1}>{connections}</Text> : null}
+    </View>
+  );
+}
+
+function EnvironmentServiceMenu(
   props: Readonly<{
-    service: DeploymentService;
-    row: MachineServiceRowV1 | null;
+    item: EnvironmentServiceItem;
     serverId: string;
     environmentId: string;
     machineId: string | null;
@@ -2124,16 +2174,17 @@ function EnvironmentServiceRow(
     review: DeploymentReviewHandle;
     onRestarted: () => Promise<void>;
     onOpenLogs: ((service: string) => void) | null;
-    connections: string | null;
+    openOnMachine: (() => void) | null;
+    /** The restart's outcome line lives under the list, keyed by service; the sentence says what it left. */
+    onFeedback: (service: string, feedback: ServiceRestartFeedback) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const router = useRouter();
   const [open, setOpen] = React.useState(false);
-  const [restartState, setRestartState] = React.useState<ServiceRestartState>('idle');
-  // The refusal's typed code stays behind Details; the sentence says what it left.
-  const [restartCode, setRestartCode] = React.useState<string | null>(null);
-  const { row, machineId, service } = props;
+  const { machineId, onFeedback } = props;
+  const { row, service } = props.item;
+  // The refusal's typed code stays behind Details.
+  const setRestartState = (state: ServiceRestartState, code: string | null = null) => onFeedback(service.name, { state, code });
   const generation = row?.generation ?? null;
   const restartInput = row?.deployment && generation && machineId && props.targetLinkId && row.capabilities.restart ? {
     environmentId: props.environmentId, deploymentId: row.deployment.deploymentId, targetLinkId: props.targetLinkId,
@@ -2142,7 +2193,6 @@ function EnvironmentServiceRow(
   const { restart, review, onRestarted } = props;
   const pressRestart = restart && restartInput ? () => {
     setRestartState('running');
-    setRestartCode(null);
     void restart(restartInput).then((result) => {
       setRestartState(result.kind === 'unsupported' ? 'unsupported' : result.kind === 'outcome_unknown' ? 'unknown' : 'idle');
       if (result.kind === 'observed' || result.kind === 'accepted') void onRestarted();
@@ -2152,8 +2202,7 @@ function EnvironmentServiceRow(
         review.request(outcome.artifactId);
         setRestartState('approval');
       } else {
-        setRestartCode(outcome.kind === 'refused' ? outcome.code : null);
-        setRestartState('failed');
+        setRestartState('failed', outcome.kind === 'refused' ? outcome.code : null);
       }
     });
   } : null;
@@ -2162,9 +2211,7 @@ function EnvironmentServiceRow(
     serverId: props.serverId, machineId, machineName: props.machineName, serviceName: service.name, place: props.place,
     target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: generation },
   }) : null;
-  const openOnMachine = row && machineId ? () => router.push(machinePageHref({
-    door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services', page: 'service', service: row.serviceId },
-  }) as never) : null;
+  const openOnMachine = props.openOnMachine;
   const openLogs = props.onOpenLogs ? () => props.onOpenLogs?.(service.name) : null;
   const items = React.useMemo((): readonly DropdownMenuItem[] => {
     const icon = (name: 'arrow-clockwise' | 'terminal' | 'hard-drives' | 'list') =>
@@ -2183,59 +2230,29 @@ function EnvironmentServiceRow(
     // The menu's rows follow which operations exist, not the callbacks' identities.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(openLogs), Boolean(pressRestart), Boolean(runCommand), Boolean(openOnMachine), props.machineName, service.name, theme.colors.text.secondary]);
-  const feedback = restartState === 'idle' || restartState === 'running' ? null : (
-    <SurfaceStateCard
-      testID={`project-deployments.environment.services.${service.name}.restart.${restartState}`}
-      size="line"
-      kind={restartState === 'approval' ? 'loading' : 'warning'}
-      diagnosticCode={restartState === 'failed' ? restartCode : null}
-      title={restartState === 'approval' ? t('machineServices.control.approval')
-        : restartState === 'unknown' ? t('machineServices.control.unknown', { machine: props.machineName })
-          : restartState === 'unsupported' ? t('machineServices.control.unsupported', { machine: props.machineName, service: service.name })
-            : t('machineServices.control.failed', { service: service.name })}
+  return items.length > 0 ? (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      matchTriggerWidth={false}
+      placement="bottom"
+      popoverAccessibilityLabel={t('common.more')}
+      onSelect={(id) => {
+        if (id === 'logs') openLogs?.();
+        else if (id === 'restart') pressRestart?.();
+        else if (id === 'command') runCommand?.();
+        else if (id === 'machine') openOnMachine?.();
+      }}
+      trigger={({ toggle }) => (
+        <IconButton
+          testID={`project-deployments.environment.services.${service.name}.menu`}
+          iconName="dots-three"
+          variant="plain"
+          accessibilityLabel={t('common.more')}
+          onPress={toggle}
+        />
+      )}
     />
-  );
-  return (
-    <>
-      <Item
-        testID={`project-deployments.environment.services.${service.name}`}
-        title={service.name}
-        subtitle={<>
-          {service.reference
-            ? <Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>{service.reference}</Text>
-            : t('projects.deployments.serviceBuiltHere')}
-          {props.connections ? <Text testID={`project-deployments.environment.services.${service.name}.connections`}
-            variant="body" style={styles.factsLine} numberOfLines={1}>{props.connections}</Text> : null}
-        </>}
-        mode={items.length > 0 ? undefined : 'info'}
-        showChevron={false}
-        rightElement={items.length > 0 ? (
-          <DropdownMenu
-            open={open}
-            onOpenChange={setOpen}
-            items={items}
-            matchTriggerWidth={false}
-            placement="bottom"
-            popoverAccessibilityLabel={t('common.more')}
-            onSelect={(id) => {
-              if (id === 'logs') openLogs?.();
-              else if (id === 'restart') pressRestart?.();
-              else if (id === 'command') runCommand?.();
-              else if (id === 'machine') openOnMachine?.();
-            }}
-            trigger={({ toggle }) => (
-              <IconButton
-                testID={`project-deployments.environment.services.${service.name}.menu`}
-                iconName="dots-three"
-                variant="plain"
-                accessibilityLabel={t('common.more')}
-                onPress={toggle}
-              />
-            )}
-          />
-        ) : undefined}
-      />
-      {feedback}
-    </>
-  );
+  ) : null;
 }
