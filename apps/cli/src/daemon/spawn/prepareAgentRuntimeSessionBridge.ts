@@ -13,6 +13,7 @@ import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/regist
 import { configuration } from '@/configuration';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { PluginDiagnosticError } from '@/plugins/runtime/moduleFailure';
 
 import {
   createForegroundAgentRuntimeBootstrapAuthorization,
@@ -112,9 +113,11 @@ export async function resolveRunnerAgentSessionDescriptorForLease(
       `Runner Agent backend '${input.target.backendId}' is unavailable in the admitted plugin registry`,
     );
   }
-  await activateAgentRuntimeContributionOnDemand(lease.registry, backend.agentId);
+  const activation = await activateAgentRuntimeContributionOnDemand(lease.registry, backend.agentId);
   const registration = lease.registry.agentRuntimesByAgentId.get(backend.agentId);
   if (!registration?.hasPrimaryRuntime) {
+    const diagnostic = activation.find(result => result.pluginId === backend.pluginId)?.diagnostics[0];
+    if (diagnostic) throw new PluginDiagnosticError(diagnostic);
     throw new Error(
       `Runner Agent runtime '${backend.pluginId ?? 'unknown'}/${backend.agentId}' was not published by activation`,
     );
