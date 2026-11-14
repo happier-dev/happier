@@ -7,6 +7,7 @@ import { GuardTab } from '@/components/machines/guard/GuardTab';
 import { MachineProcessesTab, parseMachineProcessesParams } from '@/components/machines/processes/MachineProcessesTab';
 import { MachineStorageTab, StorageTabBarAccessory } from '@/components/machines/storage/MachineStorageTab';
 import { MachineSecurityTab } from '@/components/machines/security/MachineSecurityTab';
+import { MachineScheduledTab } from '@/components/machines/scheduled/MachineScheduledTab';
 import { MachineSetupTab, parseMachineSetupParams } from '@/components/machines/setup/MachineSetupTab';
 import type { TranslationKeyNoParams } from '@/text';
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -51,6 +52,7 @@ const OVERVIEW_PARAMS: MachinePageTabParams = Object.freeze({ id: 'overview' });
 const STORAGE_PARAMS: MachinePageTabParams = Object.freeze({ id: 'storage' });
 
 const GUARD_PARAMS: MachinePageTabParams = Object.freeze({ id: 'guard' });
+const SCHEDULED_PARAMS: MachinePageTabParams = Object.freeze({ id: 'scheduled' });
 const SERVICES_PARAMS: MachinePageTabParams = Object.freeze({ id: 'services' });
 const SECURITY_PARAMS: MachinePageTabParams = Object.freeze({ id: 'security' });
 
@@ -95,6 +97,7 @@ export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
     { id: 'guard', icon: 'shield', titleKey: 'machineGuard.tab', Body: GuardTab, suspendWhenHidden: true, BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
     { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
     { id: 'security', icon: 'shield-check', titleKey: 'machineDetailPage.subPages.security', Body: MachineSecurityTab, suspendWhenHidden: true, parseParams: parseSecurityParams },
+    { id: 'scheduled', icon: 'clock', titleKey: 'machineScheduled.title', Body: MachineScheduledTab, suspendWhenHidden: true, parseParams: () => SCHEDULED_PARAMS },
 ];
 
 export type MachinePagePluginTabEntry = MachinePageTabEntry & Readonly<{ id: 'plugin'; key: string; pluginId: string; localId: string; label: string }>;
