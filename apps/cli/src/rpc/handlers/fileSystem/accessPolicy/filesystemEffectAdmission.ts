@@ -6,6 +6,10 @@ import { logger } from '@/ui/logger';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readWorkspaceSourcePlacement, runWithWorkspaceSource, selectWorkspaceSource,
+  type WorkspaceSource, type WorkspaceSourcePlacement, type WorkspaceTargetSourceResolver } from '@/workspaces/source/workspaceSource';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
+import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 
 /** Capability admission has already expanded and validated the effective request. */
 export function isAgentInventoryRead(method: string, input: unknown): boolean {
@@ -22,14 +26,40 @@ export type FilesystemEffectFailure = Readonly<{
 
 export type FilesystemEffectRequester = Readonly<{ identity: HostRequesterExecutionIdentity; dispose(): Promise<void> }>;
 
+/** The Session facts an admitted RPC or Action request carries. */
+export type FilesystemEffectSessionContext = Readonly<{
+  sessionActionOrigin?: SessionActionRpcOriginV1;
+  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+  externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
+  authorization?: unknown;
+}>;
+
+/**
+ * The one reader of the Session an admitted request acts for: an RPC origin, the
+ * caller's execution authorization, or an Action's execution authorization.
+ */
+function readSessionActionOrigin(context: FilesystemEffectSessionContext | undefined) {
+  return context?.sessionActionOrigin ?? context?.callerInputAuthorization?.binding.sessionActionOrigin
+    ?? context?.externalActionExecutionAuthorization?.binding.sessionActionOrigin;
+}
+
+/** Placement of an admitted request: its Session (through the one origin reader) and addressed root. */
+function readFilesystemEffectPlacement(context: FilesystemEffectSessionContext | undefined, input: unknown): WorkspaceSourcePlacement {
+  return readWorkspaceSourcePlacement({ sessionActionOrigin: readSessionActionOrigin(context), authorization: context?.authorization }, input);
+}
+
 /** Host-private effect prerequisite; never a caller-selected path or OS user. */
 export type FilesystemEffectAdmission = Readonly<{
-  rpc(context?: RpcHandlerContext): Promise<FilesystemEffectFailure | null>;
-  action(context?: RpcActionExecutorContext, alreadySelectedIdentity?: HostRequesterExecutionIdentity): Promise<FilesystemEffectFailure | null>;
+  /** `source` is the request's selected workspace source (this Machine's disk when omitted). */
+  rpc(context?: RpcHandlerContext, source?: WorkspaceSource): Promise<FilesystemEffectFailure | null>;
+  action(context?: RpcActionExecutorContext, alreadySelectedIdentity?: HostRequesterExecutionIdentity, source?: WorkspaceSource): Promise<FilesystemEffectFailure | null>;
   resolveRpcRequester?(context?: RpcHandlerContext): Promise<FilesystemEffectRequester>;
   resolveActionRequester?(context?: RpcActionExecutorContext): Promise<FilesystemEffectRequester>;
   executeRpc?(method: string, input: unknown, context: RpcHandlerContext | undefined,
-    ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown): Promise<unknown>;
+    ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown,
+    source?: WorkspaceSource): Promise<unknown>;
+  /** The workspace source of this admitted request: this Machine's disk or the Session's target. */
+  selectWorkspaceSource(context: FilesystemEffectSessionContext | undefined, input: unknown): WorkspaceSource;
 }>;
 
 /** Admission belongs to ingress; admitted filesystem work observes local cancellation. */
@@ -53,6 +83,8 @@ export function createFilesystemEffectAdmission(params: Readonly<{
   }> | null>;
   executeNativeRpc?: (request: Readonly<{ method: string; input: unknown; context: RpcHandlerContext;
     requester: FilesystemEffectRequester; identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }>) => Promise<unknown>;
+  /** Session placement owner: the target source of a Session running in an execution target. */
+  resolveWorkspaceTarget?: WorkspaceTargetSourceResolver;
 }> = {}): FilesystemEffectAdmission {
   const unavailable = {
     errorCode: 'filesystem_identity_custody_unavailable' as const,
@@ -75,8 +107,7 @@ export function createFilesystemEffectAdmission(params: Readonly<{
     const hostHomeServerIdentityId = params.resolveHomeServerIdentityId
       ? await params.resolveHomeServerIdentityId() : undefined;
     const host = await params.resolveHostIdentity?.(context?.signal);
-    const origin = context?.sessionActionOrigin ?? context?.callerInputAuthorization?.binding.sessionActionOrigin
-      ?? input.actionContext?.externalActionExecutionAuthorization?.binding.sessionActionOrigin;
+    const origin = readSessionActionOrigin(context);
     const retained = !context?.requesterSessionBootstrap && origin
       ? await params.resolveSessionRequester?.(origin.caller.sessionId, context?.signal) : undefined;
     let disposed = false;
@@ -95,8 +126,16 @@ export function createFilesystemEffectAdmission(params: Readonly<{
       return { identity, dispose };
     } catch (error) { await dispose(); throw error; }
   };
+  /**
+   * Owner ruling 2026-11-12 (container member access): inside a Session's execution
+   * target there is no per-member OS identity. The container boundary, the source's
+   * workspace-root confinement and the member's Session access admitted at ingress
+   * (a Session-scoped call for the Session the target was selected from) suffice.
+   */
+  const admitsTargetSessionMember = (context: FilesystemEffectSessionContext | undefined, source: WorkspaceSource | undefined) =>
+    source !== undefined && source.kind !== 'local' && readFilesystemEffectPlacement(context, undefined).sessionId !== undefined;
   const admit = async (input: Readonly<{ rpcContext?: RpcHandlerContext; actionContext?: RpcActionExecutorContext }>,
-    alreadySelectedIdentity?: HostRequesterExecutionIdentity) => {
+    alreadySelectedIdentity?: HostRequesterExecutionIdentity, source?: WorkspaceSource) => {
     if (input.actionContext) input = { ...input,
       actionContext: (await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy'))
         .projectVerifiedExternalActionRequesterContext(input.actionContext) };
@@ -118,7 +157,7 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         await requester.dispose();
       }
       const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
-      if (!policy.isHostRequesterUnrestrictedOwner(identity) && !(params.readAgentIsolation && identity.kind === 'isolated'
+      if (!policy.isHostRequesterUnrestrictedOwner(identity) && !admitsTargetSessionMember(context, source) && !(params.readAgentIsolation && identity.kind === 'isolated'
         && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation?.() }) === 'daemon'))
         return refuse('requester_identity_unavailable');
       // The selector consumed receiving admission or authenticated local-root
@@ -131,12 +170,13 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         ? 'admission_not_current' : 'admission_unavailable');
     }
   };
-  return { rpc: rpcContext => admit({ rpcContext }),
-    action: (actionContext, alreadySelectedIdentity) => admit({ actionContext }, alreadySelectedIdentity),
+  return { rpc: (rpcContext, source) => admit({ rpcContext }, undefined, source),
+    selectWorkspaceSource: (context, input) => selectWorkspaceSource(readFilesystemEffectPlacement(context, input), params.resolveWorkspaceTarget),
+    action: (actionContext, alreadySelectedIdentity, source) => admit({ actionContext }, alreadySelectedIdentity, source),
     resolveRpcRequester: rpcContext => resolveRequester({ rpcContext }),
     resolveActionRequester: actionContext => resolveRequester({ actionContext }),
     ...(params.executeNativeRpc ? { executeRpc: async (method: string, input: unknown, context: RpcHandlerContext | undefined,
-      ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown) => {
+      ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown, source?: WorkspaceSource) => {
       if ((await import('@happier-dev/protocol/machines/managed/actionsV1'))
         .ManagedInstallationServerOriginV1Schema.safeParse(context?.authorization).success) {
         const failure = await admit({ rpcContext: context });
@@ -149,15 +189,18 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         // file browsing retains the person's administrator placement.
         const identity = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT || isAgentInventoryRead(method, input)
           ? policy.resolveHostRequesterAgentExecutionIdentity(requester.identity) : requester.identity;
-        if (!context || context.signal.aborted || identity.kind === 'unknown')
-          return projectFailure(refuse('requester_identity_unavailable'));
+        if (!context || context.signal.aborted) return projectFailure(refuse('requester_identity_unavailable'));
+        // A member of a target Session works through the target's source, never the host OS identity.
+        if (admitsTargetSessionMember(context, source)) return await ownerEffect();
+        if (identity.kind === 'unknown') return projectFailure(refuse('requester_identity_unavailable'));
         // Ingress has already admitted this arrival. Never invoke an opaque
         // currentness callback here: only its local cancellation is relevant.
         context.signal.throwIfAborted();
         if (policy.isHostRequesterUnrestrictedOwner(identity) || params.readAgentIsolation && identity.kind === 'isolated'
           && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation?.() }) === 'daemon')
           return await ownerEffect();
-        if (identity.kind !== 'isolated') return projectFailure(refuse('requester_identity_unavailable'));
+        // The native requester channel is this Machine's disk; a target without admitted Session access is refused.
+        if (identity.kind !== 'isolated' || source && source.kind !== 'local') return projectFailure(refuse('requester_identity_unavailable'));
         try { return await params.executeNativeRpc!({ method, input, context, identity, requester: { ...requester, identity } }); }
         catch (error) {
           if (error && typeof error === 'object' && 'code' in error && error.code === unavailable.errorCode)
@@ -176,9 +219,12 @@ export function createFilesystemEffectRpcRegistrar(
 ): RpcHandlerRegistrar {
   return { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>): void {
     registrar.registerHandler<TRequest, unknown>(method, async (input, context) => {
-      if (admission.executeRpc) return await admission.executeRpc(method, input, context, async () => await handler(input, context), projectFailure);
-      const failure = await admission.rpc(context);
-      return failure ? projectFailure(failure) : await handler(input, context);
+      // The source is chosen once here; every consumer the handler reaches reads it.
+      const source = admission.selectWorkspaceSource(context, input);
+      const ownerEffect = async () => await runWithWorkspaceSource(source, async () => await handler(input, context));
+      if (admission.executeRpc) return await admission.executeRpc(method, input, context, ownerEffect, projectFailure, source);
+      const failure = await admission.rpc(context, source);
+      return failure ? projectFailure(failure) : await ownerEffect();
     });
   } };
 }
