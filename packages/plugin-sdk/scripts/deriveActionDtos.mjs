@@ -377,7 +377,10 @@ const neutralImports = {
   PluginUiJsonValueV1: 'plugins/contributions/ui/json.ts',
 };
 export const ACTION_DTO_BUILTINS = new Set(['Readonly', 'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract',
-  'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer', 'Date', 'AbortSignal']);
+  'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer',
+  // Typed-array parameters use the consumer's standard-library buffer contracts.
+  // Copying these from the derivation compiler shadows newer consumer members.
+  'ArrayBufferLike', 'SharedArrayBuffer', 'Date', 'AbortSignal']);
 
 
 function createDerivationHost(inputSnapshot) {
@@ -630,6 +633,41 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
         }
         if (ts.isTypeReferenceNode(node)) {
           const name = node.typeName.getText(file);
+          // Pick is a wire projection, not a dependency on every member of
+          // its operand (which may include process-local executor attachments).
+          // Materialize concrete named picks before collecting support aliases.
+          if (name === 'Pick' && node.typeArguments?.length === 2) {
+            const [operand, selection] = node.typeArguments;
+            const selected = ts.isUnionTypeNode(selection) ? selection.types : [selection];
+            const literalKeys = selected.every(key => ts.isLiteralTypeNode(key) && ts.isStringLiteral(key.literal));
+            const readonlyOperand = ts.isTypeReferenceNode(operand) && ts.isIdentifier(operand.typeName)
+              && operand.typeName.text === 'Readonly' && operand.typeArguments?.length === 1;
+            const structural = readonlyOperand ? operand.typeArguments[0] : operand;
+            if (literalKeys && ts.isTypeLiteralNode(structural)) {
+              const names = new Set(selected.map(key => key.literal.text));
+              const members = structural.members.filter(member => ts.isPropertySignature(member)
+                && names.has(member.name.text));
+              if (members.length !== names.size) throw Error('Missing picked structural schema property');
+              const body = `{ ${members.map(member => member.getText(file)).join('\n')} }`;
+              return expand(normalize(readonlyOperand ? `Readonly<${body}>` : body, input, parameters));
+            }
+            if (ts.isTypeReferenceNode(operand) && ts.isIdentifier(operand.typeName)
+              && !operand.typeArguments?.length && !parameters.has(operand.typeName.text)
+              && literalKeys) {
+              const type = checker.getDeclaredTypeOfSymbol(findSymbol(operand.typeName.text));
+              const members = selected.map(key => {
+                const property = checker.getPropertyOfType(type, key.literal.text);
+                if (!property) throw Error(`Missing picked schema property: ${key.literal.text}`);
+                const location = property.valueDeclaration ?? property.declarations?.[0];
+                const value = checker.getTypeOfSymbolAtLocation(property, location);
+                const readonly = (ts.getCheckFlags(property) & ts.CheckFlags.Readonly) !== 0
+                  || property.declarations?.some(declaration =>
+                    declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword));
+                return `${readonly ? 'readonly ' : ''}${JSON.stringify(property.name)}${property.flags & ts.SymbolFlags.Optional ? '?' : ''}: ${checker.typeToString(value, undefined, flags)};`;
+              });
+              return expand(normalize(`{ ${members.join('\n')} }`, input, parameters));
+            }
+          }
           if (/^(?:z\.)?Zod|^z\.core\.\$Zod/u.test(name)) return ts.factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword);
           if (keys && /^ActionSchema\d+Value$/u.test(name)) {
             // Complex row unions may retain their virtual alias inside a map.

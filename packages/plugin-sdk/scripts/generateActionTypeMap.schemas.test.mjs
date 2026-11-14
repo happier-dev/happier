@@ -7,6 +7,38 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { captureActionSchemaInputs, deriveActionDtoBindings, deriveActionDtoSchemas } from './deriveActionDtos.mjs';
 
+test('real schema DTOs exclude authorization runtime attachments and retain deployment fields', () => {
+  const derived = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
+    ['workflows/workflowDefinitionV1.ts', 'WorkflowAcceptedAuthorizationV1'],
+    ['deployments/deploymentTemplateInstantiationV1.ts', 'DeploymentTemplateInstantiateInputV1'],
+  ] });
+  const authorization = derived.declarations.map(([, text]) => text).join('\n');
+  assert.doesNotMatch(authorization, /requesterAccountExecutor|requesterAccountProjection|requesterHttpProjection/u);
+  assert.match(authorization, /externalActionExecutionAuthorization\?:/u);
+  assert.match(authorization, /["']?v["']?: 1/u);
+  assert.match(authorization, /["']?binding["']?:/u);
+  const deployment = derived.declarations.find(([name]) => name === 'DeploymentTemplateInstantiateInputV1')[1];
+  assert.match(deployment, /managedRetention\?:[^;]*'keep'[^;]*'until-delete'/u);
+  assert.doesNotMatch(deployment, /managedRetention\??: any/u);
+  assert.match(deployment, /generatedSecretAudience\?:/u);
+});
+
+test('picked DTO support preserves optional and readonly selected fields', t => {
+  const root = mkdtempSync(resolve(tmpdir(), 'happier-dto-pick-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = resolve(root, 'packages/protocol/src/payload.ts');
+  mkdirSync(dirname(source), { recursive: true });
+  writeFileSync(source, `
+    type Host = Readonly<{ value?: string; excluded: () => void }>;
+    export type Payload = { selected: Pick<Host, 'value'> };
+  `);
+  const result = deriveActionDtoBindings({ repoRoot: root, bindings: [['payload.ts', 'Payload']] });
+  const dto = result.declarations.map(([, text]) => text).join('\n');
+  assert.match(dto, /(?:readonly ["']?value["']?\?:|selected: Readonly<)/u);
+  assert.match(dto, /["']?value["']?\?:/u);
+  assert.doesNotMatch(dto, /excluded/u);
+});
+
 test('Action DTO support omits private symbol keys and retains named wire fields', t => {
   const root = mkdtempSync(resolve(tmpdir(), 'happier-dto-private-symbol-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -664,6 +696,13 @@ test('schema edits regenerate family DTOs without any authored DTO input', async
   assert.match(refreshed, /count: string/u);
   assert.match(refreshed, /'ready' \| 'failed'|'failed' \| 'ready'/u);
   assert.doesNotMatch(refreshed, /z\.|zod|count: number/u);
+  writeFileSync(schemas, readFileSync(schemas, 'utf8').replace(
+    'typeof OptionalPluginInput> };',
+    'typeof OptionalPluginInput> & Readonly<{ surfaceBindings: { plugin: { inputSchema: typeof OptionalPluginInput } } }> };',
+  ));
+  const bound = await derive();
+  assert.match(bound, /query: number/u);
+  assert.doesNotMatch(bound, /query\?: string/u);
 });
 
 test('Action schema derivation admits imported declarations without unrelated ambient packages', async t => {
