@@ -5,7 +5,7 @@ import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { useSetting } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { t, tLoose } from '@/text';
+import { t } from '@/text';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import {
@@ -23,7 +23,6 @@ import type { VoiceSurfaceProps } from './voiceSurfaceTypes';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { getVoiceSessionAttemptId } from '@/voice/session/voiceSessionStore';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { resolveSelectedVoiceProviderTitleKey } from '@/voice/registry/providerSelection';
 import {
     reconcileVoiceActivityFeedExpansion,
     useVoiceActivityFeedExpansion,
@@ -119,8 +118,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         canonicalVoice,
         voiceProviderRegistry,
     ) ?? 'off';
-    const providerTitleKey = resolveSelectedVoiceProviderTitleKey(canonicalVoice, voiceProviderRegistry);
-    const providerLabel = providerTitleKey ? tLoose(providerTitleKey) : null;
     /*
      * §2.8 — no active Voice surface carries a provider/data-disclosure
      * affordance. The provider's processing disclosure renders in Voice settings
@@ -169,6 +166,7 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         [bindingScope, startSessionAddress],
     );
     const baseAttemptControl = useVoiceAttemptControl(idleTarget);
+    const providerLabel = baseAttemptControl.serviceTitle ?? null;
     const activityFeedExpansion = useVoiceActivityFeedExpansion();
     const attemptId = getVoiceSessionAttemptId();
     React.useEffect(() => {

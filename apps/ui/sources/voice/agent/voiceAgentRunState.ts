@@ -27,7 +27,8 @@ import {
 import type { VoiceAgentHandle, VoiceAgentStartParams } from './types';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 
 export type VoiceAgentSessionState = Readonly<{
     id?: string;
@@ -93,8 +94,9 @@ export async function assertActiveDaemonTargetSession(target: SessionAddress | s
             { code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' },
         );
     }
-    const machine = machineId ? resolveMachineForActiveServerFromState(storage.getState(), machineId) : null;
-    const reachability = machine ? resolveMachineReachability(selectActiveServerAccountScopeForServer(state.profileScope, address?.serverId ?? null), machine) : null;
+    const machine = machineId ? resolveMachineForActiveServerFromState(state, machineId, { serverId: address?.serverId }) : null;
+    const account = machine && address ? await resolveServerCredentialAccountScope(address.serverId) : null;
+    const reachability = machine ? resolveMachineReachability(account?.kind === 'bound' ? account.scope : null, machine) : null;
     if (reachability && reachability !== 'reachable') {
         throw Object.assign(
             new Error('Target machine is not currently reachable.'),

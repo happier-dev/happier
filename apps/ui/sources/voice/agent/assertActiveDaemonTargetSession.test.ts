@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createSessionFixture, createPlainMachineRowFixture } from '@/dev/testkit';
+import { createSessionFixture, createPlainMachineRowFixture, createMachineFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 vi.stubGlobal('__DEV__', true);
 vi.stubGlobal('self', globalThis);
@@ -47,6 +48,20 @@ describe('assertActiveDaemonTargetSession', () => {
         seedTargetSession();
     });
     afterAll(() => network.dispose());
+
+    it.each([true, false])('uses the bound Home Machine after navigation (target online: %s)', async (targetOnline) => {
+        const targetMachine = createMachineFixture({ id: 'machine-1', active: targetOnline, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const focusedMachine = createMachineFixture({ id: 'machine-1', active: !targetOnline, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        publishMachineActivityForTest([targetMachine]);
+        publishMachineActivityForTest([focusedMachine]);
+        storage.setState({
+            machines: { 'machine-1': focusedMachine },
+            machineListByServerId: { [targetHome.id]: [targetMachine], [focusedHome.id]: [focusedMachine] },
+        });
+        const admission = assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: 'target-1' });
+        if (targetOnline) await expect(admission).resolves.toBeUndefined();
+        else await expect(admission).rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
+    });
 
     it('admits a live Codex context target with no terminal support or daemon declaration probe', async () => {
         seedTargetSession({ metadata: {

@@ -97,4 +97,25 @@ describe('useVoiceSurfaceModel identity', () => {
         expect(hook.getCurrent()?.attemptControl.canStop).toBe(true);
         await hook.unmount();
     });
+
+    it('keeps the admitted service label when next-call preferences change, including Off', async () => {
+        seedVoiceSession();
+        const { useVoiceSurfaceModel } = await import('./useVoiceSurfaceModel');
+        const hook = await renderHook(() => useVoiceSurfaceModel({ variant: 'sidebar' }));
+        const admittedTitle = hook.getCurrent()?.attemptControl.serviceTitle;
+        expect(admittedTitle).toBeTruthy();
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const nextProvider = createDefaultVoiceProviderRegistry().list().find(entry =>
+            entry.kind === 'voice.conversation-provider.v1' && entry.providerId !== 'local_conversation');
+        if (!nextProvider) throw new Error('Expected a second conversation provider in the bundled registry');
+        for (const providerId of [nextProvider.providerId, 'off']) {
+            getStorage().setState((state) => ({ settings: {
+                ...state.settings,
+                voice: voiceSettingsParse({ ...state.settings.voice, providerId }),
+            } }));
+            await hook.rerender();
+            expect(hook.getCurrent()?.providerLabel).toBe(admittedTitle);
+        }
+        await hook.unmount();
+    });
 });
