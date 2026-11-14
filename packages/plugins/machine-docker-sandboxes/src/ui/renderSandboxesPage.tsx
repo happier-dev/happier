@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import { decodePluginUiManagedMachineInventory, type PluginUiManagedMachineInventory, type RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
 import {
   Button,
@@ -43,15 +42,14 @@ import {
 type Read =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'scopeUnavailable' }>
-  | Readonly<{ kind: 'ready'; availability: SandboxAvailability; rows: readonly SandboxRow[]; readAt: number }>
-  | Readonly<{ kind: 'failed'; message: string; retained?: Readonly<{ availability: SandboxAvailability; rows: readonly SandboxRow[]; readAt: number }> }>;
+  | Readonly<{ kind: 'ready'; availability: SandboxAvailability; rows: readonly SandboxRow[]; unavailableManagedIds: readonly string[]; readAt: number }>
+  | Readonly<{ kind: 'failed'; message: string; retained?: Readonly<{ availability: SandboxAvailability; rows: readonly SandboxRow[]; unavailableManagedIds: readonly string[]; readAt: number }> }>;
 
 const contribution = { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_PROVISIONER_ID };
-type Inventory = Readonly<{ machines: PluginActionResultById['machines.managed.list']['machines']; readAt: number }>;
+type Inventory = PluginUiManagedMachineInventory & Readonly<{ readAt: number }>;
 const inventoryProjection: PluginUiResourceProjection<Inventory> = {
   decode(content) {
-    // This exact host-read serializes the canonical inventory's schema-admitted Action result.
-    const list = JSON.parse(new TextDecoder().decode(content.bytes)) as PluginActionResultById['machines.managed.list'];
+    const list = decodePluginUiManagedMachineInventory(content.bytes);
     return { machines: list.machines, readAt: Date.now() };
   },
 };
@@ -104,14 +102,15 @@ function SandboxesPage({ hostApi, surface }: RenderContext): React.ReactElement 
   const retry = React.useCallback(async () => { await Promise.all([inventory.refresh(), scope ? loadCheck(scope) : undefined]); }, [inventory.refresh, loadCheck, scope]);
   const availability = check?.scope === scope ? check.availability : null;
   const admitted = inventory.value.value;
-  const projectedRows = React.useMemo(() => admitted && scope ? selectMachineSandboxes(admitted.machines, scope.controller.machineId) : NO_ROWS,
+  const projected = React.useMemo(() => admitted && scope ? selectMachineSandboxes(admitted.machines, scope.controller.machineId) : EMPTY_SELECTION,
     [admitted, scope]);
-  const retained = admitted && availability ? { availability, rows: projectedRows, readAt: admitted.readAt } : undefined;
+  const retained = admitted && availability ? { availability, ...projected, readAt: admitted.readAt } : undefined;
   const read: Read = !scope ? { kind: 'scopeUnavailable' }
     : inventory.value.error ? { kind: 'failed', message: inventory.value.error.message, ...(retained ? { retained } : {}) }
       : retained ? { kind: 'ready', ...retained } : { kind: 'loading' };
   const shown = read.kind === 'ready' ? read : read.kind === 'failed' ? read.retained ?? null : null;
   const rows = shown?.rows ?? NO_ROWS;
+  const contentUnavailable = (shown?.unavailableManagedIds.length ?? 0) > 0;
   const collection = useHappierCollection<SandboxRow>({ items: rows, keyOf: keyOfRow, selection: 'none', openKey: null, onOpenChange: noOpenRow });
 
   const createRequest = React.useMemo(() => readSandboxCreateRequest(hostApi.version().methods), [hostApi]);
@@ -140,6 +139,11 @@ function SandboxesPage({ hostApi, surface }: RenderContext): React.ReactElement 
           reason={text('machineDocker.page.stale', 'This machine isn’t answering.')}
           action={{ label: text('machineDocker.page.retry', 'Retry'), onPress: () => { void retry(); } }} />
       ) : null}
+      {shown && contentUnavailable ? (
+        <FreshnessLine asOf={shown.readAt} tone="warning"
+          reason={text('machineDocker.page.contentUnavailable', 'Some machine details couldn’t be opened. This sandbox list may be incomplete.')}
+          action={{ label: text('machineDocker.page.retry', 'Retry'), onPress: () => { void retry(); } }} />
+      ) : null}
     </Stack>
   );
 
@@ -156,7 +160,7 @@ function SandboxesPage({ hostApi, surface }: RenderContext): React.ReactElement 
       action={{ label: text('machineDocker.page.retry', 'Retry'), onPress: retry }} />;
   }
   const shownAvailability = shown?.availability;
-  if (shownAvailability && shownAvailability.kind !== 'ready' && rows.length === 0) {
+  if (shownAvailability && shownAvailability.kind !== 'ready' && rows.length === 0 && !contentUnavailable) {
     const copy = shownAvailability.kind === 'notInstalled'
       ? [text('machineDocker.page.notInstalled.title', 'Docker Sandboxes isn’t installed'),
         text('machineDocker.page.notInstalled.body', 'Sandboxes give each agent session its own isolated machine with Docker. Install Docker Sandboxes on this machine to create sandboxes.')]
@@ -197,7 +201,7 @@ function SandboxesPage({ hostApi, surface }: RenderContext): React.ReactElement 
           render: row => <Status tone={STATE_TONE[row.state]} label={stateLabel(text, row.state)} presentation="inline" />,
         }],
       }}
-      empty={read.kind === 'ready' ? (
+      empty={read.kind === 'ready' && !contentUnavailable ? (
         <EmptyState testID="docker-sandboxes-empty"
           title={text('machineDocker.page.empty.title', 'No sandboxes on this machine yet')}
           description={text('machineDocker.page.empty.body', 'When an agent session runs in a Docker Sandbox here, it shows up in this list.')} />
@@ -209,6 +213,7 @@ function SandboxesPage({ hostApi, surface }: RenderContext): React.ReactElement 
 }
 
 const NO_ROWS: readonly SandboxRow[] = [];
+const EMPTY_SELECTION = { rows: NO_ROWS, unavailableManagedIds: [] } as const;
 const keyOfRow = (row: SandboxRow) => row.managedId;
 // Rows open nothing yet: a sandbox's Machine page is reached from the Machines list.
 const noOpenRow = () => {};

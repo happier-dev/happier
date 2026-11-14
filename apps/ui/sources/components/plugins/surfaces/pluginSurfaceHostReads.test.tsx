@@ -8,6 +8,7 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginUiActionOperationHostReadResultV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiJsonValueV1Schema, type PluginUiJsonObjectV1 } from '@happier-dev/protocol/plugins/ui';
 import { useLivePluginResource, type PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import { decodePluginUiManagedMachineInventory } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
 import { PluginHostApiProviderInternal } from '../../../../../../packages/plugin-ui/src/hostApi/context';
 import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -206,7 +207,7 @@ describe('mounted native and hosted host reads', () => {
             accountLifetime={lifetime} mountedPluginId="acme.usage"><Probe /></PluginHostApiProviderInternal>);
         const readRows = () => {
             const value = snapshots.at(-1)?.value;
-            return value ? JSON.parse(new TextDecoder().decode(value.bytes)) as { machines: typeof machines } : null;
+            return value ? decodePluginUiManagedMachineInventory(value.bytes) : null;
         };
         try {
             await expect.poll(() => host.getCurrent().entries[lifetime.scope.serverId]?.status).toBe('ready');

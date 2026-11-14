@@ -1628,10 +1628,12 @@
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |
 | `./errors` | `PluginError` | value | any |
 | `./errors` | `isPluginError` | value | any |
+| `./errors` | `projectActionFailureCauseV1` | value | any |
 | `./errors` | `readActionOutputDiagnostic` | value | any |
 | `./errors` | `readUnexpectedActionErrorDiagnosticV1` | value | any |
 | `./errors` | `withActionFailureDiagnostic` | value | any |
 | `./events` | `BackupOutcomeEventV1ProtocolSchema` | value | any |
+| `./events` | `CurrentSourceCatalog` | type | any |
 | `./events` | `DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1` | value | any |
 | `./events` | `DEPLOYMENT_RECEIPT_EVENT_REFS_V1` | value | any |
 | `./events` | `DeploymentFailedEventV1ProtocolSchema` | value | any |
@@ -1680,6 +1682,7 @@
 | `./events` | `isAutomationEventSourcesListPageProgressingV1` | value | any |
 | `./events` | `projectPluginEventAdmissionSourceStatusV1` | value | any |
 | `./events` | `projectPluginEventSourceConnectionStatusV1` | value | any |
+| `./events` | `readCurrentSourceDefinitions` | value | any |
 | `./events` | `readDeploymentAccountChangeV1` | value | any |
 | `./events` | `readDeploymentReceiptEventFailureV1` | value | any |
 | `./exec` | `AgentCliReadinessRequest` | type | daemon |
@@ -3470,6 +3473,7 @@
 | `./ui` | `PluginUiJsonObjectV1` | type | any |
 | `./ui` | `PluginUiJsonValueV1` | type | any |
 | `./ui` | `PluginUiLaunchInputV1Schema` | value | any |
+| `./ui` | `PluginUiManagedMachineInventory` | type | any |
 | `./ui` | `PluginUiMountContextV1` | type | any |
 | `./ui` | `PluginUiOpenManagedMachineConfigurationRequestV1` | type | any |
 | `./ui` | `PluginUiPageHeaderActionV1` | type | any |
@@ -3564,6 +3568,7 @@
 | `./ui` | `compileEntityListFilterV1` | value | any |
 | `./ui` | `createEntityFilterConditionCodecV1` | value | any |
 | `./ui` | `createPluginListFilterFieldRegistryV1` | value | any |
+| `./ui` | `decodePluginUiManagedMachineInventory` | value | any |
 | `./ui` | `defineEntityFilterFieldV1` | value | any |
 | `./ui` | `defineHostedWebBridgeMessage` | value | any |
 | `./ui` | `definePluginDeclarativeDocumentV1` | value | any |

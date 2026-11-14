@@ -6654,6 +6654,13 @@ prepares that exact Action read before borrowing the canonical inventory's
 demand, currentness and Home-change observation. Plugins filter admitted rows;
 they do not create another list loader or timer. Explicit Retry reaches the
 same reader, and Account retirement withdraws visibility. The public
+SDK `/ui` decoder `decodePluginUiManagedMachineInventory` reads this host-local
+projection: custody has already opened available private content, while rows
+whose content cannot be opened retain their structural fields without `launch`.
+Consumers keep readable rows visible and report an incomplete list when an
+unopened row prevents provisioner filtering; they never decrypt content again
+or interpret it as an empty inventory. This projection differs from the raw
+Action's opaque `{ machine, presetContent }` carriers. The public
 `classifyManagedMachineAllocationV1` helper on SDK `/machine-provisioners`
 shares allocation/progress classification with the host while leaving
 operation correlation, translated labels and recovery at their domain owners.

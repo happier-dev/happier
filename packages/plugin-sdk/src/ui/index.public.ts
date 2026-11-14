@@ -1,4 +1,5 @@
 export type { PluginUiActionBinding } from './actionBinding.js';
+export { decodePluginUiManagedMachineInventory, type PluginUiManagedMachineInventory } from './managedMachineInventory.js';
 export { presentActionFailure } from './actionFailurePresentation.js';
 export type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from './hostApi.js';
 export { formatUsageDurationCompact } from '../usage.js';

@@ -241,7 +241,15 @@ const inventory = useLivePluginResource(
 );
 ```
 
-The JSON value has the `machines.managed.list` result shape. The host admits
+Decode `inventory.resource.value.bytes` with
+`decodePluginUiManagedMachineInventory` from `@happier-dev/plugin-sdk/ui`.
+Its `machines` are the host's local read snapshots: available private content
+has already been opened, and unavailable content leaves a structural row with
+no `launch`. Keep readable rows visible and show that the list is incomplete
+when such a row prevents provisioner filtering. Do not decrypt it again or
+silently omit it. This differs from the raw Action's opaque content carriers.
+
+The host admits
 the exact read against the mounted Account and Action policy, shares the
 existing active inventory, and invalidates it when another entry changes rows.
 Only `{ homeId }` is supported by this observation; archived or other query

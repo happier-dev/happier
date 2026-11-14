@@ -290,6 +290,13 @@ export const ManagedMachineV1Schema = lazyDefinition(() => z.union([
 ]));
 export type ManagedMachineV1 = z.infer<typeof ManagedMachineV1Schema>;
 
+/** Account-local read views may include opened E2EE content; never use this schema for Home responses. */
+export const ManagedMachineReadSnapshotV1Schema = lazyDefinition(() => z.union([
+  ManagedMachineFullV1Schema,
+  ManagedOpaquePresetMachineV1Schema,
+]));
+export type ManagedMachineReadSnapshotV1 = z.infer<typeof ManagedMachineReadSnapshotV1Schema>;
+
 export function isManagedOpaquePresetMachineV1(machine: ManagedMachineV1): machine is ManagedOpaquePresetMachineV1 {
   return machine.launch === undefined;
 }

@@ -1,10 +1,11 @@
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { classifyManagedMachineAllocationV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiManagedMachineInventory, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 
 import { DOCKER_SANDBOXES_PLUGIN_ID, DOCKER_SANDBOXES_PROVISIONER_ID } from '../machine/provider.js';
 
-type ManagedMachine = PluginActionResultById['machines.managed.list']['machines'][number];
+type ManagedMachine = PluginUiManagedMachineInventory['machines'][number];
+type ManagedLaunch = NonNullable<ManagedMachine['launch']>;
 type ProvisionerCheck = PluginActionResultById['machines.provisioners.check'];
 
 /**
@@ -24,20 +25,20 @@ export type SandboxRow = Readonly<{
     enrolledMachineId?: string;
 }>;
 
-function readLaunchChoice(machine: ManagedMachine, key: 'name' | 'templateId'): string | undefined {
-    const choices = machine.launch.choices;
+function readLaunchChoice(launch: ManagedLaunch, key: 'name' | 'templateId'): string | undefined {
+    const choices = launch.choices;
     if (!choices || typeof choices !== 'object' || Array.isArray(choices)) return undefined;
-    const value = (choices as Readonly<Record<string, unknown>>)[key];
+    const value = choices[key];
     return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function readSandboxName(machine: ManagedMachine): string {
+function readSandboxName(machine: ManagedMachine, launch: ManagedLaunch): string {
     const value = machine.resource?.value;
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-        const name = (value as Readonly<Record<string, unknown>>).sandboxName;
+        const name = value.sandboxName;
         if (typeof name === 'string' && name.length > 0) return name;
     }
-    return readLaunchChoice(machine, 'name') ?? machine.launch.name;
+    return readLaunchChoice(launch, 'name') ?? launch.name;
 }
 
 function readState(machine: ManagedMachine): SandboxState {
@@ -59,22 +60,30 @@ const STATE_ORDER: Readonly<Record<SandboxState, number>> = { running: 0, creati
  * The sandboxes this Machine runs: the Account's managed Machines this plugin's provisioner created with this
  * Machine as their controller, still active. Running work first, then by name.
  */
-export function selectMachineSandboxes(machines: readonly ManagedMachine[], machineId: string): readonly SandboxRow[] {
-    return machines
-        .filter(machine => machine.launch.provider.pluginId === DOCKER_SANDBOXES_PLUGIN_ID
-            && machine.launch.provider.localId === DOCKER_SANDBOXES_PROVISIONER_ID
-            && machine.controller?.machineId === machineId
-            && machine.creationState === 'active'
-            && machine.archivedAt === undefined)
-        .map((machine): SandboxRow => {
-            const templateId = readLaunchChoice(machine, 'templateId');
-            return {
-                managedId: machine.id, name: readSandboxName(machine), state: readState(machine),
-                ...(templateId ? { templateId } : {}),
-                ...(machine.enrolledMachineId ? { enrolledMachineId: machine.enrolledMachineId } : {}),
-            };
-        })
-        .sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.name.localeCompare(b.name));
+export function selectMachineSandboxes(machines: readonly ManagedMachine[], machineId: string): Readonly<{
+    rows: readonly SandboxRow[];
+    unavailableManagedIds: readonly string[];
+}> {
+    const rows: SandboxRow[] = [];
+    const unavailableManagedIds: string[] = [];
+    for (const machine of machines) {
+        if (machine.controller?.machineId !== machineId || machine.creationState !== 'active' || machine.archivedAt !== undefined) continue;
+        const launch = machine.launch;
+        if (launch === undefined) {
+            // Provider identity is private too, so this row may be a sandbox. Keep its unavailability explicit.
+            unavailableManagedIds.push(machine.id);
+            continue;
+        }
+        if (launch.provider.pluginId !== DOCKER_SANDBOXES_PLUGIN_ID || launch.provider.localId !== DOCKER_SANDBOXES_PROVISIONER_ID) continue;
+        const templateId = readLaunchChoice(launch, 'templateId');
+        rows.push({
+            managedId: machine.id, name: readSandboxName(machine, launch), state: readState(machine),
+            ...(templateId ? { templateId } : {}),
+            ...(machine.enrolledMachineId ? { enrolledMachineId: machine.enrolledMachineId } : {}),
+        });
+    }
+    rows.sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.name.localeCompare(b.name));
+    return { rows, unavailableManagedIds };
 }
 
 /** Whether this Machine can run sandboxes, in the words the provisioner's own check owns. */

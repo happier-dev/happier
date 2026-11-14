@@ -1,4 +1,5 @@
 import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiManagedMachineInventory } from '@happier-dev/plugin-sdk/ui';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -40,7 +41,8 @@ export function createPluginManagedMachineInventoryHostReadStore(input: Readonly
         async readResource(resource, options) {
             assertReference(resource);
             const entry = await readInventory(options?.signal);
-            const bytes = new TextEncoder().encode(JSON.stringify({ machines: entry.machines }));
+            const snapshot: PluginUiManagedMachineInventory = { machines: entry.machines };
+            const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
             return { contentType: 'application/json', bytes, digest: computePluginUiArtifactSha256DigestV1(bytes) };
         },
         async watchResource(resource, listener, options) {

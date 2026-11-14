@@ -34,6 +34,7 @@ export type {
     PluginEventObservationV1,
     PluginEventSourceConnectionStatusProjectionV1,
     PluginEventSourceConnectionStatusV1,
+    CurrentSourceCatalog,
 } from '../eventAutomation.js';
 export {
     admitDurablePushPluginEventObservationV1,
@@ -42,6 +43,7 @@ export {
     isAutomationEventSourcesListPageProgressingV1,
     projectPluginEventAdmissionSourceStatusV1,
     projectPluginEventSourceConnectionStatusV1,
+    readCurrentSourceDefinitions,
 } from '../eventAutomation.js';
 export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './accountFacts.js';
 
