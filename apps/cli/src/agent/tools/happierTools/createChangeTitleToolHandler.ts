@@ -3,7 +3,7 @@ import type { ActionToolExecutionOptions } from './createActionToolExecutorBridg
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }
-  | { ok: false; errorCode: string; error: string }
+  | { ok: false; errorCode: string; error: string; details?: unknown }
 >;
 
 type ActionExecutorLike = Readonly<{
@@ -64,7 +64,9 @@ export function createChangeTitleToolHandler(params: Readonly<{
     );
 
     if (!res.ok) {
-      return { success: false, errorCode: res.errorCode, error: res.error };
+      // The refusal's typed cause (e.g. its diagnostic reason) stays with the failure.
+      return { success: false, errorCode: res.errorCode, error: res.error,
+        ...(res.details === undefined ? {} : { details: res.details }) };
     }
 
     const result = readRecord(res.result);

@@ -39,6 +39,13 @@ const ACCOUNT_ACTIONS = [
   ['deployments.environments.list', {}],
   ['registries.sources.list', { kind: 'app' }],
 ] as const;
+// Recorded live failure (R144-E Voice-spawned Codex child): the child's own title and skill read,
+// called by the tool names the Agent sees. Both reach the same Account Action executor.
+const OWN_SESSION_TOOLS = (sessionId: string) => [
+  { name: 'change_title', arguments: { title: 'Create teal.txt with blue' } },
+  { name: 'skills_read', arguments: { name: 'happier', sessionId } },
+] as const;
+const CALL_COUNT = ACCOUNT_ACTIONS.length + OWN_SESSION_TOOLS('').length;
 
 it('serves each Agent relay tool call with its own added Session authority on a shared host', async () => {
   // The host process carries no Session authority; only the added Session's environment does.
@@ -91,6 +98,10 @@ it('serves each Agent relay tool call with its own added Session authority on a 
           );
           results.push(JSON.stringify(result.content));
         }
+        for (const call of OWN_SESSION_TOOLS(sessionId!)) {
+          const result = CallToolResultSchema.parse(await agent.callTool(call));
+          results.push(JSON.stringify(result.content));
+        }
         outcomes.set(sessionId!, results);
       } finally {
         await agent.close();
@@ -122,10 +133,10 @@ it('serves each Agent relay tool call with its own added Session authority on a 
     // The admitted Session's path is read; with no admitted turn the executor refuses next at
     // the witness check, before any effect. The neighbour on the same host never borrows it.
     expect(outcomes.get('admitted')).toEqual(
-      ACCOUNT_ACTIONS.map(() => expect.stringContaining('turn_witness_absent')),
+      Array.from({ length: CALL_COUNT }, () => expect.stringContaining('turn_witness_absent')),
     );
     expect(outcomes.get('unadmitted')).toEqual(
-      ACCOUNT_ACTIONS.map(() =>
+      Array.from({ length: CALL_COUNT }, () =>
         expect.stringContaining('authority_path_absent'),
       ),
     );
