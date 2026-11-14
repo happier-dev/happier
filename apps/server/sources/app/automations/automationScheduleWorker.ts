@@ -143,7 +143,9 @@ export async function runAutomationScheduleWorkerPass(params: Readonly<{
             );
         }
     }
-    const next = await findNextScheduleTrigger();
+    // Continuation already owns the next page's cursor; its immediate wake
+    // ignores deadlines. Find the next deadline once, after the scan finishes.
+    const next = page.continuationCursor === null ? await findNextScheduleTrigger() : null;
     return {
         progressed,
         failed,

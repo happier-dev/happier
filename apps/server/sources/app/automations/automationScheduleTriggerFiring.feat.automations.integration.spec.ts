@@ -330,6 +330,39 @@ describe("Automation schedule trigger firing (integration)", () => {
         await expect(readRuns()).resolves.toHaveLength(2);
     });
 
+    it.each([128, 384])("scans each retained page only once before finding the final deadline (%i open Runs)", async (heldCount) => {
+        await seedTwoScheduleTriggers();
+        const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
+        const heldIds = [fastTriggerId, ...Array.from({ length: heldCount - 1 }, () => randomUUID())];
+        await db.automationTrigger.createMany({ data: heldIds.slice(1).map(id => ({ ...template, id, nextRunAt: dueAt })) });
+        await db.automationTrigger.update({ where: { id: fastTriggerId }, data: { nextRunAt: dueAt } });
+        const future = new Date(dueAt.getTime() + 60_000);
+        await db.automationTrigger.update({ where: { id: slowTriggerId }, data: { nextRunAt: future } });
+        await db.automationRun.createMany({ data: heldIds.map(triggerId => ({
+            id: randomUUID(), accountId, automationId, originKind: "automation", state: "queued",
+            triggerId, causeKind: "trigger", causeTriggerKind: "schedule", causeTriggerRevision: template.revision,
+            causeOccurredAt: dueAt, causeScheduledFor: dueAt, dueAt, scheduledAt: dueAt,
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: AutomationTriggerIdSchema.parse(triggerId),
+                evidence: { v: 1, kind: "schedule", scheduledFor: dueAt.getTime() } }),
+        })) });
+        let scans = 0;
+        const release = observePrismaRequests(db, { before: request => {
+            if (request.model === "AutomationTrigger" && request.action === "findMany") scans += 1;
+        } });
+        let cursor: import("./automationScheduleWorker").AutomationScheduleScanCursor | null = null;
+        let result: Awaited<ReturnType<typeof runAutomationScheduleWorkerPass>>;
+        try {
+            do {
+                result = await runAutomationScheduleWorkerPass({ now: dueAt, scanCursor: cursor });
+                cursor = result.continuationCursor;
+            } while (cursor !== null);
+        } finally { release(); }
+        expect(result!.nextDueAt).toEqual(future);
+        // One due scan and one final deadline scan, each proportional to real pages.
+        expect(scans).toBe(2 * (heldCount / 128 + 1));
+        await expect(readRuns()).resolves.toHaveLength(heldCount);
+    });
+
     it("continues past a full retained open-Run cohort without omitting later valid work", async () => {
         await seedTwoScheduleTriggers();
         const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
@@ -385,20 +418,16 @@ describe("Automation schedule trigger firing (integration)", () => {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         const timers = vi.spyOn(globalThis, "setTimeout");
         let failed = false;
-        let scans = 0;
         const release = observePrismaRequests(db, { before: request => {
             const where = (request.args as { where?: { id?: string } }).where;
             if (!failed && request.model === "AutomationTrigger" && request.action === "findFirst" && where?.id === fastTriggerId) {
                 failed = true; throw new Error("Temporary admission database failure");
             }
-        }, after: request => {
-            if (request.model === "AutomationTrigger" && request.action === "findMany") scans += 1;
         } });
         const worker = startAutomationScheduleWorker();
         try {
-            await vi.waitFor(() => expect(scans).toBeGreaterThanOrEqual(4));
-            expect(failed).toBe(true);
             await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === 10_000)).toBe(true));
+            expect(failed).toBe(true);
             await vi.advanceTimersByTimeAsync(10_000);
             await vi.waitFor(async () => expect(await db.automationRun.count({ where: { triggerId: fastTriggerId } })).toBe(1));
         } finally { await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers(); }
