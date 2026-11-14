@@ -1991,6 +1991,9 @@ describe('installed deployment storage and target composition', () => {
                 vi.mocked(axios.request).mockImplementation(async request => new URL(request.url!).pathname.endsWith(`/receipts/${receipt.id}`)
                     ? { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: receipt }) }
                     : readHttp(request));
+                // Activation advances the Link while the protected receipt keeps
+                // the revision and exact provider deployment it originally captured.
+                if (scenario === 'rollback retained platform') row.targetLink.revision++;
                 const intent = { serverId: 'home', environmentId: environment.environment.id, requestKey: `retained-${scenario}` };
                 const prepared = await deps.prepareDeploymentAction(scenario === 'promote retained platform'
                     ? { actionId: 'deployments.promote', input: { ...intent, sourceEnvironmentId: environment.environment.id,
@@ -2003,9 +2006,23 @@ describe('installed deployment storage and target composition', () => {
                 if (!('input' in prepared)) throw new Error('Expected a prepared provider traffic change');
                 const stored = decodePlainArtifactStoredContent(String(documents.get(prepared.input.contentArtifactId)!.body));
                 const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
-                expect(content).toMatchObject({ sourceIntent: rootSourceIntent, sourceMethod: 'upload', machines: [], images: [] });
+                expect(content).toMatchObject({ sourceIntent: rootSourceIntent, sourceMethod: 'upload', machines: [], images: [],
+                    platform: { targetLinkRevision: row.targetLink.revision,
+                        credentialPrincipal: row.content.credentialPrincipal, providerIdentity: row.content.providerIdentity,
+                        providerEnvironment: row.content.providerEnvironment,
+                        observation: { state: 'succeeded', providerDeploymentId: 'existing-provider-deployment' } } });
                 expect(content).not.toHaveProperty('buildMachineId');
                 expect(nativeReads).toBe(0);
+                if (scenario === 'rollback retained platform') {
+                    // A new Link revision permits fresh review, not substituting
+                    // the provider resource that owns the retained deployment.
+                    row.content = { ...row.content, providerIdentity: { ...row.content.providerIdentity,
+                        providerResourceId: 'another-provider-project' } };
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                    await expect(deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
+                        input: { ...intent, deploymentId: receipt.id }, context: ownerContext }))
+                        .resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+                }
                 return;
             }
             const requestHttp = vi.mocked(axios.request).getMockImplementation()!;
