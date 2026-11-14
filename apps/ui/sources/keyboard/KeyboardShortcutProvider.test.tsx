@@ -126,6 +126,16 @@ describe('KeyboardShortcutProvider', () => {
             getModifierState: (modifier: string) => modifier === 'AltGraph',
         }));
         expect(focused).toBe('second');
+
+        // macOS Option types characters such as "{" on a French layout.
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        try {
+            focused = '';
+            window.dispatchEvent(createKeyboardEvent({ key: '{', altKey: true }));
+            expect(focused).toBe('second');
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('leaves typing alone in editors, open overlays, IME, shortcuts, Space scrolling and when turned off', async () => {

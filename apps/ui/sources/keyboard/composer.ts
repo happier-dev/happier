@@ -65,12 +65,18 @@ export function shouldIgnoreComposerKeyboardEvent(event: ComposerKeyEvent): bool
 
 /**
  * A key that types visible text: one character, no command modifier, and not Space, which keeps
- * scrolling the focused transcript. AltGr reports Ctrl+Alt on Windows but still types a character.
+ * scrolling the focused transcript. AltGr (Ctrl+Alt on Windows) and macOS Option still type
+ * characters such as "@" or "{".
  */
-export function isComposerTypeToFocusKey(event: ComposerKeyEvent & Readonly<{ altGraph?: boolean }>): boolean {
+export function isComposerTypeToFocusKey(
+    event: ComposerKeyEvent & Readonly<{ altGraph?: boolean }>,
+    input: Readonly<{ platformOS?: string; webPlatform?: string }> = {},
+): boolean {
     if (event.isComposing === true) return false;
+    const altTypesText = event.altGraph === true
+        || (event.altKey === true && event.ctrlKey !== true && isAppleKeyboardPlatform(input));
     const commandModifier = event.metaKey === true
-        || (event.altGraph !== true && (event.ctrlKey === true || event.altKey === true));
+        || (!altTypesText && (event.ctrlKey === true || event.altKey === true));
     if (commandModifier) return false;
     return Array.from(event.key).length === 1 && event.key.trim() !== '';
 }
