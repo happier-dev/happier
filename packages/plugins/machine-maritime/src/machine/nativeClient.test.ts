@@ -59,12 +59,15 @@ describe('Maritime managed-machine REST leaf', () => {
       const request: typeof fetch = async input => {
         const path = new URL(String(input)).pathname;
         if (path.endsWith('/resize')) return Response.json({ ok: true, alwaysOn: true });
-        if (path.endsWith('/exec')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 28, stdout: '', stderr: 'No space left on device' });
+        if (path.endsWith('/exec')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 28, stdout: '', stderr: 'Bearer private-token; No space left on device' });
         return Response.json(resource.kind === 'agent-box' ? box : computer);
       };
       const client = createMaritimeNativeClient(request, new AbortController().signal, 1000);
       const operation = phase === 'stdin' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }) : client.bootstrap(resource);
-      await expect(operation).rejects.toMatchObject({ code: 'maritime_guest_command_failed', details: { exitCode: 28 } });
+      const failure: unknown = await operation.catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: 'maritime_guest_command_failed', details: { exitCode: 28,
+        nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 28, stderr: expect.stringContaining('No space left on device') } } });
+      expect(JSON.stringify(failure)).not.toContain('private-token');
     });
   it('retains a completed delete acknowledgement after late cancellation', async () => {
     const abort = new AbortController();

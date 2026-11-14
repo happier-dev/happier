@@ -49,8 +49,12 @@ only observed Home transport failures become `home_not_guest_reachable`.
 Agent37 native shell failures retain their exit status and output through the
 shared bootstrap transport. Agent37, E2B and Maritime use the SDK guest-command
 success check before decoding successful prerequisite output, preserving failed
-mktemp/bootstrap exits as command failures. Truncated binary envelopes remain
-command failures; malformed responses retain their provider's `invalid_response`.
+mktemp/bootstrap exits as command failures. Failed prerequisites retain the
+existing closed native cause, with exit status and a redacted stderr tail bounded
+by the native diagnostic envelope; incomplete output retains its truncation flag.
+The managed controller preserves that cause in the operation failure. Truncated
+binary envelopes remain command failures; malformed responses retain their
+provider's `invalid_response`.
 Payload promotion reports
 `remote_command_failed` with the exit status and a redacted stderr tail using the
 existing command capture budget. Storage exhaustion keeps `remote_storage_full`.

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { createAgent37NativeClient } from './nativeClient.js';
-import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ManagedMachineControllerError } from '../../../../cli-common/src/machines/managed/controllerErrors.js';
 
 const launch = { kind: 'vm' as const, size: '2-4', region: 'us' as const };
 const resource = { instanceId: 'ab12cd34ef', managedId: 'managed-one', ...launch };
@@ -37,11 +40,36 @@ function vendor(options: { lostCreate?: boolean; startPending?: boolean; truncat
 }
 
 describe('Agent37 native HTTP lifecycle', () => {
-  it.each(['stdin', 'bootstrap'] as const)('retains the failed %s prerequisite exit separately from response validation', async phase => {
-    const request: typeof fetch = async () => Response.json({ exit_code: 28, stdout: '', stderr: 'No space left on device', truncated: false });
+  it.each(['stdin', 'upload', 'process-config', 'bootstrap', 'truncated-envelope'] as const)('retains safe %s failure diagnostics through the managed controller', async phase => {
+    // Redaction must precede bounding: a long credential crosses the tail boundary.
+    const stderr = 'discarded-head-marker' + 'x'.repeat(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1)
+      + '\nAuthorization: Bearer ' + 'private-token'.repeat(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1)
+      + '\nmktemp: /root/private-dir: No space left on device\n';
+    let requests = 0;
+    const request: typeof fetch = async () => {
+      if (phase === 'upload' && requests++ === 0) return Response.json({ exit_code: 0, stdout: '/tmp/agent37-fixture\n', stderr: '', truncated: false });
+      return Response.json({ exit_code: phase === 'truncated-envelope' ? 0 : 28,
+        stdout: '', stderr, truncated: phase === 'truncated-envelope' });
+    };
     const client = createAgent37NativeClient(request, new AbortController().signal, 1000);
-    const operation = phase === 'stdin' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }) : client.bootstrap(resource);
-    await expect(operation).rejects.toMatchObject({ code: 'agent37_guest_command_failed', details: { exitCode: 28 } });
+    const operation = phase === 'bootstrap' ? client.bootstrap(resource)
+      : phase === 'upload' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
+      : client.exec({ resource, argv: ['cat'], ...(phase === 'stdin' ? { inputBase64: 'YQ==' } : {}),
+        ...(phase === 'process-config' ? { processConfig: { environment: {}, detachedDaemonStartArgv: ['true'] } } : {}) });
+    const failure: unknown = await operation.catch((error: unknown) => error);
+    expect(isPluginError(failure)).toBe(true);
+    if (!isPluginError(failure)) throw new Error('Expected the native prerequisite failure');
+    const projected = normalizeActionExecutorThrownError(ManagedMachineControllerError.fromActionFailure({
+      ok: false, errorCode: failure.code, error: failure.message, details: failure.data,
+    }, 'machines.managed.acquire'), 'machines.managed.acquire');
+    expect(projected).toMatchObject({ errorCode: 'agent37_guest_command_failed', details: {
+      kind: 'managedNative', nativeCause: { localCause: 'native_command_failed', command: 'run',
+        exitCode: phase === 'truncated-envelope' ? 0 : 28, stderr: expect.stringContaining('No space left on device'), stderrTruncated: true },
+    } });
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain('private-token');
+    expect(serialized).not.toContain('discarded-head-marker');
+    expect(serialized.length).toBeLessThan(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 + 2000);
   });
   it('retains completed power and delete bodies after late cancellation', async () => {
     for (const effect of ['stop', 'delete'] as const) {

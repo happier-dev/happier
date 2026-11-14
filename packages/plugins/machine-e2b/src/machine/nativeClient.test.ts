@@ -12,8 +12,8 @@ function frame(value: unknown, flag = 0) {
   const json = new TextEncoder().encode(JSON.stringify(value)); const bytes = new Uint8Array(5 + json.length);
   bytes[0] = flag; new DataView(bytes.buffer).setUint32(1, json.length); bytes.set(json, 5); return bytes;
 }
-function output(stdout: string, exitCode = 0) {
-  return new Uint8Array(Buffer.concat([frame({ event: { start: { pid: 42 } } }), frame({ event: { data: { stdout } } }), frame({ event: { end: { exited: true, exitCode } } }), frame({}, 2)]));
+function output(stdout: string, exitCode = 0, stderr = '') {
+  return new Uint8Array(Buffer.concat([frame({ event: { start: { pid: 42 } } }), frame({ event: { data: { stdout, stderr } } }), frame({ event: { end: { exited: true, exitCode } } }), frame({}, 2)]));
 }
 function vendor(options: { failCreate?: boolean; duplicate?: boolean; processBytes?: Uint8Array } = {}) {
   const requests: Request[] = [];
@@ -38,11 +38,14 @@ function vendor(options: { failCreate?: boolean; duplicate?: boolean; processByt
 
 describe('E2B native REST leaf', () => {
   it.each(['stdin', 'bootstrap'] as const)('classifies a failed %s guest prerequisite as a command failure', async phase => {
-    const h = vendor({ processBytes: output('', 28) });
+    const h = vendor({ processBytes: output('', 28, Buffer.from('Bearer private-token; mktemp: No space left on device').toString('base64')) });
     const operation = phase === 'stdin'
       ? h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
       : h.client.bootstrap(resource);
-    await expect(operation).rejects.toMatchObject({ code: 'e2b_guest_command_failed', details: { exitCode: 28 } });
+    const failure: unknown = await operation.catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'e2b_guest_command_failed', details: { exitCode: 28,
+      nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 28, stderr: expect.stringContaining('No space left on device') } } });
+    expect(JSON.stringify(failure)).not.toContain('private-token');
   });
   it.each(['stdin', 'bootstrap'] as const)('keeps malformed successful %s output distinct from command failure', async phase => {
     const h = vendor({ processBytes: output('') });

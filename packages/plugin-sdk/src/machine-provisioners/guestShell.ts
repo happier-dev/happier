@@ -1,13 +1,26 @@
 /** @moduleRealm any */
+import { redactBugReportSensitiveText } from '../diagnostics.js';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
+
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 /** A completed guest prerequisite can fail without making its native response malformed. */
 export function assertMachineProvisionerGuestCommandSucceeded(
-  result: Readonly<{ exitCode: number; truncated?: boolean }>,
-  failure: (details: Readonly<{ exitCode: number; truncated?: boolean }>) => Error,
+  result: Readonly<{ exitCode: number; truncated?: boolean; stderr?: string | Uint8Array }>,
+  failure: (details: Readonly<{ exitCode: number; truncated?: boolean;
+    nativeCause: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> }>) => Error,
 ): void {
-  if (result.exitCode !== 0 || result.truncated) throw failure({ exitCode: result.exitCode,
-    ...(result.truncated === undefined ? {} : { truncated: result.truncated }) });
+  if (result.exitCode === 0 && !result.truncated) return;
+  const stderr = typeof result.stderr === 'string' ? result.stderr : new TextDecoder().decode(result.stderr);
+  // Project the complete retained text before bounding, so a credential cannot straddle the tail boundary.
+  const projected = redactBugReportSensitiveText(stderr).trim();
+  throw failure({ exitCode: result.exitCode,
+    ...(result.truncated === undefined ? {} : { truncated: result.truncated }),
+    nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: result.exitCode,
+      ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+      ...(result.truncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+    },
+  });
 }
 
 /** Preserve binary stdout/stderr and exit status over a native text-only exec API.

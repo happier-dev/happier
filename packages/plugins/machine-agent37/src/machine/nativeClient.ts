@@ -39,7 +39,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
   }
   async function checked(resource: Agent37Resource, shell: string) {
     const result = await command(resource, shell);
-    assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exit_code, truncated: result.truncated },
+    assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exit_code, truncated: result.truncated, stderr: result.stderr },
       details => new PluginError({ code: 'agent37_guest_command_failed', details }));
     return result.stdout;
   }
@@ -113,8 +113,8 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       termination: { observed: { kind: 'exit', exitCode: result.exit_code }, requestedBy: { kind: 'none' } },
       stdoutTruncated: result.truncated, stderrTruncated: result.truncated,
     };
-    if (result.truncated) throw new PluginError({ code: 'agent37_guest_command_failed',
-      details: { exitCode: result.exit_code, truncated: true } });
+    assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exit_code, truncated: result.truncated, stderr: result.stderr },
+      details => new PluginError({ code: 'agent37_guest_command_failed', details }));
     let value: unknown;
     try { value = JSON.parse(result.stdout) as unknown; } catch { throw invalid(); }
     const binary = binaryExecution.safeParse(value);

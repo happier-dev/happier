@@ -101,7 +101,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     const run = (argv: readonly string[], environment?: Readonly<Record<string, string>>) => executeEnvd(request, signal, session, argv, environment, input.timeoutMs);
     if (input.processConfig) {
       const result = await run(input.processConfig.detachedDaemonStartArgv, input.processConfig.environment);
-      assertMachineProvisionerGuestCommandSucceeded(result, () => new E2bNativeError({ code: 'e2b_process_configuration_failed' }));
+      assertMachineProvisionerGuestCommandSucceeded(result, details => new E2bNativeError({ code: 'e2b_process_configuration_failed', details }));
       return { kind: 'process-configured' };
     }
     let argv = input.argv;

@@ -169,7 +169,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     } else await awake(input.resource);
     if (input.processConfig) {
       const result = await run(input.resource, ['env', ...Object.entries(input.processConfig.environment).map(([key, value]) => key + '=' + value), ...input.processConfig.detachedDaemonStartArgv], input.timeoutMs);
-      assertMachineProvisionerGuestCommandSucceeded(result, () => new MaritimeNativeError({ code: 'maritime_process_configuration_failed' }));
+      assertMachineProvisionerGuestCommandSucceeded(result, details => new MaritimeNativeError({ code: 'maritime_process_configuration_failed', details }));
       return { kind: 'process-configured' };
     }
     let argv = input.argv;
