@@ -21,6 +21,11 @@ import * as serverProfiles from '@/sync/domains/server/serverProfiles';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
+// Socket.IO is hoisted to the harness boundary: the static imports above load scoped-RPC consumers,
+// and a consumer that binds the real client before the harness installs never reaches the RPC responder.
+vi.mock('socket.io-client', async (importOriginal) => (
+    await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')
+).createSessionOpsSocketIoClientBoundary(importOriginal));
 // Install physical HTTP/Socket.IO before loading the real scoped-RPC owner.
 const network = await installSessionOpsNetworkBoundary();
 const { resolvePreferredBackendTarget } = await import('@/agents/backendCatalog/resolvePreferredBackendTarget');
@@ -1274,6 +1279,56 @@ describe('machine inventory lifecycle boundary', () => {
                 v: 2, bindingsByServiceId: { 'acme.review/account': { source: 'connected', selection: 'profile', profileId: 'successor-work' } },
             });
         } finally { await hook.unmount(); resetServerFeaturesClientForTests(); }
+    });
+    it('evaluates Connected Account sign-in once for single-machine and fleet observers that mount before the projection loads', async () => {
+        const server = await network.addHome('https://auth-shape-inventory.example.test', 'inventory-account');
+        const scope = { serverId: server.id, accountId: 'inventory-account' };
+        const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const machine = createMachineFixture({ id: 'auth-shape-machine', active: true, activeAt: Date.now() });
+        const service = { pluginId: 'acme.review', localId: 'account' };
+        const identity = { pluginId: 'acme.review', localId: 'review' };
+        const descriptor = {
+            id: 'account', serviceId: 'account', pluginId: service.pluginId, title: 'Review account', provenance: 'external', sourceKind: 'installed',
+            authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'providerCheck' }] },
+            capabilities: [], availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+        } satisfies NonNullable<PluginProjectionV2['familiesById']['connectedAccounts']>['entriesById'][string];
+        const projection = PluginProjectionV2Schema.parse({ ...emptyProjection,
+            familiesById: { connectedAccounts: { family: 'connectedAccounts', entriesById: { 'acme.review/account': descriptor } } },
+            agentsById: { review: { id: 'review', identity, title: 'Review', connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }],
+                capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
+        });
+        storage.setState({ profileScope: scope });
+        await publishMachineInventoryForTest(scope, [machine]);
+        // The Home's features are already settled before either observer mounts.
+        primeServerFeaturesSnapshot({ serverId: server.id, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+            features: {}, capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
+        }) } });
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true);
+        rpc.mockImplementation(async ({ method }: { method: string }) => method.includes('contributionRegistryProjection.describe')
+            ? { protocolVersion: 1, projection }
+            : method === 'capabilities.detect' ? { protocolVersion: 1, results: { 'cli.review': { ok: true, checkedAt: 12,
+                data: { ...item, signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, isLoggedIn: false,
+                    authStatus: { state: 'logged_out', checkedAt: 12 } } } } } : { jobs: [] });
+        const key = serverAccountScopedResourceKey(scope, 'machine-agents', machine.id);
+        // Each publication of the shared inventory re-renders every consumer; record which sign-in shape it carried.
+        const unevaluated: number[] = [];
+        let publications = 0;
+        const off = machineAgentInventoryStore.subscribe(key, () => {
+            publications++;
+            const connected = machineAgentInventoryStore.read(key).agents[0]?.signIn.connectedServices[0];
+            if (connected && connected.profiles === undefined) unevaluated.push(publications);
+        });
+        const hook = await renderHook(() => ({
+            inventory: useMachineAgents({ serverId: server.id, machineId: machine.id, load: false }),
+            fleet: useMachineAgentsByMachine({ serverId: server.id, machineIds: [machine.id], load: false }),
+        }));
+        try {
+            await act(async () => { await refreshMachineAgents({ serverId: server.id, machineId: machine.id, accountLifetime: lifetime }); });
+            await vi.waitFor(() => expect(hook.getCurrent().inventory.agents[0]?.signIn.connectedServices[0]?.profiles).toEqual([]));
+            await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+            // Settled features never publish an "undetermined" Account shape that a later publication reverses.
+            expect(unevaluated).toEqual([]);
+        } finally { off(); await hook.unmount(); resetServerFeaturesClientForTests(); }
     });
     it.each(['signedIn', 'signedOut', 'unavailable'] as const)('keeps an untouched embedded Agent idle and settles its demanded probe to %s', async (outcome) => {
         const server = await network.addHome(`https://embedded-agent-${outcome}.example.test`, 'inventory-account');

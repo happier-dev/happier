@@ -6,6 +6,7 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveConnectedServiceRegistryEntryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
@@ -30,7 +31,12 @@ export function useMachineAgentAuthentication(input: Readonly<{
     const profile = lifetime && areServerAccountScopesEqual(profileSlice.scope, lifetime.scope) ? profileSlice : savedProfile;
     const purposeCatalog = useConnectedAccountCatalog('purposes', enabled ? lifetime?.scope ?? null : null,
         { sourceMachineId: input.sourceMachineId });
-    const features = useServerFeaturesSnapshotForServerId(serverId, { enabled });
+    const liveFeatures = useServerFeaturesSnapshotForServerId(serverId, { enabled });
+    // Every producer of one Machine inventory must evaluate the same Account fact. The imperative reader
+    // (`readMachineAgentAuthentication`) uses the settled cache; a mounted observer whose own snapshot is
+    // still loading (disabled, or one render behind enabling) must not publish an undetermined Connected
+    // Account shape over it, which the next publication reverses and re-renders every consumer.
+    const features = liveFeatures.status === 'loading' ? getCachedServerFeaturesSnapshot({ serverId }) ?? liveFeatures : liveFeatures;
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups', { scopeKind: 'spawn', serverId });
     const localize = useProjectedPluginLocalizedTextResolver();
     const { present } = useConnectedAccountIdentityPrivacy();
