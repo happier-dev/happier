@@ -42,10 +42,21 @@ import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/c
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { SessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
-import { readRetainedWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
+import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
+import { WorkflowSessionCompositionError } from './workflowConversation';
 import { hasLostWorkflowActionOperation, LOST_ACTION_OPERATION_CODE, readWorkflowActionOperationSnapshot } from './actionOperationObservation';
 
 type WorkflowInvocationRecoveryEvidence = Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['observeRecovery']>>>;
+
+function failedOperationObservation(operation: ActionOperationSnapshotV1, sessionStartup: boolean): WorkflowInvocationRecoveryObservation {
+  const startup = sessionStartup ? readWorkflowSessionStartupError(operation) : undefined;
+  if (startup && !(startup instanceof WorkflowSessionCompositionError)) return { kind: 'unresolved', code: startup.code };
+  return { kind: 'failed', code: startup?.code ?? operation.error?.errorCode ?? 'action_operation_failed',
+    ...(startup?.failureCause ?? operation.error?.failureCause
+      ? { failureCause: startup?.failureCause ?? operation.error?.failureCause } : {}),
+    ...(startup?.runtimeIssueV1 ? { runtimeIssueV1: startup.runtimeIssueV1 } : {}),
+    ...(operation.error?.error ? { message: operation.error.error } : {}) };
+}
 
 type RecoveryActionExecutor = Readonly<{
   execute: (
@@ -478,9 +489,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
             const output = execution.output;
             const failed = readRetainedWorkflowSessionStartupFailure(output && typeof output === 'object' && !Array.isArray(output) && 'operation' in output
               ? output.operation : undefined, snapshots[0]!.target, execution.actionRequestId);
-            if (failed) return { kind: 'failed', code: failed.error?.errorCode ?? 'action_operation_failed',
-              ...(failed.error?.failureCause ? { failureCause: failed.error.failureCause } : {}),
-              ...(failed.error?.error ? { message: failed.error.error } : {}) };
+            if (failed) return failedOperationObservation(failed, true);
             return await recoverAbsentStartup();
           }
           const observedOperations = snapshots.flatMap(({ target, raw }) => {
@@ -516,9 +525,8 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           if (observedOperations.length !== snapshots.length) return { kind: 'outcome_uncertain', code: LOST_ACTION_OPERATION_CODE };
           if (execution.output === undefined) {
             const failed = observedOperations.find(({ operation }) => operation.state === 'failed');
-            if (failed) return { kind: 'failed', code: failed.operation.error?.errorCode ?? 'action_operation_failed',
-              ...(failed.operation.error?.failureCause ? { failureCause: failed.operation.error.failureCause } : {}),
-              ...(failed.operation.error?.error ? { message: failed.operation.error.error } : {}) };
+            if (failed) return failedOperationObservation(failed.operation,
+              input.progress.blockKind === 'step' && execution.actionId === 'session.spawn_new');
             if (observedOperations.some(({ operation }) => operation.state === 'cancelled')) return { kind: 'cancelled', code: 'cancelled' };
             // A projected native receipt proves settlement, but cannot recreate
             // a lost Action result/acceptance envelope for completion adapters.
@@ -529,9 +537,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           // closed control must first handle any Session created by startup.
           if (input.progress.blockKind === 'step') {
             const failed = observedOperations.find(({ operation }) => operation.state === 'failed');
-            if (failed) return { kind: 'failed', code: failed.operation.error?.errorCode ?? 'action_operation_failed',
-              ...(failed.operation.error?.failureCause ? { failureCause: failed.operation.error.failureCause } : {}),
-              ...(failed.operation.error?.error ? { message: failed.operation.error.error } : {}) };
+            if (failed) return failedOperationObservation(failed.operation, execution.actionId === 'session.spawn_new');
             if (observedOperations.some(({ operation }) => operation.state === 'cancelled')) return { kind: 'cancelled', code: 'cancelled' };
             if (execution.actionId === 'session.spawn_new' && input.run && input.index
               && execution.actionRequestId === `workflow:${input.run.id}:${input.index.id}`

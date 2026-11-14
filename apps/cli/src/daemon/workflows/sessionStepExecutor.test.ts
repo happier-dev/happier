@@ -3271,7 +3271,9 @@ describe('workflow Session step executor', () => {
     });
     const resourcePage = TeamCredentialResourceEntitledPageV1Schema.parse({
       resources: [{
-        id: 'resource-1', teamId: 'team-1', displayName: 'Shared Codex account',
+        id: 'resource-1', teamId: 'team-1', displayName: {
+          content: { t: 'plain', v: 'Shared Codex account' }, recipientEnvelope: null,
+        },
         resourceRevision: 4, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],

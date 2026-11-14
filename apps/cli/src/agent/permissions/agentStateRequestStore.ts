@@ -1234,7 +1234,8 @@ export class AgentStateRequestStore {
             const extra = clonePlainObjectToNullProto(params.extraCompletedFields) ?? Object.create(null);
             for (const [key, value] of Object.entries(extra)) {
                 if (!key) continue;
-                completedEntry[key] = value;
+                if (value === undefined) delete completedEntry[key];
+                else completedEntry[key] = value;
             }
         }
 
@@ -1369,7 +1370,8 @@ export class AgentStateRequestStore {
                     const mutableEntry = entry as Record<string, unknown>;
                     for (const [key, value] of Object.entries(extra)) {
                         if (!key) continue;
-                        mutableEntry[key] = value;
+                        if (value === undefined) delete mutableEntry[key];
+                        else mutableEntry[key] = value;
                     }
                 }
                 removePermissionResponseClaim(entry as Record<string, unknown>);

@@ -107,8 +107,13 @@ vi.mock('../platform/windows/spawnHappyCliVisibleConsole', () => ({
 vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => {
   const actual = await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>();
   const launch = async ({ method, request }: {
-    method: string; request: { sessionId?: string; spawnNonce?: string };
+    method: string; request: { sessionId?: string; spawnNonce?: string; directory?: unknown };
   }) => {
+    if (method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE
+      || method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+      const { createSessionCreationTargetPreparationRpcResult } = await import('@/testkit/backends/apiSessionSocketHarness');
+      return createSessionCreationTargetPreparationRpcResult(request);
+    }
     if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       || method === RPC_METHODS.CAPABILITIES_DETECT) {
       const { readCurrentContributionRegistry } = await import('@/agent/catalog/snapshot');
@@ -886,10 +891,15 @@ it.each(['success', 'failure', 'already-stopped', 'foreign-session', 'success-du
     if (method.endsWith('actionOperation.cancel.v1')) return await operations.handlers.cancel(request, options);
     throw new Error(`Unexpected retained-operation RPC: ${method}`);
   };
+  const callExactMachineRpc = machineRpc.callExactMachineRpc;
+  const callMachineRpc = machineRpc.callMachineRpc;
   vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request =>
-    await invoke(request.method, request.request, request.signal ? { signal: request.signal } : undefined));
+    request.method.includes('actionOperation.')
+      ? await invoke(request.method, request.request, request.signal ? { signal: request.signal } : undefined)
+      : await callExactMachineRpc(request));
   vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async request => {
-    if (request.method !== RPC_METHODS.STOP_SESSION || request.machineId !== machineId
+    if (request.method !== RPC_METHODS.STOP_SESSION) return await callMachineRpc(request);
+    if (request.machineId !== machineId
       || !request.request || typeof request.request !== 'object' || !('sessionId' in request.request)
       || request.request.sessionId !== 'late-child') throw new Error('Wrong Session Stop wiring');
     const session = freshSessionRecords.get('late-child')!;
@@ -1146,7 +1156,10 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
     const progress = openRowProgress(kit, leaf);
     expect(progress).toMatchObject({ reason: { code: expectedCode }, execution: {
       kind: 'action', actionId: 'session.spawn_new', awaitedOperations: [{ operationId: 'failed-start', machineId }],
-      output: { operation: { state: 'failed', error: { errorCode: expectedCode } } },
+      output: { operation: { state: 'failed', ...(mode === 'missing-requester-profile' || transientHome
+        ? { error: { errorCode: 'spawn_failed' }, result: { type: 'error', code: 'spawn_failed',
+          launchError: { code: expectedCode } } }
+        : { error: { errorCode: expectedCode } }) } },
     } });
     if (typedRefusal) {
       // A new process-local owner has no record of the retired operation. The
@@ -1175,7 +1188,7 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
           .resolves.toEqual(unknown);
         // A fresh live native observation always takes precedence over the
         // retained terminal projection, even when its revision has advanced.
-        const { error: _terminalError, settledAt: _settledAt, ...liveOperation } = execution.output.operation;
+        const { error: _terminalError, result: _terminalResult, settledAt: _settledAt, ...liveOperation } = execution.output.operation;
         await expect(readEvidence(progress, async () => ({ kind: 'found', operation: {
           ...liveOperation, state: 'running', revision: 99,
         } }))).resolves.toEqual({ activity: 'active', canReattach: true, canContinueConversation: false });
@@ -1247,7 +1260,8 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
         expect(replacement.index).toMatchObject({ attempt: '1', lifecycle: 'completed' });
         expect(openRowProgress(kit, replacement.index)).toMatchObject({ previousAttemptRecordId: leaf.id });
         expect(openRowProgress(kit, kit.rowById(leaf.id)!.index)).toMatchObject({ execution: {
-          output: { operation: { operationId: 'failed-start', state: 'failed', error: { errorCode: expectedCode } } },
+          output: { operation: { operationId: 'failed-start', state: 'failed', error: { errorCode: 'spawn_failed' },
+            result: { type: 'error', code: 'spawn_failed', launchError: { code: expectedCode } } } },
         } });
         expect(successfulStarts).toBe(1);
       } else {
@@ -1484,41 +1498,32 @@ it.each(['unavailable', 'missing-inventory', 'valid'] as const)(
     await Promise.race([nativeFinished, coordinating.then(value => {
       throw new Error(`Workflow settled before native open finished: ${JSON.stringify(value)}`);
     })]);
-    if (mode === 'missing-inventory') {
+    await vi.waitFor(() => expect(operations.store.get(scope, 'native-mode-start')?.state)
+      .toBe(mode === 'valid' ? 'succeeded' : 'failed'));
+    if (mode === 'valid') await expect(coordinating).resolves.toMatchObject({ state: 'succeeded' });
+    else {
       expect(openError).toMatchObject({ code: 'native_agent_session_mode_unavailable' });
-      expect(attestationPhases).toEqual(['prepare']);
-      expect(operations.store.get(scope, 'native-mode-start')).toMatchObject({ state: 'running' });
-      expect(enqueue).not.toHaveBeenCalled();
-      controller.abort(new WorkflowRuntimeInterruption());
-      await expect(coordinating).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
-    } else {
-      await vi.waitFor(() => expect(operations.store.get(scope, 'native-mode-start')?.state)
-        .toBe(mode === 'valid' ? 'succeeded' : 'failed'));
-      if (mode === 'valid') await expect(coordinating).resolves.toMatchObject({ state: 'succeeded' });
-      else {
-        expect(openError).toMatchObject({ code: 'native_agent_session_mode_unavailable' });
-        expect(operations.store.get(scope, 'native-mode-start')).toMatchObject({ state: 'failed',
-          error: { errorCode: 'native_agent_session_mode_unavailable' } });
-        await expect(coordinating).resolves.toMatchObject({ state: 'failed', reason: 'native_agent_session_mode_unavailable' });
-        expect(kit.run()).toMatchObject({ state: 'failed' });
-        expect(rowFor(kit, 'launch')).toMatchObject({ lifecycle: 'failed' });
-        expect(rowFor(kit, 'must-not-admit')).toBeUndefined();
-        expect(attestationPhases).toEqual(['prepare', 'refused']);
-        expect(retiredSessions).toEqual(['native-mode-child']);
-        expect(openRowProgress(kit, rowFor(kit, 'launch')!)).toMatchObject({
-          execution: { kind: 'action', actionId: 'session.spawn_new',
-            awaitedOperations: [{ operationId: 'native-mode-start', machineId }],
-            output: { operation: { state: 'failed', error: { errorCode: 'native_agent_session_mode_unavailable' } } } },
-          reason: { code: 'native_agent_session_mode_unavailable' },
-        });
-        await expect(coordinate({ runId, attempt: 0, expectedRevision: kit.run().revision,
-          accountCurrentness: currentness, acceptedEnvelope })).resolves.toMatchObject({ state: 'failed' });
-      }
+      expect(operations.store.get(scope, 'native-mode-start')).toMatchObject({ state: 'failed',
+        error: { errorCode: 'native_agent_session_mode_unavailable' } });
+      await expect(coordinating).resolves.toMatchObject({ state: 'failed', reason: 'native_agent_session_mode_unavailable' });
+      expect(kit.run()).toMatchObject({ state: 'failed' });
+      expect(rowFor(kit, 'launch')).toMatchObject({ lifecycle: 'failed' });
+      expect(rowFor(kit, 'must-not-admit')).toBeUndefined();
+      expect(attestationPhases).toEqual(['prepare', 'refused']);
+      expect(retiredSessions).toEqual(['native-mode-child']);
+      expect(openRowProgress(kit, rowFor(kit, 'launch')!)).toMatchObject({
+        execution: { kind: 'action', actionId: 'session.spawn_new',
+          awaitedOperations: [{ operationId: 'native-mode-start', machineId }],
+          output: { operation: { state: 'failed', error: { errorCode: 'native_agent_session_mode_unavailable' } } } },
+        reason: { code: 'native_agent_session_mode_unavailable' },
+      });
+      await expect(coordinate({ runId, attempt: 0, expectedRevision: kit.run().revision,
+        accountCurrentness: currentness, acceptedEnvelope })).resolves.toMatchObject({ state: 'failed' });
     }
     expect(launches).toBe(1);
     expect(admissions).toHaveLength(mode === 'valid' ? 1 : 0);
-    expect(retiredSessions).toEqual(mode === 'unavailable' ? ['native-mode-child'] : []);
-    expect(tracked.childProcess?.exitCode).toBe(mode === 'unavailable' ? 0 : undefined);
+    expect(retiredSessions).toEqual(mode === 'valid' ? [] : ['native-mode-child']);
+    expect(tracked.childProcess?.exitCode).toBe(mode === 'valid' ? undefined : 0);
     expect(send).not.toHaveBeenCalled();
   } finally {
     controller.abort(new WorkflowRuntimeInterruption());
@@ -2167,7 +2172,7 @@ describe('composed Workflow front door and claimed execution', () => {
         const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
           actionExecutor: { execute: async () => { throw new Error('must_not_launch_or_observe_an_input'); } } });
         expect(await observe({ progress: unknown, terminalParent: true, cancellationRequested: true }))
-          .toEqual({ kind: 'unresolved', code: 'workflow_execution_correspondence_missing' });
+          .toEqual({ kind: 'unresolved', code: 'action_operation_observation_unavailable' });
         const owner = createWorkflowRunActionOwner({ resolveAccountId: async () => accountId, storage: kit,
           definitions: { get: async () => { throw new Error('unexpected_definition_read'); } },
           resolveEncryption: async () => ({ kind: 'available', witness: currentness }) });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, StrictJsonValueSchema } from '@happier-dev/protocol';
 import type { AgentState } from '@/api/types';
 import { configuration } from '@/configuration';
 import type { PermissionRequestPushSender } from '@/settings/notifications/permissionRequestPush';
@@ -67,6 +67,29 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    it.each(['complete', 'record'] as const)('removes cleared response targets before strict JSON persistence (%s)', async method => {
+        let state: AgentState = { requests: {}, completedRequests: {} };
+        const store = new AgentStateRequestStore({ logPrefix: '[Strict completion]', target: {
+            scopeId: 'workflow-input', readState: () => state,
+            updateState: updater => {
+                const next = updater(state);
+                StrictJsonValueSchema.parse(next);
+                state = next;
+            },
+        } });
+        try {
+            await store.publishRequestAndWait({ requestId: 'permission', toolName: 'Bash', toolInput: {},
+                createdAt: 1, responseTarget: { kind: 'native-permission' } });
+            const completion = { requestId: 'permission', status: 'approved', decision: 'approved',
+                extraCompletedFields: { responseTarget: undefined } };
+            expect(await (method === 'complete' ? store.completeRequest(completion)
+                : store.recordCompletedRequest({ ...completion, toolName: 'Bash', toolInput: {} }))).toBe(true);
+            expect(state.requests).not.toHaveProperty('permission');
+            expect(state.completedRequests?.permission).toMatchObject({ status: 'approved', decision: 'approved' });
+            expect(state.completedRequests?.permission).not.toHaveProperty('responseTarget');
+        } finally { store.dispose(); }
+    });
+
     it('releases an obsolete native offer claim while preserving claims for the same occurrence', async () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({ session, logPrefix: '[Native reoffer]' });

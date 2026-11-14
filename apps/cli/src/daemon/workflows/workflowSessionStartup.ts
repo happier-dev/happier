@@ -19,6 +19,7 @@ import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActio
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
@@ -92,6 +93,8 @@ export async function runObservedWorkflowSessionStartup(
     // The original operation proves failure even when creation rejects before
     // returning an acceptance reply. Preserve its terminal fact for recovery.
     await input.onObservation?.(operation);
+    if ((error instanceof WorkflowSessionCompositionError && error.launchFailure)
+      || (error instanceof Error && 'code' in error && error.code === SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED)) throw error;
     throw readWorkflowSessionStartupError(operation);
   };
   const abort = () => {
@@ -171,6 +174,7 @@ export async function runObservedWorkflowSessionStartup(
               resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: serverHttpBaseUrl,
                 token: input.request.credentials.token, signal: operation.signal }),
             });
+            let spawnFailure: unknown;
             const { executor } = createCliActionExecutorHarness({ credentials: input.request.credentials,
               token: input.request.credentials.token, sessionId: context.defaultSessionId ?? 'cli',
               serverId: host.serverId, ...(context.serverIdentityId ? { serverIdentityId: context.serverIdentityId } : {}),
@@ -212,6 +216,7 @@ export async function runObservedWorkflowSessionStartup(
                     organizationPlacement: created.organizationPlacement, initialInput: created.initialInput,
                     ...(readiness ? { agentUpdate: readiness.agentUpdate } : {}) };
                 } catch (error) {
+                  spawnFailure = error;
                   const refusal = readWorkflowSessionStartupRefusal(error);
                   if (refusal) return refusal;
                   throw error;
@@ -226,7 +231,10 @@ export async function runObservedWorkflowSessionStartup(
               bypassActionInterception: true,
             });
             const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
-            if (!result.ok) throw new WorkflowSessionCompositionError(result.errorCode);
+            if (!result.ok) {
+              if (spawnFailure) throw spawnFailure;
+              throw new WorkflowSessionCompositionError(result.errorCode);
+            }
             const created = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
             if (created.success && created.data.type === 'error') {
               try { await host.cleanupOnFailure(); } catch { /* Preserve the original startup refusal. */ }
@@ -267,7 +275,13 @@ export async function runObservedWorkflowSessionStartup(
         }
       }
       if (operation.state === 'cancelled') throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-      if (operation.state === 'failed') throw readWorkflowSessionStartupError(operation);
+      if (operation.state === 'failed') {
+        const error = readWorkflowSessionStartupError(operation);
+        // The operation's generic failure projection can settle before its
+        // original launch returns the creator's retirement evidence.
+        if (!(error instanceof WorkflowSessionCompositionError) && launch) await launch.catch(rejectFromOriginalOperation);
+        throw error;
+      }
       if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error?.error ?? 'workflow_session_startup_unavailable'), {
         code: operation.error?.errorCode ?? 'workflow_session_startup_unavailable',
       });

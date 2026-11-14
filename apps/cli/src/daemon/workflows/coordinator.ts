@@ -21,7 +21,7 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
-import { readRetainedWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
+import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
 import { readWorkflowProjectSetupConsentHold } from './stepExecution';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -717,7 +717,7 @@ function hasDefinitiveFailedSessionStartup(execution: WorkflowProgressEnvelopeV1
     execution.awaitedOperations[0]!, execution.actionRequestId);
   // A typed Home read refusal settles this attempt, not the Workflow. Keep
   // ordinary user-initiated recovery available without retrying native work.
-  return failed !== undefined && failed.error?.errorCode !== 'project_requester_home_unavailable';
+  return failed !== undefined && readWorkflowSessionStartupError(failed).code !== 'project_requester_home_unavailable';
 }
 
 function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFailure | undefined {

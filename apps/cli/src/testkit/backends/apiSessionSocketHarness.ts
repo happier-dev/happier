@@ -52,6 +52,20 @@ export function createAvailableSessionSpawnMachineSnapshot(
     };
 }
 
+export function createSessionCreationTargetPreparationRpcResult(request: Readonly<{ directory?: unknown }>) {
+    const directory = request.directory && typeof request.directory === 'object'
+        ? request.directory : null;
+    return SessionCreationTargetPreparationResultV1Schema.parse({
+        ok: true,
+        directory: typeof request.directory === 'string' ? request.directory
+            : directory && 'kind' in directory && directory.kind === 'path'
+                && 'path' in directory && typeof directory.path === 'string' ? directory.path : process.cwd(),
+        directoryKind: directory && 'kind' in directory && directory.kind === 'managed' ? 'managed' : 'path',
+        directoryCreationRequired: false,
+        checkout: null,
+    });
+}
+
 export function respondToExactMachineSessionSpawnRpc(params: Readonly<{
     event: string;
     args: unknown[];
@@ -80,16 +94,7 @@ export function respondToExactMachineSessionSpawnRpc(params: Readonly<{
         const request = decodedParams && typeof decodedParams === 'object' && !Array.isArray(decodedParams)
             ? decodedParams as Readonly<Record<string, unknown>>
             : {};
-        const directory = request.directory && typeof request.directory === 'object'
-            ? request.directory as Readonly<{ kind?: unknown; path?: unknown }> : null;
-        const result = SessionCreationTargetPreparationResultV1Schema.parse({
-            ok: true,
-            directory: typeof request.directory === 'string' ? request.directory
-                : directory?.kind === 'path' && typeof directory.path === 'string' ? directory.path : process.cwd(),
-            directoryKind: directory?.kind === 'managed' ? 'managed' : 'path',
-            directoryCreationRequired: false,
-            checkout: null,
-        });
+        const result = createSessionCreationTargetPreparationRpcResult(request);
         callback({ ok: true, result: params.rpcCodec?.encode(result) ?? result });
         return true;
     }

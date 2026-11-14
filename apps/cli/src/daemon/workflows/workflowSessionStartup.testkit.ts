@@ -37,7 +37,10 @@ export function createAdmittedWorkflowSessionHost(
       serverId: deps.serverId, machineId: deps.machineId, observeExecution: operations.observeExecution, rpcContext: {},
       transport: () => ({ spawn: (request, options) => callExactMachineRpc({ credentials: deps.credentials,
         machineId: deps.machineId, method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
-        resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) }),
+        resolveSpawnSessionByNonce: (spawnNonce, options) => callExactMachineRpc({ credentials: deps.credentials,
+          machineId: deps.machineId, method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+          request: { spawnNonce, ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) },
+          ...(options?.signal ? { signal: options.signal } : {}) }) }),
       observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
         ...(options.waitForTerminal ? { waitForTerminal: true } : {}),
         ...(options.includeSetupReview ? { includeSetupReview: true } : {}) }, options.signal ? { signal: options.signal } : undefined),
@@ -66,7 +69,7 @@ export function runAdmittedObservedWorkflowSessionStartup(
   const agentTarget = input.request.agentTarget ?? { kind: 'agent' as const,
     identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
   return runObservedWorkflowSessionStartup({ ...input,
-    ...(!input.retainedOperation && !input.actionAdmission ? { actionAdmission: {
+    actionAdmission: input.actionAdmission ?? (input.retainedOperation ? undefined : {
       input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
         creationKey: input.creationKey, agentTarget,
         executionTarget: { serverId: host.serverId, machineId: host.machineId },
@@ -81,6 +84,6 @@ export function runAdmittedObservedWorkflowSessionStartup(
         actionCaller: { kind: 'workflowRun', runId: 'workflow-test', authorization: {
           principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } },
       },
-    } } : {}),
+    }),
   }, host);
 }

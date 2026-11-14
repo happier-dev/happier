@@ -44,12 +44,18 @@ function workflowSessionStartupRefusalError(
 }
 
 /** Both live observation and cold recovery consume the original operation's typed result. */
-export function readWorkflowSessionStartupError(operation: ActionOperationSnapshotV1): WorkflowSessionCompositionError {
+export function readWorkflowSessionStartupError(operation: ActionOperationSnapshotV1): WorkflowSessionCompositionError | (Error & Readonly<{ code: string }>) {
   const result = SessionSpawnNewActionResultV1Schema.safeParse(operation.result);
   if (result.success && result.data.type === 'error') {
     return workflowSessionStartupRefusalError(result.data, operation.settledAt ?? operation.createdAt);
   }
-  return new WorkflowSessionCompositionError(operation.error?.errorCode ?? 'workflow_session_startup_unavailable');
+  const code = operation.error?.errorCode ?? 'workflow_session_startup_unavailable';
+  // A failed observer is not proof that its native launch retired. Only the
+  // creator's typed refusal or exact retirement can close Workflow custody.
+  if (code === SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED) {
+    return Object.assign(new Error(operation.error?.error ?? code), { code });
+  }
+  return new WorkflowSessionCompositionError(code);
 }
 
 /** Only the creator's typed response settles a definite startup refusal. */
@@ -86,5 +92,6 @@ export function readRetainedWorkflowSessionStartupFailure(
   const parsed = ActionOperationSnapshotV1Schema.safeParse(snapshot);
   return parsed.success && parsed.data.state === 'failed' && parsed.data.operationId === address.operationId
     && parsed.data.actionId === 'session.spawn_new' && parsed.data.scope.machineId === address.machineId
-    && parsed.data.requestId === creationKey ? parsed.data : undefined;
+    && parsed.data.requestId === creationKey
+    && readWorkflowSessionStartupError(parsed.data) instanceof WorkflowSessionCompositionError ? parsed.data : undefined;
 }
