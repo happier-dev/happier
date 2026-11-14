@@ -1,5 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+test('shipped files include every runtime and declaration export', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const files = manifest.files;
+  const targets = new Set();
+  function collect(value) {
+    if (typeof value === 'string' && value.startsWith('./')) targets.add(value.slice(2));
+    else if (value && typeof value === 'object') {
+      for (const [condition, target] of Object.entries(value)) {
+        if (condition !== 'happier-source') collect(target);
+      }
+    }
+  }
+  collect(manifest.exports);
+  const missing = [...targets].filter(target => !files.some(file => target === file || target.startsWith(`${file}/`)));
+  assert.deepEqual(missing, [], 'pnpm must retain exported entries when installing the prepared SDK closure');
+});
 
 test('package export entrypoints load in Node ESM', async () => {
   const links = await import('../dist/links.js');
