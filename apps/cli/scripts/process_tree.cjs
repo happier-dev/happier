@@ -13,7 +13,7 @@ async function taskkillWindowsProcessTree(input, windowsSystemToolCommand, execF
 }
 
 function createProcessTreeOwner({ readProcessCensus, indexCensus, descendantsOf, protectedSet,
-    membersOfCgroup, membersOfJob, membersOfPgid, taskkillWindowsProcessTree, terminateWindowsJob,
+    membersOfCgroup, membersOfJob, membersOfPgid, probeProcessGroupLiveness, taskkillWindowsProcessTree, terminateWindowsJob,
     platform, windowsJobTerminationBudgetMs, kill = (pid, signal) => process.kill(pid, signal),
     wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
     const sameStart = (left, right) => Number.isFinite(left?.startTimeMs) && left.startTimeMs === right?.startTimeMs
@@ -338,9 +338,13 @@ function createProcessTreeOwner({ readProcessCensus, indexCensus, descendantsOf,
     async function terminateProcessTree(proc, options) {
         if (!proc.pid) return;
         if ((proc.exitCode !== null && proc.exitCode !== undefined) || (proc.signalCode !== null && proc.signalCode !== undefined)) {
-            const table = await census(undefined, options?.ownedProcessGroup ? undefined : [proc.pid], []);
+            // Group members can only be found by a census of every process. ESRCH for
+            // the group proves none exists (a later group with this number is another
+            // group), so the whole-machine read is needed only when that is unproven.
+            const groupUnproven = options?.ownedProcessGroup && probeProcessGroupLiveness?.(proc.pid) !== 'absent';
+            const table = await census(undefined, groupUnproven ? undefined : [proc.pid], []);
             if (!table || present(table.index.byPid.get(proc.pid))) throw incomplete({ outcomes: [{ pid: proc.pid, outcome: 'refused', reason: 'identity_changed' }] });
-            if (options?.ownedProcessGroup && membersOfPgid(table.index, proc.pid).some(present)) {
+            if (groupUnproven && membersOfPgid(table.index, proc.pid).some(present)) {
                 throw incomplete({ outcomes: [{ pid: proc.pid, outcome: 'refused', reason: 'root_missing' }] });
             }
             return;

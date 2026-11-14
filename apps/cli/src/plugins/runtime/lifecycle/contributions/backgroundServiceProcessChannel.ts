@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { probeProcessGroupLiveness } from '@happier-dev/cli-common/process';
 
 import { indexCensus, membersOfPgid, readProcessCensus, type ProcessStartIdentity } from '@/processes/census/processCensus';
 import { PROCESS_OWNER_ENV_KEY, withProcessOwnerEnvironment } from '@/processes/ownerTag';
@@ -86,18 +87,24 @@ export async function spawnBackgroundServiceProcessChannel(input: Readonly<{
       return;
     }
     if (managed.pid === null) return;
-    // A numeric PGID can be reused once its last member leaves. Uncaptured
-    // members require the launch's canonical owner tag as well as group membership.
-    const census = await readProcessCensus({ freshness: 'fresh', scope: 'all', fields: [] });
-    if (census.status !== 'ok') throw custodyError('background_service_process_termination_incomplete');
     const targets = new Map(retainedTargets);
-    const candidates = membersOfPgid(indexCensus(census.rows), managed.pid).filter(row => !targets.has(row.pid));
-    if (candidates.length) {
-      const ownership = await readProcessCensus({ freshness: 'fresh', pids: candidates.map(row => row.pid), fields: ['ownershipEnvironment'] });
-      if (ownership.status !== 'ok') throw custodyError('background_service_process_termination_incomplete');
-      for (const row of ownership.rows) {
-        if (row.pgid === managed.pid && row.ownerTag && row.ownerTag === launchOwnerTag) {
-          targets.set(row.pid, { pid: row.pid, start: row.start });
+    // Finding uncaptured group members needs a census of every process on the
+    // machine. ESRCH for the group proves it has no member now; a later group
+    // with this number is a different group, so the scan is needed only when
+    // the probe cannot prove the group empty.
+    if (probeProcessGroupLiveness(managed.pid) !== 'absent') {
+      // A numeric PGID can be reused once its last member leaves. Uncaptured
+      // members require the launch's canonical owner tag as well as group membership.
+      const census = await readProcessCensus({ freshness: 'fresh', scope: 'all', fields: [] });
+      if (census.status !== 'ok') throw custodyError('background_service_process_termination_incomplete');
+      const candidates = membersOfPgid(indexCensus(census.rows), managed.pid).filter(row => !targets.has(row.pid));
+      if (candidates.length) {
+        const ownership = await readProcessCensus({ freshness: 'fresh', pids: candidates.map(row => row.pid), fields: ['ownershipEnvironment'] });
+        if (ownership.status !== 'ok') throw custodyError('background_service_process_termination_incomplete');
+        for (const row of ownership.rows) {
+          if (row.pgid === managed.pid && row.ownerTag && row.ownerTag === launchOwnerTag) {
+            targets.set(row.pid, { pid: row.pid, start: row.start });
+          }
         }
       }
     }

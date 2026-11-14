@@ -343,6 +343,20 @@ describe('process-tree generation safety', () => {
             .rejects.toMatchObject({ code: 'plugin_exec_termination_incomplete' });
         expect(signaled).toEqual([]);
     });
+    it('confirms an exited owned group from the group probe without reading unrelated processes', async () => {
+        const rows = new Map<number, { parent: number; start: number; group?: number }>([[process.pid, { parent: 1, start: 10 }]]);
+        for (let pid = 5000; pid < 5200; pid++) rows.set(pid, { parent: 1, start: pid });
+        const reads: string[] = [];
+        vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+            if (pid < 0 && signal === 0 && ![...rows].some(([member, row]) => (row.group ?? member) === -pid)) {
+                throw Object.assign(new Error('No such process group'), { code: 'ESRCH' });
+            }
+            return true;
+        });
+        await expect(fixture(rows, {}, false, path => { reads.push(path); })
+            .terminateProcessTree({ pid: 4100, exitCode: 0 }, { graceMs: 1, ownedProcessGroup: true })).resolves.toBeUndefined();
+        expect(reads.filter(path => { const pid = Number(path.split('/')[2]); return pid >= 5000 && pid < 5200; })).toHaveLength(0);
+    });
     it('leaves graceful runner waiting and escalation to its existing lifecycle budget', async () => {
         const root = 4100;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }]]);

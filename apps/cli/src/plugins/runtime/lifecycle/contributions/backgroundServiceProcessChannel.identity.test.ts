@@ -31,6 +31,7 @@ describe.skipIf(process.platform !== 'linux')('background service group identity
     owner: string;
     signalled: number[];
     channel: Awaited<ReturnType<typeof spawnBackgroundServiceProcessChannel>>;
+    procReads: string[];
   }) => Promise<void>) {
     await withTempHappyCliEntrypoint(async entrypoint => {
       environment.patch({ HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node', HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
@@ -44,7 +45,9 @@ describe.skipIf(process.platform !== 'linux')('background service group identity
       });
       boundary.readdir.mockImplementation(async (path: string) => path.endsWith('/task')
         ? [path.split('/')[2]!] : [...rows.keys()].map(String));
+      const procReads: string[] = [];
       boundary.readProc.mockImplementation(async (path: string) => {
+        procReads.push(path);
         const pid = Number(path.split('/')[2]);
         const row = rows.get(pid);
         if (!row) throw Object.assign(new Error('Process absent'), { code: 'ENOENT' });
@@ -59,11 +62,15 @@ describe.skipIf(process.platform !== 'linux')('background service group identity
       });
       const signalled: number[] = [];
       vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        // A group probe (kill(-pgid, 0)) answers ESRCH exactly when no process is in the group.
+        if (pid < 0 && signal === 0 && ![...rows.values()].some(row => row.group === -pid)) {
+          throw Object.assign(new Error('No such process group'), { code: 'ESRCH' });
+        }
         if (signal !== 0) { signalled.push(pid); rows.delete(pid); }
         return true;
       });
       const channel = await spawnBackgroundServiceProcessChannel({ serviceId: 'identity-test' });
-      try { await run({ rows, child, owner, signalled, channel }); }
+      try { await run({ rows, child, owner, signalled, channel, procReads }); }
       finally {
         child.emit('exit', 0, null);
         await channel.terminate();
@@ -81,6 +88,17 @@ describe.skipIf(process.platform !== 'linux')('background service group identity
       await channel.waitForTermination();
       expect(signalled).toEqual([]);
       expect([...rows.keys()]).toContain(4101);
+    });
+  });
+
+  it('reads no unrelated process when the ended service left no group member', async () => {
+    await withNativeBoundary(async ({ rows, child, channel, signalled, procReads }) => {
+      for (let pid = 5000; pid < 5200; pid++) rows.set(pid, { parent: 1, group: pid, birth: pid });
+      procReads.length = 0;
+      child.emit('exit', 0, null);
+      await channel.waitForTermination();
+      expect(signalled).toEqual([]);
+      expect(procReads.filter(path => { const pid = Number(path.split('/')[2]); return pid >= 5000 && pid < 5200; })).toHaveLength(0);
     });
   });
 
