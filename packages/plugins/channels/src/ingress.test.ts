@@ -2467,7 +2467,7 @@ describe('Conversation provider observation ingress', () => {
     });
     const proof = observation({ occurrenceId: 'topic-proof', messageRevision: '1', transport: 'socket',
       messageText: `/pair ${challenge.manualToken}` });
-    fullTextIngress(proof).endpoint = { ...endpoint, label: title };
+    Object.assign(fullTextIngress(proof), { endpoint: { ...endpoint, label: title } });
     await createConversationProviderObservationIngestHandler(manager)(proof, harness.context);
     const proposal = manager.readManagementProjection().proposals[0];
     if (proposal === undefined) throw new Error('Expected the authenticated topic proposal.');
@@ -2485,7 +2485,7 @@ describe('Conversation provider observation ingress', () => {
       ...record(stored.value.payload), enabled: true, inboundDebounceMs: 0, inputMode: 'allAllowedMessages',
     } }, stored.revision + 1));
     const question = observation({ occurrenceId: 'topic-question', messageRevision: '1', transport: 'socket' });
-    fullTextIngress(question).endpoint = { ...endpoint, label: 'Later observation name' };
+    Object.assign(fullTextIngress(question), { endpoint: { ...endpoint, label: 'Later observation name' } });
     await ingestConversationProviderObservationForInvocation(question, harness.context);
     await runConversationIngressDueWorkForInvocation({}, harness.context);
     expect(harness.execute).toHaveBeenCalledWith('discussion.post', expect.objectContaining({
@@ -2611,9 +2611,13 @@ describe('Conversation provider observation ingress', () => {
       await vi.waitFor(() => expect(independentPosts).toBe(1));
       await independentWork;
       // Both arrivals are captured while the first native approval is held.
-      running.push(...inputs.slice(1).map(input => dispatchCaptured(input)));
-      await vi.waitFor(() => expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
-        && record(record(row.value.payload).lifecycle).phase === 'attempting')).toHaveLength(3));
+      // Establish their arrival order before starting the next capture. Two
+      // concurrent captures with equal due timestamps have row-id index order.
+      for (const [index, input] of inputs.slice(1).entries()) {
+        running.push(dispatchCaptured(input));
+        await vi.waitFor(() => expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+          && record(record(row.value.payload).lifecycle).phase === 'attempting')).toHaveLength(index + 2));
+      }
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(requests).toHaveLength(1);
       expect(reads).toBe(2);
@@ -2621,9 +2625,12 @@ describe('Conversation provider observation ingress', () => {
       for (let index = 0; index < inputs.length; index += 1) {
         await vi.waitFor(() => expect(requests).toHaveLength(index + 1));
         decisions[index]!();
-        await running[index];
-        expect(publications).toHaveLength(index + 1 - (firstDecision === 'rejected' ? 1 : 0));
+        // One due-work invocation can drain later arrivals after its first
+        // publication. Observe the effect before releasing the next approval;
+        // awaiting the entire pump here would wait on that next approval.
+        await vi.waitFor(() => expect(publications).toHaveLength(index + 1 - (firstDecision === 'rejected' ? 1 : 0)));
       }
+      await Promise.all(running);
       const skipped = firstDecision === 'rejected' ? 1 : 0;
       expect(new Set(publications.map(request => request.localId)).size).toBe(3 - skipped);
       expect(publications.map(request => record(record(request.content).externalSource).inputLocalId))
@@ -5919,7 +5926,17 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
     try {
       const native = createGithubPullRequestUpdatesFixture();
       native.input.ciEndpoints = [githubPullRequestUpdatesEndpoint];
-      const harness = createIngressHarness({ pollExecution: async () => {
+      const stateValidator = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+      const harness = createIngressHarness({ beforeBatch: ({ operations }) => {
+        for (const operation of operations) {
+          if (operation.kind === 'put' && operation.value['record-kind'] === 'ingress-obligation') {
+            const valid = isValidPluginJsonSchemaValue(stateValidator, operation.value);
+            const payload = record(operation.value.payload);
+            expect(valid, JSON.stringify({ phase: record(payload.lifecycle).phase,
+              dueAt: operation.value['due-at'], batchLeader: payload.prBatchLeaderId !== undefined })).toBe(true);
+          }
+        }
+      }, pollExecution: async () => {
         native.input.nowMs = Date.now();
         const result = ConversationPollResultV1Schema.parse(await pollGithubIssueCommentsForChannels(native.input));
         if (result.kind === 'checkpointOnly' || result.kind === 'batch') native.input.checkpoint = result.checkpointAfterBatch;
@@ -6835,6 +6852,7 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
         let retainedLeaderId: string | undefined;
         let handoffAssociationReads = 0;
         let handoffConnectionReads = 0;
+        const stateValidator = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
         const harness = createIngressHarness({
           sessionSend: async () => {
             nativeAccepted = true;
@@ -6845,6 +6863,11 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
             if (nativeAccepted && rowId === 'connection-1') handoffConnectionReads += 1;
           },
           beforeBatch: ({ operations }) => {
+            for (const operation of operations) {
+              if (operation.kind === 'put' && operation.value['record-kind'] === 'ingress-obligation') {
+                expect(isValidPluginJsonSchemaValue(stateValidator, operation.value)).toBe(true);
+              }
+            }
             if (retainedUnattempted && !interrupted && operations.some(operation => operation.kind === 'put'
               && record(operation.value.payload).prUpdate !== undefined)) {
               interrupted = true;

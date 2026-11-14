@@ -1112,6 +1112,12 @@ function createChannelsPlugin(): ChannelsPlugin {
         run: deliverConversationAutomationResultForInvocation,
       },
     },
+    // Machine roles (OWNER-RULINGS 2026-11-12): conversation intake runs as part of
+    // the built-in Work intake role, on by default like today.
+    machineRoles: {
+      intake: { title: 'Channels', description: 'Conversation ingress and outward delivery on this Machine.', partOf: 'intake',
+        backgroundServices: ['ingress-supervisor', 'outward-delivery-supervisor'] },
+    },
     // Socket services remain provider-owned. The core owns the two persisted
     // work families: checkpointed ingress and retained outward delivery.
     backgroundServices: [

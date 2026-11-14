@@ -632,8 +632,6 @@ describe('Channels collection declarations', () => {
   });
 
   it('publishes each repeated channel-state subschema once', () => {
-    const retainedV20 = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV20.json', import.meta.url), 'utf8'));
-    expect(CHANNEL_STATE_INLINE_SCHEMA).toEqual(retainedV20.collection.schema);
     // Every schema position after the first that repeats a byte-equal,
     // reference-free subschema of reference size or more. Each repeat is
     // compiled and walked again by every reader, writer and stored-read trial.
@@ -788,8 +786,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(21);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(22);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -844,6 +842,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v19-to-v20', fromSchemaVersion: 19, toSchemaVersion: 20,
     }, {
       id: 'channel-state-v20-to-v21', fromSchemaVersion: 20, toSchemaVersion: 21,
+    }, {
+      id: 'channel-state-v21-to-v22', fromSchemaVersion: 21, toSchemaVersion: 22,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');

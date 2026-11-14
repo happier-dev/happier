@@ -94,7 +94,7 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         if (connection.lifecycle.deletionState !== 'none') return;
         const readiness = connection.lifecycle.providerReadiness?.code;
         if (readiness === 'providerCredentialInvalid' || readiness === 'providerPermissionMissing') connectionReasons.set(connectionId, 'credentials');
-        else if (!connection.lifecycle.enabled || readiness !== undefined) connectionReasons.set(connectionId, 'paused');
+        else if (!connection.lifecycle.enabled || readiness !== undefined || connection.lifecycle.pollFailure !== null) connectionReasons.set(connectionId, 'paused');
         watchingMachines.set(connectionId, { serverId: connection.transportOrigin.serverIdentityId,
             machineId: connection.transportOrigin.machineId, label: connection.transportOrigin.machineId });
     }));

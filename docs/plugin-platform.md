@@ -4824,6 +4824,17 @@ lands. Session holders publish their sliced projection to AppShell's executable
 owner as mounted client-Action demand, so their client Actions register without a
 complete catalogue.
 
+A mounted plugin surface demands only its plugin's slices, plus the shared UI
+families (`pluginUiSections(pluginId)`): Administration's execution-origin
+demand and `PluginSurfaceProjectionDemand` never load a Machine's whole
+catalogue for one surface. AppShell's per-Machine observer keeps the Machine
+`establishing` until a whole catalogue is held, but reports the plugins whose
+slices the held answer covers (`readDaemonProjectionCoveredPlugins`). The union
+treats exactly those plugins' entries on that Machine as current and interactive
+(`currentPluginIds`); every other plugin stays establishing, with its pending
+execution target, and is never read as absent. The aggregate catalogue phase and
+interaction flag still require a complete catalogue.
+
 Every manifest carries `sectionFrameVersion: 2`: index frames travel as raw index
 text, and body pages as their JSON span array. A manifest without that version,
 or a body that fails its digest, settles as `invalid-response` with a
@@ -8311,12 +8322,6 @@ does not copy undisplayed structured output.
 Resource-only plugins do not need an unrelated View to supply app-scope widget data. The existing daemon projection stamps the Resource's actual execution origin and occurrence; the app union admits it only against Administration's exact selected origin and the matching enabled package occurrence. Older unstamped rows retain only their existing admitted-UI context, not independent app read authority. Demand and explicit Refresh use the Resource origin's own currentness: another current machine in the union cannot start reads on an offline origin. Retained authorized data may still display while reads are paused.
 
 Client-targeted Actions receive the bounded [`PluginClientActionUi`](../packages/plugin-sdk/src/actions/contracts.ts) subset, not a mounted `SurfaceContext`. Its `context(options?)` returns current `targetedContributions` for the Action's plugin (or `null`) and the optional `accountScope` from its admitted Account lifetime. The scope identifies private evidence; it grants no Action authority. `version()` and `selectActionInput(...)` reuse the canonical host method advertisement and selected-input admission/custody; `executeAction` and `openSurface` remain the effect seams. An Action gets no page, mount, layout or UI-selection owner from this capability.
-
-For Account Actions, targeted input selection reads the current Account UI
-declarations through Account Availability without requiring daemon authority.
-Machine-bound client Actions retain their daemon projection path. Projection
-refusals carry the unavailable source or daemon failure reason in the existing
-PluginError diagnostics.
 
 For Account Actions, targeted input selection uses Account Availability for
 Account-owned declarations. Selecting a Session checkout retains its Machine for
@@ -11887,6 +11892,12 @@ Channels applies current sender and command policy once at dispatch, not at
 capture and again at dispatch. For a PR batch, that boundary admits each
 original event against its current binding before forming the update; a refused
 sender neither joins the update nor suppresses another sender's admitted event.
+An unclassified PR capture retains its due time so the existing ingress pump can
+recover an interrupted batch. The V22 channel-state contract admits that due time
+alongside the absent due time of a member already assigned to a batch leader; its
+V21 migration preserves every stored row. PR watch reads report `paused` while
+the connection retains a poll failure, whose detailed cause and retry control
+remain in Channels connection health.
 Polling reuses the connection, binding inventory and provider selection acquired
 for that finite poll; dispatch retains the cross-person recipient and binding
 checks. A later due dispatch is a new natural admission boundary.

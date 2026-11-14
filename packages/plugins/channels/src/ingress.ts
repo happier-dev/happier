@@ -6154,21 +6154,28 @@ async function freezeClassifiedPullRequestBatches(input: Readonly<{
           actor: { principalId: observation.actor.principalId!, repositoryWriteAccess: observation.actor.repositoryWriteAccess ?? null } };
       });
     const now = Date.now();
-    const values: JsonRecord[] = members.map(member => member.dispatchAdmission!.decision.terminalOutcome !== undefined
-      ? terminalIngressObligationValue({ obligation: member.obligation.value,
-        ...member.dispatchAdmission!.decision.terminalOutcome, now }) : ({ ...member.obligation.value,
-      ...(member === leader ? { [CHANNEL_STATE_FIELD.prUpdateAt]: Math.max(...update!.events.map(event => event.occurredAt)) } : {}),
-      [CHANNEL_STATE_FIELD.dueAt]: member === leader ? now : null,
-      [CHANNEL_STATE_FIELD.updatedAt]: now,
-      payload: { ...member.obligation.value.payload,
-        ...(member === leader ? { prUpdate: settledPullRequestUpdate(update!), prBatchMemberIds: admitted.slice(1).map(member => member.obligation.value.id),
-          ...(prEventActors === undefined ? {} : { prEventActors }),
-          occurrenceIds: admitted.map(member => ingressShell(member.ingress).occurrenceId),
-          lifecycle: { phase: 'ready', attemptCount: 0, dueAt: now } }
-          : { prBatchLeaderId: leader.obligation.value.id,
-            lifecycle: { ...member.obligation.value.payload.lifecycle, dueAt: null } }),
-      },
-    }));
+    const values: JsonRecord[] = members.map(member => {
+      if (member.dispatchAdmission!.decision.terminalOutcome !== undefined) {
+        return terminalIngressObligationValue({ obligation: member.obligation.value,
+          ...member.dispatchAdmission!.decision.terminalOutcome, now });
+      }
+      // Followers stop participating in the due index. Optional projection
+      // fields are absent in logical writes; Data owns the wire null sentinel.
+      const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, ...value } = member.obligation.value;
+      return { ...value,
+        ...(member === leader ? { [CHANNEL_STATE_FIELD.prUpdateAt]: Math.max(...update!.events.map(event => event.occurredAt)) } : {}),
+        ...(member === leader ? { [CHANNEL_STATE_FIELD.dueAt]: now } : {}),
+        [CHANNEL_STATE_FIELD.updatedAt]: now,
+        payload: { ...member.obligation.value.payload,
+          ...(member === leader ? { prUpdate: settledPullRequestUpdate(update!), prBatchMemberIds: admitted.slice(1).map(member => member.obligation.value.id),
+            ...(prEventActors === undefined ? {} : { prEventActors }),
+            occurrenceIds: admitted.map(member => ingressShell(member.ingress).occurrenceId),
+            lifecycle: { phase: 'ready', attemptCount: 0, dueAt: now } }
+            : { prBatchLeaderId: leader.obligation.value.id,
+              lifecycle: { ...member.obligation.value.payload.lifecycle, dueAt: null } }),
+        },
+      };
+    });
     const mutations = values.map((value, index) => ({ kind: 'put' as const, value, expectedRevision: members[index]!.obligation.row.revision }));
     const split = async () => {
       if (members.length === 1) throw pluginError('channels_pr_batch_transport_unavailable', 'The retained PR evidence cannot fit the admitted Collection transport.', true);

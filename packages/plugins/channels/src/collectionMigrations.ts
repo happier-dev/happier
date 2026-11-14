@@ -394,6 +394,13 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 21,
     // Same validation; reused subschemas move under `$defs`. Rows are unchanged.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v21-to-v22',
+    fromSchemaVersion: 21,
+    toSchemaVersion: 22,
+    // Unclassified PR captures retain a due time for interrupted-batch recovery.
+    // Widen the strict state union without changing existing custody rows.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

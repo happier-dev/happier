@@ -19,6 +19,7 @@ import { assembleSessionPullRequestWatchMetadata, observeSessionPullRequestWatch
     type SessionPullRequestWatchContext } from './sessionPullRequestWatch.js';
 import { readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
+import type { ConversationConnectionPollFailureV1 } from './connectionLifecycle.js';
 import type { SettingsChange } from '@happier-dev/plugin-sdk/settings';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { prepareConversationIngressObligationForBindingDeletion, prepareConversationIngressObligationForConnectionDeletion } from './ingress.js';
@@ -30,7 +31,8 @@ import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PR
 
 describe('portable Account PR Watch Action', () => {
     async function configuredFixFixture(options: { head?: string; expectedHead?: string; closed?: boolean; exhausted?: boolean;
-        send?: 'rejected' | 'unknownThenAccepted' | 'typedError' | 'fanoutFailure' | 'fanoutUnknownThenFailure'; endpointMetadata?: boolean } = {}) {
+        send?: 'rejected' | 'unknownThenAccepted' | 'typedError' | 'fanoutFailure' | 'fanoutUnknownThenFailure'; endpointMetadata?: boolean;
+        pollFailure?: ConversationConnectionPollFailureV1 | null } = {}) {
         const declaration = GITHUB_PLUGIN.manifest.contributes.targetedPluginContributions?.find(entry => typeof entry.target === 'object' && entry.target !== null && 'pluginId' in entry.target && entry.target.pluginId === CHANNELS_PLUGIN.manifest.id);
         if (!declaration) throw new Error('Missing real GitHub Channels contribution');
         const state = new MemoryCollection<Record<string, JsonValue>>();
@@ -48,7 +50,7 @@ describe('portable Account PR Watch Action', () => {
             providerSetupInput: {}, credentialRef: null, transportOrigin: { serverIdentityId: 'srv_example', machineId: 'machine-example' },
             providerConnectionKey: 'example:connection-1', providerConfig: {}, integrationPrincipal: { id: 'bot' },
             routingIdentityKey: 'r'.repeat(43), authorityEpoch: 1,
-        } }), { expectedRevision: 'absent' });
+        }, pollFailure: options.pollFailure }), { expectedRevision: 'absent' });
         let witness: string | undefined;
         let completed = false;
         let sendAttempts = 0;
@@ -441,6 +443,20 @@ describe('portable Account PR Watch Action', () => {
         controller.abort();
         expect(settingsListeners.size).toBe(0);
         observation.dispose();
+    });
+    it.each<Readonly<{ pollFailure: ConversationConnectionPollFailureV1 | null; reason: 'paused' | null }>>([
+        { pollFailure: null, reason: null },
+        { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null,
+            evidence: { kind: 'action', code: 'plugin_collection_invalid_value', message: 'Invalid Collection value' } }, reason: 'paused' },
+        { pollFailure: { phase: 'retryDue', attemptCount: 1, retryNotBeforeMs: 2_000,
+            evidence: { kind: 'provider', reason: 'network' } }, reason: 'paused' },
+    ])('exposes a retained poll failure in the PR watch read ($reason)', async ({ pollFailure, reason }) => {
+        const f = await configuredFixFixture({ pollFailure });
+        try {
+            await expect(f.invoke({ kind: 'get', sessionId: 'session-a' })).resolves.toMatchObject({
+                kind: 'ready', bindings: [{ watch: { reason } }],
+            });
+        } finally { await f.kit.dispose(); }
     });
     it('projects retained connection credential loss independently from native PR status', () => {
         const value = sessionPullRequestBindingFixture('pr-1', 'session-a', 12);

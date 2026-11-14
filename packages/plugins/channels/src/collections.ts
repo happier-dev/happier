@@ -1255,7 +1255,7 @@ const INGRESS_OBLIGATION_ROW_CONSISTENCY_SCHEMA: PluginJsonSchema = {
       properties: {
         [CHANNEL_STATE_FIELD.terminal]: { type: 'boolean', const: false },
         [CHANNEL_STATE_FIELD.attention]: { type: 'boolean', const: false },
-        [CHANNEL_STATE_FIELD.dueAt]: NULL_SCHEMA,
+        [CHANNEL_STATE_FIELD.dueAt]: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
         payload: { type: 'object', properties: {
           lifecycle: { type: 'object', properties: { phase: { type: 'string', const: 'batchCollecting' } }, required: ['phase'] },
           disposition: NULL_SCHEMA, nonAdmission: NULL_SCHEMA,
@@ -1527,10 +1527,11 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 21,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+  schemaVersion: 22,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
   // V21 publishes the V20 document with its reused subschemas under `$defs`
   // (same validation, a fraction of the size every reader compiles).
+  // V22 admits due unclassified PR captures so interrupted batching can resume.
   schema: shareRepeatedCollectionSchemas({
     type: 'object',
     properties: {
