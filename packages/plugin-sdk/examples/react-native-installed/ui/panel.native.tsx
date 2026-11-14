@@ -12,4 +12,4 @@ function InstalledPanel() {
     );
 }
 
-export const renderSurface = defineUiSurface(InstalledPanel);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(InstalledPanel);

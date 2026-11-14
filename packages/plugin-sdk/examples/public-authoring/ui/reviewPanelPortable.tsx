@@ -770,4 +770,4 @@ const SNIPPET_PICKER_HOST: HappierPromptPickerHost = {
     ),
 };
 
-export const renderSurface = defineUiSurface(ReviewPanel);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(ReviewPanel);

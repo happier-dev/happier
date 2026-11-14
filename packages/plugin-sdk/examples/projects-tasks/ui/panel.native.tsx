@@ -374,4 +374,4 @@ function ProjectsTasksSurface(context: RenderContext) {
     return <ProjectsTasksPanel signal={context.signal} />;
 }
 
-export const renderSurface = defineUiSurface(ProjectsTasksSurface);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(ProjectsTasksSurface);

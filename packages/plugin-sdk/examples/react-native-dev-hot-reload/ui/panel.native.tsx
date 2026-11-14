@@ -12,4 +12,4 @@ function DevelopmentPanel() {
     );
 }
 
-export const renderSurface = defineUiSurface(DevelopmentPanel);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(DevelopmentPanel);

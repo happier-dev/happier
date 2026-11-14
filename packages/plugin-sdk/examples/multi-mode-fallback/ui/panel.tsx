@@ -12,4 +12,4 @@ function FallbackPanel() {
     );
 }
 
-export const renderSurface = defineUiSurface(FallbackPanel);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(FallbackPanel);
