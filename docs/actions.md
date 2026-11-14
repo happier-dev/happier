@@ -3422,7 +3422,10 @@ installed channel's URL scheme. A process-local response queue bridges native
 launch to renderer readiness; there is no notification disk store. Recovered
 responses enter the same parser and Guard currentness checks, refuse an Account
 rebind, and cannot execute permission answers or plugin Actions through this
-Guard-only native route. Delivered macOS/Windows warnings are read from OS history
+native route. Ordinary Activity clicks are admitted separately as default-only
+`openSession` commands with the original saved Account, through the shared
+`navigateWithNotificationAccount` owner. They cannot enter permission or plugin
+Action execution. Browser Activity clicks use that same Account admission. Delivered macOS/Windows warnings are read from OS history
 so the existing withdrawal owner can reconcile them after restart.
 
 Linux requires an action-capable notification daemon and the original sending
@@ -5916,6 +5919,17 @@ editor's source contracts. Saved-definition mutations retain the complete
 controls use the numeric `run.revision`; invocation draft/review operations use
 the decimal-string `contentRevision` and exact `{recordId}` invocation reference.
 Discovery keeps these distinctions when eliciting edits, recovery and capture.
+
+In 0.3 development source, unfiltered `workflow.run.invocations.list` accepts
+`knownContentRevisions`, an ID-to-decimal-revision map from the retained invocation
+store. The storage query excludes matching records before keyset pagination;
+continuations bind that same map. Editor Test-run refreshes indexes and opens
+the demanded step's exact progress, including a conditional ancestor when its
+private branch choice is needed. A viewed Discussion opens missing or changed
+round progress through the same reader. Complete outputs remain in the scoped
+fact store; unchanged Run wakes reopen no historical bodies. Requests carry
+the known index, so their input size still grows with retained invocation count.
+Explicit invocation detail reads continue to own private recovery evidence.
 
 Saved-definition authoring reads the authorized root Artifact directly. Plugin
 destination discovery cannot block an edit or turn an acknowledged Save into a

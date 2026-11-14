@@ -1,6 +1,7 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -13,6 +14,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { WORKFLOW_CONDITION_UNSET } from '../presentation/workflowConditionRules';
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
@@ -23,6 +25,7 @@ const { useWorkflowReferenceDefinition } = await import('../presentation/useWork
 const { useWorkflowRunRolePrefill } = await import('../run/useWorkflowRunRolePrefill');
 const { useWorkflowRunVisibility } = await import('../run/useWorkflowRunVisibility');
 const { useWorkflowTestRunPresentation } = await import('../editor/useWorkflowTestRunPresentation');
+const { useWorkflowInlineRunInvocations } = await import('../run/useWorkflowInlineRunControls');
 const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
 const route = '/v3/automations/runs/workflow-storage';
 let serverId: string;
@@ -65,6 +68,78 @@ function invocationPage(index: ReturnType<typeof createWorkflowInvocationIndexFi
 }
 
 describe('Workflow sibling read recovery', () => {
+    it.each(['editor', 'inline', 'conditional'] as const)('%s reads only changed invocation facts on a wake and preserves complete demanded outputs', async surface => {
+        const step = { kind: 'step' as const, id: 'analyze',
+            document: { text: 'Analyze', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } };
+        const definition = createWorkflowDefinitionFixture({ blocks: surface === 'conditional'
+            ? [{ kind: 'if', id: 'choice', when: WORKFLOW_CONDITION_UNSET, then: [step],
+                otherwise: [{ ...step, id: 'other' }] }] : [step] });
+        let indices = Array.from({ length: 24 }, (_, index) => createWorkflowInvocationIndexFixture({ runId,
+            id: `invocation-${index}`, sequence: String(index), parentRecordId: index === 0 ? null
+                : surface === 'conditional' && index > 1 ? 'invocation-1' : 'invocation-0',
+            attempt: String(Math.max(0, index - (surface === 'conditional' ? 2 : 1))),
+            lifecycle: index === 0 || surface === 'conditional' && index === 1 || index === 23 ? 'completed' : 'superseded', contentRevision: '1' }));
+        const output = 'Complete, untruncated output. '.repeat(800).trim();
+        const keyCensus = invocationPage(indices[0]!, 2).keyCensus;
+        const reads: { indices: number; bodies: number }[] = [];
+        home.answer(serverId, route, { select: raw => {
+            const input = raw as { cursor?: string; invocationId?: string; knownContentRevisions?: Record<string, string>; progressEnvelopes?: boolean };
+            const matches = indices.filter(index => input.invocationId ? index.id === input.invocationId
+                : input.knownContentRevisions?.[index.id] !== index.contentRevision);
+            const offset = Number(input.cursor ?? 0);
+            const selected = matches.slice(offset, offset + 8);
+            reads.push({ indices: selected.length, bodies: input.progressEnvelopes ? selected.length : 0 });
+            const bodies = !input.progressEnvelopes ? [] : selected.map(index => {
+                const conditional = surface === 'conditional' && index.id === 'invocation-1';
+                const root = index.parentRecordId === null;
+                const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : conditional ? 'if' : 'step',
+                    invocationPath: { blockId: root ? '$root' : conditional ? 'choice' : 'analyze', scope: [] }, attempt: index.attempt,
+                    logicalInvocationRecordId: root || conditional ? index.id : surface === 'conditional' ? 'invocation-2' : 'invocation-1', result: output,
+                    ...(index.attempt === '0' ? {} : { previousAttemptRecordId: `invocation-${Number(index.sequence) - 1}` }),
+                    ...(conditional ? { container: { kind: 'if', selected: 'then', nextBlockOrdinal: '1' } } : {}) });
+                return [index.id, serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, purpose: 'invocation_progress', accountId: 'recovery-account', runId,
+                        recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
+                        memberOrdinal: index.memberOrdinal, attempt: index.attempt }, progress }))] as const;
+            });
+            return { body: { invocations: selected, parentRevision: 2,
+                ...(offset + selected.length < matches.length ? { nextCursor: String(offset + selected.length) } : {}),
+                ...(input.progressEnvelopes ? { keyCensus,
+                    progressEnvelopesByInvocationId: Object.fromEntries(bodies.map(([id, envelope]) => [id, envelope])) } : {}) } };
+        } });
+        const lifetime = { scope: { serverId, accountId: 'recovery-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        function Reader(props: Readonly<{ opened: boolean }>) {
+            const presentation = useWorkflowTestRunPresentation({ runId: surface === 'inline' ? null : runId, definition, editable: true });
+            const inline = useWorkflowInlineRunInvocations({ runIds: surface === 'inline' ? [runId] : [], accountLifetime: lifetime, enabled: props.opened });
+            return surface !== 'inline' ? <>{props.opened ? presentation.step?.('analyze')?.footer : null}</>
+                : <>{inline.byRunId.get(runId)?.at(-1)?.progress.result as string | undefined}</>;
+        }
+        const screen = await renderScreen(<Reader opened={false} />);
+        if (surface !== 'inline') {
+            await waitForHomeGovernance(() => expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.history.invocationIds).toHaveLength(indices.length));
+            expect(reads.reduce((total, read) => total + read.bodies, 0)).toBe(0);
+        } else expect(reads).toEqual([]);
+        await act(async () => screen.update(<Reader opened />));
+        await waitForHomeGovernance(() => expect(screen.getTextContent().includes(output)).toBe(true));
+        expect(reads.reduce((total, read) => total + read.bodies, 0)).toBe(surface === 'inline' ? indices.length : surface === 'conditional' ? 2 : 1);
+        const before = reads.length;
+        indices = indices.map((index, position) => position === indices.length - 1 ? { ...index, contentRevision: '2' } : index);
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${runId}`]));
+        await waitForHomeGovernance(() => expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]
+            ?.factsById[indices.at(-1)!.id]?.opened?.index.contentRevision).toBe('2'));
+        expect(reads.slice(before).reduce((total, read) => total + read.bodies, 0)).toBe(1);
+        expect(reads.slice(before).filter(read => read.bodies === 0).reduce((total, read) => total + read.indices, 0))
+            .toBe(surface === 'inline' ? 0 : 1);
+        expect(screen.getTextContent().includes(output)).toBe(true);
+        expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.history.invocationIds).toHaveLength(indices.length);
+        expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.history.nextCursor).toBeNull();
+        const unchanged = reads.length;
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${runId}`]));
+        await waitForHomeGovernance(() => expect(reads.length).toBeGreaterThan(unchanged));
+        expect(reads.slice(unchanged).reduce((total, read) => total + read.indices + read.bodies, 0)).toBe(0);
+    });
+
     it('replaces a retired Role-prefill read without waiting for its old response', async () => {
         const retired = createDeferred<void>();
         home.answer(serverId, route, { respondAfter: retired.promise, body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });

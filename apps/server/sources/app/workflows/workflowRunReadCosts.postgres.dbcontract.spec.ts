@@ -92,6 +92,44 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
         await db.$disconnect();
     });
 
+    it("filters known invocation revisions in PostgreSQL before paging or loading historical bodies", async () => {
+        const indices = await db.workflowRunInvocation.findMany({ where: { runId }, select: { id: true, contentRevision: true } });
+        const knownContentRevisions = Object.fromEntries(indices.filter(row => row.id !== latestId)
+            .map(row => [row.id, row.id === children[7] ? "999" : row.contentRevision.toString()]));
+        const request = { accountId: ownerId, runId, knownContentRevisions, limit: 1, pageByteLimit: 1_000_000 };
+        statements.length = 0;
+        const first = await listWorkflowRunInvocations(request);
+        expect(first.invocations.map(row => row.id)).toEqual([children[7]]);
+        expect(first.nextCursor).toEqual(expect.any(String));
+        const second = await listWorkflowRunInvocations({ ...request, cursor: first.nextCursor });
+        expect(second.invocations.map(row => row.id)).toEqual([latestId]);
+        expect(second.nextCursor).toBeUndefined();
+        const selects = statements.filter(event => /^SELECT\b/i.test(event.query.trimStart()) && event.query.includes('"WorkflowRunInvocation"'));
+        expect(selects.some(event => event.query.includes('jsonb_to_recordset'))).toBe(true);
+        expect(selects.every(event => !event.query.includes('"contentEnvelope"'))).toBe(true);
+        const readCosts = costs();
+        const selection = selects.find(event => event.query.includes('jsonb_to_recordset'))!;
+        type PlanNode = { 'Node Type': string; 'Actual Rows': number; 'Actual Loops': number;
+            'Rows Removed by Filter'?: number; 'Rows Removed by Join Filter'?: number; Plans?: PlanNode[] };
+        // Native PostgreSQL EXPLAIN JSON is the database instrumentation boundary.
+        const explained = await client.$queryRawUnsafe<Array<{ 'QUERY PLAN': { Plan: PlanNode }[] }>>(
+            `EXPLAIN (ANALYZE, FORMAT JSON) ${selection.query}`, ...JSON.parse(selection.params));
+        const nodes: PlanNode[] = [];
+        const visit = (node: PlanNode) => { nodes.push(node); node.Plans?.forEach(visit); };
+        visit(explained[0]!['QUERY PLAN'][0]!.Plan);
+        // Repeated PK probes examine one retained row; replaying a materialized
+        // JSON inventory per history row violates this proportional-work shape.
+        for (const node of nodes.filter(node => node['Actual Loops'] > 1)) {
+            expect(node['Actual Rows'] + (node['Rows Removed by Filter'] ?? 0) + (node['Rows Removed by Join Filter'] ?? 0)).toBeLessThanOrEqual(1);
+        }
+        console.info('WORKFLOW_INVOCATION_DELTA_POSTGRES_PLAN', nodes.map(node => ({
+            type: node['Node Type'], rows: node['Actual Rows'], loops: node['Actual Loops'],
+            filtered: node['Rows Removed by Filter'] ?? node['Rows Removed by Join Filter'] ?? 0,
+        })));
+        console.info("WORKFLOW_INVOCATION_DELTA_SQL", JSON.stringify({ retained: indices.length,
+            returnedRows: first.invocations.length + second.invocations.length, ...readCosts }));
+    });
+
     function costs() {
         const sql = statements.filter(event => !/^(BEGIN|COMMIT|ROLLBACK|SET|SHOW)\b/i.test(event.query.trimStart()));
         const invocationSelects = sql.filter(event => /^SELECT\b/i.test(event.query.trimStart()) && event.query.includes('"WorkflowRunInvocation"'));

@@ -11,6 +11,7 @@ import { prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows';
 import { canResumeWorkflowRunBoundary, canStartWorkflowAnotherRound, canStartWorkflowRunAgain, describeWorkflowRunState, isWorkflowRunStopPending } from '../presentation/workflowLifecyclePresentation';
 import { describeWorkflowRunProgress } from '../presentation/workflowRunProgress';
 import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { refreshWorkflowRunInvocationHistory } from '@/sync/domains/workflows/workflowInvocationReads';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowRunNowController } from './useWorkflowRunNowController';
 import { projectAcceptedWorkflowRunTarget } from './projectAcceptedWorkflowRunTarget';
@@ -145,19 +146,8 @@ export function useWorkflowInlineRunInvocations(params: Readonly<{
         if (!params.enabled || runIds.length === 0) return;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
-        const actions = createWorkflowRunDetailActions({ accountLifetime });
         const load = async (runId: string) => {
-            let cursor: string | undefined;
-            do {
-                const page = await actions.listInvocations({ runId, includeContent: true, ...(cursor ? { cursor } : {}) }, controller.signal);
-                if (controller.signal.aborted || !accountLifetime.isCurrent()) return;
-                const state = getStorage().getState();
-                state.applyWorkflowRunInvocationPage({ scope: accountLifetime.scope, runId,
-                    invocations: page.invocations, invocationDetails: page.invocationDetails,
-                    nextCursor: page.nextCursor ?? null, parentRevision: page.parentRevision,
-                    mode: cursor ? 'append' : state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId, accountLifetime.scope)]?.history.loaded ? 'refresh' : 'replace' });
-                cursor = page.nextCursor ?? undefined;
-            } while (cursor);
+            await refreshWorkflowRunInvocationHistory({ runId, accountLifetime, signal: controller.signal, includeContent: true });
             if (!controller.signal.aborted && accountLifetime.isCurrent()) setErrors(previous => {
                 if (!previous[runId]) return previous;
                 const next = { ...previous };
@@ -180,7 +170,7 @@ export function useWorkflowInlineRunInvocations(params: Readonly<{
             const known = state.workflowRunInvocationsByRunId[key];
             return !known?.history.loaded || known.history.nextCursor !== null
                 || known.history.parentRevision !== state.workflowRunsById[key]?.revision
-                || known.history.invocationIds.some(id => known.openedReadMetadataById?.[id]?.parentRevision !== known.history.parentRevision);
+                || known.history.invocationIds.some(id => known.factsById[id]?.opened?.index.contentRevision !== known.factsById[id]?.contentRevision);
         }));
         const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({ lifetime: accountLifetime, runIds,
             isVisibleWindowLoaded: () => true, invalidate: change => request(change.runIds ?? runIds) });

@@ -12,12 +12,13 @@ import { workflowRunStyles } from '@/components/workflows/run/workflowRunStyles'
 import { projectWorkflowInvocationStructure } from '@/components/workflows/run/workflowInvocationStructure';
 import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import { findWorkflowBlockListRef } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
-import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { readWorkflowRunInvocationProgress, refreshWorkflowRunInvocationHistory } from '@/sync/domains/workflows/workflowInvocationReads';
 import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -60,6 +61,18 @@ export function selectWorkflowTestStep(invocations: WorkflowRunInvocations | und
 
 type StepProps = Readonly<{ runId: string; blockId: string; definition: WorkflowDefinitionV1 }>;
 
+/** An unopened conditional ancestor owns the private branch choice. */
+function selectWorkflowTestStepRead(invocations: WorkflowRunInvocations | undefined, definition: WorkflowDefinitionV1, blockId: string): WorkflowRunInvocationFact | null {
+    let current = blockId;
+    for (;;) {
+        const fact = selectWorkflowTestStep(invocations, definition, current);
+        if (fact) return fact.opened?.index.contentRevision === fact.contentRevision ? null : fact;
+        const list = findWorkflowBlockListRef(definition, current);
+        if (!list || list.kind === 'root') return null;
+        current = list.kind === 'loopBody' ? list.loopId : list.kind === 'parallelBranch' ? list.parallelId : list.ifId;
+    }
+}
+
 function WorkflowTestStepState(props: StepProps): React.ReactElement | null {
     const fact = storage((state) => selectWorkflowTestStep(state.workflowRunInvocationsByRunId[workflowRunStoreKey(props.runId)], props.definition, props.blockId));
     if (!fact) return null;
@@ -67,9 +80,23 @@ function WorkflowTestStepState(props: StepProps): React.ReactElement | null {
         testID={`workflow-editor-test-${props.blockId}-status`} />;
 }
 
-function WorkflowTestStepOutput(props: StepProps & Readonly<{ serverId: string | null }>): React.ReactElement | null {
+function WorkflowTestStepOutput(props: StepProps & Readonly<{ serverId: string | null; readAttempt: number; onReadFailure: (error: unknown) => void }>): React.ReactElement | null {
     const router = useRouter();
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const visible = useDestinationVisibility();
+    const activelyViewed = useHostActivelyViewed();
     const fact = storage((state) => selectWorkflowTestStep(state.workflowRunInvocationsByRunId[workflowRunStoreKey(props.runId)], props.definition, props.blockId));
+    const read = storage((state) => selectWorkflowTestStepRead(state.workflowRunInvocationsByRunId[workflowRunStoreKey(props.runId)], props.definition, props.blockId));
+    const invocationId = read?.id;
+    const contentRevision = read?.contentRevision;
+    React.useEffect(() => {
+        if (!invocationId || !lifetime || !visible || !activelyViewed) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        void readWorkflowRunInvocationProgress({ runId: props.runId, invocationId, accountLifetime: lifetime, signal: controller.signal })
+            .catch(error => { if (!controller.signal.aborted && lifetime.isCurrent()) props.onReadFailure(error); });
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [activelyViewed, contentRevision, invocationId, lifetime, props.onReadFailure, props.readAttempt, props.runId, visible]);
     if (!fact?.opened || fact.opened.index.contentRevision !== fact.contentRevision) return null;
     const progress = fact.opened.progress;
     const output = progress.result === undefined ? progress.reason?.message : typeof progress.result === 'string'
@@ -110,19 +137,8 @@ export function useWorkflowTestRunPresentation(input: Readonly<{ runId: string |
             invalidate: () => setRefresh((value) => value + 1) });
         setPending(true);
         setFailure(null);
-        void (async () => {
-            let cursor: string | undefined;
-            do {
-                const page = await workflowRunDetailActions.listInvocations({ runId, includeContent: true,
-                    ...(cursor === undefined ? {} : { cursor }) }, controller.signal);
-                if (!isCurrent()) return;
-                const owner = storage.getState();
-                owner.applyWorkflowRunInvocationPage({ runId, invocations: page.invocations, parentRevision: page.parentRevision,
-                    nextCursor: page.nextCursor ?? null, mode: cursor === undefined ? 'refresh' : 'append',
-                    invocationDetails: page.invocationDetails });
-                cursor = page.nextCursor;
-            } while (cursor !== undefined);
-        })().catch((error: unknown) => { if (isCurrent()) setFailure(error); })
+        void refreshWorkflowRunInvocationHistory({ runId, accountLifetime: lifetime, signal: controller.signal })
+            .catch((error: unknown) => { if (isCurrent()) setFailure(error); })
             .finally(() => { if (isCurrent()) setPending(false); });
         return () => { controller.abort(); retirement.dispose(); unsubscribe(); };
     }, [activelyViewed, input.runId, lifetime, refresh, visible]);
@@ -138,10 +154,11 @@ export function useWorkflowTestRunPresentation(input: Readonly<{ runId: string |
             </View>,
             step: (blockId: string) => ({
                 state: <WorkflowTestStepState runId={input.runId!} definition={input.definition!} blockId={blockId} />,
-                footer: <WorkflowTestStepOutput runId={input.runId!} definition={input.definition!} blockId={blockId} serverId={lifetime?.scope.serverId ?? null} />,
+                footer: <WorkflowTestStepOutput runId={input.runId!} definition={input.definition!} blockId={blockId} serverId={lifetime?.scope.serverId ?? null}
+                    readAttempt={refresh} onReadFailure={setFailure} />,
             }),
         }),
-    }), [failure, input.editable, input.runId, input.definition, lifetime?.scope.serverId, pending]);
+    }), [failure, input.editable, input.runId, input.definition, lifetime?.scope.serverId, pending, refresh]);
 }
 
 const styles = StyleSheet.create((theme) => ({

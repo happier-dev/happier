@@ -482,12 +482,18 @@ export const WorkflowInvocationListRequestV1Schema = lazyZodSchema(() => z.stric
   parentRecordIds: z.optional(z.array(WorkflowInvocationRecordIdSchema).check(z.minLength(1))),
   /** Exact history record, including a superseded logical attempt. */
   invocationId: z.optional(WorkflowInvocationRecordIdSchema),
+  /** Run history omits records whose content revision the caller already holds. */
+  knownContentRevisions: z.optional(z.record(WorkflowInvocationRecordIdSchema, WorkflowDecimalV1Schema)),
   /** Newest attempt of one direct-member slot. */
   memberOrdinal: z.optional(WorkflowDecimalV1Schema),
   lifecycles: z.optional(z.array(WorkflowInvocationLifecycleV1Schema).check(z.minLength(1))),
   /** Open private progress beside the selected indices, without recovery-detail reads. */
   includeContent: z.optional(z.boolean()),
 }).check(z.superRefine((value, context) => {
+  if (value.knownContentRevisions !== undefined && (value.parentRecordId !== undefined || value.parentRecordIds !== undefined
+    || value.invocationId !== undefined || value.memberOrdinal !== undefined || value.lifecycles !== undefined)) {
+    context.addIssue({ code: "custom", path: ['knownContentRevisions'], message: 'Known revisions select unfiltered Run history' });
+  }
   if (value.memberOrdinal !== undefined && value.parentRecordId === undefined) {
     context.addIssue({ code: "custom", path: ['memberOrdinal'], message: 'A member slot requires its parent' });
   }

@@ -3576,6 +3576,65 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
+    it("returns only changed or new invocation facts before paging through the storage route", async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        await admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct" }, machineId: seeded.machineId,
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        const ids = Array.from({ length: 80 }, () => randomUUID());
+        await db.workflowRunInvocation.createMany({ data: ids.map((id, index) => ({
+            id, runId, sequence: BigInt(index), parentRecordId: null, memberOrdinal: BigInt(index),
+            lifecycle: "completed", contentRevision: 1n,
+            contentEnvelope: progressEnvelope({ ...seeded, runId, id, sequence: BigInt(index), parentRecordId: null,
+                memberOrdinal: BigInt(index), result: "Complete output ".repeat(300) }),
+        })) });
+        const knownContentRevisions = Object.fromEntries(ids.slice(0, -1).map(id => [id, "1"]));
+        await db.workflowRunInvocation.update({ where: { id: ids[5]! }, data: { contentRevision: 2n } });
+        const { app, headers } = await createReviewStorageApp(seeded.accountId);
+        const request = { operation: "invocations.list", runId, knownContentRevisions, limit: 1,
+            pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES };
+        const selections: { query: string; values: unknown[] }[] = [];
+        const stopObserving = observeSqliteRequests({ before(request) {
+            if (request.action !== 'queryRaw') return;
+            const raw = request.args;
+            if (raw && typeof raw === 'object' && 'query' in raw && typeof raw.query === 'string'
+                && raw.query.includes('json_each') && 'parameters' in raw && raw.parameters
+                && typeof raw.parameters === 'object' && 'values' in raw.parameters
+                && typeof raw.parameters.values === 'string') {
+                const values: unknown = JSON.parse(raw.parameters.values);
+                if (Array.isArray(values)) selections.push({ query: raw.query, values });
+            }
+        } });
+        try {
+            const first = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers, payload: request });
+            expect(first.statusCode).toBe(200);
+            const page = first.json();
+            expect(page.invocations.map((row: { id: string }) => row.id)).toEqual([ids[5]]);
+            expect(page.progressEnvelopesByInvocationId).toBeUndefined();
+            const second = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
+                payload: { ...request, cursor: page.nextCursor } });
+            expect(second.statusCode).toBe(200);
+            expect(second.json().invocations.map((row: { id: string }) => row.id)).toEqual([ids.at(-1)]);
+            expect(second.json().nextCursor).toBeUndefined();
+            const wrongWindow = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
+                payload: { ...request, knownContentRevisions: {}, cursor: page.nextCursor } });
+            expect(wrongWindow.statusCode).toBe(422);
+            const opened = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
+                payload: { ...request, invocationId: ids[5], knownContentRevisions: undefined, progressEnvelopes: true } });
+            expect(opened.statusCode).toBe(200);
+            expect(opened.json().progressEnvelopesByInvocationId[ids[5]!]).toContain("Complete output ".repeat(300));
+        } finally { stopObserving(); await app.close(); }
+        expect(selections).toHaveLength(2);
+        for (const selection of selections.slice(0, 1)) {
+            const plan = await db.$queryRawUnsafe<Array<{ detail: string }>>(`EXPLAIN QUERY PLAN ${selection.query}`, ...selection.values);
+            const details = plan.map(row => row.detail);
+            console.info('WORKFLOW_INVOCATION_DELTA_SQLITE_PLAN', { retained: ids.length, details });
+            expect(details.some(detail => /CORRELATED/i.test(detail))).toBe(false);
+            expect(details.some(detail => /LIST SUBQUERY/i.test(detail))).toBe(true);
+            expect(details.some(detail => /SEARCH retained.*\(id=\?\)/i.test(detail))).toBe(true);
+        }
+    });
+
     it("pages private progress envelopes beside the same history rows inside the exact response-byte boundary", async () => {
         const seeded = await seed();
         const runId = randomUUID();

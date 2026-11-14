@@ -1771,8 +1771,13 @@ export async function completeWorkflowInvocationReview(input: WorkflowReviewMuta
  * its members count
  * against the same response-byte boundary and it is part of the cursor binding.
  */
-export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
+export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; knownContentRevisions?: Readonly<Record<string, string>>; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
+    if (params.knownContentRevisions !== undefined && (params.invocationId !== undefined || params.parentRecordId !== undefined
+        || params.parentRecordIds !== undefined || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
+    const knownRevisions = params.knownContentRevisions === undefined ? undefined
+        : Object.entries(params.knownContentRevisions).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+            .map(([id, contentRevision]) => ({ id, contentRevision }));
     if (params.invocationId !== undefined && (!params.invocationId || params.parentRecordId !== undefined
         || params.parentRecordIds !== undefined || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
     if (params.parentRecordIds !== undefined && (params.parentRecordIds.length === 0 || params.parentRecordId !== undefined
@@ -1784,6 +1789,7 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
         ...(params.invocationId !== undefined ? { invocationId: params.invocationId } : {}),
         ...(params.parentRecordIds !== undefined ? { parentRecordIds: [...new Set(params.parentRecordIds)].sort() } : {}),
         ...(params.memberOrdinal !== undefined ? { memberOrdinal: params.memberOrdinal } : {}),
+        ...(knownRevisions === undefined ? {} : { knownContentRevisions: knownRevisions }),
         ...(params.progressEnvelopes ? { progressEnvelopes: true } : {}) });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
     const afterSequence = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
@@ -1903,6 +1909,23 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
         const id = workflowRunSqlIdentifier;
         const provider = getDbProviderFromEnv(process.env, "postgres");
         const textType = prismaRuntime.raw(provider === "mysql" ? "CHAR" : "TEXT");
+        // Bind the retained index once as JSON, rather than one SQL parameter
+        // per historical record. Exclude matching revisions before keyset
+        // paging; only returned records may acquire private progress bodies.
+        const knownJson = JSON.stringify(knownRevisions ?? []);
+        const changedRecords = knownRevisions === undefined ? undefined
+            : provider === "postgres" || provider === "pglite"
+                ? prismaRuntime.sql`${id("id")} NOT IN (SELECT retained.${id("id")} FROM jsonb_to_recordset(CAST(${knownJson} AS jsonb)) AS known(id text, "contentRevision" text)
+                    JOIN ${id("WorkflowRunInvocation")} retained ON retained.${id("id")} = known.id
+                    WHERE retained.${id("runId")} = ${params.runId} AND known."contentRevision" = CAST(retained.${id("contentRevision")} AS TEXT))`
+                : provider === "mysql"
+                    ? prismaRuntime.sql`${id("id")} NOT IN (SELECT retained.${id("id")} FROM JSON_TABLE(${knownJson}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$.id', revision TEXT PATH '$.contentRevision')) known
+                        JOIN ${id("WorkflowRunInvocation")} retained ON retained.${id("id")} = known.id COLLATE utf8mb4_unicode_ci
+                        WHERE retained.${id("runId")} = ${params.runId} AND known.revision = CAST(retained.${id("contentRevision")} AS CHAR))`
+                    : prismaRuntime.sql`${id("id")} NOT IN (SELECT retained.${id("id")} FROM json_each(${knownJson}) known
+                        CROSS JOIN ${id("WorkflowRunInvocation")} retained
+                        WHERE retained.${id("id")} = json_extract(known.value, '$.id') AND retained.${id("runId")} = ${params.runId}
+                            AND json_extract(known.value, '$.contentRevision') = CAST(retained.${id("contentRevision")} AS TEXT))`;
         const parentRecordIds = params.parentRecordIds;
         const selectedParents = parentRecordIds === undefined ? undefined
             : provider === "postgres" || provider === "pglite"
@@ -1916,9 +1939,11 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
             // not a second newest-attempt projection. Bind the caller-sized set
             // once: 35k short ids fit the HTTP budget but exceed PostgreSQL's
             // 32767 bind parameters. Only the bounded page ids acquire bodies.
-            const selectedIds = selectedParents === undefined ? undefined : await tx.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
+            const selectedIds = selectedParents === undefined && changedRecords === undefined ? undefined : await tx.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
                     SELECT ${id("id")} FROM ${id("WorkflowRunInvocation")}
-                    WHERE ${id("runId")} = ${params.runId} AND ${selectedParents}
+                    WHERE ${id("runId")} = ${params.runId}
+                    ${selectedParents === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND ${selectedParents}`}
+                    ${changedRecords === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND ${changedRecords}`}
                     ${params.lifecycles ? prismaRuntime.sql`AND CAST(${id("lifecycle")} AS ${textType}) IN (${prismaRuntime.join([...params.lifecycles])})` : prismaRuntime.empty}
                     ${pageAfterSequence !== null && pageAfterId ? prismaRuntime.sql`AND (${id("sequence")} > ${pageAfterSequence}
                         OR (${id("sequence")} = ${pageAfterSequence} AND ${id("id")} > ${pageAfterId}))` : prismaRuntime.empty}
@@ -1929,7 +1954,8 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
             ...(params.invocationId !== undefined ? { id: params.invocationId } : {}),
             ...(params.lifecycles ? { lifecycle: { in: [...params.lifecycles] } } : {}),
             ...(pageAfterSequence !== null && pageAfterId ? { OR: [{ sequence: { gt: pageAfterSequence } }, { sequence: pageAfterSequence, id: { gt: pageAfterId } }] } : {}),
-            }, orderBy: [{ sequence: "asc" }, { id: "asc" }], take: batchSize + 1, select: invocationSelect }) as InvocationRow[];
+            }, orderBy: [{ sequence: "asc" }, { id: "asc" }], take: batchSize + 1,
+            select: { ...invocationSelect, contentEnvelope: params.progressEnvelopes === true } }) as InvocationRow[];
             const candidates = rows.slice(0, batchSize);
             const batchHasMore = rows.length > batchSize;
             const bounded = appendBoundedPage({
