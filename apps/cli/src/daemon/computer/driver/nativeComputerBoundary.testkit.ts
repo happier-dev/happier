@@ -18,6 +18,17 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js');
 
 export const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAMgAAABk';
+// Captured Cua 0.37.0 Linux refusal: native-typing-live-red.log. There is
+// no effect/status proof that earlier accessibility attempts did nothing.
+export function backgroundTextRefusalResult() {
+  return { isError: true, structuredContent: {
+    code: 'background_unavailable',
+    detail: 'the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget',
+    escalation: { reason: 'background input is unavailable on this surface', recommended: 'foreground' },
+    hint: 'Xvfb/Xtigervnc cannot hot-add input devices, so the route is unavailable there.',
+    next_call: { arguments: { pid: target.pid, window_id: target.windowId }, tool: 'get_window_state' },
+  } };
+}
 export function captureResult() {
   return { content: [{ type: 'image', mimeType: 'image/png', data: png }], structuredContent: {
     pid: 42, window_id: 123, capture_id: 'capture-1', screenshot_width: 200, screenshot_height: 100,

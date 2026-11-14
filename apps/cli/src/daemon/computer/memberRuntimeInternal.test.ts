@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { native, captureResult, png } from './driver/nativeComputerBoundary.testkit';
+import { backgroundTextRefusalResult, native, captureResult, png } from './driver/nativeComputerBoundary.testkit';
 import './desktopX11Boundary.testkit';
 import { runMemberComputerRuntimeInternal } from './memberRuntimeInternal';
 import { createMemberComputerRuntimeChannel } from './memberRuntimeProtocol';
@@ -96,6 +96,12 @@ describe('member Computer private child', () => {
       releaseInput();
       expect(await effect).toMatchObject({ status: 'interrupted', completion: 'known' });
       expect(native.tools.some(tool => tool.name === 'type_text')).toBe(false);
+      native.call.mockResolvedValue(backgroundTextRefusalResult());
+      expect(await driver.input(target, null, { kind: 'type', text: 'a' }))
+        .toEqual({ status: 'interrupted', completion: 'unknown', code: 'background_unavailable' });
+      expect(await driver.input(target, null, { kind: 'press', key: 'Return' }))
+        .toEqual({ status: 'failed', code: 'driver_unavailable' });
+      expect(native.tools.some(tool => tool.name === 'press_key')).toBe(false);
     } finally { releaseInput(); await channel.dispose(); }
     expect(native.instances.every(instance => instance.close.mock.calls.length > 0)).toBe(true);
     expect(spawned.every(entry => entry.child.exitCode !== null || entry.child.signalCode !== null)).toBe(true);

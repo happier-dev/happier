@@ -4,7 +4,7 @@ import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protoco
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
 import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1, ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
-import { createManagedComputerDriver } from './driver/managedComputerDriver';
+import { createManagedComputerDriver, type ComputerDriverInputResult } from './driver/managedComputerDriver';
 import { createSurfaceInputControl, type SurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
 import type { MachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
@@ -124,7 +124,7 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
     const clicked = requestedBy === 'agent' && operation.kind === 'click' && modelCapture
       ? clickedTarget(modelCapture, operation) : undefined;
     const targetLabel = clicked?.label;
-    const outcome = await control.execute({ requestedBy, signal,
+    const outcome = await control.execute<ComputerDriverInputResult>({ requestedBy, signal,
       async effect(abortSignal) {
         if (abortSignal.aborted) return { status: 'interrupted', completion: 'known' } as const;
         if (requestedBy === 'agent') {
@@ -144,7 +144,8 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
     });
     if (!outcome.ok) return { ...identity, status: 'failed', code: outcome.errorCode };
     const presentation = targetLabel ? { targetLabel } : {};
-    if (outcome.interrupted) return { ...identity, ...presentation, status: 'interrupted', completion: outcome.completion };
+    if (outcome.interrupted) return { ...identity, ...presentation, status: 'interrupted', completion: outcome.completion,
+      ...(outcome.value.status === 'interrupted' && outcome.value.code ? { code: outcome.value.code } : {}) };
     return { ...identity, ...presentation, ...outcome.value };
   }
 
@@ -222,8 +223,8 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
             }
             const outcome = await execute(captureId, operation, 'human');
             if (outcome.status === 'failed') failInput(outcome.code);
-            else if (outcome.status === 'interrupted') failInput(outcome.completion === 'unknown'
-              ? 'human_input_interruption_uncertain' : 'human_input_failed');
+            else if (outcome.status === 'interrupted') failInput(outcome.code ?? (outcome.completion === 'unknown'
+              ? 'human_input_interruption_uncertain' : 'human_input_failed'));
           }).catch(() => failInput('human_input_failed'));
           return { ok: true };
         },

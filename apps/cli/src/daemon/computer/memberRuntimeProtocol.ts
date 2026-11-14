@@ -42,7 +42,7 @@ const captureSchema = z.extend(frameSchema, { captureId: id, accessibility: z.st
 const inputResultSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('dispatched') }), z.strictObject({ status: z.literal('verified'), property: z.string() }),
   z.strictObject({ status: z.literal('failed'), code: z.string() }),
-  z.strictObject({ status: z.literal('interrupted'), completion: z.enum(['known', 'unknown']) }),
+  z.strictObject({ status: z.literal('interrupted'), completion: z.enum(['known', 'unknown']), code: z.optional(z.string()) }),
 ]);
 export const memberComputerUnavailable = () => new PluginError({ code: 'computer_display_unavailable', message: 'Member desktop is unavailable' });
 type RequestOperation = MemberComputerRequest extends infer R ? R extends MemberComputerRequest ? Omit<R, 'id'> : never : never;

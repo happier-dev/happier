@@ -14,7 +14,7 @@ export { ComputerDriverError } from './nativeTransport';
 
 export type ComputerDriverInputResult = Readonly<{ status: 'dispatched' }>
   | Readonly<{ status: 'verified'; property: string }> | Readonly<{ status: 'failed'; code: string }>
-  | Readonly<{ status: 'interrupted'; completion: 'known' | 'unknown' }>;
+  | Readonly<{ status: 'interrupted'; completion: 'known' | 'unknown'; code?: string }>;
 export type ComputerDriverCapture = Readonly<{ png: Buffer; captureId: string; geometry: ComputerCaptureGeometryV1;
   accessibility: Readonly<{ nodes: readonly ComputerAccessibilityNodeV1[]; complete: boolean; degradedReason?: string }> }>;
 export type ManagedComputerDriver = Readonly<{
@@ -297,7 +297,7 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
           || code === 'capture_generation_mismatch' || code === 'capture_frame_mismatch' || code === 'capture_coordinate_invalid'))
           || (operation.kind === 'type' && code === 'browser_field_needs_keystrokes') || refusedBackgroundClass) return { status: 'failed', code };
         native.quarantine();
-        return { status: 'interrupted', completion: 'unknown' };
+        return { status: 'interrupted', completion: 'unknown', code };
       }
       const effect = result.structuredContent?.effect;
       if (effect === 'confirmed' && calls.length === 1) {

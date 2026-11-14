@@ -209,7 +209,7 @@ export const ComputerActionResultV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ ...InputPresentationShape, status: z.literal('dispatched') }),
   z.strictObject({ ...InputPresentationShape, status: z.literal('verified'), property: IdSchema }),
   z.extend(FailedResultSchema, { targetLabel: TargetLabelSchema }),
-  z.strictObject({ ...InputPresentationShape, status: z.literal('interrupted'), completion: z.enum(['known', 'unknown']) }),
+  z.strictObject({ ...InputPresentationShape, status: z.literal('interrupted'), completion: z.enum(['known', 'unknown']), code: z.optional(IdSchema) }),
 ]));
 export type ComputerActionResultV1 = z.infer<typeof ComputerActionResultV1Schema>;
 

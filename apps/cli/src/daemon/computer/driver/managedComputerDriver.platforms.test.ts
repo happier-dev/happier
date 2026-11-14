@@ -76,7 +76,8 @@ describe('native Windows and Wayland sources', () => {
       expect((await driver.capture(window)).captureId).toBe('capture-1');
       // The same code can follow an unresolved UIA invocation. It is not proof of nondelivery.
       native.call.mockResolvedValue({ isError: true, structuredContent: { code: 'background_unavailable', path: 'ax', effect: 'unverifiable', uia_status: 'timeout' } });
-      expect(await driver.input(window, null, { kind: 'press', key: 'Return' })).toEqual({ status: 'interrupted', completion: 'unknown' });
+      expect(await driver.input(window, null, { kind: 'press', key: 'Return' }))
+        .toEqual({ status: 'interrupted', completion: 'unknown', code: 'background_unavailable' });
     } finally { await driver.close(); }
   });
 

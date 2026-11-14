@@ -1,8 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { captureResult, native, target } from './nativeComputerBoundary.testkit';
+import { backgroundTextRefusalResult, captureResult, native, target } from './nativeComputerBoundary.testkit';
 import { createManagedComputerDriver } from './managedComputerDriver';
 
 describe('Cua snapshot element delivery', () => {
+  it('retains a native text refusal cause while quarantining its unknown completion', async () => {
+    native.call.mockResolvedValue(backgroundTextRefusalResult());
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/cua-driver' });
+    try {
+      expect(await driver.input(target, null, { kind: 'type', text: 'a' }))
+        .toEqual({ status: 'interrupted', completion: 'unknown', code: 'background_unavailable' });
+      expect(await driver.input(target, null, { kind: 'press', key: 'Return' }))
+        .toEqual({ status: 'failed', code: 'driver_unavailable' });
+      expect(native.tools.filter(tool => tool.name === 'press_key')).toEqual([]);
+    } finally { await driver.close(); }
+  });
   it('refuses window hover instead of pretending the native overlay moved the app pointer', async () => {
     native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? captureResult()
       : { structuredContent: { effect: 'unverifiable' } });

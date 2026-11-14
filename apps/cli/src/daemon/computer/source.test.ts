@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ComputerControlStatusResponseV1Schema, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
-import { native, target, captureResult } from './driver/nativeComputerBoundary.testkit';
+import { ComputerActionResultV1Schema, ComputerControlStatusResponseV1Schema, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
+import { backgroundTextRefusalResult, native, target, captureResult } from './driver/nativeComputerBoundary.testkit';
 import { createComputerCaptureSource } from './source';
 
 // Source, driver, native codec and input recovery stay real beneath the shared stdio boundary.
@@ -18,6 +18,50 @@ function deferred<T>() {
 }
 
 describe.skipIf(process.platform !== 'linux')('computer source status projection', () => {
+  it.each(['native', 'transport'] as const)('retains a native text refusal cause only when available for an interrupted agent action: %s', async failure => {
+    native.call.mockImplementation(async ({ name }) => {
+      if (name === 'get_window_state') return observation();
+      if (failure === 'transport') throw new Error('Lost native acknowledgement');
+      return backgroundTextRefusalResult();
+    });
+    const source = createComputerCaptureSource({ sessionId: 'agent-text-refusal', target, executablePath: '/managed/cua-driver' });
+    try {
+      const capture = await source.observe();
+      const result = ComputerActionResultV1Schema.parse(await source.input(capture.captureId, { kind: 'type', text: 'a' }, 'agent'));
+      expect(result).toMatchObject({ status: 'interrupted', completion: 'unknown' });
+      if (failure === 'native') expect(result).toHaveProperty('code', 'background_unavailable');
+      else expect(result).not.toHaveProperty('code');
+      expect(source.status()).toMatchObject({ uncertain: true });
+    } finally { await source.close(); }
+  });
+  it('retains a native text refusal cause in the human receipt without allowing later input', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation() : backgroundTextRefusalResult());
+    const source = createComputerCaptureSource({ sessionId: 'viewer-text-refusal', target, executablePath: '/managed/cua-driver' });
+    const first = deferred<string>();
+    const later = deferred<string>();
+    const failures: string[] = [];
+    const stream = await source.adapter.start({ streamId: 'text-refusal', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'text-refusal', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }),
+      emitReceipt(receipt) {
+        if (!receipt.reasonCode) return;
+        failures.push(receipt.reasonCode);
+        (failures.length === 1 ? first : later).resolve(receipt.reasonCode);
+      } });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    try {
+      await source.observe();
+      expect(stream.session.applySidebandControl?.({ v: 1, streamId: 'text-refusal', sourceId: source.sourceId,
+        eventId: 'text', kind: 'keyboard_text', text: 'a' })).toEqual({ ok: true });
+      expect(await first.promise).toBe('background_unavailable');
+      expect(source.status()).toMatchObject({ controller: 'human', uncertain: true });
+      expect(stream.session.applySidebandControl?.({ v: 1, streamId: 'text-refusal', sourceId: source.sourceId,
+        eventId: 'later-key', kind: 'keyboard_key', key: 'Return' })).toEqual({ ok: true });
+      expect(await later.promise).toBe('human_input_interruption_uncertain');
+      expect(native.tools.filter(tool => tool.name === 'press_key')).toEqual([]);
+    } finally { await stream.session.stop(); await source.close(); }
+  });
   it('preserves viewer key modifiers through the real source and pinned native driver', async () => {
     native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation()
       : name === 'check_permissions' ? { structuredContent: { x11: true, xsend_event: true } }
@@ -100,7 +144,7 @@ describe.skipIf(process.platform !== 'linux')('computer source status projection
       if (name === 'get_window_state') {
         const result = observation();
         // Moving after the fresh viewer observation refuses before the physical effect.
-        if (kind === 'stale' && args.include_screenshot === false) result.structuredContent.window_bounds.x = 1;
+        if (kind === 'stale' && args.display_only === true) result.structuredContent.window_bounds.x = 1;
         return result;
       }
       if (name === 'click') { physicalInputs += 1; throw new Error('Lost native acknowledgement'); }
