@@ -4604,6 +4604,45 @@ test('artifact workspace compilation preserves live dependency links while stagi
   assert.equal(readFileSync(join(sdkDir, 'dist', 'index.d.ts'), 'utf8'), 'export declare const current: true;\n');
 });
 
+test('an artifact rebuild that emits unchanged bytes keeps those dist files in place and prunes stale ones', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-artifact-unchanged-emit-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['apps/*', 'packages/*'] });
+  writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+  for (const name of ['cli', 'ui', 'server']) {
+    mkdirSync(join(repoRoot, 'apps', name), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  const protocolDir = join(repoRoot, 'packages', 'protocol');
+  mkdirSync(join(protocolDir, 'src'), { recursive: true });
+  writeFileSync(join(protocolDir, 'src', 'index.ts'), 'export const current = true;\n');
+  writeFileSync(join(protocolDir, 'tsconfig.json'), '{}\n');
+  writeFileSync(join(protocolDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+    exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } }, scripts: { build: 'fixture-build' },
+  }));
+  const build = async () => await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/protocol'], {
+    publicationMode: 'artifact',
+    workspaceBuildBoundary: {
+      async prepareEnv(_packageDir, env) { return { ...env }; },
+      async runPackageBuild(_packageDir, { env }) {
+        writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export const current = true;\n');
+        writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const current: true;\n');
+      },
+    },
+  });
+  assert.deepEqual((await build()).built, ['@happier-dev/protocol']);
+  const distDir = join(protocolDir, 'dist');
+  writeFileSync(join(distDir, 'stale.js'), 'export {};\n');
+  const before = ['index.js', 'index.d.ts'].map((name) => statSync(join(distDir, name)).ino);
+  // A source edit that does not change emitted bytes (a comment) still rebuilds by key.
+  writeFileSync(join(protocolDir, 'src', 'index.ts'), '// comment\nexport const current = true;\n');
+  assert.deepEqual((await build()).built, ['@happier-dev/protocol']);
+  assert.deepEqual(['index.js', 'index.d.ts'].map((name) => statSync(join(distDir, name)).ino), before,
+    'unchanged emitted files were replaced');
+  assert.equal(existsSync(join(distDir, 'stale.js')), false, 'artifact publication must still prune stale outputs');
+});
+
 test('declared plugin UI artifacts participate in atomic workspace build admission', async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-plugin-ui-admission-'));
   try {

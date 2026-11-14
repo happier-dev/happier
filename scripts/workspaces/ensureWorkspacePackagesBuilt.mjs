@@ -1418,8 +1418,11 @@ async function consumeWorkspacePackageBuildInputs({
     if (refreshOnly && !packageJson.scripts?.['build:ui']) {
       await publishOutputs(distDir);
     } else {
+      // Both modes publish through the mounted tree: byte-identical emitted
+      // files keep their inode and mtime (a no-op compile must not churn dist
+      // for mtime-keyed consumers); artifact publication also prunes stale files.
       await buildIntoTempThenReplace(distDir, publishOutputs, {
-        preserveDestinationPath: publicationMode === 'live',
+        preserveDestinationPath: true,
         pruneStale: publicationMode === 'artifact',
       });
     }
