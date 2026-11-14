@@ -35,6 +35,7 @@ import {
   readServiceCheckSettings,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
+  serviceCheckResultWord,
   serviceCheckStatusTone,
   serviceCheckStatusWord,
   type ServiceCheckDay,
@@ -236,9 +237,7 @@ export function ServiceCheckDetail(
     {
       key: 'last',
       label: t(`${k}.lastResult`),
-      value: shown
-        ? serviceCheckStatusWord(shown.result.status)
-        : serviceCheckStatusWord(facts.status),
+      value: (shown ? serviceCheckResultWord(shown.result.status) : null) ?? '—',
       ...(lastTone === 'danger' ? { tone: 'danger' as const } : lastTone === 'warning' ? { tone: 'attention' as const } : {}),
       ...(shown
         ? {
@@ -270,8 +269,9 @@ export function ServiceCheckDetail(
         shown?.result.latencyMs === undefined || !shown
           ? '—'
           : formatLatency(shown.result.latencyMs),
-      detail:
-        latencies.length >= 2 ? (
+      ...(latencies.length >= 2
+        ? {
+            detail: (
           <StackedSeriesChart
             theme={pluginTheme}
             label=""
@@ -292,15 +292,14 @@ export function ServiceCheckDetail(
             showReadout={false}
             decorative
           />
-        ) : (
-          t(`${k}.lastResult`)
         ),
+          }
+        : {}),
     },
     {
       key: 'uptime',
       label: t(`${k}.lastDays`),
       value: percentText(facts.uptimePercent),
-      detail: t(`${k}.uptimeWord`),
     },
   ];
   const expect = settings?.expectStatus
@@ -394,7 +393,7 @@ export function ServiceCheckDetail(
             <Item
               key={result.observedAt}
               testID={`services.check.result.${result.observedAt}`}
-              title={serviceCheckStatusWord(result.status)}
+              title={serviceCheckResultWord(result.status) ?? '—'}
               subtitle={observer ? t(`${k}.resultFrom`, { machine: observer }) : undefined}
               detail={[
                 result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),

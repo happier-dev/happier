@@ -193,6 +193,14 @@ export function serviceCheckStatusWord(status: ServiceCheckStatus): string {
   }
 }
 
+/**
+ * A single result as a fact cell says it: up, down or degraded. An unknown, unchecked or still-loading state is said
+ * once by the detail's meta line, so the cell keeps its dash instead of repeating it (null).
+ */
+export function serviceCheckResultWord(status: ServiceCheckStatus): string | null {
+  return status === 'up' || status === 'down' || status === 'degraded' ? serviceCheckStatusWord(status) : null;
+}
+
 /** Whether a Check's state needs the person: down is danger, degraded a warning; anything else stays quiet (null). */
 export function serviceCheckStatusTone(status: ServiceCheckStatus): 'danger' | 'warning' | null {
   return status === 'down' ? 'danger' : status === 'degraded' ? 'warning' : null;

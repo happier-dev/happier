@@ -4,6 +4,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  serviceCheckResultWord,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
 } from './serviceCheckPresentation';
@@ -198,5 +199,16 @@ describe('A Check’s retained results read newest first, with its failing strea
     const passing = readServiceCheckRecent({ checkId: 'a', result: sample('up', 300), failingSince: null, failureStreak: 0 } as never);
     expect(passing).toMatchObject({ failingSince: null, failureStreak: null, partial: false });
     expect(passing.results.map((item) => item.observedAt)).toEqual([300]);
+  });
+});
+
+describe('a Check’s fact cells say a result, never repeat the unknown state the meta line already says', () => {
+  it('names up, down and degraded results; unknown, not checked and loading leave the cell to its dash', () => {
+    expect(serviceCheckResultWord('down')).toBeTruthy();
+    expect(serviceCheckResultWord('up')).toBeTruthy();
+    expect(serviceCheckResultWord('degraded')).toBeTruthy();
+    expect(serviceCheckResultWord('unknown')).toBeNull();
+    expect(serviceCheckResultWord('notChecked')).toBeNull();
+    expect(serviceCheckResultWord('loading')).toBeNull();
   });
 });
