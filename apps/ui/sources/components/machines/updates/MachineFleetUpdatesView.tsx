@@ -1,6 +1,7 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowFailurePolicy } from '@happier-dev/protocol/workflows/workflowV1';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -8,86 +9,37 @@ import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConf
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
-import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
-import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useMachineListForServerSelection } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import type { MachineUpdatesScope } from '../security/machineUpdatesActions';
-import { useMachineUpdatesPage } from '../security/useMachineUpdatesPage';
 import {
   fleetRolloutCandidates,
-  orderFleetUpdatesRows,
-  readFleetUpdatesRow,
-  summarizeFleetUpdates,
-  type FleetMachine,
   type FleetUpdatesRow,
 } from './machineFleetUpdates';
+import { MachineFleetUpdatesTable } from './MachineFleetUpdatesTable';
+import { useFleetUpdates } from './useFleetUpdates';
 import { useMachineFleetRollout } from './useMachineFleetRollout';
 
 const s = 'machineFleetUpdates' as const;
 
-/** One Home's Machines as the facts this page shows; the same array while none of them changed. */
-function useFleetMachines(serverId: string): readonly FleetMachine[] {
-  const select = React.useMemo(() => {
-    let previous: readonly FleetMachine[] | null = null;
-    return (machines: readonly Machine[]) => {
-      previous = retainKeyedRows(
-        previous,
-        machines.map((machine) => ({
-          machineId: machine.id,
-          name: getSettledMachineDisplayName(machine) ?? machine.id,
-          online: isMachineOnline(machine),
-          installationId: machine.installationId ?? null,
-        })),
-        (row) => row.machineId,
-      );
-      return previous;
-    };
-  }, []);
-  return useMachineListForServerSelection(serverId, select);
-}
-
 function listNames(names: readonly string[]): string {
   return names.join(', ');
-}
-
-function describeRow(
-  row: FleetUpdatesRow,
-): Readonly<{ subtitle: string; detail: string; attention: boolean }> {
-  if (row.online === false)
-    return { subtitle: t(`${s}.offline`), detail: '—', attention: false };
-  if (row.security === null && row.all === null)
-    return { subtitle: t(`${s}.notChecked`), detail: '—', attention: false };
-  const parts = [
-    row.security === null ? null : t(`${s}.security`, { count: row.security }),
-    row.all === null ? null : t(`${s}.all`, { count: row.all }),
-    row.restartNeeded ? t(`${s}.restartNeeded`) : null,
-  ].filter((part): part is string => part !== null);
-  const waiting = (row.security ?? 0) > 0 || (row.all ?? 0) > 0;
-  return {
-    subtitle: parts.join(' · '),
-    detail: waiting
-      ? t(`${s}.waiting`)
-      : row.restartNeeded
-        ? t(`${s}.restartNeeded`)
-        : t(`${s}.upToDate`),
-    attention: (row.security ?? 0) > 0 || row.restartNeeded,
-  };
 }
 
 /**
@@ -95,27 +47,10 @@ function describeRow(
  * from the facts each Machine pushes, and one reviewed rollout to the ones that have them, now or as a Workflow later.
  */
 export function MachineFleetUpdatesView() {
-  const { theme } = useUnistyles();
   const router = useRouter();
   const { serverId } = useActiveServerSnapshot();
-  const machines = useFleetMachines(serverId);
-  const machineIds = React.useMemo(
-    () => machines.map((machine) => machine.machineId),
-    [machines],
-  );
-  const entries = useMachineUpdatesPage({
-    serverId,
-    machineIds,
-    enabled: machines.length > 0,
-  });
-  const rows = React.useMemo(
-    () =>
-      orderFleetUpdatesRows(machines.map((machine, index) =>
-        readFleetUpdatesRow(machine, entries[index]),
-      )),
-    [entries, machines],
-  );
-  const summary = summarizeFleetUpdates(rows);
+  const { machines, rows, summary } = useFleetUpdates(serverId);
+  const phone = useDeviceType() === 'phone';
 
   const [reviewing, setReviewing] = React.useState(false);
   const [scope, setScope] = React.useState<MachineUpdatesScope>('security');
@@ -171,6 +106,7 @@ export function MachineFleetUpdatesView() {
     }
   };
 
+  // The count line under the page's purpose (lab fUpd): the fleet once, from the rows' own facts.
   const status =
     summary.machines === 0
       ? null
@@ -191,25 +127,29 @@ export function MachineFleetUpdatesView() {
             : summary.offline.length > 0
               ? t(`${s}.offlineNamed`, { names: listNames(summary.offline) })
               : null,
-        ]
-          .filter(Boolean)
-          .join(' · ');
+        ];
 
   const showReview = reviewing || rollout.kind !== 'idle';
+  // The head, the review and the table share one page column (lab fUpd), as the Machines index does; the page's
+  // ItemList is the scroller the table windows its rows in.
   return (
-    <ItemList>
-      <SettingsPageHeader
+    <ItemList pageColumn="wide"><CoreCollectionScope renderPageScroller={passThroughPageScroller}>
+    <PageContentColumn>
+      <MainScreenHeader
         testID="machines.updates.header"
+        title={t(`${s}.title`)}
         alwaysShowTitle
         description={t(`${s}.description`)}
-        primaryAction={
-          showReview
-            ? undefined
-            : {
-                testID: 'machines.updates.review',
-                title: t(`${s}.reviewRollout`),
-                onPress: () => setReviewing(true),
-              }
+        {...(status ? { count: status } : {})}
+        actions={
+          showReview ? undefined : (
+            <RoundButton
+              testID="machines.updates.review"
+              size="small"
+              title={t(`${s}.reviewRollout`)}
+              onPress={() => setReviewing(true)}
+            />
+          )
         }
       />
       {showReview ? (
@@ -244,38 +184,29 @@ export function MachineFleetUpdatesView() {
         <EmptyState
           testID="machines.updates.empty"
           layout="page"
-          scene="shipped"
+          scene="noMachines"
           title={t(`${s}.emptyTitle`)}
           subtitle={t(`${s}.emptyBody`)}
         />
       ) : (
-        <ItemGroup
+        <>
+        {/* The table is the page's next section: one section gap under what leads, as on the Machines index. The
+            phone's list brings its own group spacing. */}
+        {phone ? null : <View style={styles.beforeTable} />}
+        <MachineFleetUpdatesTable
           testID="machines.updates.list"
-          title={t('settings.machines')}
-          description={status ?? undefined}
-        >
-          {rows.map((row) => {
-            const shown = describeRow(row);
-            return (
-              <Item
-                key={row.machineId}
-                testID={`machines.updates.row.${row.machineId}`}
-                title={row.name}
-                subtitle={shown.subtitle}
-                detail={shown.detail}
-                detailStyle={
-                  shown.attention
-                    ? { color: theme.colors.state.warning }
-                    : undefined
-                }
-                onPress={() => openMachine(row.machineId)}
-              />
-            );
-          })}
-        </ItemGroup>
+          rows={rows}
+          onOpen={openMachine}
+        />
+        </>
       )}
-    </ItemList>
+    </PageContentColumn>
+    </CoreCollectionScope></ItemList>
   );
+}
+
+function passThroughPageScroller(children: React.ReactNode): React.ReactNode {
+  return children;
 }
 
 function FleetRolloutReview(
@@ -526,3 +457,9 @@ function FleetRolloutReview(
     </>
   );
 }
+
+const styles = StyleSheet.create(() => ({
+  beforeTable: {
+    height: PAGE_LIST_METRICS.sectionGapPx,
+  },
+}));

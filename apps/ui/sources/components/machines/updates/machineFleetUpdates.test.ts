@@ -15,7 +15,7 @@ const machine = (
   machineId: string,
   online: boolean | null,
   installationId: string | null = `inst-${machineId}`,
-): FleetMachine => ({ machineId, name: machineId, online, installationId });
+): FleetMachine => ({ machineId, name: machineId, online, installationId, platform: 'linux' });
 const observed = (
   pendingSecurity: number | undefined,
   pendingAll: number | undefined,

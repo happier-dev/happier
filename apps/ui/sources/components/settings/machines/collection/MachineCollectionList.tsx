@@ -14,6 +14,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Item } from '@/components/ui/lists/Item';
+import { MachineFleetUpdatesEntry } from '@/components/machines/updates/MachineFleetUpdatesEntry';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -392,23 +393,26 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         />
     );
 
-    // Fleet OS updates (pfc-redesign fUpd) sit under Defaults: one page for every machine's system packages.
+    // Fleet OS updates (pfc-redesign fUpd) sit under Defaults: one page for every machine's system packages; the
+    // entry says how many machines have updates waiting (lab mIdx), as the Overview says how many need a look.
     const updatesRow = (
-        <Item
-            rowRole="catalogRow"
-            testID="settings.machines.updates"
-            title={t('machineFleetUpdates.title')}
-            subtitle={t('machineFleetUpdates.rowSubtitle')}
-            icon={(
-                <HappierCollectionListMark rowRole="catalogRow">
-                    <Icon name="download" size={20} color={theme.colors.text.secondary} />
-                </HappierCollectionListMark>
-            )}
-            selected={rail ? selectedKey === 'updates' : undefined}
-            density={rail ? 'compact' : undefined}
-            showChevron={!rail}
-            pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, SETTINGS_ROUTES.machineUpdates, replaceConfiguration, 'MachineCollectionList.updates')}
+        <MachineFleetUpdatesEntry
+            serverId={viewModel.activeServerId}
+            item={{
+                rowRole: 'catalogRow',
+                testID: 'settings.machines.updates',
+                title: t('machineFleetUpdates.title'),
+                icon: (
+                    <HappierCollectionListMark rowRole="catalogRow">
+                        <Icon name="download" size={20} color={theme.colors.text.secondary} />
+                    </HappierCollectionListMark>
+                ),
+                selected: rail ? selectedKey === 'updates' : undefined,
+                density: rail ? 'compact' : undefined,
+                showChevron: !rail,
+                pressableStyle: rail ? collectionListStyles.row : undefined,
+                onPress: () => openHref(router, SETTINGS_ROUTES.machineUpdates, replaceConfiguration, 'MachineCollectionList.updates'),
+            }}
         />
     );
 
@@ -418,7 +422,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             rowRole="catalogRow"
             testID="settings.machines.activity"
             title={t('machineFleetActivity.title')}
-            subtitle={t('machineFleetActivity.rowSubtitle')}
             icon={(
                 <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="clock" size={20} color={theme.colors.text.secondary} />

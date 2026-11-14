@@ -2078,7 +2078,6 @@ export const english = {
     },
     machineFleetUpdates: {
         title: "Updates",
-        rowSubtitle: "System packages waiting on your machines",
         description: "Operating-system packages waiting on each machine of this Home. Happier’s own app, CLI and daemon updates stay in Settings → Updates.",
         reviewRollout: "Review rollout…",
         statusWith: ({ count, total }: { count: number; total: number }) => `${count} of ${total} machines have updates`,
@@ -2086,6 +2085,10 @@ export const english = {
         all: ({ count }: { count: number }) => `${count} in all`,
         restarts: ({ count }: { count: number }) => count === 1 ? "1 restart needed" : `${count} restarts needed`,
         restartNeeded: "Restart needed",
+        restartNotNeeded: "Not needed",
+        columnSecurity: "Security",
+        columnAll: "All",
+        columnRestart: "Restart",
         offline: "Offline · not checked now",
         offlineNamed: ({ names }: { names: string }) => `offline: ${names}`,
         offlineCount: ({ count }: { count: number }) => `${count} offline`,
@@ -2129,7 +2132,6 @@ export const english = {
     },
     machineFleetActivity: {
         title: "Activity",
-        rowSubtitle: "Who did what on your machines and services",
         description: "What people, agents and workflows did on your machines and services. What needs you stays in Inbox.",
         partial: "Some machines or environments couldn’t be read; their history is missing here.",
         partialEmptyTitle: "Some history couldn’t be read",

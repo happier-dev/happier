@@ -10,6 +10,8 @@ export type FleetMachine = Readonly<{
   name: string;
   online: boolean | null;
   installationId: string | null;
+  /** The reported OS platform ("linux", "darwin"), for the row's mark and byline. */
+  platform: string | null;
 }>;
 
 /** One Machine's pushed update facts as the fleet page shows them. Unknown stays null: never a zero. */
