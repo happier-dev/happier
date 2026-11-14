@@ -10,7 +10,7 @@ import type {
     AutomationSessionLifecycleTriggerStatus,
     AutomationTriggerListItem,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
-import { t, type TranslationKey } from '@/text';
+import { hasTranslation, t, tLoose, type TranslationKey } from '@/text';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { isSpentOnceSchedule } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
@@ -103,6 +103,24 @@ export function formatAutomationTriggerStatusLabel(
             : t(`settingsPlugins.eventAutomationComposer.sourceStatusState.${trigger.sourceStatus.state}`);
     }
     return t('automations.detail.status.active');
+}
+
+/** Source attention uses the pushed status; history gaps have their own recovery presentation. */
+export function formatAutomationTriggerObservationWarning(
+    trigger: AutomationTriggerListItem | undefined,
+    automationEnabled = true,
+): string | null {
+    if (!automationEnabled || !trigger?.enabled || trigger.kind !== 'pluginEvent') return null;
+    const status = trigger.sourceStatus;
+    if (!status || (status.state !== 'backingOff' && status.state !== 'attention') || status.code === 'historyGap') return null;
+    const codeKey = `settingsPlugins.eventAutomationComposer.sourceStatusCode.${status.code}`;
+    return [
+        formatAutomationTriggerStatusLabel(trigger, automationEnabled),
+        status.code !== null && hasTranslation(codeKey) ? tLoose(codeKey) : null,
+        status.nextRetryAt !== null ? t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
+            time: new Date(status.nextRetryAt).toLocaleString(),
+        }) : null,
+    ].filter(Boolean).join(' · ');
 }
 
 const AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS = {

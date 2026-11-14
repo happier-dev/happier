@@ -26,6 +26,9 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/prot
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationEventSourceStatusV1 } from '@happier-dev/protocol/automations/automationEventSourceStatusV1';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 
 // Only Home HTTP/credentials and the native Machine RPC leave the real path.
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -133,6 +136,81 @@ const runWindowKey = (id: Parameters<typeof workflowRunListWindowStoreKey>[0]) =
     if (!scope) throw new Error('Expected a bound Home');
     return workflowRunListWindowStoreKey(id, scope);
 };
+
+it('shows and clears pushed observation backoff in trigger History without rereading its Runs', async () => {
+    const automationId = 'repository-pushes';
+    const triggerId = 'repository-pushed';
+    const sourceStatus: AutomationEventSourceStatusV1 = {
+        automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId), triggerRevision: 2,
+        eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
+        sourceSelectorId: '065e3616-1601-41f9-b0ac-576178f10cdf',
+        reporterMaterializationRef: { machineId: 'watcher', materializationId: 'github-watcher', pluginId: 'happier.scm.forge.github' },
+        reporterSourceCustody: { kind: 'development', registeredRootId: '/repo' },
+        state: 'backingOff', code: 'rateLimited', nextRetryAt: 1_794_641_418_000,
+        lastObservedAt: null, lastDispositionAt: null, observedCount: 0, admittedCount: 0, skippedCount: 0, revision: 368,
+    };
+    const summary = AutomationDefinitionListItemSchema.parse({
+        id: automationId, name: 'Repository pushes', description: null, enabled: true,
+        targetType: 'newSession', existingSessionId: null, templateVersion: 1,
+        lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [{
+            id: triggerId, revision: 2, enabled: true, createdAt: 1, updatedAt: 1, kind: 'pluginEvent',
+            eventRef: sourceStatus.eventRef, sourceSelectorId: sourceStatus.sourceSelectorId, sourceContractVersion: 1,
+            observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null,
+        }],
+    });
+    storage.getState().applyAutomations([createAutomationDefinitionSummary(summary)], null);
+    home.answer(serverId, route, { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
+    const commits = vi.fn();
+    const screen = await renderScreen(<React.Profiler id="trigger-history" onRender={commits}>
+        <WorkflowTriggerRunHistory automationId={automationId} triggerId={triggerId} />
+    </React.Profiler>);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')));
+    const runReads = home.requestsFor(route).length;
+    const definitionReads = home.requestsFor('/v3/automations').length;
+    const warningId = `session-work-trigger-history:${automationId}-observation`;
+    expect(screen.findByTestId(warningId)).toBeNull();
+    const publishStatus = async (status: AutomationEventSourceStatusV1 | null, enabled = true) => {
+        await act(async () => storage.getState().applyAutomations([createAutomationDefinitionSummary({ ...summary, enabled,
+            triggers: summary.triggers.map(trigger => trigger.kind === 'pluginEvent' ? { ...trigger, sourceStatus: status } : trigger),
+        })], null));
+    };
+    await publishStatus(sourceStatus);
+    expect(screen.findByTestId(warningId)).not.toBeNull();
+    expect(screen.getTextContent()).toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusState.backingOff'));
+    expect(screen.getTextContent()).toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusCode.rateLimited'));
+    expect(screen.getTextContent()).toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
+        time: new Date(sourceStatus.nextRetryAt!).toLocaleString(),
+    }));
+    expect(screen.findByTestId('automation-history-gap-recovery')).toBeNull();
+    const committed = commits.mock.calls.length;
+    for (let revision = 1; revision <= 3; revision++) {
+        await act(async () => storage.getState().upsertAutomation(createAutomationDefinitionSummary({
+            ...summary, id: 'another-automation', name: `Other work ${revision}`, triggers: [],
+        })));
+    }
+    expect(commits).toHaveBeenCalledTimes(committed);
+    const later = { ...sourceStatus, nextRetryAt: sourceStatus.nextRetryAt! + 60_000, revision: 369 };
+    await publishStatus(later);
+    expect(screen.getTextContent()).toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
+        time: new Date(later.nextRetryAt).toLocaleString(),
+    }));
+    await publishStatus({ ...later, state: 'observing', code: null, nextRetryAt: null, revision: 370 });
+    expect(screen.findByTestId(warningId)).toBeNull();
+    await publishStatus({ ...later, state: 'attention', code: 'credentialMissing', nextRetryAt: null, revision: 371 });
+    expect(screen.getTextContent()).toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusCode.credentialMissing'));
+    expect(screen.getTextContent()).not.toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
+        time: new Date(later.nextRetryAt).toLocaleString(),
+    }));
+    await publishStatus({ ...later, state: 'attention', code: 'historyGap', nextRetryAt: null, revision: 372 });
+    expect(screen.findByTestId(warningId)).toBeNull();
+    expect(screen.findByTestId('automation-history-gap-recovery')).not.toBeNull();
+    await publishStatus(sourceStatus, false);
+    expect(screen.findByTestId(warningId)).toBeNull();
+    await publishStatus(null);
+    expect(screen.findByTestId(warningId)).toBeNull();
+    expect(home.requestsFor(route)).toHaveLength(runReads);
+    expect(home.requestsFor('/v3/automations')).toHaveLength(definitionReads);
+});
 
 it('lists a fired Once Run while its accepted snapshot is pending, then opens initialized content', async () => {
     const trigger = { kind: 'schedule' as const, schedule: { kind: 'once' as const, scheduleExpr: null,

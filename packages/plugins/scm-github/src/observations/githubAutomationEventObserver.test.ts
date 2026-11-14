@@ -148,6 +148,7 @@ function checkpointRetirementCandidate(row: GithubAutomationEventCheckpointRowV1
 function historyGapCheckpointRow(input: Readonly<{
   automationId: string;
   sourceSelectorId: string;
+  eventLocalId?: GithubAutomationEventLocalIdV1;
 }>): GithubAutomationEventCheckpointRowV1 {
   const row = checkpointRow(input);
   return {
@@ -2198,17 +2199,22 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     ]));
   });
 
-  it.each(['persisted history gap', 'missing checkpoint'] as const)(
-    'recovers a %s through the authenticated baseline and admits the next new event', async (prior) => {
-    const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
+  it.each([
+    { prior: 'persisted history gap', eventLocalId: EVENT_LOCAL_ID },
+    { prior: 'missing checkpoint', eventLocalId: EVENT_LOCAL_ID },
+    { prior: 'persisted history gap', eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened },
+    { prior: 'missing checkpoint', eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened },
+  ] as const)(
+    'recovers $prior for $eventLocalId without replaying compact historical payloads', async ({ prior, eventLocalId }) => {
+    const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA, eventLocalId });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
       triggerId: 'trigger-automation-a',
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
+      eventRef: source.eventRef,
       sourceSelectorId: sourceSelectorA,
     });
     const checkpoints = createCheckpointCollection(prior === 'persisted history gap'
-      ? [historyGapCheckpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA })]
+      ? [historyGapCheckpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA, eventLocalId })]
       : []);
     const priorRevision = prior === 'persisted history gap' ? 1 : 0;
     const admitted: AutomationEventAdmitInput[] = [];
@@ -2217,10 +2223,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const nextEventAt = Date.now() + 60_000;
     const repositoryEvent = (id: string, createdAt: string) => ({
       id,
-      type: 'PushEvent',
+      type: eventLocalId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened ? 'PullRequestEvent' : 'PushEvent',
       created_at: createdAt,
       repo: { id: 77, name: 'acme/widgets' },
-      payload: { ref: 'refs/heads/main', before: 'a'.repeat(40), head: 'b'.repeat(40) },
+      payload: eventLocalId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened
+        ? { action: 'opened', number: 1, pull_request: { id: 455, number: 1,
+          // Existing compact Events lack a title. A current-head baseline must
+          // retain their IDs without interpreting or emitting their payloads.
+          ...(id === 'new-after-baseline' ? { title: 'New pull request' } : {}),
+        } }
+        : { ref: 'refs/heads/main', before: 'a'.repeat(40), head: 'b'.repeat(40) },
     });
     let requestCount = 0;
     const http = {
@@ -2323,6 +2335,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     expect(checkpoints.read(rowId)?.value.payload.continuity).not.toHaveProperty('historyGap');
 
+    expect(admitted).toEqual([]);
+
     const observerContext = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: {
@@ -2339,8 +2353,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     expect(http.request).toHaveBeenCalledTimes(2);
     expect(admitted).toContainEqual(expect.objectContaining({
+      eventRef: source.eventRef,
       occurrenceId: 'github:repository:77:event:new-after-baseline',
     }));
+    expect(admitted).toHaveLength(1);
     expect(checkpoints.read(rowId)).toMatchObject({
       revision: priorRevision + 2,
       value: {

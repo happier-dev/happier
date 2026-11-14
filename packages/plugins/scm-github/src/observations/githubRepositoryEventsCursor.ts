@@ -190,13 +190,27 @@ export function reuseGithubRepositoryEventsCheckpointOnNotModified(
  * unseen for the next request. A completely displaced prior timeline is an
  * explicit gap, never a fabricated cursor.
  */
-export function classifyGithubRepositoryEvents<TObservation>(input: Readonly<{
+type GithubRepositoryEventsClassificationInputV1<TObservation> = Readonly<{
   cursor: GithubRepositoryEventsCursorV1;
   observedAtMs: number;
   etag: string | null;
   maxEntries: number;
   events: readonly GithubRepositoryTimelineEntryV1<TObservation>[];
-}>): GithubRepositoryEventsClassificationV1<TObservation> {
+}>;
+
+export function classifyGithubRepositoryEvents<TEvent, TObservation>(
+  input: GithubRepositoryEventsClassificationInputV1<TEvent> & Readonly<{
+    projectObservation: (event: TEvent) => TObservation | null;
+  }>,
+): GithubRepositoryEventsClassificationV1<TObservation>;
+export function classifyGithubRepositoryEvents<TObservation>(
+  input: GithubRepositoryEventsClassificationInputV1<TObservation>,
+): GithubRepositoryEventsClassificationV1<TObservation>;
+export function classifyGithubRepositoryEvents<TEvent, TObservation>(
+  input: GithubRepositoryEventsClassificationInputV1<TEvent> & Readonly<{
+    projectObservation?: (event: TEvent) => TObservation | null;
+  }>,
+): GithubRepositoryEventsClassificationV1<TEvent | TObservation> {
   validateTimeline(input.events);
   validateCursor(input.cursor);
   validateTimestamp(input.observedAtMs);
@@ -222,7 +236,7 @@ export function classifyGithubRepositoryEvents<TObservation>(input: Readonly<{
   }
 
   const classified = new Set(priorSeen);
-  const observations: TObservation[] = [];
+  const observations: (TEvent | TObservation)[] = [];
   let complete = true;
   let blockedByUncommittedObservation = false;
   for (const event of orderedEvents) {
@@ -238,7 +252,12 @@ export function classifyGithubRepositoryEvents<TObservation>(input: Readonly<{
       classified.add(event.eventId);
       continue;
     }
-    if (event.observation === null) {
+    // Baseline and already committed occurrences need only timeline identity.
+    // Parse semantic payloads after this owner selects a new occurrence, so a
+    // compact historical payload cannot defeat an explicit from-now reset.
+    const observation = event.observation === null ? null : input.projectObservation
+      ? input.projectObservation(event.observation) : event.observation;
+    if (observation === null) {
       classified.add(event.eventId);
       continue;
     }
@@ -247,7 +266,7 @@ export function classifyGithubRepositoryEvents<TObservation>(input: Readonly<{
       blockedByUncommittedObservation = true;
       continue;
     }
-    observations.push(event.observation);
+    observations.push(observation);
     classified.add(event.eventId);
   }
 
