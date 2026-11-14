@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import {
     PrimaryTurnStatusV1Schema,
+    PENDING_DELIVERY_BLOCKED_REASONS,
+    isPendingDeliveryProviderEffectPossibleV1,
     SessionRuntimeIssueV1Schema,
     projectSessionRuntimeIssueForReader,
     type ConnectedServiceId,
@@ -154,7 +156,32 @@ type V2SessionListLegacyRow = Prisma.SessionGetPayload<{
     select: typeof V2_SESSION_LIST_ROW_LEGACY_SELECT;
 }>;
 
-export type V2SessionListRowCompat = V2SessionListRow | V2SessionListLegacyRow;
+export type V2SessionListRowCompat = (V2SessionListRow | V2SessionListLegacyRow) & {
+    _count?: { pendingMessages: number };
+};
+
+// Count only positively classified no-effect reasons. Unknown and future stored
+// reasons stay conservative through the protocol's delivery-status owner.
+function createV2SessionDetailPendingNoEffectCountSelect(sessionId: string) {
+    return {
+        _count: {
+            select: {
+                pendingMessages: {
+                    where: {
+                        // Prisma aggregates before the Session join; bind the count to this key too.
+                        sessionId,
+                        status: "queued",
+                        deliveryState: "blocked",
+                        deliveryBlockedReason: {
+                            in: PENDING_DELIVERY_BLOCKED_REASONS.filter((reason) =>
+                                !isPendingDeliveryProviderEffectPossibleV1({ status: "blocked", reason })),
+                        },
+                    },
+                },
+            },
+        },
+    } as const satisfies Prisma.SessionSelect;
+}
 
 /**
  * "Shared with this user" — the single definition of share membership.
@@ -191,9 +218,12 @@ export function createV2SessionListVisibilityWhere(params: Readonly<{ userId: st
     };
 }
 
-export function createV2SessionListRowSelect(params: Readonly<{ userId: string }>) {
+export function createV2SessionListRowSelect(params: Readonly<{ userId: string; pendingBlockedNoEffectCountSessionId?: string }>) {
     return {
         ...V2_SESSION_LIST_ROW_BASE_SELECT,
+        ...(params.pendingBlockedNoEffectCountSessionId
+            ? createV2SessionDetailPendingNoEffectCountSelect(params.pendingBlockedNoEffectCountSessionId)
+            : {}),
         shares: {
             where: { sharedWithUserId: params.userId },
             select: V2_SESSION_LIST_SHARE_SELECT,
@@ -201,9 +231,12 @@ export function createV2SessionListRowSelect(params: Readonly<{ userId: string }
     } as const satisfies Prisma.SessionSelect;
 }
 
-export function createV2SessionListLegacyRowSelect(params: Readonly<{ userId: string }>) {
+export function createV2SessionListLegacyRowSelect(params: Readonly<{ userId: string; pendingBlockedNoEffectCountSessionId?: string }>) {
     return {
         ...V2_SESSION_LIST_ROW_LEGACY_SELECT,
+        ...(params.pendingBlockedNoEffectCountSessionId
+            ? createV2SessionDetailPendingNoEffectCountSelect(params.pendingBlockedNoEffectCountSessionId)
+            : {}),
         shares: {
             where: { sharedWithUserId: params.userId },
             select: V2_SESSION_LIST_SHARE_SELECT,
@@ -296,6 +329,7 @@ export function mapV2SessionListRow(params: Readonly<{ row: V2SessionListRowComp
         ...runtimeActivityProjection,
         pendingCount: row.pendingCount,
         pendingBlockedCount: row.pendingBlockedCount,
+        ...(row._count ? { pendingBlockedNoEffectCount: row._count.pendingMessages } : {}),
         pendingVersion: row.pendingVersion,
         pendingActivationAuthorization: mapPendingActivationAuthorization(row),
         rollbackEligibleTurnStarts: readSessionTurnRollbackEligibleStarts(row),
