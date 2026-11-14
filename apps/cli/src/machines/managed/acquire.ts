@@ -386,14 +386,15 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             return false;
         }
     }
-    async function submitIdentity(machine: ManagedMachineFullV1, kind: 'acquire' | 'rebuild') {
+    // Opaque rows are structural at Home; every claimed effect continues from the locally opened row.
+    async function submitIdentity(machine: ManagedMachineFullV1, kind: 'acquire' | 'rebuild' | 'intent') {
         const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
             candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
             && candidate.definition.schemaVersion === machine.launch.schemaVersion);
         const path = kind === 'acquire' ? 'submit' : 'submit-intent';
         const response = await post(`/v1/machines/managed/controller/${path}`, correlation(machine), ManagedControllerSubmitOutputV1Schema);
         const submitted = { ...response, machine: hydrator.normalize(response.machine) };
-        if (submitted.submitted && provider) submittedIdentity = captureManagedSubmittedNativeIdentity({ kind,
+        if (kind !== 'intent' && submitted.submitted && provider) submittedIdentity = captureManagedSubmittedNativeIdentity({ kind,
             machine: hydrator.structural(submitted.machine), privateMachine: submitted.machine, provisioner: provider.definition });
         return submitted;
     }
@@ -441,7 +442,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         post, row, correlation, projectEnrollmentCorrelation: hydrator.projectEnrollmentCorrelation, readCurrent, isCurrent, isOriginCurrent, assertConnection,
         setHomeOperationRetry(lifetime?: HomeOperationRetry) { homeRetry = lifetime; },
         async submit(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'acquire'); },
-        async submitIntent(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'rebuild'); },
+        async submitIntent(machine: ManagedMachineFullV1) { return await submitIdentity(machine, machine.desired === 'rebuild' ? 'rebuild' : 'intent'); },
         /** Capture the admitted paid handle immediately before its safe native reconciliation. */
         async preparePendingAcquireBoundReport(machine: ManagedMachineFullV1) {
             if (action !== 'machines.managed.acquire' && action !== 'machines.managed.bootstrap.retry') {

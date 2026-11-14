@@ -7,7 +7,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -423,6 +424,40 @@ it('preserves the native pre-handler refusal and submitted custody when refusal 
     });
 });
 
+describe('opaque preset Delete on the controller', () => {
+    it('keeps the opened native resource after Home claims the effect and destroys it', async () => {
+        // #155 G1 (op 43cd90df): a delegated Team preset row is structural at Home; the controller
+        // opens its sealed native identity. Home's submit-intent reply is structural too.
+        const test = setup();
+        const { launch, resource, ...plainFields } = test.readMachine();
+        const preset = { id: 'opaque-preset', revision: 1, contentEncryptionMode: 'plain' as const };
+        const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'opaque-preset', launch,
+            nativeResult: { kind: 'bound', resource } }) };
+        const toStructural = (row: Record<string, unknown>) => {
+            const { launch: _launch, resource: _resource, ...rest } = row;
+            return ManagedOpaquePresetMachineV1Schema.parse({ ...rest, preset });
+        };
+        toStructural(plainFields);
+        const home = test.post.getMockImplementation()!;
+        test.post.mockImplementation(async (url, body, config) => {
+            const response = await home(url, body, config) as { status: number; data: unknown };
+            const data = response.data;
+            if (String(url).endsWith('/actions/get')) return { ...response, data: toStructural(data as Record<string, unknown>) };
+            if (!data || typeof data !== 'object' || !('machine' in data) || !data.machine || typeof data.machine !== 'object') return response;
+            const machine = toStructural(data.machine as Record<string, unknown>);
+            const carrier = /\/(admit-control|context)$/.test(String(url)) ? { presetContent: { content, recipients: [] } } : {};
+            return { ...response, data: { ...data, machine, ...carrier } };
+        });
+        // Plain preset custody opens under the custodian Account named by the controller's token.
+        const ownerToken = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const driver = createManagedMachineAcquisitionDriver({ ...test.driverInput, token: ownerToken,
+            credentials: { token: ownerToken, encryption: null } });
+        await expect(driver.execute('machines.managed.delete', { homeId: plainFields.homeId, managedId: 'managed', when: 'now',
+            intent: 'delete', expectedRevision: plainFields.intentRevision, reviewedDependencies: true }, test.options))
+            .resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.effects).toEqual(['destroy']);
+    });
+});
 describe('Delete with no native resource', () => {
     it('settles the Home-confirmed absence without native effects or guest activity', async () => {
         const test = setup();

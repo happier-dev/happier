@@ -1,5 +1,4 @@
 import { type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { ManagedControllerSubmitOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineProvisionerCleanupObservationV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -428,10 +427,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     effectContext = context;
                 }
                 assertLive(options.signal);
-                const submission = machine.desired === 'rebuild' ? await client.submitIntent(machine)
-                    : await client.post(
-                        '/v1/machines/managed/controller/submit-intent', client.correlation(machine),
-                        ManagedControllerSubmitOutputV1Schema);
+                const submission = await client.submitIntent(machine);
                 machine = submission.machine;
                 client.assertConnection(machine);
                 const outstanding = machine.submittedNativeEffect;
