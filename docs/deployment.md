@@ -3795,6 +3795,9 @@ Save, a saved-check read correctly reports `source_unavailable`: a successful
 setup proposal alone is not a saved or enabled source. The Event declaration
 supplies observation-only intent for both new and edited checks; no recipe,
 execution assignment or separate health-check store is required.
+The Account authoring owner enrolls observation-only health checks on the existing
+health-status Event so the same Notice receives failure and recovery. Explicit
+workflow Actions retain their selected failed, recovered or status Event.
 
 Opening setup again carries the plugin's canonical source identity. The existing
 Account Automation inventory and private-definition reader resolve that exact

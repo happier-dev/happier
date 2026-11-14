@@ -71,6 +71,8 @@ import {
 import { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowAccountRunActionDeps } from './workflowRunActions.js';
 import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
+import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
@@ -463,22 +465,24 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           randomBytes: params.randomBytes, binding, definition })),
     });
   };
-  /** Observation-only labels live beside their existing private Event source facts. */
-  const withObservationDisplay = (automationId: string, triggerId: string, triggerRevision: number,
+  /** Health observations follow both phases; labels remain with their private source facts. */
+  const prepareObservationTrigger = (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, display: AutomationDefinitionDisplayV1,
     current: AvailableAutomationAccountEncryptionV1): AutomationTriggerDefinitionInput => {
     if (trigger.kind !== 'pluginEvent') unavailable('invalid_input');
+    const eventRef = isHealthCheckEventSourceV1(trigger) ? HEALTH_CHECK_EVENT_REFS_V1.status : trigger.eventRef;
     if (!('triggerDefinitionEnvelope' in trigger)) {
-      return AutomationPluginEventDefinitionTriggerInputSchema.parse({ ...trigger, automationDisplay: display });
+      return AutomationPluginEventDefinitionTriggerInputSchema.parse({ ...trigger, eventRef, automationDisplay: display });
     }
     if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) unavailable('modeMismatch');
     const binding = eventBinding(automationId, triggerId, triggerRevision, trigger.eventRef, trigger.sourceSelectorId);
     const definition = openEvent(binding, trigger.triggerDefinitionEnvelope, current);
     return AutomationPluginEventDefinitionTriggerInputSchema.parse({
       ...trigger,
+      eventRef,
       triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.parse(
         sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'e2ee', material: current.material.material,
-          randomBytes: params.randomBytes, binding,
+          randomBytes: params.randomBytes, binding: { ...binding, eventRef },
           definition: AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse({
             ...definition, automationDisplay: display,
           }) }),
@@ -597,8 +601,15 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       },
       create: async (input, beforeWrite, signal) => {
         const current = input.triggers.some((item) => isPrivateTrigger(item.trigger)) ? await params.resolveEncryption() : null;
+        const observationDisplay = input.observationOnly
+          ? { name: input.name, description: input.description ?? null }
+          : null;
+        const triggers = input.triggers.map((item) => current ? { ...item,
+          trigger: observationDisplay
+            ? prepareObservationTrigger(input.automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
+            : item.trigger } : item);
         const environment = input.observationOnly?.deploymentEnvironment;
-        const requested = input.triggers.length === 1 ? input.triggers[0]!.trigger : undefined;
+        const requested = triggers.length === 1 ? triggers[0]!.trigger : undefined;
         const reuse = current && environment && requested?.kind === 'pluginEvent' && !('triggerDefinitionEnvelope' in requested)
           ? (row: AutomationDefinitionDetail) => {
             const trigger = row.triggers[0];
@@ -610,7 +621,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
               && readAccountStoredPluginEventTriggerV1(row, trigger.id, current).definition.sourceInstanceId === requested.sourceInstanceId;
           } : undefined;
         const retained = current ? await assertSourceConfigurations(input.automationId, input.name,
-          input.triggers.flatMap(item => {
+          triggers.flatMap(item => {
             const source = requestedEvent(input.automationId, item.triggerId, 0, item.trigger, current);
             return source ? [source] : [];
           }), current, reuse) : [];
@@ -628,19 +639,12 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
               }, existing), existing)), beforeWrite, signal);
           }
         }
-        const observationDisplay = input.observationOnly
-          ? { name: input.name, description: input.description ?? null }
-          : null;
-        const triggers = input.triggers.map((item) => current ? { ...item,
-          trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0,
-            observationDisplay
-              ? withObservationDisplay(input.automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
-              : item.trigger,
-            current) } : item);
         const nextScopes = requesterScopes({ ...input, id: input.automationId,
           triggers: input.triggers.map(item => ({ id: item.triggerId, enabled: item.trigger.enabled })) });
+        const privateTriggers = triggers.map(item => current ? { ...item,
+          trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current) } : item);
         return commitRequesterScopes([], nextScopes, async () => materializePrivateDetail(
-          await params.automations.create(await sealCreatePrivateDisplay({ ...input, triggers }), beforeWrite, signal),
+          await params.automations.create(await sealCreatePrivateDisplay({ ...input, triggers: privateTriggers }), beforeWrite, signal),
         ), beforeWrite, signal);
       },
       reconcile: async (automationId, input, row, beforeWrite, signal) => {
@@ -682,7 +686,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           if (item.kind === 'new') {
             if (!current) return item;
             const trigger = observationDisplay
-              ? withObservationDisplay(automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
+              ? prepareObservationTrigger(automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
               : item.trigger;
             if (observationDisplay) observationDisplayStored = true;
             return { ...item, trigger: preparePrivateTrigger(automationId, item.triggerId, 0, trigger, current) };
@@ -698,7 +702,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           }
           const requested = item.trigger === undefined ? undefined
             : observationDisplay
-              ? withObservationDisplay(automationId, item.triggerId, item.expectedRevision + 1,
+              ? prepareObservationTrigger(automationId, item.triggerId, item.expectedRevision + 1,
                 { ...item.trigger, enabled: item.enabled ?? retained.enabled }, observationDisplay, current)
               : { ...item.trigger, enabled: item.enabled ?? retained.enabled };
           if (requested !== undefined && observationDisplay) observationDisplayStored = true;

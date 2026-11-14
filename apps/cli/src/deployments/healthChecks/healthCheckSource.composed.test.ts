@@ -17,6 +17,9 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { normalizePluginAccountStorageJsonValueV1 } from '@happier-dev/protocol/plugins/data/accountKvValueV1';
 import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
+import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
+import { AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
@@ -31,7 +34,8 @@ const definition: PluginCheckpointedEventSourceDefinitionV1 = {
 const result = (status: HealthCheckResultV1['status'], observedAt: number): HealthCheckResultV1 => ({ status, observedAt,
     evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: '{"reason":"http_status"}' }] } });
 
-function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['health-status'], triggerRevision = definition.triggerRevision) {
+function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['health-status'], triggerRevision = definition.triggerRevision,
+    enrolledDefinition?: PluginCheckpointedEventSourceDefinitionV1) {
     let configuredSource = healthSource;
     let now = 1000;
     let status: HealthCheckResultV1['status'] = 'down';
@@ -59,9 +63,9 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
     const read = vi.fn(async () => [{ checkId: 'http', result: result(status, now) }]);
     const execute = vi.fn(async (id: string, input: unknown) => {
         if (id === 'automation.event.sources.list') return { kind: 'page', revision: String(revision),
-            definitions: active ? events.map((localId, index) => ({ ...definition, triggerId: `health-trigger-${index}`, triggerRevision,
+            definitions: !active ? [] : enrolledDefinition ? [enrolledDefinition] : events.map((localId, index) => ({ ...definition, triggerId: `health-trigger-${index}`, triggerRevision,
                 eventRef: { ...definition.eventRef, localId }, sourceConfig: configuredSource,
-                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: watcher } })) : [], nextCursor: null };
+                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: watcher } })), nextCursor: null };
         if (id === 'automation.event.source.status.report') {
             if (input && typeof input === 'object' && 'kind' in input && input.kind === 'source') {
                 for (const listener of sourceReports) listener();
@@ -164,15 +168,63 @@ describe('saved health source registration and finite cycles', () => {
             recentResultsCoverage: 'partial', failingSince: 10, failureStreak: 2 });
         expect(retainHealthResult(next, 'http', result('up', 30))).toMatchObject({ failingSince: null, failureStreak: 0 });
     });
-    it('admits a revision-zero health trigger through failure Notice and recovery', async () => {
+    it('enrolls one failed-event observation through failure Notice and recovery', async () => {
         const artifacts = createPlainAccountArtifactHttpBoundary();
         const environment = createDeploymentEnvironmentDetailV1();
         const configured: HealthCheckSourceConfigV1 = { ...source,
             subject: { kind: 'environment', environmentId: environment.environment.id },
             checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
-        const f = fixture(configured, ['health-check-failed', 'health-check-recovered'], 0);
-        const noticeDefinition = AutomationEventSourceDefinitionV1Schema.parse({ ...definition, triggerRevision: 0,
-            sourceConfig: configured, observationOnly: { kind: 'observationOnly' } });
+        const rows = new Map<string, AutomationDefinitionDetail>();
+        // Automation HTTP persistence is the boundary. Enrollment, private-definition
+        // codecs, source observation and Notice publication all run their real owners.
+        const enrollment = createAccountWorkflowTriggerActions({
+            resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+            randomBytes: length => new Uint8Array(length).fill(3), newId: () => crypto.randomUUID(),
+            automations: {
+                list: async () => ({ automations: [...rows.values()], nextCursor: null }),
+                listDetails: async () => ({ automations: [...rows.values()], nextCursor: null }),
+                get: async id => rows.get(id) ?? null,
+                create: async input => {
+                    const row = AutomationDefinitionDetailSchema.parse({ id: input.automationId, name: input.name,
+                        description: input.description ?? null, enabled: input.enabled, targetType: null, existingSessionId: null,
+                        templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, scheduleOccurrences: [],
+                        workflowDefinitionId: null, scopeSessionId: null, observationOnly: input.observationOnly, assignments: [],
+                        triggers: input.triggers.map(({ triggerId, trigger }) => {
+                            if (trigger.kind !== 'pluginEvent' || 'triggerDefinitionEnvelope' in trigger
+                                || trigger.observationTransport.kind !== 'checkpointedPull') throw new Error('Unexpected enrollment');
+                            const sourceSelectorId = definition.sourceSelectorId;
+                            return { kind: 'pluginEvent', id: triggerId, revision: 0, enabled: trigger.enabled,
+                                createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef, sourceSelectorId,
+                                sourceContractVersion: trigger.sourceContractVersion, sourceStatus: null, sourceCatalogStatus: null,
+                                observation: { kind: 'checkpointedPull', watcher: { ...materialization, machineInstallationId: 'installed' } },
+                                triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                                    binding: { v: 1, automationId: input.automationId, triggerId, triggerRevision: 0,
+                                        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId },
+                                    definition: { v: 1, sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig,
+                                        displayLabel: trigger.displayLabel, filter: trigger.filter, maximumObservationAgeMs: trigger.maximumObservationAgeMs,
+                                        automationDisplay: trigger.automationDisplay } })) };
+                        }) });
+                    rows.set(row.id, row); return row;
+                },
+                reconcile: async () => { throw new Error('Unexpected enrollment update'); },
+                delete: async () => { throw new Error('Unexpected enrollment removal'); },
+            },
+        });
+        const saved = await enrollment.add({ observationOnly: { kind: 'observationOnly' }, includeEventDefinition: true,
+            trigger: { kind: 'pluginEvent', enabled: true, eventRef: { ...definition.eventRef, localId: 'health-check-failed' },
+                sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: definition.sourceContractVersion,
+                sourceConfig: configured, displayLabel: 'Saved health checks', observationTransport: definition.observationTransport,
+                filter: null, maximumObservationAgeMs: null } });
+        const persisted = rows.get(saved.set.automationId)?.triggers[0];
+        const privateDefinition = saved.triggerDefinition?.definition;
+        if (persisted?.kind !== 'pluginEvent' || !privateDefinition) throw new Error('Expected saved observation');
+        const noticeDefinition = AutomationEventSourceDefinitionV1Schema.parse({ ...definition,
+            sourceInstanceId: privateDefinition.sourceInstanceId, sourceConfig: privateDefinition.sourceConfig,
+            filter: privateDefinition.filter,
+            maximumObservationAgeMs: privateDefinition.maximumObservationAgeMs,
+            automationId: saved.set.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision,
+            eventRef: persisted.eventRef, sourceSelectorId: persisted.sourceSelectorId, observationOnly: { kind: 'observationOnly' } });
+        const f = fixture(configured, [noticeDefinition.eventRef.localId], noticeDefinition.triggerRevision, noticeDefinition);
         const publish = createConfiguredHealthCheckNotices({ credentials: artifacts.credentials,
             serverId: environment.environment.serverId, serverHttpBaseUrl: 'https://health-notices.test',
             machineId: materialization.machineId, readService: async () => null, readEnvironment: async () => environment });

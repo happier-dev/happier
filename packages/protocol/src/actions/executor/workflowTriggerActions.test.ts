@@ -894,6 +894,7 @@ describe('Account source watcher assignment', () => {
     const opened = open(stored);
     expect(opened).toMatchObject({ kind: 'available', definition: { sourceConfig: event.sourceConfig } });
     if (opened.kind !== 'available') throw new Error('Expected readable health definition');
+    const { enabled: _enabled, ...replacementDefinition } = event;
     const replacement = mode === 'e2ee' && isAvailableE2eeAutomationAccountEncryptionV1(encryption)
       ? { kind: 'pluginEvent' as const, eventRef: event.eventRef, sourceSelectorId: trigger.sourceSelectorId,
           sourceContractVersion: trigger.sourceContractVersion, observationTransport: event.observationTransport,
@@ -902,7 +903,7 @@ describe('Account source watcher assignment', () => {
             binding: { v: 1, automationId: stored.id, triggerId: trigger.id, triggerRevision: trigger.revision + 1,
               triggerKind: 'pluginEvent', eventRef: event.eventRef, sourceSelectorId: trigger.sourceSelectorId },
             definition: opened.definition })) }
-      : event;
+      : replacementDefinition;
     await host.update({ automationId: stored.id, triggerId: trigger.id, expectedRevision: saved.set.revision,
       patch: { trigger: replacement } });
     const updated = f.rows.get(stored.id)!;
