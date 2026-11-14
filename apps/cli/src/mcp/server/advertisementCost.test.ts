@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import Ajv from 'ajv';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -8,11 +9,11 @@ import { listVoiceActionBlockSpecs, listActionSpecs } from '@happier-dev/protoco
 import { registerHappierMcpBuiltInTools } from './registerHappierMcpBuiltInTools';
 
 describe('Happier advertisement cost', () => {
-  // Baselines are the reproduced pre-sectioning advertisements at 471 Voice Actions.
-  // These are regression measurements, not product payload limits.
+  // Regression measurements, never runtime payload limits. Current wire values
+  // protect lossless sharing; historical values protect catalog sectioning.
   it.each([
     { surface: 'agent', count: 35, beforeBytes: 1_992_370 },
-    { surface: 'mcp', count: 19, beforeBytes: 1_694_795 },
+    { surface: 'mcp', count: 19, beforeBytes: 140_584 },
   ] as const)('keeps $surface advertisements sectioned at catalog scale', async ({ surface, count, beforeBytes }) => {
     const server = new McpServer({ name: 'advertisement-cost', version: '1' });
     registerHappierMcpBuiltInTools(server, {
@@ -30,6 +31,23 @@ describe('Happier advertisement cost', () => {
       const result = await client.listTools();
       const bytes = Buffer.byteLength(JSON.stringify(result.tools));
       console.log(JSON.stringify({ surface, actions: listActionSpecs().length, count: result.tools.length, bytes }));
+      console.log(JSON.stringify({ surface, tools: result.tools.map(tool => ({ name: tool.name,
+        fields: Object.fromEntries(Object.entries(tool).filter(([, value]) => value !== undefined).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value))])),
+      })) }));
+      // Measured after lossless inline-subtree sharing; a regression contract,
+      // never a runtime payload limit or truncation rule.
+      if (surface === 'agent') expect(bytes).toBeLessThanOrEqual(240_324);
+      const ajv = new Ajv({ strict: false, validateFormats: false });
+      for (const tool of result.tools) {
+        // Every retained reference must compile on the real tools/list wire.
+        expect(() => ajv.compile(tool.inputSchema), tool.name).not.toThrow();
+        if (tool.outputSchema) expect(() => ajv.compile(tool.outputSchema), tool.name).not.toThrow();
+      }
+      if (surface === 'agent') {
+        const native = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'cost-session',
+          memoryRecallGuidanceEnabled: false, sessionMemoryEnabled: true, isServerFeatureEnabled: () => true });
+        expect(result.tools.map(tool => tool.name)).toEqual(native.map(tool => tool.name));
+      }
       expect(listVoiceActionBlockSpecs().length).toBeGreaterThanOrEqual(471);
       expect(result.tools).toHaveLength(count);
       expect(bytes).toBeLessThan(beforeBytes);
@@ -41,7 +59,7 @@ describe('Happier advertisement cost', () => {
     } finally { await client.close(); await server.close(); }
   });
   it.each([
-    { family: 'native Session tools (including Pi)', count: 35, beforeBytes: 245_436, descriptors: () =>
+    { family: 'native Session tools (including Pi)', count: 35, beforeBytes: 80_542, descriptors: () =>
       resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'cost-session',
         memoryRecallGuidanceEnabled: false, sessionMemoryEnabled: true, isServerFeatureEnabled: () => true }) },
     { family: 'Codex native Voice function', count: 1, beforeBytes: 789_347, descriptors: () => [getVoiceActionFunctionTool()] },

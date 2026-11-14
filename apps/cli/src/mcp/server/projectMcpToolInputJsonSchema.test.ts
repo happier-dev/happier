@@ -10,6 +10,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 import { toMcpToolObjectSchema } from './toolSchemas';
 import { projectMcpToolInputJsonSchema } from './projectMcpToolInputJsonSchema';
+import { compactToolJsonSchema } from './compactToolJsonSchema';
 
 function unsupportedProviderLiterals(value: unknown, path = '#'): string[] {
     if (!value || typeof value !== 'object') return [];
@@ -91,6 +92,29 @@ function recursiveReferences(document: unknown): string[] {
 }
 
 describe('MCP provider input projection', () => {
+    it.each(['inputSchema', 'outputSchema'] as const)('shares repeated inline grammar without changing valid %s values', field => {
+        const value = { type: 'string', minLength: 1, pattern: `^(?:${Array.from({ length: 40 }, (_, i) => `value${i}`).join('|')})$` };
+        const item = { type: 'object', properties: { value }, required: ['value'], additionalProperties: false };
+        const source = { type: 'object', properties: Object.fromEntries(
+            Array.from({ length: 8 }, (_, i) => [`item${i}`, structuredClone(item)])),
+            required: ['item0', 'item1'], additionalProperties: false,
+            default: { properties: { untouched: { type: 'string' } } },
+        };
+        const adapter = field === 'inputSchema' ? toMcpToolObjectSchema(source, field) : toMcpToolObjectSchema(source, field)!;
+        const advertised = zodSchemaToJsonSchemaObject(adapter, { target: 'draft-7' });
+        expect(Buffer.byteLength(JSON.stringify(advertised))).toBeLessThan(Buffer.byteLength(JSON.stringify(source)));
+        const validate = new Ajv({ strict: false }).compile(advertised);
+        expect(validate({ item0: { value: 'value1' }, item1: { value: 'value2' } })).toBe(true);
+        for (const invalid of [
+            { item0: { value: '' }, item1: { value: 'value2' } },
+            { item0: { value: 'value1', extra: true }, item1: { value: 'value2' } },
+            { item0: { value: 'value1' } },
+            { item0: { value: 'invalid' }, item1: { value: 'value2' } },
+        ]) expect(validate(invalid)).toBe(false);
+        // Literal defaults are data, even when they contain schema keywords.
+        const completed = field === 'outputSchema' ? (advertised.anyOf as Record<string, unknown>[])[0] : advertised;
+        expect(completed.default).toEqual(source.default);
+    });
     it('advertises non-string literals by their original type while retaining strict call validation', () => {
         const parser = z.object({ approved: z.literal(true), version: z.literal(1), mode: z.literal('exact') });
         const source = zodSchemaToJsonSchemaObject(parser, { target: 'draft-7' });
@@ -255,5 +279,39 @@ describe('MCP provider input projection', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
             issues: expect.arrayContaining([expect.objectContaining({ code: 'unknown_action', path: ['id'] })]),
         } });
+    });
+});
+
+describe('tool schema wire compaction', () => {
+    it('preserves incoming pointers, constraints and literal data when sharing inline grammar', () => {
+        const item = { type: 'object', properties: { value: { type: 'string', minLength: 1,
+            description: 'A non-empty authored value retained for every occurrence.' } },
+            required: ['value'], additionalProperties: false };
+        const source = { type: 'object', properties: {
+            first: structuredClone(item), second: structuredClone(item), third: structuredClone(item),
+            reference: { $ref: '#/properties/second/properties/value' },
+        }, required: ['first', 'second', 'third', 'reference'], additionalProperties: false,
+        examples: [{ $ref: 'literal', properties: { value: item } }] };
+        const compact = compactToolJsonSchema(source);
+        expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(source).length);
+        expect(compact.examples).toEqual(source.examples);
+        const ajv = new Ajv({ strict: false });
+        const original = ajv.compile(source);
+        const advertised = ajv.compile(compact);
+        const valid = { first: { value: 'one' }, second: { value: 'two' }, third: { value: 'three' }, reference: 'four' };
+        expect(advertised(valid)).toBe(true);
+        for (const value of [valid, { ...valid, reference: '' }, { ...valid, second: { value: '' } },
+            { ...valid, third: { value: 'three', extra: true } }, { ...valid, extra: true }]) {
+            expect(advertised(value)).toBe(original(value));
+        }
+        expect(source.properties.first).toEqual(item);
+        expect(source.properties.second).toEqual(item);
+    });
+
+    it('retains authored resource scopes without moving relative references', () => {
+        const source = { type: 'object', properties: { child: {
+            $id: 'https://example.test/child', type: 'object', properties: { value: { $ref: 'value.json' } },
+        } } };
+        expect(compactToolJsonSchema(source)).toEqual(source);
     });
 });

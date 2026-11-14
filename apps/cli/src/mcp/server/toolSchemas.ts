@@ -7,6 +7,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResult
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
 import { projectMcpToolInputJsonSchema, rewriteMcpJsonSchemaReferences } from './projectMcpToolInputJsonSchema';
+import { compactToolJsonSchema } from './compactToolJsonSchema';
 
 const ACTION_APPROVAL_REQUEST_CREATED_RESULT_JSON_SCHEMA = zodSchemaToJsonSchemaObject(
     ActionApprovalRequestCreatedResultSchema,
@@ -65,10 +66,10 @@ export function toMcpToolObjectSchema(schema: unknown, field: 'inputSchema' | 'o
             }
         }));
         adapter._zod.processJSONSchema = (_ctx, json) => {
-            Object.assign(json, {
+            Object.assign(json, compactToolJsonSchema({
                 type: 'object',
                 anyOf: [completedMcpJsonSchema, ACTION_APPROVAL_REQUEST_CREATED_RESULT_JSON_SCHEMA, ACTION_OPERATION_ACCEPTED_RESULT_JSON_SCHEMA],
-            });
+            }));
         };
         return adapter;
     }

@@ -125,7 +125,7 @@ describe('Pi parameter documents through installed provider serializers', () => 
           : {tools};
         process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
       });`);
-    const inline = projectMcpToolInputJsonSchema(zodSchemaToJsonSchemaObject(getActionSpec('settings.get').inputSchema));
+    const inline = zodSchemaToJsonSchemaObject(getActionSpec('settings.get').inputSchema);
     loaded = await loadExtension({ config: { v: 1, directory: root, systemPrompt: '',
       tools: [...native.filter(tool => ['settings_get', 'session_board_item_upsert'].includes(tool.name)),
         { name: 'inline_control', title: 'Inline control', description: '', inputSchema: JSON.parse(JSON.stringify(inline)) }],

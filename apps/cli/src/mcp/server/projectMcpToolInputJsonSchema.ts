@@ -1,5 +1,6 @@
 import type { JsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { projectActionSchemaForToolAdvertisement } from '@happier-dev/protocol/actions/actionSpecSections';
+import { compactToolJsonSchema } from './compactToolJsonSchema';
 
 function asObject(value: unknown): JsonSchemaObject | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -180,7 +181,7 @@ function projectSchemaDepth(document: JsonSchemaObject): JsonSchemaObject {
  * Cross-field/variant correlations remain authoritative at call validation.
  */
 export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSchemaObject {
-    return projectActionSchemaForToolAdvertisement(projectSchemaDepth(projectMcpToolObjectRoot(schema)));
+    return compactToolJsonSchema(projectActionSchemaForToolAdvertisement(projectSchemaDepth(projectMcpToolObjectRoot(schema))));
 }
 
 function projectMcpToolObjectRoot(schema: JsonSchemaObject): JsonSchemaObject {
