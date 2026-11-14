@@ -149,6 +149,7 @@ import type { createCredentialedFilesystemTransferClient } from '@/machines/tran
 import type { createPreparedFilesystemTransferClient } from '@/machines/transfer/preparedFilesystemTransferClient';
 import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';
 import { assertDeploymentArchiveChildCurrentForHost, assertReviewedDeploymentArchiveSourceForHost } from '@/api/deploymentChildExecutionAuthorization';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { getServerProfile } from '@/server/serverProfiles';
@@ -2662,8 +2663,10 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
           if (!copy || !('deploymentRun' in copy) || !copy.deploymentRun) return actionFailure('filesystem_transfer_custody_required');
           return await copy.deploymentRun();
         } catch (error) {
-          return { ok: false, errorCode: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : 'action_forbidden', error: error instanceof Error ? error.message : 'action_forbidden' };
+          // The deployment failure owner keeps typed causes and recovery; refusals stay content-free.
+          return projectDeploymentFailure(request.context.signal?.aborted ? 'cancelled'
+            : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'action_forbidden',
+          error, 'deployment.archive.copy');
         }
       },
       prepare: async (actionId, input, context) => {

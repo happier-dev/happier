@@ -32,7 +32,9 @@ import { createCredentialedFilesystemTransferClient } from './createCredentialed
 import { createDeploymentImageArchiveCopyForHost } from '@/deployments/targets/ownServer/imageArchiveCopy';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
 import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
-import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure, refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { deploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 // The addon is the native/OS boundary. Runtime ownership, grant/proof creation,
 // installed requester custody and HTTP signing remain real.
@@ -314,6 +316,20 @@ describe('credentialed deployment archive byte transport', () => {
             expect(cancelled).toMatchObject({ ok: false, details: { status: 'cancelled' } });
             expect(cancelled).not.toMatchObject({ errorCode: 'machine_carrier_unavailable' });
             await expect(readFile(join(destinationRoot, 'cancelled.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
+            // Admission refusals keep the owning typed cause and recovery; a stop stays a cancellation.
+            const childCopy = (name: string, assertCurrent: () => Promise<void>, signal = context.signal) => executor.executeDeploymentChildFilesystemAction({
+                actionId: 'daemon.filesystem.copy', input: { kind: 'target_copy',
+                    source: { serverId: fixture.profileId, machineId: 'holder', rootPath: sourceRoot, path: 'image.tar' },
+                    destination: { serverId: fixture.profileId, machineId: fixture.job.machineId, rootPath: destinationRoot, path: name },
+                    overwrite: false, recursive: false }, context: { ...context, signal }, archiveOrigin, assertCurrent });
+            const contentFailure = deploymentArtifactReadFailureV1('body');
+            expect(await childCopy('content.tar', async () => refuseDeploymentArtifactRead(contentFailure))).toMatchObject({
+                ok: false, errorCode: 'deployment_content_unavailable', failureCause: contentFailure.failureCause,
+                details: projectDeploymentFailureRecoveryV1({}) });
+            const stoppedChild = new AbortController();
+            stoppedChild.abort();
+            expect(await childCopy('stopped.tar', async () => {}, stoppedChild.signal))
+                .toMatchObject({ ok: false, errorCode: 'cancelled' });
             const grantsBeforeWithdrawal = grantActors.length;
             current = false;
             fixture.setCurrent(false);
