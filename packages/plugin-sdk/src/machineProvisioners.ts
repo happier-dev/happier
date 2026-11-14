@@ -158,6 +158,9 @@ export type MachineProvisionerNativeExecResultV1 = (Omit<PluginProcessResult, 's
   | Readonly<{ kind: 'process-configured' }>;
 export type MachineProvisionerProcessConfigV1 = canonical.MachineProvisionerProcessConfigV1;
 export const MachineProvisionerNativeExecResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeExecResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeExecResultV1Schema);
+/** The `stream` role's result: how the channel's local carrier ended, never proof that the guest process exited. */
+export type MachineProvisionerNativeStreamResultV1 = Readonly<{ termination: PluginProcessResult['termination'] }>;
+export const MachineProvisionerNativeStreamResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeStreamResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeStreamResultV1Schema);
 export type MachineProvisionerGuestHomeV1 = canonical.MachineProvisionerGuestHomeV1;
 export const defineMachineProvisionerSchemas: <LI, LO, RI, RO, C extends true | undefined = undefined>(schemas: Readonly<{ launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO>; continueAcquire?: C }>) => Readonly<{
   checkInput: typeof MachineProvisionerCheckInputV1Schema;
@@ -177,7 +180,10 @@ export const defineMachineProvisionerSchemas: <LI, LO, RI, RO, C extends true | 
   /** One bounded fragment at a host-selected private path. Host assembly owns
    * atomic publication of the complete archive; confirmed means all bytes of
    * this fragment were written, including native process settlement. */
-  putFileInput: ProtocolComposableSchema<Readonly<{ resource: RI; guestPath: string; bytesBase64: string; mode?: number }>, Readonly<{ resource: RO; guestPath: string; bytesBase64: string; mode?: number }>>;
+  putFileInput: ProtocolComposableSchema<Readonly<{ resource: RI; guestPath: string; allowWake?: false; bytesBase64: string; mode?: number }>, Readonly<{ resource: RO; guestPath: string; allowWake?: false; bytesBase64: string; mode?: number }>>;
+  /** Optional long-lived non-PTY duplex channel for one argv: spawn it with
+   * `outputDelivery: 'invocation'` and return its termination when it ends. */
+  streamInput: ProtocolComposableSchema<Readonly<{ resource: RI; argv: readonly string[] }>, Readonly<{ resource: RO; argv: readonly string[] }>>;
 }> = /* @__PURE__ */ projectProtocolValue(canonical.defineMachineProvisionerSchemas);
 
 /** Use this result on both acquire and the declared read-only reconciliation Action.
