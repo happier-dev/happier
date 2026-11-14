@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import * as sshExports from './index.js';
 import type {
@@ -56,6 +59,30 @@ function spawnResult(params: Readonly<{
 }
 
 describe('openSshLocalPortForward', () => {
+  it.each([false, true])('settles an absent control master while preserving a failed close for a remaining path (%s)', (pathRemains) => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-ssh-close-'));
+    const controlPath = join(root, 'control.sock');
+    const deps = createDeps();
+    deps.spawnSync.mockReturnValueOnce(spawnResult({ status: 255, stderr: 'Control socket connect failed' }));
+    try {
+      if (pathRemains) writeFileSync(controlPath, 'socket fixture');
+      const close = () => sshExports.closeOpenSshLocalPortForward({
+        target: 'dev@example.test', auth: { mode: 'agent' }, controlPath,
+      }, deps);
+      if (pathRemains) expect(close).toThrow('SSH tunnel close failed');
+      else expect(close).not.toThrow();
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('preserves an SSH spawn failure even when the control path is absent', () => {
+    const deps = createDeps();
+    const error = Object.assign(new Error('ssh unavailable'), { code: 'ENOENT' });
+    deps.spawnSync.mockReturnValueOnce({ ...spawnResult({ status: 255 }), error });
+    expect(() => sshExports.closeOpenSshLocalPortForward({
+      target: 'dev@example.test', auth: { mode: 'agent' }, controlPath: '/missing/control.sock',
+    }, deps)).toThrow(error);
+  });
+
   it('opens an OpenSSH ControlMaster local forward before the target argument', () => {
     const openSshLocalPortForward = exportedFunction<(
       request: OpenSshLocalPortForwardRequest,
@@ -104,7 +131,7 @@ describe('openSshLocalPortForward', () => {
       '-o', 'ExitOnForwardFailure=yes',
       '-o', 'ControlMaster=yes',
       '-o', 'ControlPath=/tmp/happier-ssh-control/tunnel-4321-123456-49152.sock',
-      '-o', 'ControlPersist=60',
+      '-o', 'ControlPersist=yes',
       '-f',
       '-N',
       '-L', '49152:127.0.0.1:8787',

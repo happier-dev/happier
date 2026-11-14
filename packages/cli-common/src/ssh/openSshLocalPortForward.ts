@@ -3,7 +3,7 @@ import {
   type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
 } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -157,11 +157,15 @@ export function closeOpenSshLocalPortForward(
     '-O',
     'exit',
   ]);
-  assertSuccessfulSshResult(spawn(closeInvocation.command, closeArgs, {
+  const result = spawn(closeInvocation.command, closeArgs, {
     encoding: 'utf8',
     windowsHide: true,
     ...(closeInvocation.env ? { env: closeInvocation.env } : {}),
-  }), 'SSH tunnel close failed');
+  });
+  // An exited master has already removed its control socket; closing it is complete.
+  if (!result.error && result.status === 255
+    && statSync(request.controlPath, { throwIfNoEntry: false }) === undefined) return;
+  assertSuccessfulSshResult(result, 'SSH tunnel close failed');
 }
 
 export function openSshLocalPortForward(
@@ -181,7 +185,7 @@ export function openSshLocalPortForward(
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ControlMaster=yes',
     '-o', `ControlPath=${controlPath}`,
-    '-o', 'ControlPersist=60',
+    '-o', 'ControlPersist=yes',
     '-f',
     '-N',
     '-L', `${request.localPort}:${remoteHost}:${request.remotePort}`,

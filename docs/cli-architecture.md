@@ -2406,6 +2406,11 @@ Unexpected local-control failures retain the shared diagnostic owner's safe erro
 class, allowlisted code and source locations in the correlated request log. Request
 content and exception messages are not included in that diagnostic.
 
+OpenSSH masters stay alive until the existing tunnel lease lifecycle or scoped
+operation closes them; a separate SSH idle expiry cannot end an active lease.
+Closing an already-exited master settles successfully when its control socket is
+absent. Spawn errors and failed closes with a remaining socket still surface.
+
 All hsetup tasks execute through the shared system-task registry runner. A prompt
 event leaves the task pending while hsetup reads its JSON answer from stdin,
 including first-use SSH host trust. Hosts without an answer transport retain the
