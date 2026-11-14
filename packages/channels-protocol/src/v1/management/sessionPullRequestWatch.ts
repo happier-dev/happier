@@ -3,6 +3,7 @@ import {
     defineProtocolString, defineProtocolUnion, ProtocolCollectionOpaqueCursorV1Schema,
     PluginUiResourceIntentV1Schema,
 } from '@happier-dev/plugin-sdk/protocol';
+import type { ProtocolComposableSchema, ProtocolSchemaInput, ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { ActionSessionAddressV1Schema, SessionIdSchema, SessionTargetV1Schema,
     SessionInputForgeEvidenceV1Schema, SessionMessageSendResultV1ProtocolSchema,
     PluginSessionInputAttachmentsV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
@@ -103,14 +104,21 @@ export const SessionPullRequestConfiguredFixInputV1Schema = defineProtocolObject
     }, closed),
 }, closed);
 export type SessionPullRequestConfiguredFixInputV1 = ReturnType<typeof SessionPullRequestConfiguredFixInputV1Schema.parse>;
-export const SessionPullRequestConfiguredFixResultV1Schema = defineProtocolUnion([
+type ConfiguredFixResult<TSendResult> =
+    | { kind: 'configuredFixResult'; result: TSendResult }
+    | { kind: 'configuredFixHeld'; reason: 'outstanding' | 'exhausted' }
+    | { kind: 'configuredFixUncertain' };
+export type SessionPullRequestConfiguredFixResultV1 = ConfiguredFixResult<ProtocolSchemaOutput<typeof SessionMessageSendResultV1ProtocolSchema>>;
+export const SessionPullRequestConfiguredFixResultV1Schema: ProtocolComposableSchema<
+    ConfiguredFixResult<ProtocolSchemaInput<typeof SessionMessageSendResultV1ProtocolSchema>>,
+    SessionPullRequestConfiguredFixResultV1
+> = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('configuredFixResult'), result: SessionMessageSendResultV1ProtocolSchema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('configuredFixHeld'), reason: defineProtocolUnion([
         defineProtocolLiteral('outstanding'), defineProtocolLiteral('exhausted'),
     ]) }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('configuredFixUncertain') }, closed),
 ]);
-export type SessionPullRequestConfiguredFixResultV1 = ReturnType<typeof SessionPullRequestConfiguredFixResultV1Schema.parse>;
 export const SessionPullRequestWatchInputV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('get'), sessionId: SessionTargetV1Schema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('list'), cursor: ProtocolCollectionOpaqueCursorV1Schema.optional() }, closed),
@@ -119,13 +127,24 @@ export const SessionPullRequestWatchInputV1Schema = defineProtocolUnion([
     SessionPullRequestConfiguredFixInputV1Schema,
 ]);
 export type SessionPullRequestWatchInputV1 = ReturnType<typeof SessionPullRequestWatchInputV1Schema.parse>;
-export const SessionPullRequestWatchResultV1Schema = defineProtocolUnion([
+type WatchUpdatedResult = {
+    kind: 'updated'; bindingId: ProtocolSchemaOutput<typeof ConversationBindingIdV1Schema>;
+    revision: ProtocolSchemaOutput<typeof ConversationCollectionRowRevisionV1ProtocolSchema>;
+};
+export type SessionPullRequestWatchResultV1 = SessionPullRequestWatchReadResultV1
+    | ProtocolSchemaOutput<typeof SessionPullRequestWatchListResultV1Schema>
+    | SessionPullRequestConfiguredFixResultV1 | WatchUpdatedResult;
+export const SessionPullRequestWatchResultV1Schema: ProtocolComposableSchema<
+    ProtocolSchemaInput<typeof SessionPullRequestWatchReadResultV1Schema>
+    | ProtocolSchemaInput<typeof SessionPullRequestWatchListResultV1Schema>
+    | ProtocolSchemaInput<typeof SessionPullRequestConfiguredFixResultV1Schema> | WatchUpdatedResult,
+    SessionPullRequestWatchResultV1
+> = defineProtocolUnion([
     SessionPullRequestWatchReadResultV1Schema, SessionPullRequestWatchListResultV1Schema,
     SessionPullRequestConfiguredFixResultV1Schema,
     defineProtocolObject({ kind: defineProtocolLiteral('updated'), bindingId: ConversationBindingIdV1Schema,
         revision: ConversationCollectionRowRevisionV1ProtocolSchema }, closed),
 ]);
-export type SessionPullRequestWatchResultV1 = ReturnType<typeof SessionPullRequestWatchResultV1Schema.parse>;
 
 export const SessionPullRequestWatchModeV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestWatchModeV1Schema.jsonSchema)();
 export const SessionPullRequestFixAttemptLimitV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestFixAttemptLimitV1Schema.jsonSchema)();
