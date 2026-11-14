@@ -77,6 +77,8 @@ export default defineConfig({
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {
     ...resolveVitestWorkers(),
+    // Mitigate Vitest 3 fork RPC timeouts until the shared upgrade includes vitest#8297.
+    pool: 'threads',
     testTimeout: 15000,
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
