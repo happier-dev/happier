@@ -1,3 +1,6 @@
+import { join } from 'node:path';
+import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
+
 import type {
   AgentAcpRuntimeOptions,
   AgentRuntimeFactory,
@@ -61,17 +64,37 @@ async function openCopilot<
   open: (request: TRequest, options: AgentAcpRuntimeOptions) => TRuntime | Promise<TRuntime>,
 ): Promise<TRuntime> {
   const prepared = await prepareCopilotConnectedAccount(request, context, request.configuration?.model.value);
+  let sessionHome: ReturnType<typeof createSecureTempDirectorySync> | undefined;
+  const disposePrepared = () => { sessionHome?.cleanup(); prepared.dispose(); };
   try {
     const options = createCopilotAcpOptions(request.configuration);
+    let launchOptions: AgentAcpRuntimeOptions = options;
+    const servers = Object.entries(request.mcpServers ?? {});
+    if (servers.length > 0) {
+      sessionHome = createSecureTempDirectorySync({ prefix: 'copilot-session' });
+      const configPath = join(sessionHome.path, 'mcp-config.json');
+      // Copilot 1.0.111 ignores ACP mcpServers. Its supported per-launch file
+      // overrides same-name global entries without changing the user's home.
+      // https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference
+      await writeAtomicTextFile({ path: configPath, mode: 0o600, contents: JSON.stringify({
+        mcpServers: Object.fromEntries(servers.map(([name, server]) => [name, {
+          type: 'local', command: server.command, args: [...(server.args ?? [])],
+          env: { ...server.env }, tools: ['*'],
+        }])),
+      }) });
+      launchOptions = { ...options, transport: { ...options.transport,
+        args: [...options.transport.args, '--additional-mcp-config', `@${configPath}`],
+      }, requiredFiles: [configPath] };
+    }
     const runtime = await open(prepared.request, prepared.models
-      ? { ...options, definition: { ...options.definition, models: prepared.models } } : options);
-    if (!prepared.models) return runtime;
+      ? { ...launchOptions, definition: { ...options.definition, models: prepared.models } } : launchOptions);
+    if (!prepared.models && !sessionHome) return runtime;
     // ACP returns frozen closure handles. Preserve their live getter descriptors.
     return Object.create(Object.getPrototypeOf(runtime), {
       ...Object.getOwnPropertyDescriptors(runtime),
       dispose: { enumerable: true, value: async (reason?: AgentSessionDisposeReason) => {
-        try { await runtime.dispose(reason); } finally { prepared.dispose(); }
+        try { await runtime.dispose(reason); } finally { disposePrepared(); }
       } },
     }) as TRuntime;
-  } catch (error) { prepared.dispose(); throw error; }
+  } catch (error) { disposePrepared(); throw error; }
 }

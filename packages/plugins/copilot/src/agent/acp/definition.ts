@@ -27,7 +27,7 @@ export const COPILOT_ACP_RUNTIME_DEFINITION = Object.freeze({
   timeouts: COPILOT_ACP_TIMEOUTS,
   toolNameInference: COPILOT_ACP_TOOL_NAME_INFERENCE,
   stderrRules: COPILOT_ACP_STDERR_RULES,
-  mcp: { policy: 'pass_through' },
+  mcp: { policy: 'drop' },
   skills: { sessionDelivery: {
     kind: 'env_path_list', envKey: 'COPILOT_SKILLS_DIRS', separator: ',', value: 'skills_root',
   } },

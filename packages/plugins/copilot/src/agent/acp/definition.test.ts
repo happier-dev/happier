@@ -33,7 +33,7 @@ describe('Copilot ACP backend definition', () => {
         investigationToolKinds: ['task'],
       },
       stderrRules: expect.any(Object),
-      mcp: { policy: 'pass_through' },
+      mcp: { policy: 'drop' },
     });
     expect(COPILOT_ACP_RUNTIME_DEFINITION.stderrRules.statusErrors)
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining('Authentication error') })]));
