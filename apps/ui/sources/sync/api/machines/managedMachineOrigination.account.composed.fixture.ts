@@ -21,7 +21,7 @@ import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePre
 import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeRequestSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -178,6 +178,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     let approvals = 0;
     let joinAttempts = 0;
     let guestDispatches = 0;
+    let roleDispatches = 0;
     let guestContinuation: unknown;
     let acquireDigest = '';
     let interruptJoin = !startAgent;
@@ -240,6 +241,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     });
     let receiver: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
     let receiverProjection: ReturnType<typeof buildDeferredDaemonProjectionSections> | undefined;
+    const homeBoundaryFailures: unknown[] = [];
     const request: typeof fetch = async (url, init) => {
         const address = new URL(String(url));
         if (address.origin === 'https://api.vercel.com') return native.fetch(url, init);
@@ -250,7 +252,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         }
         const response = await receiver?.handle(address, init);
         if (response) return response;
-        return requestHome(url, init);
+        try { return await requestHome(url, init); }
+        catch (error) { homeBoundaryFailures.push(error); throw error; }
     };
     connection = await restoreServerAccountForTest({ serverUrl, accountId, credentials,
         additionalRequestOrigins: ['https://api.vercel.com'],
@@ -358,21 +361,34 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             }
             if (path === '/v1/machines/joined') return Response.json({ machine: guest });
             if (path === '/v1/machines/joined/access') return Response.json(guestAccess);
-            if (path === '/v1/actions/session.spawn_new/execution-authorization') {
+            if (path === '/v1/actions/session.spawn_new/execution-authorization'
+                || path === '/v1/actions/machines.roles.set/execution-authorization') {
+                const actionId = path === '/v1/actions/machines.roles.set/execution-authorization' ? 'machines.roles.set' : 'session.spawn_new';
                 const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
                 guestContinuation = body.managedContinuation;
                 return Response.json({ v: 1, token: 'guest-creation-proof', binding: {
                     serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 0 },
-                    actionId: 'session.spawn_new', requestId: body.envelope.requestId, target: { kind: 'machine', machineId: 'joined' },
+                    actionId, requestId: body.envelope.requestId, target: { kind: 'machine', machineId: 'joined' },
                     machineId: 'joined', installationId: guest.installationId, custodianAccountId: accountId, accountEncryptionMode: 'plain',
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
                     managedContinuation: { ...body.managedContinuation, acquireRequestEnvelopeDigest: acquireDigest },
                 } });
             }
+            if (path === '/v1/actions/machines.roles.set') {
+                roleDispatches++;
+                const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+                expect(envelope.input).toMatchObject({ machineId: 'joined', policy: { active: ['sessions'] } });
+                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.roles.set',
+                    requestId: envelope.requestId, execution: { ok: true, result: {
+                        status: 'applied', policy: { active: ['sessions'] }, metadataVersion: 1,
+                    } } }));
+            }
             if (path === '/v1/actions/session.spawn_new') {
                 guestDispatches++;
                 const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'session.spawn_new', requestId: body.envelope.requestId, execution: { ok: true, result: SessionSpawnNewActionResultV1Schema.parse({
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'session.spawn_new', requestId: envelope.requestId, execution: { ok: true, result: SessionSpawnNewActionResultV1Schema.parse({
                     type: 'success', disposition: 'created', sessionId: 'managed-session', executionTarget: { serverId: homeId, machineId: 'joined' },
                     organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
                 }) } }));
@@ -984,7 +1000,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     ...context, actionRequestId: 'native-managed-retry', presentUserConfirmation: undefined,
                 }));
         }
-        expect(retried, JSON.stringify(retried)).toMatchObject({ ok: true, result: { managedId: 'managed-1' } });
+        expect(machineRpcs).toBe(0);
+        expect(homeBoundaryFailures).toEqual([]);
+        expect(retried, JSON.stringify({ retried, homePaths, roleDispatches, allocations, joinAttempts })).toMatchObject({ ok: true, result: { managedId: 'managed-1' } });
         const joined = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
             ...context, actionRequestId: 'stage-joined', presentUserConfirmation: undefined,
         });
@@ -994,7 +1012,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect({ admissions, allocations, approvals, machineRpcs, guestDispatches }).toEqual({
             admissions: missingPolicy && !plainPreset ? 2 : 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
         });
-        if (startAgent) expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
+        expect(roleDispatches).toBe(1);
+        expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
         expect(JSON.stringify({ interrupted, retried })).not.toContain(secret);
         if (missingPolicy) {
             expect(homePaths.filter(path => path === '/v1/machines/presets/get')).toHaveLength(plainPreset ? 1 : 2);

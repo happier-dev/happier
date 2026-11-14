@@ -3681,7 +3681,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? { machineResourcesPolicyAction: opts?.machineResourcesPolicyAction ?? capturedFamilyPorts!.machineResourcesPolicyAction }
       : {}),
     ...(opts?.machineRolesAction ?? capturedFamilyPorts?.machineRolesAction
-      ? { machineRolesAction: opts?.machineRolesAction ?? capturedFamilyPorts!.machineRolesAction }
+      ? { machineRolesAction: opts?.machineRolesAction ?? ((args: Parameters<NonNullable<ActionExecutorDeps['machineRolesAction']>>[0]) => args.context.invocationServices?.managedContinuation
+        ? executeMachineOwnedAction(args) : capturedFamilyPorts!.machineRolesAction(args)) }
       : {}),
     ...(opts?.machineAdminAccessAction ?? capturedFamilyPorts?.machineAdminAccessAction
       ? { machineAdminAccessAction: opts?.machineAdminAccessAction ?? capturedFamilyPorts!.machineAdminAccessAction }

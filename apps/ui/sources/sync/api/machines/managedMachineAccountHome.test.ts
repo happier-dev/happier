@@ -95,3 +95,28 @@ describe('Account managed admission boundary', () => {
         expect(() => structural(machine)).toThrow(expect.objectContaining({ code: 'content_unavailable' }));
     });
 });
+
+
+it('foreground sandbox completion seeds its admitted roles without an Agent start', async () => {
+    const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
+    const requests: unknown[] = [];
+    const enrolled = { ...machine, enrollmentIdentity, enrolledMachineId: 'joined' };
+    await completeUiManagedAccountGuest({ account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
+        input: presetInput, machine: enrolled, requestId: 'creation', context: { surface: 'ui', hostReviewedChild: {
+            invoke: async request => {
+                requests.push(request);
+                return { ok: true, result: { status: 'applied', policy: { active: ['sessions'] }, metadataVersion: 1 } };
+            },
+        } } });
+    expect(requests).toMatchObject([{ action: 'machines.roles.set', input: { machineId: 'joined', policy: { active: ['sessions'] } },
+        invocationServices: { managedContinuation: { managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0 } } }]);
+});
+
+it('adopted completion without an Agent preserves roles without a guest effect', async () => {
+    const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
+    const enrolled = { ...machine, enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const }, enrolledMachineId: 'joined' };
+    await expect(completeUiManagedAccountGuest({
+        account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
+        input: {}, machine: enrolled, requestId: 'creation', context: { surface: 'ui' },
+    })).resolves.toEqual(enrolled);
+});

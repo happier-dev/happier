@@ -79,12 +79,23 @@ describe('Account managed power role preparation', () => {
     it('reviews inspection without mutation roles and installation retry without power or destroy roles', async () => {
         expect(await prepareManagedPowerProvisionerAdmissionV1(machine, async () => selected, 'machines.managed.inspect'))
             .toEqual({ children: [{ action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' }] });
-        expect(await prepareManagedPowerProvisionerAdmissionV1(machine, async () => selected, 'machines.managed.bootstrap.retry'))
+        expect(await prepareManagedPowerProvisionerAdmissionV1({ ...machine,
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }, async () => selected, 'machines.managed.bootstrap.retry'))
             .toEqual({ children: [
                 { action: { pluginId: 'acme.compute', localId: 'acquire' }, role: 'acquire' },
                 { action: { pluginId: 'acme.compute', localId: 'bootstrap' }, role: 'bootstrap' },
                 { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
+                { action: 'machines.roles.set', role: 'machines.roles.set' },
             ] });
+    });
+    it('does not demand a roles seed when retrying an adopted Machine', async () => {
+        const prepared = await prepareManagedPowerProvisionerAdmissionV1({ ...machine,
+            enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } }, async () => selected, 'machines.managed.bootstrap.retry');
+        expect(prepared).toEqual({ children: [
+            { action: { pluginId: 'acme.compute', localId: 'acquire' }, role: 'acquire' },
+            { action: { pluginId: 'acme.compute', localId: 'bootstrap' }, role: 'bootstrap' },
+            { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
+        ] });
     });
     it.each(['machines.managed.delete', 'machines.managed.cancel'] as const)('reviews cleanup roles for %s without acquisition or bootstrap', async actionId => {
         expect(await prepareManagedPowerProvisionerAdmissionV1(machine, async () => selected, actionId)).toEqual({ children: [

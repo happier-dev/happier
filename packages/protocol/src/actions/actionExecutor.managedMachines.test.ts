@@ -192,7 +192,10 @@ describe('managed Machine Action executor', () => {
     });
     expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'machines.managed.acquire', artifactId: 'parent-review' } });
     expect(entered).toBe(0);
-    expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: [{ action: 'session.spawn_new', role: 'session.spawn_new' }] } });
+    expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: [
+      { action: 'machines.roles.set', role: 'machines.roles.set' },
+      { action: 'session.spawn_new', role: 'session.spawn_new' },
+    ] } });
     const preview = approval?.preview as { hostReviewedChildren?: { children: readonly { input?: unknown }[] } } | undefined;
     expect(preview?.hostReviewedChildren?.children.every(child => child.input === undefined)).toBe(true);
     expect(JSON.stringify(approval?.preview)).not.toContain('private-user');

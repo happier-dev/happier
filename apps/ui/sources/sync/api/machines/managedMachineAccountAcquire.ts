@@ -418,6 +418,13 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                 },
                 prepareCredential: credential.prepare,
                 readCredential: credential.read,
+                complete: async row => {
+                    if ('selection' in params.input || !machine.enrolledMachineId) {
+                        await completeUiManagedAccountGuest({ ...params,
+                            input: 'selection' in params.input ? params.input : {}, machine: row,
+                            ...(normalizer ? { normalizer } : {}) });
+                    }
+                },
                 enroll: async enrollment => {
                     if (!('selection' in params.input) && !('expectedIntentRevision' in params.input)) {
                         throw new ManagedMachineControllerError('admission_unavailable');
@@ -438,9 +445,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     // Ordinary Account pairing is the enrollment writer; observe its
                     // resulting row once, rather than inventing an /enrolled mutation.
                     const machine = await client.home.row('current', client.home.correlation(enrollment.machine));
-                    return 'selection' in params.input
-                        ? await completeUiManagedAccountGuest({ ...params, input: params.input, machine,
-                            ...(normalizer ? { normalizer } : {}) }) : machine;
+                    return machine;
                 },
             },
         });

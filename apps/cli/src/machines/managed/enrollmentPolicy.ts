@@ -1,6 +1,7 @@
-import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1, type ActionExecuteResult } from '@happier-dev/protocol';
+import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MachineRolesMutationResultV1Schema, machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { applyManagedMachineEnrollmentRoles } from '@happier-dev/cli-common/machines/managed';
 import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineRoles, dispatchLocalManagedMachineRoles } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
@@ -62,23 +63,13 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
 
 /** Seeds the owner-approved role set for this install type over the missing field (OWNER-RULINGS 2026-11-12). */
 async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
-    const policy = resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity);
-    if (!policy) return;
-    options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
-    if (!options.context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-    // Field comparison over the missing field (every core role): a role set the
-    // owner already changed is a conflict and is never replaced.
-    const request = { serverId: machine.homeId, machineId: machine.enrolledMachineId, expectedMetadataVersion: 0,
-        expectedPolicy: machineRolesMetadataFieldV1.defaultValue(), policy };
-    const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
-        { remote: dispatchManagedMachineRoles, local: dispatchLocalManagedMachineRoles });
-    if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.roles.set');
-    const result = MachineRolesMutationResultV1Schema.safeParse(execution.result);
-    if (!result.success || result.data.status === 'outcomeUnknown') throw new ManagedMachineControllerError('action_outcome_unknown');
-    if (!['applied', 'satisfied', 'unchanged'].includes(result.data.status)
-        || !('policy' in result.data) || !machineRolesMetadataFieldV1.equal(result.data.policy, policy)) {
-        throw new ManagedMachineControllerError('machine_roles_unconfirmed');
-    }
+    await applyManagedMachineEnrollmentRoles({ machine, dispatch: async request => {
+        options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
+        const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
+            { remote: dispatchManagedMachineRoles, local: dispatchLocalManagedMachineRoles });
+        if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.roles.set');
+        return execution.result;
+    } });
 }
 
 /** Enrollment owns creation; an optional roles seed cannot turn its success into a bootstrap failure. */

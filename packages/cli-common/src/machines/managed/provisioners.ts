@@ -8,7 +8,8 @@ import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier
 import type { ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedResizeActionIdV1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
@@ -110,7 +111,7 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
     const provisioner = resize ? selected?.descriptor : machine.reviewedFacts?.provisioner;
     if (!provisioner || !resize && !await matchesSelectedProvisioner(machine.launch.provider, provisioner, readSelected))
         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-    return { children: readMachineProvisionerActionRolesV1(provisioner)
+    return { children: [...readMachineProvisionerActionRolesV1(provisioner)
         .filter(({ role }) => resize ? role === 'resize' || role === 'power' || role === 'inspect'
                 || Boolean(machine.enrolledMachineId) && machine.enrollmentIdentity?.kind !== 'dedicatedDaemonUser'
                     && provisioner.bootstrapTransport?.kind === 'native' && (role === 'bootstrap' || role === 'exec')
@@ -122,7 +123,10 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
                 || options?.includeGuestDiagnostics === true && role === 'exec'
             : role === 'acquire' || role === 'bootstrap' || role === 'inspect' || role === 'reconcile'
                 || role === 'exec' || role === 'putFile')
-        .map(({ action, role }) => ({ action: { pluginId: machine.launch.provider.pluginId, localId: action }, role })) };
+        .map(({ action, role }) => ({ action: { pluginId: machine.launch.provider.pluginId, localId: action }, role })),
+        ...(actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity)
+            ? [{ action: 'machines.roles.set' as const, role: 'machines.roles.set' }] : []),
+    ] };
 }
 
 /** Shared discovery semantics; each host supplies its existing catalog and invocation adapter. */

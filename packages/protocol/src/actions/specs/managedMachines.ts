@@ -18,6 +18,7 @@ import {
   type ManagedMachineActionIdV1,
 } from '../../machines/managed/actionsV1.js';
 import { resolveManagedMachineEnrollmentAdminAccessV1, resolveManagedMachineEnrollmentAgentIsolationV1 } from '../../machines/managed/enrollmentIdentityV1.js';
+import { resolveManagedMachineEnrollmentRolesV1 } from '../../machines/roles/machineRolesV1.js';
 import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions/machineProvisioners.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
@@ -91,8 +92,9 @@ function createManagedMachineActionSpecs() {
         // The preset declaration is private. Its custodian opens the exact
         // admitted carrier before issuing provider children through the
         // opaque-preset reviewed-child owner; this public Action can declare
-        // only its structural Session request.
-        return input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : [];
+        // its structural enrollment policy and Session requests.
+        return [{ action: 'machines.roles.set' as const, role: 'machines.roles.set' },
+          ...(input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : [])];
       }
       // The guest operands arrive after enrollment. Declare only work already
       // demanded by this normalized creation, without inventing guest inputs.
@@ -103,6 +105,8 @@ function createManagedMachineActionSpecs() {
               || role === 'exec' || role === 'putFile' || role === 'reconcile' || role === 'cleanup')
             .map(({ action, role }) => ({ action: { pluginId: input.reviewedFacts!.launch.provider.pluginId, localId: action }, role }))
           : []),
+        ...(resolveManagedMachineEnrollmentRolesV1(input.enrollmentIdentity)
+          ? [{ action: 'machines.roles.set' as const, role: 'machines.roles.set' }] : []),
         ...(resolveManagedMachineEnrollmentAdminAccessV1(input.enrollmentIdentity)
           ? [{ action: 'machines.setup.adminAccess.set' as const, role: 'machines.setup.adminAccess.set' }] : []),
         ...(resolveManagedMachineEnrollmentAgentIsolationV1(input.enrollmentIdentity)

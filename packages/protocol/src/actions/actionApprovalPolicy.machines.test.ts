@@ -148,3 +148,8 @@ describe('Corridor C approval defaults', () => {
     expect(resolveActionApprovalRouting({ ...args, settings: required })).toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 });
+
+it('acquire admits the enrollment roles child even without an Agent start', () => {
+  const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 } };
+  expect(getActionSpec('machines.managed.acquire').hostReviewedChildren?.(input)).toContainEqual({ action: 'machines.roles.set', role: 'machines.roles.set' });
+});
