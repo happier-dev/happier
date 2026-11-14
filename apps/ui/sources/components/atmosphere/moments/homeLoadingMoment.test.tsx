@@ -20,7 +20,7 @@ vi.mock('react-native', async () => {
 vi.mock('@shopify/react-native-skia', async () => {
   const { createReactNativeSkiaMock } = await import('@/dev/testkit/mocks/reactNativeSkia');
   const font = {};
-  return { ...createReactNativeSkiaMock(), useFont: () => font };
+  return { ...createReactNativeSkiaMock(), useTypeface: () => font };
 });
 
 const pane = { width: 1150, height: 900 };

@@ -1,11 +1,12 @@
-import { BlendMode, FillType, PaintStyle, Skia, TileMode, type SkCanvas, type SkFont, type SkImage, type SkShader } from '@shopify/react-native-skia';
+import { BlendMode, FillType, PaintStyle, Skia, TileMode, type SkCanvas, type SkFont, type SkImage, type SkShader, type SkTypeface } from '@shopify/react-native-skia';
 import { createPlanetScene } from '@happier-dev/brand/planet';
 import type { MomentPaintCommand, MomentPlanetOptions } from '@happier-dev/brand/planet-moments';
 import { paintNativePlanetScene } from './planetCanvasPaint.native';
 
 export type NativeMomentEnvironment = Readonly<{
     w: number; h: number; dpr: number;
-    mono: SkFont; monoStrong: SkFont; sans: SkFont; sansMedium: SkFont; sansStrong: SkFont;
+    /** Typefaces, not fonts: see paintNativePlanetScene on Skia's borrowed `getTypeface()`. */
+    mono: SkTypeface; monoStrong: SkTypeface; sans: SkTypeface; sansMedium: SkTypeface; sansStrong: SkTypeface;
     mark?: SkImage | null;
 }>;
 type Colour = string | Readonly<{ gradient: number }>;
@@ -57,9 +58,7 @@ export function paintNativeMomentCommands(canvas: SkCanvas, commands: readonly M
         const weight = Number(match[1]), size = Number(match[2]);
         const mono = /plex\s*mono|monospace/i.test(match[3]);
         const face = mono ? (weight >= 600 ? env.monoStrong : env.mono) : weight >= 600 ? env.sansStrong : weight >= 500 ? env.sansMedium : env.sans;
-        const typeface = face.getTypeface();
-        if (!typeface) throw new Error('Atmosphere moment typeface is unavailable');
-        font = Skia.Font(typeface, size); fonts.set(state.font, font);
+        font = Skia.Font(face, size); fonts.set(state.font, font);
         return font;
     };
     try {

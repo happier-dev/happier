@@ -1,8 +1,12 @@
-import { BlendMode, Skia, type SkCanvas, type SkFont } from '@shopify/react-native-skia';
+import { BlendMode, Skia, type SkCanvas, type SkTypeface } from '@shopify/react-native-skia';
 import type { PlanetScene } from '@happier-dev/brand/planet';
 
-/** The existing native planet composition; shared by the scene canvas and moment layers. */
-export function paintNativePlanetScene(canvas: SkCanvas, scene: PlanetScene, regular: SkFont | null, strong: SkFont | null, ink?: string) {
+/**
+ * The existing native planet composition; shared by the scene canvas and moment layers.
+ * Takes the typefaces themselves: Skia 2.4.18's `SkFont.getTypeface()` adopts the font's borrowed
+ * typeface without a reference, so its collected wrappers free the face under recorded pictures.
+ */
+export function paintNativePlanetScene(canvas: SkCanvas, scene: PlanetScene, regular: SkTypeface | null, strong: SkTypeface | null, ink?: string) {
     const paint = Skia.Paint(); paint.setAntiAlias(true);
     const dots = (list: typeof scene.body) => {
         for (const dot of list) {
@@ -13,7 +17,7 @@ export function paintNativePlanetScene(canvas: SkCanvas, scene: PlanetScene, reg
     const cells = (over: boolean) => {
         for (const cell of scene.cells) {
             if (cell.over !== over) continue;
-            const typeface = (over ? strong : regular)?.getTypeface();
+            const typeface = over ? strong : regular;
             if (!typeface) throw new Error('Atmosphere mono typeface is unavailable');
             const font = Skia.Font(typeface, Number(cell.fs.toFixed(2)));
             // Native Skia 2.4.18 reads a JSI number despite its shared boolean declaration.

@@ -7,6 +7,7 @@ export function createReactNativeSkiaMock() {
         // A recorded picture is opaque native state; the stub records nothing.
         createPicture: () => ({ dispose: () => undefined }),
         useFont: () => null,
+        useTypeface: () => null,
         AlphaType: { Unpremul: 'unpremul' },
         ColorType: { RGBA_8888: 'rgba' },
         Skia: {

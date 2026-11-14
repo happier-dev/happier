@@ -24,7 +24,7 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 vi.mock('@/components/atmosphere/moments/PlanetMomentCanvas', () => import('@/components/atmosphere/moments/PlanetMomentCanvas.web'));
 vi.mock('@shopify/react-native-skia', async () => {
     const font = {};
-    return { ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(), useFont: () => font };
+    return { ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(), useTypeface: () => font };
 });
 
 installDisconnectedServerSocketBoundary();

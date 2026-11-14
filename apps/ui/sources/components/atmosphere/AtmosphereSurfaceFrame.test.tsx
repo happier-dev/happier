@@ -34,7 +34,7 @@ const planetPaints = vi.hoisted(() => ({ count: 0, font: {} }));
 vi.mock('@shopify/react-native-skia', async () => ({
     ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
     // Native picture allocation is the physical drawing boundary.
-    useFont: () => planetPaints.font,
+    useTypeface: () => planetPaints.font,
     createPicture: () => { planetPaints.count++; return { dispose() {} }; },
 }));
 

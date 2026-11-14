@@ -33,7 +33,7 @@ const nativePictures = vi.hoisted(() => ({ count: 0 }));
 vi.mock('@shopify/react-native-skia', async () => ({
   ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
   // Font readiness and native picture allocation are genuine platform boundaries.
-  useFont: () => ({}),
+  useTypeface: () => ({}),
   createPicture: () => { nativePictures.count += 1; return { dispose() {} }; },
 }));
 

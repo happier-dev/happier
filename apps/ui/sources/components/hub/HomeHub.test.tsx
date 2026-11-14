@@ -77,7 +77,7 @@ const atmospherePaints = vi.hoisted(() => ({ count: 0, font: {} }));
 vi.mock('@shopify/react-native-skia', async () => ({
     ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
     // Font readiness and physical picture allocation are native boundaries.
-    useFont: () => atmospherePaints.font,
+    useTypeface: () => atmospherePaints.font,
     createPicture: () => { atmospherePaints.count++; return { dispose() {} }; },
 }));
 installDisconnectedServerSocketBoundary();

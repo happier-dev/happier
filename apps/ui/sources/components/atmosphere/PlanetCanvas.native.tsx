@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { PixelRatio } from 'react-native';
-import { AlphaType, BlendMode, Canvas, ColorType, FilterMode, MipmapMode, Picture, Skia, TileMode, createPicture, useFont } from '@shopify/react-native-skia';
+import { AlphaType, BlendMode, Canvas, ColorType, FilterMode, MipmapMode, Picture, Skia, TileMode, createPicture, useTypeface } from '@shopify/react-native-skia';
 import { orderedFadeMask } from './orderedFadeMask';
 import { createPlanetCanvasSceneCache, snapCanvasBox } from './planetCanvasScene';
 import type { PlanetCanvasProps } from './planetCanvas.types';
@@ -14,8 +14,8 @@ export const PlanetCanvas = React.memo(function PlanetCanvas(props: PlanetCanvas
 /** One surface keeps the original body/emboss/haze/digits blend and ordered fade intact. */
 function PlanetDigits(input: PlanetCanvasProps) {
     const props = usePlanetDigits(input);
-    const regular = useFont(require('@/assets/fonts/IBMPlexMono-Regular.ttf'), 12);
-    const strong = useFont(require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'), 12);
+    const regular = useTypeface(require('@/assets/fonts/IBMPlexMono-Regular.ttf'));
+    const strong = useTypeface(require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'));
     const dpr = props.options?.dpr ?? PixelRatio.get();
     const box = snapCanvasBox(props.width, props.height, dpr);
     const resolveScene = React.useMemo(createPlanetCanvasSceneCache, []);

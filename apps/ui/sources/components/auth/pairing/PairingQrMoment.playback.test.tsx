@@ -17,7 +17,7 @@ vi.mock('react-native', async () => {
 // Font and picture handles are native system boundaries; the real scene/timeline stays intact.
 vi.mock('@shopify/react-native-skia', async () => ({
     ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
-    useFont: () => ({}),
+    useTypeface: () => ({}),
 }));
 
 beforeEach(() => vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] }));

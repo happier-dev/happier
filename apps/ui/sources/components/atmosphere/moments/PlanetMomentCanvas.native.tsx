@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Canvas, Picture, Skia, createPicture, useFont, type SkFont } from '@shopify/react-native-skia';
+import { Canvas, Picture, Skia, createPicture, useTypeface, type SkFont } from '@shopify/react-native-skia';
 import { planetAssemblyFrame } from '@happier-dev/brand/planet';
 import { snapCanvasBox } from '../planetCanvasScene';
 import type { PlanetMomentCanvasProps } from './planetMomentCanvas.types';
@@ -9,8 +9,9 @@ import type { PlanetMomentCanvasProps } from './planetMomentCanvas.types';
  * digits), recorded into one picture per frame on the JS runtime, never on the UI thread.
  */
 export const PlanetMomentCanvas = React.memo(function PlanetMomentCanvas(props: PlanetMomentCanvasProps) {
-    const regular = useFont(require('@/assets/fonts/IBMPlexMono-Regular.ttf'), 12);
-    const strong = useFont(require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'), 12);
+    // Typefaces, not fonts: see paintNativePlanetScene on Skia's borrowed `getTypeface()`.
+    const regular = useTypeface(require('@/assets/fonts/IBMPlexMono-Regular.ttf'));
+    const strong = useTypeface(require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'));
     const box = snapCanvasBox(props.width, props.height, props.dpr);
     const picture = React.useMemo(() => {
         if (!regular || !strong || props.opacity <= 0) return null;
@@ -29,11 +30,7 @@ export const PlanetMomentCanvas = React.memo(function PlanetMomentCanvas(props: 
                 const face = cell.weight >= 600 ? strong : regular;
                 const key = `${cell.weight >= 600 ? 's' : 'r'}${cell.fs}`;
                 let font = fonts.get(key);
-                if (!font) {
-                    const typeface = face.getTypeface();
-                    if (!typeface) throw new Error('Atmosphere mono typeface is unavailable');
-                    font = Skia.Font(typeface, cell.fs); fonts.set(key, font);
-                }
+                if (!font) { font = Skia.Font(face, cell.fs); fonts.set(key, font); }
                 paint.setColor(new Float32Array([Math.round(cell.col[0]) / 255, Math.round(cell.col[1]) / 255, Math.round(cell.col[2]) / 255, cell.a]));
                 const metrics = font.getMetrics();
                 canvas.drawText(cell.ch, cell.x - font.getGlyphWidths(font.getGlyphIDs(cell.ch))[0] / 2, cell.y - (metrics.ascent + metrics.descent) / 2, paint, font);

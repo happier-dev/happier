@@ -18,8 +18,9 @@ const boundary = vi.hoisted(() => {
         const values = s.match(/[\d.]+/g)!.map(Number);
         return [values[0] / 255, values[1] / 255, values[2] / 255, values[3] ?? 1];
     };
+    // Skia.Font(typeface, size): the painters hold typefaces (faces here), never a font's borrowed one.
     const font = (face: string, size: number) => ({ face, size, embolden: false, dispose() {},
-        getTypeface: () => face, getMetrics: () => ({ ascent: -size * 0.8, descent: size * 0.2 }),
+        getMetrics: () => ({ ascent: -size * 0.8, descent: size * 0.2 }),
         getGlyphIDs: (text: string) => [...text].map(c => c.charCodeAt(0)),
         getGlyphWidths: (ids: number[]) => ids.map(() => size * 0.6),
         // Skia 2.4.18's native JsiSkFont.h uses Value::asNumber here, unlike its
@@ -123,7 +124,7 @@ function paintBoth(commands: readonly MomentPaintCommand[]) {
     vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
     const web = recordWeb();
     const native = recordNative();
-    const fonts = { mono: boundary.font('mono400', 12), monoStrong: boundary.font('mono600', 12), sans: boundary.font('sans400', 12), sansMedium: boundary.font('sans500', 12), sansStrong: boundary.font('sans600', 12) };
+    const fonts = { mono: 'mono400', monoStrong: 'mono600', sans: 'sans400', sansMedium: 'sans500', sansStrong: 'sans600' };
     paintMomentCommands(web as unknown as CanvasRenderingContext2D, commands, { ...env, mark: { complete: true, naturalWidth: 32 } as HTMLImageElement });
     paintNativeMomentCommands(native.canvas as unknown as Parameters<typeof paintNativeMomentCommands>[0], commands,
         { ...env, ...fonts, mark: { width: () => 32, height: () => 32 } } as unknown as Parameters<typeof paintNativeMomentCommands>[2]);
@@ -140,8 +141,8 @@ it('paints cut and regular planet glyphs through the numeric native embolden bou
         const native = recordNative();
         // Only opaque Skia canvas/font host objects are substituted here.
         paintNativePlanetScene(native.canvas as unknown as Parameters<typeof paintNativePlanetScene>[0], scene,
-            boundary.font('mono400', 12) as unknown as Parameters<typeof paintNativePlanetScene>[2],
-            boundary.font('mono600', 12) as unknown as Parameters<typeof paintNativePlanetScene>[3]);
+            'mono400' as unknown as Parameters<typeof paintNativePlanetScene>[2],
+            'mono600' as unknown as Parameters<typeof paintNativePlanetScene>[3]);
         expect(native.textWeights).toContain(false);
         if (overStyle === 'ink') expect(native.textWeights).toContain(true);
         else expect(native.textWeights).not.toContain(true);
@@ -173,7 +174,7 @@ it('matches web paint output for actual QR/reform/scan, pairing and both Horizon
 });
 
 it('reveals the live new theme through the complement of the exact brand Horizon clip', () => {
-    const fonts = { mono: boundary.font('mono400', 12), monoStrong: boundary.font('mono600', 12), sans: boundary.font('sans400', 12), sansMedium: boundary.font('sans500', 12), sansStrong: boundary.font('sans600', 12) };
+    const fonts = { mono: 'mono400', monoStrong: 'mono600', sans: 'sans400', sansMedium: 'sans500', sansStrong: 'sans600' };
     const env = { w: 120, h: 120, dpr: 2, ...fonts };
     const image = { width: () => 120, height: () => 120 };
     for (const dir of ['sunrise', 'night'] as const) for (const t of [0, 0.3, 0.6, 0.9, 1.2]) {
