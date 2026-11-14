@@ -7,8 +7,8 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type UsageActionInputById = {
     readonly "usage.history.read": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -67,8 +67,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.deliver": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -126,8 +126,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.calendar.export": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -202,8 +202,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.export": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -262,8 +262,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.compose": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -312,8 +312,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.query": {
         queries: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -358,8 +358,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.export": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -406,8 +406,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.apply": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -455,8 +455,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.undo": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -650,8 +650,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.dismiss": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -700,8 +700,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.snooze": {
         query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -830,6 +830,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -838,11 +842,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -891,6 +897,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -910,6 +917,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -936,6 +947,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -954,11 +966,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -1032,6 +1046,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -1050,11 +1065,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -1201,6 +1218,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -1209,11 +1230,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -1262,6 +1285,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -1281,6 +1305,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -1307,6 +1335,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -1325,11 +1354,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -1403,6 +1434,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -1421,11 +1453,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -1572,6 +1606,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -1580,11 +1618,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -1633,6 +1673,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -1652,6 +1693,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -1678,6 +1723,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -1696,11 +1742,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -1774,6 +1822,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -1792,11 +1841,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -1945,6 +1996,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -1953,11 +2008,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -2006,6 +2063,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2025,6 +2083,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -2051,6 +2113,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -2069,11 +2132,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -2147,6 +2212,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -2165,11 +2231,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -2318,6 +2386,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -2326,11 +2398,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -2379,6 +2453,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2398,6 +2473,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -2424,6 +2503,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -2442,11 +2522,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -2520,6 +2602,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -2538,11 +2621,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -2689,6 +2774,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -2697,11 +2786,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -2750,6 +2841,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2769,6 +2861,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -2795,6 +2891,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -2813,11 +2910,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -2891,6 +2990,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -2909,11 +3009,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -3060,6 +3162,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -3068,11 +3174,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -3121,6 +3229,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3140,6 +3249,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3166,6 +3279,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -3184,11 +3298,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -3262,6 +3378,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -3280,11 +3397,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -3433,6 +3552,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -3441,11 +3564,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -3494,6 +3619,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3513,6 +3639,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3539,6 +3669,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -3557,11 +3688,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -3635,6 +3768,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -3653,11 +3787,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -3876,6 +4012,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -3884,11 +4024,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -3937,6 +4079,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3956,6 +4099,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3982,6 +4129,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -4000,11 +4148,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -4078,6 +4228,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -4096,11 +4247,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -4178,8 +4331,8 @@ export type UsageActionResultById = {
             reason: 'accounting_unavailable' | 'period_unavailable' | 'public_profile_source_unavailable' | 'public_profile_unavailable' | 'query_mismatch';
         };
         file: {
-            v: 1;
             base64: string;
+            v: 1;
             asOfMs: null | number;
             fileName: string;
             mediaType: 'image/png';
@@ -4256,6 +4409,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -4264,11 +4421,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -4317,6 +4476,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -4336,6 +4496,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -4362,6 +4526,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -4380,11 +4545,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -4458,6 +4625,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -4476,11 +4644,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -4628,6 +4798,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -4636,11 +4810,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -4689,6 +4865,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -4708,6 +4885,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -4734,6 +4915,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -4752,11 +4934,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -4830,6 +5014,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -4848,11 +5033,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -4930,8 +5117,8 @@ export type UsageActionResultById = {
             reason: 'accounting_unavailable' | 'period_unavailable' | 'public_profile_source_unavailable' | 'public_profile_unavailable' | 'query_mismatch';
         };
         file: {
-            v: 1;
             base64: string;
+            v: 1;
             asOfMs: null | number;
             fileName: string;
             mediaType: 'image/png';
@@ -5008,6 +5195,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
@@ -5016,11 +5207,13 @@ export type UsageActionResultById = {
                 modelMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
                     tokens: null | number;
                     events: number;
+                    tokensFromParts?: true | undefined;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
@@ -5069,6 +5262,7 @@ export type UsageActionResultById = {
                     bucketStartMs: number;
                     bucketEndMs: number;
                     tokens: null | number;
+                    tokensFromParts?: true | undefined;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5088,6 +5282,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -5114,6 +5312,7 @@ export type UsageActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -5132,11 +5331,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -5210,6 +5411,7 @@ export type UsageActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -5228,11 +5430,13 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -5378,6 +5582,10 @@ export type UsageActionResultById = {
                 cacheRead: null | number;
                 cacheWrite: null | number;
                 total: null | number;
+                measured?: undefined | {
+                    total: number;
+                    fromParts: true;
+                };
             };
             activeDays?: number | undefined;
             streak?: undefined | {
@@ -5386,11 +5594,13 @@ export type UsageActionResultById = {
             modelMix?: undefined | {
                 tokens: null | number;
                 events: number;
+                tokensFromParts?: true | undefined;
                 name?: string | undefined;
             }[];
             agentMix?: undefined | {
                 tokens: null | number;
                 events: number;
+                tokensFromParts?: true | undefined;
                 name?: string | undefined;
                 agentId?: string | undefined;
             }[];
@@ -5439,6 +5649,7 @@ export type UsageActionResultById = {
                 bucketStartMs: number;
                 bucketEndMs: number;
                 tokens: null | number;
+                tokensFromParts?: true | undefined;
             })[] | undefined;
             dollars?: undefined | {
                 basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5458,6 +5669,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -5484,6 +5699,7 @@ export type UsageActionResultById = {
             }>>;
             facts: {
                 tokens?: number | undefined;
+                tokensFromParts?: true | undefined;
                 activeDays?: number | undefined;
                 agentTimeMs?: number | undefined;
                 mergedPrs?: number | undefined;
@@ -5502,11 +5718,13 @@ export type UsageActionResultById = {
                         method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                     };
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                 }[];
                 sourceSplit?: undefined | {
                     execution: 'happier' | 'outside' | 'unknown';
                     share: number;
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                 }[];
                 punch?: undefined | {
                     weekday: number;
@@ -5580,6 +5798,7 @@ export type UsageActionResultById = {
                 execution: 'happier' | 'outside';
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -5598,11 +5817,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -5747,6 +5968,10 @@ export type UsageActionResultById = {
                 cacheRead: null | number;
                 cacheWrite: null | number;
                 total: null | number;
+                measured?: undefined | {
+                    total: number;
+                    fromParts: true;
+                };
             };
             activeDays?: number | undefined;
             streak?: undefined | {
@@ -5755,11 +5980,13 @@ export type UsageActionResultById = {
             modelMix?: undefined | {
                 tokens: null | number;
                 events: number;
+                tokensFromParts?: true | undefined;
                 name?: string | undefined;
             }[];
             agentMix?: undefined | {
                 tokens: null | number;
                 events: number;
+                tokensFromParts?: true | undefined;
                 name?: string | undefined;
                 agentId?: string | undefined;
             }[];
@@ -5808,6 +6035,7 @@ export type UsageActionResultById = {
                 bucketStartMs: number;
                 bucketEndMs: number;
                 tokens: null | number;
+                tokensFromParts?: true | undefined;
             })[] | undefined;
             dollars?: undefined | {
                 basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5827,6 +6055,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -5853,6 +6085,7 @@ export type UsageActionResultById = {
             }>>;
             facts: {
                 tokens?: number | undefined;
+                tokensFromParts?: true | undefined;
                 activeDays?: number | undefined;
                 agentTimeMs?: number | undefined;
                 mergedPrs?: number | undefined;
@@ -5871,11 +6104,13 @@ export type UsageActionResultById = {
                         method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                     };
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                 }[];
                 sourceSplit?: undefined | {
                     execution: 'happier' | 'outside' | 'unknown';
                     share: number;
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                 }[];
                 punch?: undefined | {
                     weekday: number;
@@ -5949,6 +6184,7 @@ export type UsageActionResultById = {
                 execution: 'happier' | 'outside';
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -5967,11 +6203,13 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -6164,6 +6402,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     cost: {
                         reportedUsd: null | number;
@@ -6206,6 +6448,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     cost: {
                         reportedUsd: null | number;
@@ -6248,6 +6494,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6292,6 +6542,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6336,6 +6590,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6380,6 +6638,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6424,6 +6686,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6468,6 +6734,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6512,6 +6782,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6556,6 +6830,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -6643,6 +6921,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -6680,6 +6962,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -6718,6 +7004,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -6755,6 +7045,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -6793,6 +7087,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -6830,6 +7128,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -6868,6 +7170,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -6905,6 +7211,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -6943,6 +7253,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -6980,6 +7294,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -7018,6 +7336,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -7055,6 +7377,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -7097,6 +7423,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -7134,6 +7464,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -7176,6 +7510,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost?: undefined | {
                             reportedUsd: null | number;
@@ -7213,6 +7551,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -7262,6 +7604,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -7396,7 +7742,9 @@ export type UsageActionResultById = {
                             execution: 'happier' | 'outside' | 'unknown';
                             tokens: null | number;
                             share: null | number;
+                            tokensFromParts?: true | undefined;
                         }[];
+                        tokensFromParts?: true | undefined;
                     };
                     observationRange?: undefined | {
                         startMs: number;
@@ -7452,6 +7800,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             contributionCount: number;
                             eventCount: number;
@@ -7468,6 +7820,7 @@ export type UsageActionResultById = {
                     rankedPricing?: Record<string, {
                         value: {
                             key: string;
+                            eventCount: number;
                             tokens: {
                                 input: null | number;
                                 output: null | number;
@@ -7475,14 +7828,17 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
-                            eventCount: number;
                             label?: string | undefined;
+                            requestCount?: number | undefined;
                             context?: undefined | {
                                 usedTokens?: null | number | undefined;
                                 windowTokens?: null | number | undefined;
                             };
-                            requestCount?: number | undefined;
                             latestContextUsedTokens?: number | undefined;
                             latestContextWindowTokens?: number | undefined;
                         };
@@ -7536,6 +7892,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -7553,6 +7913,7 @@ export type UsageActionResultById = {
                                 path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                 source: string;
                                 execution: 'happier' | 'outside' | 'unknown';
+                                eventCount: number;
                                 tokens: {
                                     input: null | number;
                                     output: null | number;
@@ -7560,8 +7921,11 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
-                                eventCount: number;
                             };
                             population: {
                                 groups: {
@@ -7613,6 +7977,10 @@ export type UsageActionResultById = {
                                         cacheRead: null | number;
                                         cacheWrite: null | number;
                                         total: null | number;
+                                        measured?: undefined | {
+                                            total: number;
+                                            fromParts: true;
+                                        };
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -7660,6 +8028,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -7680,6 +8049,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 leaders: {
                                     tokens: {
@@ -7733,6 +8103,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 agents: {
                                     agentId: null | string;
@@ -7749,6 +8120,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -7813,6 +8185,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 agents: {
                                     agentId: null | string;
@@ -7829,6 +8202,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -7893,6 +8267,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 agents: {
                                     agentId: null | string;
@@ -7909,6 +8284,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -7973,6 +8349,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 agents: {
                                     agentId: null | string;
@@ -7989,6 +8366,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8050,6 +8428,7 @@ export type UsageActionResultById = {
                                     busyMs: null | number;
                                     steeringCount: null | number;
                                     peakParallel: null | number;
+                                    tokensFromParts?: true | undefined;
                                 };
                                 agents: {
                                     agentId: null | string;
@@ -8066,6 +8445,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     coverage: {
                                         accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8197,6 +8577,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -8232,7 +8616,12 @@ export type UsageActionResultById = {
                                         method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                                     };
                                     tokens?: number | undefined;
+                                    tokensFromParts?: true | undefined;
                                 }[];
+                                footprint?: undefined | {
+                                    status: 'insufficient_basis';
+                                    reason: 'no_applicable_versioned_method';
+                                };
                                 agentActiveDays?: undefined | {
                                     agentId: string;
                                     days: number;
@@ -8253,10 +8642,7 @@ export type UsageActionResultById = {
                                     startMs: number;
                                     endMs: number;
                                 }[];
-                                footprint?: undefined | {
-                                    status: 'insufficient_basis';
-                                    reason: 'no_applicable_versioned_method';
-                                };
+                                tokensFromParts?: true | undefined;
                             };
                             days: {
                                 date: string;
@@ -8298,6 +8684,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8318,6 +8705,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     leaders: {
                                         tokens: {
@@ -8371,6 +8759,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -8387,6 +8776,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8451,6 +8841,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -8467,6 +8858,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8531,6 +8923,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -8547,6 +8940,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8611,6 +9005,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -8627,6 +9022,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8688,6 +9084,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -8704,6 +9101,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8804,7 +9202,12 @@ export type UsageActionResultById = {
                                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                                         };
                                         tokens?: number | undefined;
+                                        tokensFromParts?: true | undefined;
                                     }[];
+                                    footprint?: undefined | {
+                                        status: 'insufficient_basis';
+                                        reason: 'no_applicable_versioned_method';
+                                    };
                                     agentActiveDays?: undefined | {
                                         agentId: string;
                                         days: number;
@@ -8825,10 +9228,7 @@ export type UsageActionResultById = {
                                         startMs: number;
                                         endMs: number;
                                     }[];
-                                    footprint?: undefined | {
-                                        status: 'insufficient_basis';
-                                        reason: 'no_applicable_versioned_method';
-                                    };
+                                    tokensFromParts?: true | undefined;
                                 };
                                 days: {
                                     date: string;
@@ -8865,6 +9265,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -8885,6 +9286,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         leaders: {
                                             tokens: {
@@ -8938,6 +9340,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -8949,6 +9352,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -9013,6 +9417,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -9024,6 +9429,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -9088,6 +9494,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -9099,6 +9506,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -9163,6 +9571,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -9174,6 +9583,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -9235,6 +9645,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -9246,6 +9657,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -9400,6 +9812,10 @@ export type UsageActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 eventCount: number;
                 asOfMs: number;
@@ -9786,8 +10202,8 @@ export type UsageActionResultById = {
                     bases: {
                         v: 1;
                         source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
-                        state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
                         providerId: string;
+                        state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
                         confidence: 'confirmed' | 'estimated' | 'unknown';
                         recordId: string;
                         staleAfterMs: number;
@@ -9859,8 +10275,8 @@ export type UsageActionResultById = {
                         providerLimitId?: string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
-                        resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
+                        resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         isExhausted?: boolean | undefined;
                         isSoftLimited?: boolean | undefined;
                         isCapacityLimited?: boolean | undefined;
@@ -10716,6 +11132,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -10758,6 +11178,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -10800,6 +11224,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -10844,6 +11272,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -10888,6 +11320,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -10932,6 +11368,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -10976,6 +11416,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -11020,6 +11464,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -11064,6 +11512,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -11108,6 +11560,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost: {
                                 reportedUsd: null | number;
@@ -11195,6 +11651,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11232,6 +11692,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11270,6 +11734,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11307,6 +11775,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11345,6 +11817,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11382,6 +11858,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11420,6 +11900,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11457,6 +11941,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11495,6 +11983,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11532,6 +12024,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11570,6 +12066,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11607,6 +12107,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11649,6 +12153,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11686,6 +12194,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11728,6 +12240,10 @@ export type UsageActionResultById = {
                                 cacheRead: null | number;
                                 cacheWrite: null | number;
                                 total: null | number;
+                                measured?: undefined | {
+                                    total: number;
+                                    fromParts: true;
+                                };
                             };
                             cost?: undefined | {
                                 reportedUsd: null | number;
@@ -11765,6 +12281,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 cost: {
                                     reportedUsd: null | number;
@@ -11814,6 +12334,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -11948,7 +12472,9 @@ export type UsageActionResultById = {
                                 execution: 'happier' | 'outside' | 'unknown';
                                 tokens: null | number;
                                 share: null | number;
+                                tokensFromParts?: true | undefined;
                             }[];
+                            tokensFromParts?: true | undefined;
                         };
                         observationRange?: undefined | {
                             startMs: number;
@@ -12004,6 +12530,10 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -12020,6 +12550,7 @@ export type UsageActionResultById = {
                         rankedPricing?: Record<string, {
                             value: {
                                 key: string;
+                                eventCount: number;
                                 tokens: {
                                     input: null | number;
                                     output: null | number;
@@ -12027,14 +12558,17 @@ export type UsageActionResultById = {
                                     cacheRead: null | number;
                                     cacheWrite: null | number;
                                     total: null | number;
+                                    measured?: undefined | {
+                                        total: number;
+                                        fromParts: true;
+                                    };
                                 };
-                                eventCount: number;
                                 label?: string | undefined;
+                                requestCount?: number | undefined;
                                 context?: undefined | {
                                     usedTokens?: null | number | undefined;
                                     windowTokens?: null | number | undefined;
                                 };
-                                requestCount?: number | undefined;
                                 latestContextUsedTokens?: number | undefined;
                                 latestContextWindowTokens?: number | undefined;
                             };
@@ -12088,6 +12622,10 @@ export type UsageActionResultById = {
                                         cacheRead: null | number;
                                         cacheWrite: null | number;
                                         total: null | number;
+                                        measured?: undefined | {
+                                            total: number;
+                                            fromParts: true;
+                                        };
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -12105,6 +12643,7 @@ export type UsageActionResultById = {
                                     path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                     source: string;
                                     execution: 'happier' | 'outside' | 'unknown';
+                                    eventCount: number;
                                     tokens: {
                                         input: null | number;
                                         output: null | number;
@@ -12112,8 +12651,11 @@ export type UsageActionResultById = {
                                         cacheRead: null | number;
                                         cacheWrite: null | number;
                                         total: null | number;
+                                        measured?: undefined | {
+                                            total: number;
+                                            fromParts: true;
+                                        };
                                     };
-                                    eventCount: number;
                                 };
                                 population: {
                                     groups: {
@@ -12161,6 +12703,10 @@ export type UsageActionResultById = {
                                             cacheRead: null | number;
                                             cacheWrite: null | number;
                                             total: null | number;
+                                            measured?: undefined | {
+                                                total: number;
+                                                fromParts: true;
+                                            };
                                         };
                                         contributionCount: number;
                                         eventCount: number;
@@ -12208,6 +12754,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12228,6 +12775,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     leaders: {
                                         tokens: {
@@ -12281,6 +12829,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -12297,6 +12846,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12361,6 +12911,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -12377,6 +12928,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12441,6 +12993,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -12457,6 +13010,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12521,6 +13075,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -12537,6 +13092,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12598,6 +13154,7 @@ export type UsageActionResultById = {
                                         busyMs: null | number;
                                         steeringCount: null | number;
                                         peakParallel: null | number;
+                                        tokensFromParts?: true | undefined;
                                     };
                                     agents: {
                                         agentId: null | string;
@@ -12614,6 +13171,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         coverage: {
                                             accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12745,6 +13303,10 @@ export type UsageActionResultById = {
                                         cacheRead: null | number;
                                         cacheWrite: null | number;
                                         total: null | number;
+                                        measured?: undefined | {
+                                            total: number;
+                                            fromParts: true;
+                                        };
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -12780,7 +13342,12 @@ export type UsageActionResultById = {
                                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                                         };
                                         tokens?: number | undefined;
+                                        tokensFromParts?: true | undefined;
                                     }[];
+                                    footprint?: undefined | {
+                                        status: 'insufficient_basis';
+                                        reason: 'no_applicable_versioned_method';
+                                    };
                                     agentActiveDays?: undefined | {
                                         agentId: string;
                                         days: number;
@@ -12801,10 +13368,7 @@ export type UsageActionResultById = {
                                         startMs: number;
                                         endMs: number;
                                     }[];
-                                    footprint?: undefined | {
-                                        status: 'insufficient_basis';
-                                        reason: 'no_applicable_versioned_method';
-                                    };
+                                    tokensFromParts?: true | undefined;
                                 };
                                 days: {
                                     date: string;
@@ -12841,6 +13405,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12861,6 +13426,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         leaders: {
                                             tokens: {
@@ -12914,6 +13480,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -12925,6 +13492,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -12989,6 +13557,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -13000,6 +13569,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -13064,6 +13634,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -13075,6 +13646,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -13139,6 +13711,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -13150,6 +13723,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -13211,6 +13785,7 @@ export type UsageActionResultById = {
                                             busyMs: null | number;
                                             steeringCount: null | number;
                                             peakParallel: null | number;
+                                            tokensFromParts?: true | undefined;
                                         };
                                         agents: {
                                             agentId: null | string;
@@ -13222,6 +13797,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             coverage: {
                                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -13322,7 +13898,12 @@ export type UsageActionResultById = {
                                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                                             };
                                             tokens?: number | undefined;
+                                            tokensFromParts?: true | undefined;
                                         }[];
+                                        footprint?: undefined | {
+                                            status: 'insufficient_basis';
+                                            reason: 'no_applicable_versioned_method';
+                                        };
                                         agentActiveDays?: undefined | {
                                             agentId: string;
                                             days: number;
@@ -13340,10 +13921,7 @@ export type UsageActionResultById = {
                                             startMs: number;
                                             endMs: number;
                                         }[];
-                                        footprint?: undefined | {
-                                            status: 'insufficient_basis';
-                                            reason: 'no_applicable_versioned_method';
-                                        };
+                                        tokensFromParts?: true | undefined;
                                     };
                                     days: {
                                         date: string;
@@ -13380,6 +13958,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             leaders: {
                                                 tokens: any;
@@ -13400,6 +13979,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             agents: {
                                                 agentId: null | string;
@@ -13430,6 +14010,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             agents: {
                                                 agentId: null | string;
@@ -13460,6 +14041,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             agents: {
                                                 agentId: null | string;
@@ -13490,6 +14072,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             agents: {
                                                 agentId: null | string;
@@ -13517,6 +14100,7 @@ export type UsageActionResultById = {
                                                 busyMs: null | number;
                                                 steeringCount: null | number;
                                                 peakParallel: null | number;
+                                                tokensFromParts?: true | undefined;
                                             };
                                             agents: {
                                                 agentId: null | string;
@@ -13638,6 +14222,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -14037,6 +14625,7 @@ export type UsageActionResultById = {
             };
             publicProfileEvidence?: undefined | {
                 facts: {
+                    mergedPrs?: number | undefined;
                     peakParallel?: number | undefined;
                     weeklyPeakParallel?: undefined | {
                         peak: number;
@@ -14046,6 +14635,10 @@ export type UsageActionResultById = {
                         };
                         startMs: number;
                         endMs: number;
+                    }[];
+                    sessionDurations?: undefined | {
+                        agentId: string;
+                        durationMs: number;
                     }[];
                     dayNightActivity?: undefined | {
                         window: {
@@ -14060,11 +14653,6 @@ export type UsageActionResultById = {
                         };
                     };
                     agentTimeMs?: number | undefined;
-                    mergedPrs?: number | undefined;
-                    sessionDurations?: undefined | {
-                        agentId: string;
-                        durationMs: number;
-                    }[];
                 };
                 fieldCoverage: Partial<Record<'agentTime' | 'dayNightActivity' | 'mergedPrs' | 'peakParallel' | 'sessionDurations' | 'weeklyPeakParallel', {
                     status: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14073,6 +14661,7 @@ export type UsageActionResultById = {
                 lenses: {
                     execution: 'happier' | 'outside';
                     facts: {
+                        mergedPrs?: number | undefined;
                         peakParallel?: number | undefined;
                         weeklyPeakParallel?: undefined | {
                             peak: number;
@@ -14082,6 +14671,10 @@ export type UsageActionResultById = {
                             };
                             startMs: number;
                             endMs: number;
+                        }[];
+                        sessionDurations?: undefined | {
+                            agentId: string;
+                            durationMs: number;
                         }[];
                         dayNightActivity?: undefined | {
                             window: {
@@ -14096,11 +14689,6 @@ export type UsageActionResultById = {
                             };
                         };
                         agentTimeMs?: number | undefined;
-                        mergedPrs?: number | undefined;
-                        sessionDurations?: undefined | {
-                            agentId: string;
-                            durationMs: number;
-                        }[];
                     };
                     accountingFacts?: undefined | {
                         agentMix?: undefined | {
@@ -14111,6 +14699,7 @@ export type UsageActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         agentActiveDays?: undefined | {
                             agentId: string;
@@ -14143,6 +14732,7 @@ export type UsageActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     agentActiveDays?: undefined | {
                         agentId: string;
@@ -14286,6 +14876,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         estimatedTokenCount: 0;
                     };
@@ -14412,6 +15006,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14432,6 +15027,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         leaders: {
                             tokens: {
@@ -14485,6 +15081,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         agents: {
                             agentId: null | string;
@@ -14501,6 +15098,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14565,6 +15163,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         agents: {
                             agentId: null | string;
@@ -14581,6 +15180,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14645,6 +15245,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         agents: {
                             agentId: null | string;
@@ -14661,6 +15262,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14725,6 +15327,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         agents: {
                             agentId: null | string;
@@ -14741,6 +15344,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';
@@ -14802,6 +15406,7 @@ export type UsageActionResultById = {
                             busyMs: null | number;
                             steeringCount: null | number;
                             peakParallel: null | number;
+                            tokensFromParts?: true | undefined;
                         };
                         agents: {
                             agentId: null | string;
@@ -14818,6 +15423,7 @@ export type UsageActionResultById = {
                                 busyMs: null | number;
                                 steeringCount: null | number;
                                 peakParallel: null | number;
+                                tokensFromParts?: true | undefined;
                             };
                             coverage: {
                                 accounting: 'complete_for_supplied_facts' | 'partial' | 'unavailable' | 'unknown';

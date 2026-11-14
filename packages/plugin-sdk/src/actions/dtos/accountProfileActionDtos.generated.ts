@@ -2139,6 +2139,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -2157,11 +2158,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -2235,6 +2238,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -2253,11 +2257,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -2708,6 +2714,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -2726,11 +2733,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -2804,6 +2813,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -2822,11 +2832,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -3167,6 +3179,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -3185,11 +3198,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -3263,6 +3278,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -3281,11 +3297,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -3692,6 +3710,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -3710,11 +3729,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -3788,6 +3809,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -3806,11 +3828,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -4217,6 +4241,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -4235,11 +4260,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -4313,6 +4340,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -4331,11 +4359,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -4742,6 +4772,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -4760,11 +4791,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -4838,6 +4871,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -4856,11 +4890,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -5267,6 +5303,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -5285,11 +5322,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -5363,6 +5402,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -5381,11 +5421,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;
@@ -5792,6 +5834,7 @@ export type AccountProfileActionResultById = {
                 }>>;
                 facts: {
                     tokens?: number | undefined;
+                    tokensFromParts?: true | undefined;
                     activeDays?: number | undefined;
                     agentTimeMs?: number | undefined;
                     mergedPrs?: number | undefined;
@@ -5810,11 +5853,13 @@ export type AccountProfileActionResultById = {
                             method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                         };
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     sourceSplit?: undefined | {
                         execution: 'happier' | 'outside' | 'unknown';
                         share: number;
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                     }[];
                     punch?: undefined | {
                         weekday: number;
@@ -5888,6 +5933,7 @@ export type AccountProfileActionResultById = {
                     execution: 'happier' | 'outside';
                     facts: {
                         tokens?: number | undefined;
+                        tokensFromParts?: true | undefined;
                         activeDays?: number | undefined;
                         agentTimeMs?: number | undefined;
                         mergedPrs?: number | undefined;
@@ -5906,11 +5952,13 @@ export type AccountProfileActionResultById = {
                                 method: 'context_only' | 'logs' | 'mixed' | 'runtime' | 'unknown';
                             };
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         sourceSplit?: undefined | {
                             execution: 'happier' | 'outside' | 'unknown';
                             share: number;
                             tokens?: number | undefined;
+                            tokensFromParts?: true | undefined;
                         }[];
                         punch?: undefined | {
                             weekday: number;

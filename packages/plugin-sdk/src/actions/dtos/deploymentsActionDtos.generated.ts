@@ -2070,10 +2070,10 @@ export type DeploymentsActionInputById = {
                     resourceRevision: number;
                     kind: 'secret';
                 };
-                grantRef: string;
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
+                grantRef?: string | undefined;
             } | {
                 source: {
                     ref: string;
@@ -6823,10 +6823,10 @@ export type DeploymentsActionResultById = {
                             resourceRevision: number;
                             kind: 'secret';
                         };
-                        grantRef: string;
                         purpose: 'variable';
                         name: string;
                         phase: 'build' | 'runtime';
+                        grantRef?: string | undefined;
                     } | {
                         source: {
                             ref: string;
@@ -8791,10 +8791,10 @@ export type DeploymentsActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
-                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 } | {
                     source: {
                         ref: string;

@@ -1243,10 +1243,10 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
-                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
+                                    grantRef?: string | undefined;
                                 } | {
                                     source: {
                                         ref: string;
@@ -3298,10 +3298,10 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
-                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
+                                    grantRef?: string | undefined;
                                 } | {
                                     source: {
                                         ref: string;
@@ -5353,10 +5353,10 @@ export type ProjectExecutionActionResultById = {
                                         resourceRevision: number;
                                         kind: 'secret';
                                     };
-                                    grantRef: string;
                                     purpose: 'variable';
                                     name: string;
                                     phase: 'build' | 'runtime';
+                                    grantRef?: string | undefined;
                                 } | {
                                     source: {
                                         ref: string;
