@@ -397,9 +397,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 <View style={styles.eventFields}>
                     {props.model.eventCatalogStatus !== 'ready' ? (
                         <Text style={styles.unavailableText}>
-                            {t(props.model.eventCatalogStatus === 'loading'
-                                ? 'automations.form.trigger.eventCatalogLoading'
-                                : 'automations.form.trigger.eventCatalogUnavailable')}
+                            {props.model.eventCatalogStatus === 'idle'
+                                ? chooseObservationPlacement
+                                : t(props.model.eventCatalogStatus === 'loading'
+                                    ? 'automations.form.trigger.eventCatalogLoading'
+                                    : 'automations.form.trigger.eventCatalogUnavailable')}
                         </Text>
                     ) : (
                         <>

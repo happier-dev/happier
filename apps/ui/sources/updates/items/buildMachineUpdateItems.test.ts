@@ -12,7 +12,7 @@ import {
     buildThisComputerCliUpdateItem,
 } from './buildMachineUpdateItems';
 import { isUpdateItemActionable } from './updateItem';
-import { buildUpdatesSummary } from './buildUpdatesSummary';
+import { buildUpdatesSummary, planUpdateAll } from './buildUpdatesSummary';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 
@@ -76,6 +76,24 @@ describe('another machine — Happier CLI row (K5)', () => {
         canUpdateRemotely: true,
         lastUpdate: null,
     };
+
+    it.each([null, '0.2.9'])('allows an explicit managed CLI update with cached latest %s without claiming an available upgrade', (latestVersion) => {
+        const local = buildThisComputerCliUpdateItem({
+            machineId: 'local', title: 'Happier CLI', task: IDLE_TASK,
+            facts: { currentVersion: k5.currentVersion, latestVersion, managed: true, updateCommand: null },
+        });
+        const remote = buildRemoteCliUpdateItem({
+            machineId: 'remote', title: 'Happier CLI', online: true, platform: 'linux',
+            happyCliVersion: k5.currentVersion, remoteUpdateAdvertised: true, task: IDLE_TASK,
+            facts: { ...k5, latestVersion },
+        });
+        for (const item of [local!, remote]) {
+            expect(item).toMatchObject({ state: 'unknown', managedBy: 'happier', action: { kind: 'run', verb: 'update' } });
+            expect(isUpdateItemActionable(item)).toBe(false);
+            expect(buildUpdatesSummary([item]).status).toBe('unknown');
+            expect(planUpdateAll([item]).total).toBe(0);
+        }
+    });
 
     it('does not certify a cached current version as freshly up to date, and keeps the manual path', () => {
         const item = buildRemoteCliUpdateItem({

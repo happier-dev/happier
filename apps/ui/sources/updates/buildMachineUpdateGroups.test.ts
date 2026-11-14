@@ -10,6 +10,7 @@ vi.mock('@/text', async () => {
 
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeUpdatesGroupRow, partitionUncheckedItems, partitionUpdatesPageGroups } from '@/components/updates/describeUpdatesGroupRow';
@@ -64,6 +65,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
             currentVersion: '0.2.10', latestVersion: null, channel: 'stable', installSource: 'managed',
             updateCommand: 'happier self update', canUpdateRemotely: true, lastUpdate: null,
         } });
+        publishMachineActivity(guest, guest, []);
         const params = { accountScope: { serverId: 'home-a', accountId: 'updates-account' }, machines: [guest],
             thisMachineId: null, thisComputerItem: null, runs: NO_RUNS,
             machineAgents: new Map([[guest.id, ['claude', 'codex'].map(agentId => projectMachineAgent({
@@ -72,14 +74,16 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         const built = buildMachineUpdateGroups(params);
         const item = built.groups[0]!.items[0]!;
         expect(item).toMatchObject({ subject: { kind: 'happier-cli' }, currentVersion: '0.2.10',
-            managedBy: 'happier', state: 'unknown', action: { kind: 'none' }, failure: { kind: 'latestUnknown' } });
+            managedBy: 'happier', state: 'unknown', action: { kind: 'run', verb: 'update' }, failure: { kind: 'latestUnknown' } });
         expect(partitionUpdatesPageGroups(built.groups)).toMatchObject({ sections: built.groups, quiet: [] });
         expect(partitionUncheckedItems(built.groups[0]!.items).rows).toContain(item);
-        expect(describeUpdateItem(item)).toMatchObject({ actionLabel: null });
+        expect(describeUpdateItem(item)).toMatchObject({ actionLabel: 'updates.action.update' });
         expect(describeUpdateItem(item).subtitle).toContain('updates.row.latestUnknown');
-        const answered = buildMachineUpdateGroups({ ...params, machines: [machine(guest.id, {
+        const updatedGuest = machine(guest.id, {
             ...guest.metadata!, cliUpdate: { ...guest.metadata!.cliUpdate!, latestVersion: '0.2.20' },
-        })] });
+        });
+        publishMachineActivity(updatedGuest, updatedGuest, []);
+        const answered = buildMachineUpdateGroups({ ...params, machines: [updatedGuest] });
         expect(answered.groups[0]!.items[0]).toMatchObject({ state: 'available', action: { kind: 'run', verb: 'update' } });
     });
 

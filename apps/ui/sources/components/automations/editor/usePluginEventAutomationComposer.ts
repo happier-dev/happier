@@ -110,7 +110,7 @@ export type PluginEventAutomationPluginPresentation = Readonly<{
 
 export type PluginEventAutomationComposerModel = Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
-    eventCatalogStatus: 'loading' | 'ready' | 'unavailable';
+    eventCatalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
     selectedEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
     /** Qualified intent only; never an admitted Event descriptor. */
     pendingEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
@@ -396,6 +396,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const
+        : params.projectionPhase === 'idle' ? 'idle' as const
         : params.projectionPhase === 'loading' ? 'loading' as const : 'unavailable' as const;
     const presentationStateRef = React.useRef<PluginEventAutomationPresentationState | null>(null);
     presentationStateRef.current = {

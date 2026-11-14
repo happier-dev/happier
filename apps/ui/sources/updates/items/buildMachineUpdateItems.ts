@@ -101,12 +101,14 @@ function resolveRow(item: UpdateItem, params: Readonly<{
     if (params.manual) {
         return { ...item, state, managedBy: 'user', action: state === 'available' || state === 'unknown' ? params.manual : { kind: 'none' } };
     }
-    if (state === 'available' && params.canRun) {
-        return { ...item, state, action: { kind: 'run', verb: 'update' } };
-    }
     return {
         ...item,
         state,
+        // The CLI updater resolves the release itself. A missing/stale release cache must not
+        // disable an explicit update; the unknown state still excludes it from Update all.
+        action: params.canRun && (state === 'available' || (state === 'unknown' && item.subject.kind === 'happier-cli'))
+            ? { kind: 'run', verb: 'update' }
+            : item.action,
         failure: state === 'unknown' && item.subject.kind === 'happier-cli' && !item.latestVersion
             ? { kind: 'latestUnknown' }
             : item.failure,

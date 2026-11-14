@@ -20,7 +20,7 @@ import {
     getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -30,10 +30,6 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { readPluginUiExecutionOriginCandidates } from '@/sync/domains/plugins/ui/projectionUnion';
-import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { getPluginExecutionOriginCandidateOrigin, isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
@@ -52,6 +48,11 @@ const MATERIALIZATION_ID = 'github-materialization-a';
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
+const { publishDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
+const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+const { getPluginExecutionOriginCandidateOrigin, isPluginMachineExecutionOriginCandidateSelectable } = await import('@/sync/domains/machines/administration/pluginExecutionOrigin');
 const { usePluginEventAutomationComposer } = await import('./usePluginEventAutomationComposer');
 const endpointReadPath = getActionSpec('plugin.webhook.endpoint.read').serverTransport!.path;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
@@ -410,21 +411,22 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         });
         const admitted = ingestPluginManifestV2({ ...availabilityResponse.release.normalizedManifest, contributes: contributions(true) });
         expect(admitted.ok && admitted.manifest.contributes.events?.some(row => row.id === EVENT_LOCAL_ID)).toBe(true);
-        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+        // Bodies are content-addressed: one digest per distinct declaration.
+        const digestFor = (includesEvent: boolean) => `sha256:${(includesEvent ? 'c' : 'e').repeat(64)}`;
+        const censusResponse = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
             ...availabilityResponse,
             currentDeclaration: null,
             intent: { ...availabilityResponse.intent, desiredVersion: null },
             machineDeclarations: machines.map(machineId => ({ machineId, machineInstallationId: 'test-installation',
-                declaration: { declarationDigestSha256: `sha256:${'c'.repeat(64)}`,
-                    manifest: { ...availabilityResponse.release!.normalizedManifest,
-                        contributes: contributions(machineId === WATCHER_MACHINE_ID ? declared : !declared) } } })),
+                declaration: { declarationDigestSha256: digestFor(machineId === WATCHER_MACHINE_ID ? declared : !declared) } })),
             release: { ...availabilityResponse.release, normalizedManifest: {
                 ...availabilityResponse.release.normalizedManifest,
                 contributes: contributions(declared),
             } },
         });
-        const censusResponse = { ...response, machineDeclarations: response.machineDeclarations?.map(row => ({ ...row,
-            declaration: { declarationDigestSha256: row.declaration.declarationDigestSha256 } })) };
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...censusResponse,
+            declarationBodies: [true, false].map(includesEvent => ({ declarationDigestSha256: digestFor(includesEvent),
+                manifest: { ...availabilityResponse.release!.normalizedManifest, contributes: contributions(includesEvent) } })) });
         const exactPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'];
         harness.answer(serverId, exactPath, { body: response });
         harness.answer(serverId, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
@@ -604,11 +606,12 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
     it('bootstraps an unseeded Event only from an explicit current watcher choice', async () => {
         const event = eligibleEvent();
         const seed = { eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' } };
-        const hook = await renderHook((inputs: DaemonMergedProjectionInputs | null) => usePluginEventAutomationComposer({
-            machineId: inputs ? WATCHER_MACHINE_ID : null, serverId,
-            projectionPhase: inputs ? 'ready' : 'idle', projectionInputs: inputs,
+        const hook = await renderHook((phase: DaemonMergedProjectionPhase) => usePluginEventAutomationComposer({
+            machineId: phase === 'idle' ? null : WATCHER_MACHINE_ID, serverId,
+            projectionPhase: phase, projectionInputs: phase === 'ready' ? projectionInputs(event) : null,
             initialEventRef: event.event.identity, initialSetupSeed: seed,
-        }), { initialProps: null as DaemonMergedProjectionInputs | null });
+        }), { initialProps: 'idle' });
+        expect(hook.getCurrent().eventCatalogStatus).toBe('idle');
         expect(hook.getCurrent().watcherCandidates).toHaveLength(1);
         expect(hook.getCurrent().selectedWatcherOrigin).toBeNull();
         expect(hook.getCurrent().selectedEvent).toBeNull();
@@ -619,8 +622,14 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         expect(hook.getCurrent().selectedWatcherOrigin).toBeNull();
         await act(async () => hook.getCurrent().selectWatcher(hook.getCurrent().watcherCandidates[0]!));
         expect(hook.getCurrent().selectedWatcherOrigin).toMatchObject({ materializationRef: { machineId: WATCHER_MACHINE_ID } });
-        await hook.rerender(projectionInputs(event));
+        await hook.rerender('loading');
+        expect(hook.getCurrent().eventCatalogStatus).toBe('loading');
+        await hook.rerender('error');
+        expect(hook.getCurrent().eventCatalogStatus).toBe('unavailable');
+        expect(hook.getCurrent().createDraft).toBeNull();
+        await hook.rerender('ready');
         await waitForHomeGovernance(() => expect(hook.getCurrent().selectedEvent?.event.identity).toEqual(event.event.identity));
+        expect(hook.getCurrent().eventCatalogStatus).toBe('ready');
         expect(hook.getCurrent().selectedWatcherOrigin).toMatchObject({ materializationRef: { machineId: WATCHER_MACHINE_ID } });
         expect(hook.getCurrent().sourceStatus).toBe('idle');
         expect(hook.getCurrent().createDraft).toBeNull();
@@ -636,6 +645,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
                 authoringMachineId={null} serverId={serverId} onComplete={() => { throw new Error('must not enroll'); }} onCancel={() => {}} />
         </> });
         const model = () => hook.tree.root.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
+        expect(model().eventCatalogStatus).toBe('idle');
         expect(model().selectedEvent).toBeNull();
         expect(editorProjectionReads).toEqual([]);
         await act(async () => model().selectWatcher(model().watcherCandidates[0]!));
