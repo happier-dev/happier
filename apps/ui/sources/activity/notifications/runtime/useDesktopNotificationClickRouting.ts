@@ -30,11 +30,11 @@ export function useDesktopNotificationClickRouting(): void {
                     return;
                 }
                 unlisten = dispose;
-                // Register first, then consume: clicks during registration remain in the shell.
-                // Startup and live wakes both take the same slot, so a click opens only once.
-                void takePending();
             })
-            .catch(() => { console.warn('[notifications] Desktop notification click listener unavailable'); });
+            .catch(() => { console.warn('[notifications] Desktop notification click listener unavailable'); })
+            // Settle registration first; the pending slot remains readable even if listening fails.
+            // Startup and live wakes both take the same slot, so a click opens only once.
+            .then(takePending);
 
         return () => {
             disposed = true;

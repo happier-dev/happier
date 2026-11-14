@@ -6,6 +6,7 @@ const native = vi.hoisted(() => ({
     listener: null as null | (() => void),
     finishListening: null as null | (() => void),
     delayedRegistration: false,
+    failedRegistration: false,
     unlisten: vi.fn(),
     invoke: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => true,
     invokeTauri: (...args: unknown[]) => native.invoke(...args),
     listenTauriEvent: async (_event: string, listener: () => void) => {
+        if (native.failedRegistration) throw new Error('Event listener unavailable');
         if (native.delayedRegistration) {
             await new Promise<void>((resolve) => { native.finishListening = resolve; });
         }
@@ -41,6 +43,7 @@ describe('useDesktopNotificationClickRouting', () => {
         native.listener = null;
         native.finishListening = null;
         native.delayedRegistration = false;
+        native.failedRegistration = false;
         native.unlisten.mockReset();
         native.invoke.mockReset().mockImplementation(async () => {
             const data = native.pending;
@@ -107,6 +110,17 @@ describe('useDesktopNotificationClickRouting', () => {
         await flushHookEffects();
         expect(warning).toHaveBeenCalled();
         expect(push).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('opens a pending click and reports when listener registration fails', async () => {
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        native.failedRegistration = true;
+        native.pending = { sessionId: 'listener-unavailable' };
+        const hook = await renderHook(useDesktopNotificationClickRouting);
+        await flushHookEffects();
+        expect(push).toHaveBeenCalledExactlyOnceWith('/session/listener-unavailable');
+        expect(warning).toHaveBeenCalled();
         await hook.unmount();
     });
 });
