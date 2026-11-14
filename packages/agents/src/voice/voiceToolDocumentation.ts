@@ -82,7 +82,8 @@ function formatToolDocumentation(
     : argsExample;
   const lines: string[] = [`- ${toolName}: ${desc} ${invocationLabel} ${invocationExample}.`];
 
-  const workflowNotes = getActionVoiceWorkflowNotes(spec.id, availability);
+  const workflowNotes = getActionVoiceWorkflowNotes(spec.id, availability)
+    .filter(note => !referencesUnavailableVoiceTool(note, availability));
   if (workflowNotes.length > 0) {
     lines.push(`  Use: ${workflowNotes.join(' ')}`);
   }
@@ -130,7 +131,7 @@ export function buildVoiceToolDocumentationLines(
 
 export function buildVoiceDiscoveryChecklistLines(
   specs: readonly VoicePromptActionSpec[],
-  params?: Readonly<{ disabledActionIds?: readonly string[] }>,
+  params?: Readonly<{ disabledActionIds?: readonly string[]; includeAllTools?: boolean }>,
 ): readonly string[] {
   const disabled = new Set((params?.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean));
   const enabledSpecs = specs.filter((spec) => !disabled.has(spec.id));
@@ -142,6 +143,9 @@ export function buildVoiceDiscoveryChecklistLines(
   const out: string[] = [];
 
   for (const spec of enabledSpecs) {
+    // Documented tools already carry these workflow notes beside their inputs.
+    // The checklist supplies only the undisplayed catalog's discovery guidance.
+    if (params?.includeAllTools || isVoicePromptHotPathSpec(spec)) continue;
     for (const note of getActionVoiceWorkflowNotes(spec.id, availability)) {
       const normalized = normalizeText(note);
       if (!normalized

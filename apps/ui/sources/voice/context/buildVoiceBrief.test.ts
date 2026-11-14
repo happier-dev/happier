@@ -113,6 +113,8 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(context.items.filter((item: { category: string }) => item.category === 'needs_you').map((item: { title: string }) => item.title))
             .toEqual(['Amber', 'Silver', ...Array.from({ length: 6 }, (_, index) => `Work ${index + 2}`)]);
         expect(context.remaining).toEqual({ needs_you: 0, failed: 0, ready: 0 });
+        console.info(JSON.stringify({ voiceBriefCost: { sourceSessions: candidates.length,
+            disclosedItems: context.items.length, contextBytes: new TextEncoder().encode(brief.context).byteLength } }));
         const withheld = JSON.parse(buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: false } } } }).context);
         expect(withheld.items).toEqual([]);
         expect(withheld.remaining).toEqual(context.counts);

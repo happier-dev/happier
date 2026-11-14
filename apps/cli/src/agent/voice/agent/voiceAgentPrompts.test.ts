@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt } from './voiceAgentPrompts';
+import { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt, buildVoiceAgentUserTurnPrompt } from './voiceAgentPrompts';
 
 describe('voiceAgentPrompts', () => {
+  it.each(['native', 'mcp'] as const)('captures %s prompt cost without multiplying context or conversation history', actionTransport => {
+    const options = { actionTransport, verbosity: 'short' as const, initialContext: '' };
+    const empty = buildVoiceAgentSeededUserTurnPrompt({ ...options, userText: 'list sessions' });
+    const context = 'Current session: billing rewrite.';
+    const history = [{ role: 'user' as const, text: 'Show my sessions.' },
+      { role: 'assistant' as const, text: 'Four sessions are available.' }];
+    const seeded = buildVoiceAgentSeededUserTurnPrompt({ ...options, initialContext: context,
+      userText: 'list sessions', history });
+    const twice = buildVoiceAgentSeededUserTurnPrompt({ ...options, initialContext: context.repeat(2),
+      userText: 'list sessions', history: [...history, ...history] });
+    const bootstrap = buildVoiceAgentBootstrapPrompt({ ...options, mode: 'ready_handshake' });
+    const turn = buildVoiceAgentUserTurnPrompt({ userText: 'list sessions' });
+    const bytes = (value: string) => Buffer.byteLength(value);
+    // 49,604 B is the captured 11-14 empty seeded native prompt,
+    // before removing duplicated workflow guidance. A regression basis,
+    // never a product limit or truncation of a person's context/history.
+    expect(bytes(empty)).toBeLessThan(49_604);
+    expect(bytes(twice) - bytes(seeded)).toBe(bytes(context)
+      + history.reduce((total, item) => total + bytes(`${item.role === 'user' ? 'User' : 'Voice agent'}: ${item.text}\n`), 0));
+    expect(turn).toBe('User: list sessions\nVoice agent:');
+    expect(seeded).toContain(context);
+    for (const item of history) expect(seeded).toContain(item.text);
+    console.info(JSON.stringify({ voicePromptCost: { actionTransport,
+      bootstrapBytes: bytes(bootstrap), seededBytes: bytes(seeded),
+      emptySeededBytes: bytes(empty), retainedTurnBytes: bytes(turn), contextBytes: bytes(context),
+      historyTurns: history.length } }));
+  });
   it.each(['  Exact greeting.\n\n', '   ', ''])('retains explicitly selected welcome bytes %j', (welcomeText) => {
     const prompt = buildVoiceAgentBootstrapPrompt({
       verbosity: 'short', initialContext: '', mode: 'welcome', welcomeText,

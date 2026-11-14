@@ -484,7 +484,7 @@ describe('voiceAgentPrompt', () => {
     expect(clientToolPrompt).toContain('For codebase questions or actions, use tools first before answering');
   });
 
-  it('adds a dynamic discovery checklist ahead of the tool catalog', () => {
+  it('retains discovery guidance beside documented tools or in the discovery checklist', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
     });
@@ -495,14 +495,14 @@ describe('voiceAgentPrompt', () => {
 
     expect(localPrompt).toContain('Discovery checklist:');
     expect(localPrompt).toMatch(/Use listAgentBackends before choosing .*backendTargetKeys internally/);
-    expect(localPrompt).toContain('- Use listSessions before choosing sessionId internally');
-    expect(localPrompt).toContain('- If the exact session title is not in the first listSessions page, continue with its next cursor');
-    expect(localPrompt).toContain('- Use listRecentPaths instead of guessing raw paths');
-    expect(localPrompt).toContain('- Use the admitted Voice execution target when one is supplied');
-    expect(localPrompt).toContain('- When the person does not name a coding Agent, omit agentTarget so the host selects the canonical ready default');
+    expect(localPrompt).toContain('Use listSessions before choosing sessionId internally');
+    expect(localPrompt).toContain('If the exact session title is not in the first listSessions page, continue with its next cursor');
+    expect(localPrompt).toContain('Use listRecentPaths instead of guessing raw paths');
+    expect(localPrompt).toContain('Use the admitted Voice execution target when one is supplied');
+    expect(localPrompt).toContain('When the person does not name a coding Agent, omit agentTarget so the host selects the canonical ready default');
 
     expect(clientToolPrompt).toContain('Discovery checklist:');
-    expect(clientToolPrompt).toContain('- Use listExecutionRuns before choosing runId internally');
+    expect(clientToolPrompt).toContain('Use listExecutionRuns before choosing runId internally');
     expect(clientToolPrompt).not.toContain('spawnSession');
     expect(clientToolPrompt).not.toContain('spawnSessionPicker');
   });

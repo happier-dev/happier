@@ -318,6 +318,8 @@ describe('listSessionsForVoiceTool privacy', () => {
     if ('view' in second || !second.ok) throw new Error('Expected second summary page');
     expect([...first.sessions, ...second.sessions].map(session => `${session.serverId}:${session.id}`).sort())
       .toEqual([`${serverId}:s1`, `${otherServerId}:s1`].sort());
+    expect(first.nextCursor).not.toBeNull();
+    expect(second.nextCursor).toBeNull();
   });
 
   it('reads the released delimiter cursor while publishing only qualified structured cursors', async () => {
@@ -326,7 +328,31 @@ describe('listSessionsForVoiceTool privacy', () => {
     const result = await listSessionsForVoiceTool({ limit: 1, cursor: '100:s1' });
     if ('view' in result || !result.ok) throw new Error('Expected summary page');
     expect(result.sessions.map(session => session.id)).toEqual(['s0']);
-    expect(JSON.parse(result.nextCursor ?? '')).toEqual([1, 90, 's0', serverId]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('advertises continuation only for remaining rows and projects only the requested page', async () => {
+    seedSession({ shareSessionSummary: true });
+    const records = Array.from({ length: 4 }, (_, index) => row(`cost-${index}`, {
+      updatedAt: 100 - index,
+    }));
+    home.answer(serverId, '/v2/sessions', { body: ordinaryPage(records) });
+    const all = await listSessionsForVoiceTool({ limit: records.length });
+    const first = await listSessionsForVoiceTool({ limit: 1 });
+    if ('view' in all || !all.ok || 'view' in first || !first.ok) throw new Error('Expected summary pages');
+    expect(all.sessions).toHaveLength(records.length);
+    expect(all.nextCursor).toBeNull();
+    expect(first.sessions).toHaveLength(1);
+    expect(first.nextCursor).not.toBeNull();
+    // The payload grows by returned rows, never by the full underlying corpus.
+    const rowBytes = all.sessions.map(session => new TextEncoder().encode(JSON.stringify(session)).byteLength);
+    expect(new TextEncoder().encode(JSON.stringify(first.sessions)).byteLength).toBe(rowBytes[0] + 2);
+    expect(new TextEncoder().encode(JSON.stringify(all.sessions)).byteLength)
+      .toBe(rowBytes.reduce((sum, bytes) => sum + bytes, 0) + records.length + 1);
+    expect(all.sessions.every(session => !('metadata' in session) && !('lastMessagePreview' in session))).toBe(true);
+    console.info(JSON.stringify({ voiceListCost: { rows: records.length,
+      resultBytes: new TextEncoder().encode(JSON.stringify(all)).byteLength,
+      firstPageBytes: new TextEncoder().encode(JSON.stringify(first)).byteLength } }));
   });
 
   it('uses the admitted corpus for the basic list and reports incomplete coverage', async () => {

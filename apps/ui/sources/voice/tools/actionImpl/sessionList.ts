@@ -320,10 +320,10 @@ export async function listSessionsForVoiceTool(params: Readonly<{
 
   const privacy = readVoicePrivacySettings(state?.settings);
 
-  const pageRows = rows
+  const remainingRows = rows
     .sort((a, b) => compareVoiceSessionListKeysDesc(a.key, b.key))
-    .filter((s) => (cursorKey ? isVoiceSessionListKeyAfterCursor(s.key, cursorKey) : true))
-    .slice(0, limit);
+    .filter((s) => (cursorKey ? isVoiceSessionListKeyAfterCursor(s.key, cursorKey) : true));
+  const pageRows = remainingRows.slice(0, limit);
 
   const sessions = pageRows
     .map((s) => {
@@ -359,7 +359,9 @@ export async function listSessionsForVoiceTool(params: Readonly<{
       return out;
     });
 
-  const nextCursor = formatVoiceSessionListCursor(pageRows.at(-1)?.key ?? null);
+  const nextCursor = remainingRows.length > pageRows.length
+    ? formatVoiceSessionListCursor(pageRows.at(-1)?.key ?? null)
+    : null;
   // This summary enumerates the retained ordinary corpus. Read its omission
   // observations from the same per-Home lifecycle, never from a filtered pane.
   const serverIds = new Set([
