@@ -14,6 +14,7 @@ import type { HealthCheckSubjectV1 } from '@happier-dev/protocol/deployments/hea
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
+import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { t } from '@/text';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -290,4 +291,19 @@ export function readServiceCheckRecent(check: RetainedCheck): ServiceCheckRecent
     failingSince: failing ? check.failingSince! : null,
     failureStreak: failing && check.failureStreak !== undefined ? check.failureStreak : null,
   };
+}
+
+type ShownDefinition = Extract<ConfiguredCheckDefinitionFacts, { kind: 'available' }>['checks'][number];
+
+/**
+ * The definition the detail names (kind, target, cadence): the shown check's, else the source's first, from the
+ * inventory's definition facts. Loading and unavailable stay as the owner reports them.
+ */
+export function serviceCheckShownDefinition(
+  facts: ConfiguredCheckDefinitionFacts,
+  checkId: string | null,
+): Readonly<{ kind: 'loading' }> | Readonly<{ kind: 'unavailable' }> | Readonly<{ kind: 'available'; definition: ShownDefinition }> {
+  if (facts.kind !== 'available') return { kind: facts.kind };
+  const definition = facts.checks.find((check) => check.checkId === checkId) ?? facts.checks[0];
+  return definition ? { kind: 'available', definition } : { kind: 'unavailable' };
 }

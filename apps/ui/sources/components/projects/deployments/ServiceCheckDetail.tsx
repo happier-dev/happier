@@ -33,6 +33,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  serviceCheckShownDefinition,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
   serviceCheckResultWord,
@@ -201,19 +202,19 @@ export function ServiceCheckDetail(
   const statusText = row.native.enabled
     ? serviceCheckStatusWord(facts.status)
     : t(`${k}.paused`);
+  // Kind, target and cadence come from the inventory's definition facts; the page never reads a target itself.
+  const head = serviceCheckShownDefinition(row.definitionFacts, shown?.checkId ?? null);
+  const definition = head.kind === 'available' ? head.definition : null;
   const meta = [
-    settings?.kind ? kindWord(settings.kind) : null,
-    settings?.label ?? row.native.description ?? null,
-    settings
-      ? observer
-        ? t(`${k}.checkEvery`, {
-            period: formatPeriod(settings.periodMs),
-            machine: observer,
-          })
-        : t(`${k}.checkEveryAnywhere`, {
-            period: formatPeriod(settings.periodMs),
-          })
-      : null,
+    ...(definition
+      ? [
+          definition.name,
+          definition.targetLabel,
+          observer
+            ? t(`${k}.checkEvery`, { period: formatPeriod(definition.periodMs), machine: observer })
+            : t(`${k}.checkEveryAnywhere`, { period: formatPeriod(definition.periodMs) }),
+        ]
+      : [head.kind === 'loading' ? t('common.loading') : t('automations.form.trigger.sourceUnavailable')]),
     statusText,
   ].filter((part): part is string => Boolean(part));
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
@@ -421,13 +422,13 @@ export function ServiceCheckDetail(
         title={t('projects.deployments.tabSettings')}
         testID="services.check.settings"
       >
-        {settings?.address ? (
+        {definition?.targetLabel ? (
           <Item
             testID="services.check.settings.address"
             title={t(`${k}.address`)}
             subtitle={
               <Text variant="meta" style={styles.mono}>
-                {settings.address}
+                {definition.targetLabel}
               </Text>
             }
             onPress={openEditor}
@@ -569,20 +570,6 @@ function CheckInvestigate(props: Readonly<{ subject: NonNullable<ReturnType<type
   );
 }
 
-function kindWord(kind: NonNullable<ServiceCheckSettings['kind']>): string {
-  switch (kind) {
-    case 'http':
-      return t(`${k}.checkHttp`);
-    case 'certificate':
-      return t(`${k}.checkCertificate`);
-    case 'tcp':
-      return t(`${k}.checkTcp`);
-    case 'dns':
-      return t(`${k}.checkDns`);
-    case 'heartbeat':
-      return t(`${k}.checkHeartbeat`);
-  }
-}
 
 const styles = StyleSheet.create((theme) => ({
   metaText: { color: theme.colors.text.secondary },

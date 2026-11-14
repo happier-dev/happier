@@ -4,6 +4,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  serviceCheckShownDefinition,
   readServiceCheckDefinitions,
   serviceCheckResultWord,
   serviceCheckInvestigationSubject,
@@ -237,5 +238,22 @@ describe('a Check’s fact cells say a result, never repeat the unknown state th
     expect(serviceCheckResultWord('unknown')).toBeNull();
     expect(serviceCheckResultWord('notChecked')).toBeNull();
     expect(serviceCheckResultWord('loading')).toBeNull();
+  });
+});
+
+describe('the Check detail names what it checks from the inventory’s definition facts', () => {
+  const facts = (checks: unknown[]) => ({ kind: 'available', checks }) as never;
+  const definition = (checkId: string, targetLabel: string | null) => ({ checkId, name: 'HTTP', targetLabel, periodMs: 300_000, domainId: null });
+
+  it('reads the shown check’s kind, target and cadence, else the first check', () => {
+    const available = facts([definition('a', 'shop.example/ready'), definition('b', 'api.example/health')]);
+    expect(serviceCheckShownDefinition(available, 'b')).toEqual({ kind: 'available', definition: definition('b', 'api.example/health') });
+    expect(serviceCheckShownDefinition(available, 'missing')).toEqual({ kind: 'available', definition: definition('a', 'shop.example/ready') });
+  });
+
+  it('says loading or unavailable as the owner reports it; an empty definition list is unavailable', () => {
+    expect(serviceCheckShownDefinition({ kind: 'loading' } as never, 'a')).toEqual({ kind: 'loading' });
+    expect(serviceCheckShownDefinition({ kind: 'unavailable' } as never, 'a')).toEqual({ kind: 'unavailable' });
+    expect(serviceCheckShownDefinition(facts([]), 'a')).toEqual({ kind: 'unavailable' });
   });
 });
