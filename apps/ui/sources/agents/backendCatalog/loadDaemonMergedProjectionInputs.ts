@@ -30,7 +30,8 @@ import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
 } from '@/agents/registry/agentUiBehaviorProjection';
-import { daemonProjectionSectionsCover, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { daemonProjectionSectionsCover, demandedDaemonProjectionSections, readDaemonProjectionSectionPlugins,
+    type DaemonProjectionDeferredSectionsResponse, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getPreferredLanguage } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -288,6 +289,14 @@ type ProjectionRequest = Readonly<{
      * any of them is still current, not only while the issuer is.
      */
     wait(reader: ActiveServerAccountScopeLifetime | null, signal?: AbortSignal): Promise<ProjectionCacheEntry | null>;
+    /** The sections this request hydrates; undefined is the complete set. */
+    sections: readonly string[] | undefined;
+    /**
+     * Its admitted deferred manifest, as soon as the describe answers and
+     * before its sections hydrate; null when it settles without one. A reader
+     * holds the request like a waiter while it asks.
+     */
+    manifest(reader: ActiveServerAccountScopeLifetime | null, signal?: AbortSignal): Promise<DaemonProjectionDeferredSectionsResponse | null>;
 }>;
 const LATEST_PROJECTION_REQUEST = new Map<string, ProjectionRequest>();
 
@@ -362,6 +371,22 @@ export function readCachedDaemonMergedProjectionCacheEntry(params: Readonly<{
     }
     const entry = currentProjectionCacheEntry(buildCacheKey(machineId, normalizeKeyPart(params.serverId) || null, params.selection));
     return entry && daemonProjectionHasSections(entry, params.sections) ? entry : null;
+}
+
+/**
+ * Which plugins' Actions this Machine's held answer read: `'all'`, the loaded
+ * plugin slices, or null when no Action was read. A plugin outside the slices
+ * is not loaded; its absence is never a retirement.
+ */
+export function readDaemonProjectionActionPlugins(params: Readonly<{
+    machineId: string | null | undefined;
+    serverId?: string | null;
+}>): 'all' | ReadonlySet<string> | null {
+    const machineId = normalizeKeyPart(params.machineId);
+    if (!machineId) return null;
+    const entry = currentProjectionCacheEntry(buildCacheKey(machineId, normalizeKeyPart(params.serverId) || null));
+    if (!entry || (entry.kind !== 'ready' && entry.kind !== 'error') || !entry.inputs) return null;
+    return entry.deferredProjection ? readDaemonProjectionSectionPlugins(entry.deferredProjection.loadedSections, 'actionsById') : 'all';
 }
 
 /** Current Account/locale/revision facts, including failures, for passive observers. */
@@ -466,6 +491,10 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     const matchesRequest = (entry: ProjectionCacheEntry) => entry.questionKey === questionKey
         && matchesProjectionCurrentness(entry, { projectionRevision: requestRevision, locale, accountScope });
     const incumbentRequest = LATEST_PROJECTION_REQUEST.get(requestKey);
+    // Demand the in-flight request does not cover hydrates beside it from its
+    // manifest; shared bodies join its pending reads. Waiting for its whole
+    // answer queued a Session's Composer behind the complete UI catalogue.
+    let inFlightManifest: DaemonProjectionDeferredSectionsResponse | null = null;
     if (
         incumbentRequest?.revision === requestRevision
         && incumbentRequest.questionKey === questionKey
@@ -473,11 +502,18 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         && (incumbentRequest.accountScope === accountScope
             || areServerAccountScopesEqual(incumbentRequest.accountScope, accountScope))
     ) {
-        const answer = await incumbentRequest.wait(accountLifetime, params.signal);
-        if (!answer || answer.kind !== 'ready' || daemonProjectionHasSections(answer, sections)) return answer;
-        return await loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime, reuseFreshReady: true });
+        const manifest = full ? await incumbentRequest.manifest(accountLifetime, params.signal) : null;
+        if (params.signal?.aborted || (accountLifetime && !accountLifetime.isCurrent())) return null;
+        if (manifest && !daemonProjectionSectionsCover(manifest,
+            demandedDaemonProjectionSections(manifest, incumbentRequest.sections), sections)) {
+            inFlightManifest = manifest;
+        } else {
+            const answer = await incumbentRequest.wait(accountLifetime, params.signal);
+            if (!answer || answer.kind !== 'ready' || daemonProjectionHasSections(answer, sections)) return answer;
+            return await loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime, reuseFreshReady: true });
+        }
     }
-    if (incumbentRequest && (incumbentRequest.accountScope === accountScope
+    if (!inFlightManifest && incumbentRequest && (incumbentRequest.accountScope === accountScope
         || areServerAccountScopesEqual(incumbentRequest.accountScope, accountScope))) {
         // A newer revision needs its own fresh answer, but not a second
         // full body queued behind the first. Finish the issued read, then let
@@ -641,6 +677,8 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         return published;
     };
     const requestAbort = new AbortController();
+    let revealManifest!: (manifest: DaemonProjectionDeferredSectionsResponse) => void;
+    const manifestSeen = new Promise<DaemonProjectionDeferredSectionsResponse>(resolve => { revealManifest = resolve; });
     const publishFailure = (reason: MachineContributionRegistryProjectionFailureReason,
         deferredHydrationRejection?: DaemonProjectionHydrationRejection) => {
         const previous = currentProjectionCacheEntry(cacheKey);
@@ -697,7 +735,9 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             signal: requestAbort.signal,
             ...(knownProjection ? { knownProjection } : {}),
             sections,
-            ...(held?.deferredProjection && heldInputs ? { deferredProjection: held.deferredProjection,
+            onManifest: revealManifest,
+            ...(inFlightManifest ? { deferredProjection: { manifest: inFlightManifest, loadedSections: [] }, reuseManifest: true }
+            : held?.deferredProjection && heldInputs ? { deferredProjection: held.deferredProjection,
                 reuseManifest: params.reuseFreshReady === true && matchesRequest(held) && held.kind === 'ready'
                     && !daemonProjectionHasSections(held, sections) } : {}),
             ...(sectionPool ? { sectionCache: sectionPool } : {}),
@@ -808,39 +848,44 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     const forget = () => {
         if (LATEST_PROJECTION_REQUEST.get(requestKey) === requestOwner) LATEST_PROJECTION_REQUEST.delete(requestKey);
     };
+    const hold = async <T>(reader: ActiveServerAccountScopeLifetime | null, signal: AbortSignal | undefined,
+        answer: Promise<T | null>): Promise<T | null> => {
+        if (reader) retainReader(reader);
+        waitingReaders++;
+        let released = false;
+        const release = () => {
+            if (released) return;
+            released = true;
+            if (--waitingReaders === 0 && !settled) {
+                forget();
+                requestAbort.abort();
+            }
+        };
+        let onAbort: (() => void) | undefined;
+        let retirement: Readonly<{ dispose(): void }> | undefined;
+        try {
+            if (signal?.aborted || (reader && !reader.isCurrent())) return null;
+            return await new Promise<T | null>((resolve, reject) => {
+                onAbort = () => { release(); resolve(null); };
+                signal?.addEventListener('abort', onAbort, { once: true });
+                retirement = reader?.onRetire(onAbort);
+                void answer.then(resolve, reject);
+            });
+        } finally {
+            if (onAbort) signal?.removeEventListener('abort', onAbort);
+            retirement?.dispose();
+            release();
+        }
+    };
     const requestOwner: ProjectionRequest = Object.freeze({
         revision: requestRevision,
         locale,
         questionKey,
         accountScope,
-        wait: async (reader: ActiveServerAccountScopeLifetime | null, signal?: AbortSignal) => {
-            if (reader) retainReader(reader);
-            waitingReaders++;
-            let released = false;
-            const release = () => {
-                if (released) return;
-                released = true;
-                if (--waitingReaders === 0 && !settled) {
-                    forget();
-                    requestAbort.abort();
-                }
-            };
-            let onAbort: (() => void) | undefined;
-            let retirement: Readonly<{ dispose(): void }> | undefined;
-            try {
-                if (signal?.aborted || (reader && !reader.isCurrent())) return null;
-                return await new Promise<ProjectionCacheEntry | null>((resolve, reject) => {
-                    onAbort = () => { release(); resolve(null); };
-                    signal?.addEventListener('abort', onAbort, { once: true });
-                    retirement = reader?.onRetire(onAbort);
-                    void request.then(resolve, reject);
-                });
-            } finally {
-                if (onAbort) signal?.removeEventListener('abort', onAbort);
-                retirement?.dispose();
-                release();
-            }
-        },
+        sections,
+        wait: (reader: ActiveServerAccountScopeLifetime | null, signal?: AbortSignal) => hold(reader, signal, request),
+        manifest: (reader: ActiveServerAccountScopeLifetime | null, signal?: AbortSignal) => hold(reader, signal,
+            Promise.race([manifestSeen, request.then(() => null, () => null)])),
     });
     LATEST_PROJECTION_REQUEST.set(requestKey, requestOwner);
     void request.then(forget, forget);

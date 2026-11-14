@@ -1,3 +1,4 @@
+import { COMPOSER_HOST_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import type {
     ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import type {
@@ -103,6 +104,10 @@ import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
+
+// A participant Composer presents the same plugin surfaces as the Session Composer, without its Agent chips.
+const PARTICIPANT_COMPOSER_PROJECTION_SECTIONS = COMPOSER_HOST_PROJECTION_SECTIONS.filter(section => section !== 'agentsById'
+    && section !== 'familiesById.providers' && section !== 'familiesById.connectedAccounts');
 
 /**
  * Thrown by a prepared-submission handler that kept the draft and already shows what happens next
@@ -228,9 +233,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     const composerAccountLifetime = participantAccountBinding;
     const participantAccountId = participantAccountBinding?.accountId.trim() || null;
     const participantDaemonProjection = useDaemonMergedProjectionInputs({
-        sections: ['actionsById', 'resourcesById', 'familiesById.pluginUi', 'familiesById.inputTypes',
-            'familiesById.composerAttachments', 'familiesById.composerControls', 'familiesById.composerRegions',
-            'contributionIntrospection', 'composerSurfaceCatalog'],
+        sections: PARTICIPANT_COMPOSER_PROJECTION_SECTIONS,
         machineId: participantMachineTarget?.machineId ?? null,
         serverId: participantServerId,
         enabled: participantMachineTarget !== null,

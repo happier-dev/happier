@@ -972,6 +972,44 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(retained).toMatchObject({ kind: 'ready', inputs: { automationEligibleEvents: [{ event: { title: 'Repository updated 9' } }] } });
     });
 
+    it('hydrates new section demand from an in-flight manifest instead of queueing behind its whole catalogue', async () => {
+        // Live (P03-FIX-OPEN-SEND): on a cold Session open the Composer's sections waited for the
+        // AppShell's complete Action/UI catalogue (~60 serial frames), then for an Agents top-up.
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const current = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: '7'.repeat(64), projection: { ...daemonProjection(7),
+                agentsById: { codex: { id: 'codex', title: 'Codex' } } } }));
+        const catalogue = createDeferred<void>();
+        let manifests = 0;
+        const blocked = current.manifest.sections.actionsById!;
+        network.setRpcAckResponder(async request => {
+            const section = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            if (!section) { manifests += 1; return { ok: true, result: current.manifest }; }
+            // The catalogue's own frame is slow; frames for other demand are not.
+            if (section.digest === blocked) await catalogue.promise;
+            return { ok: true, result: current.read(section.digest, section.offset,
+                section.includeDigests?.filter(digest => digest !== blocked)) };
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime };
+        const appShell = loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['actionsById'] });
+        await vi.waitFor(() => expect(manifests).toBe(1));
+        let composerSettled = false;
+        const composer = loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'] })
+            .finally(() => { composerSettled = true; });
+        try {
+            await vi.waitFor(() => expect(composerSettled).toBe(true));
+            expect(await composer).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex' } } } } });
+        } finally { catalogue.resolve(); }
+        expect(await appShell).toMatchObject({ kind: 'ready' });
+        // Same generation: the top-up reuses the in-flight manifest, and neither completion erases the other.
+        expect(manifests).toBe(1);
+        const merged = await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById', 'actionsById'], reuseFreshReady: true });
+        expect(merged).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex' } } } } });
+        expect(manifests).toBe(1);
+    });
+
     it('is the one per-machine owner: readers share one describe per projection revision', async () => {
         let resolveDescribe!: (value: unknown) => void;
         projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {

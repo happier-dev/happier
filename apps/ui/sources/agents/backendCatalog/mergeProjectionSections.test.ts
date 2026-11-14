@@ -38,4 +38,21 @@ describe('same-manifest narrow Search coverage', () => {
             expect(Object.keys(result.projection.familiesById.pluginUi!.entriesById)).toHaveLength(2);
         }
     });
+    it('joins plugin slices of one manifest, keeps every slice\'s entries, and never lets a slice erase complete coverage', () => {
+        const slice = (pluginLoaded: string, actionIds: readonly string[]) => response(['base', 'installedPackagesById',
+            `actionsById#${pluginLoaded}`, `familiesById.pluginUi#${pluginLoaded}`], actionIds, [`entry-${actionIds[0]}`]);
+        // The fixture's entries all name qa.search; the slice id is what records coverage.
+        const first = slice('qa.one', ['one']);
+        const second = slice('qa.two', ['two']);
+        const joined = mergeProjectionSections(second, first);
+        expect(Object.keys(joined.projection.actionsById).sort()).toEqual(['qa.search/one', 'qa.search/two']);
+        expect(Object.keys(joined.projection.familiesById.pluginUi!.entriesById).sort()).toEqual(['entry-one', 'entry-two']);
+        expect([...joined.deferredProjection!.loadedSections].sort()).toEqual(['actionsById#qa.one', 'actionsById#qa.two', 'base',
+            'familiesById.pluginUi#qa.one', 'familiesById.pluginUi#qa.two', 'installedPackagesById']);
+        const full = response(['base', 'installedPackagesById', 'actionsById', 'familiesById.pluginUi'], ['one', 'two', 'three'], ['a', 'b']);
+        for (const result of [mergeProjectionSections(slice('qa.one', ['one']), full), mergeProjectionSections(full, slice('qa.one', ['one']))]) {
+            expect(Object.keys(result.projection.actionsById)).toHaveLength(3);
+            expect(result.deferredProjection!.loadedSections).toContain('actionsById');
+        }
+    });
 });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import type { PaneDriver } from '@/components/appShell/panes/types';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
@@ -118,6 +119,7 @@ export function useRegisterSessionPaneDriver(
         machineId: suppliedPluginRuntime ? null : sessionMachineTarget?.machineId ?? null,
         serverId: suppliedPluginRuntime ? null : serverId,
         enabled: suppliedPluginRuntime === undefined && options?.registerDriver !== false,
+        sections: SESSION_PLUGIN_UI_SECTIONS,
     });
     const pluginRuntime = suppliedPluginRuntime ?? {
         pluginUiProjection: pluginProjection.pluginUiProjection,

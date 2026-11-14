@@ -1,4 +1,5 @@
 import { Typography } from "@/constants/Typography";
+import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { usePluginLocalizedTextResolver } from "@/sync/domains/plugins/ui/i18n";
 import { isEmbedWindowContext } from "@/embed/isEmbedWindowContext";
 import { useAppPaneActionRailVisible } from "@/components/appShell/panes/hooks/useAppPaneActionRailVisible";
@@ -1495,6 +1496,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const headerPluginProjection = useScopedPluginUiProjection({
         machineId: headerMachineTarget?.machineId ?? null,
         serverId: currentSessionRouteServerId,
+        sections: SESSION_PLUGIN_UI_SECTIONS,
     });
     const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
     const headerAccountLifetime = sessionAccountBinding;

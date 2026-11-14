@@ -6,8 +6,9 @@ import {
   DaemonContributionRegistryProjectionDescribeResponseSchema,
   DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema,
   DaemonContributionRegistryProjectionSectionsResponseSchema,
-  reassembleDaemonProjectionSections,
-  buildDeferredDaemonProjectionSections, DaemonProjectionDeferredSectionsResponseSchema,
+  reassembleDaemonProjectionSections, demandedDaemonProjectionSections, daemonProjectionSectionsCover,
+  daemonProjectionPluginSectionId, readDaemonProjectionSectionPlugins, DAEMON_PROJECTION_SESSION_PLUGINS,
+  readDaemonProjectionSectionPartPlugin, buildDeferredDaemonProjectionSections, DaemonProjectionDeferredSectionsResponseSchema,
   DaemonProjectionSectionBodyResponseSchema, DAEMON_PROJECTION_SECTION_FRAME_BYTES,
   computeDaemonProjectionSectionDigest, computeDaemonProjectionSectionDigestAsync,
   DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
@@ -232,9 +233,112 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, sectionFrameVersion: 3 }).success).toBe(false);
     const { sectionFrameVersion: _version, ...unversioned } = built.manifest;
     expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse(unversioned).success).toBe(false);
-    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, extra: true }).success).toBe(false);
     expect(built.read('b'.repeat(64), 0)).toBeNull();
   });
+  it('carries each distinct Machine value once per index and reassembles the exact section', () => {
+    // Live (P03-FIX-OPEN-SEND): the cold actionsById index repeated 3,140 Machine values,
+    // 130 distinct (485 KB of a 566 KB index), and every Machine resends its own.
+    const plugins = Array.from({ length: 77 }, (_, index) => `qa.values-${index}`);
+    const actionsById = Object.fromEntries(plugins.flatMap(pluginId => Array.from({ length: 8 }, (_, index) => [
+      `${pluginId}/action-${index}`, { id: `action-${index}`, pluginId, occurrenceId: `${pluginId}:7`, title: 'Run',
+        scopes: ['global'], surfaces: ['ui'], placementBindings: [], execution: { target: 'daemon' },
+        dangerLevel: 'safe', available: true }])));
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 7, actionsById } });
+    const built = buildDeferredDaemonProjectionSections(response);
+    const text = (digest: string, frame: boolean) => {
+      const chunks: string[] = [];
+      for (let offset = 0; ;) {
+        const page = DaemonProjectionSectionBodyResponseSchema.parse(built.read(digest, offset, []));
+        chunks.push(page.chunk);
+        if (page.nextOffset === null) break;
+        offset = page.nextOffset;
+      }
+      return frame ? [chunks.join('')] : JSON.parse(chunks.join('')) as string[];
+    };
+    const raw = JSON.parse(text(built.manifest.sections.actionsById!, true)[0]!) as { values?: unknown[];
+      parts: (string | { values: unknown[] })[] };
+    const carried = [...(raw.values ?? []), ...raw.parts.flatMap(part => typeof part === 'string' ? []
+      : part.values.filter(value => typeof value === 'string'))];
+    // 616 Actions × (occurrenceId, available): 77 occurrence ids plus one `true`.
+    expect({ carried: carried.length, distinct: new Set(carried).size }).toEqual({ carried: 78, distinct: 78 });
+    const index = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(raw);
+    const held = new Map(index.parts.flatMap(part => typeof part === 'string' ? [] : [[part.digest, text(part.digest, false)] as const]));
+    expect(reassembleDaemonProjectionSections(index, held)?.response).toEqual({ projection: { actionsById: response.projection.actionsById } });
+    // A reference outside the index's value table never assembles.
+    const broken = { ...index, parts: index.parts.map(part => typeof part === 'string' ? part : { ...part, values: part.values.map(() => 9_999) }) };
+    expect(reassembleDaemonProjectionSections(DaemonContributionRegistryProjectionSectionsResponseSchema.parse(broken), held)).toBeNull();
+  });
+
+  it('reads only the Session-facing plugins of a selectable section and assembles exactly their entries', () => {
+    // P03-PLUGIN-UI-SUMMARY: the bundled catalogue has 782 Actions; a Session's
+    // placements select 3 of them, yet every Session open read all 1.27 MB.
+    const action = (pluginId: string, id: string, extra: Record<string, unknown> = {}) => [`${pluginId}/${id}`, {
+      id, pluginId, occurrenceId: `${pluginId}:7`, title: 'Run', scopes: ['global'], surfaces: ['ui'],
+      placementBindings: ['commandPalette'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true, ...extra }] as const;
+    const palette = Array.from({ length: 20 }, (_, plugin) => Array.from({ length: 8 },
+      (_, index) => action(`qa.palette-${plugin}`, `run-${index}`))).flat();
+    const actionsById = Object.fromEntries([...palette,
+      action('qa.session', 'continue', { scopes: ['session'] }), action('qa.session', 'other'),
+      action('qa.message', 'quote', { scopes: ['message'], placementBindings: ['message.menu'] })]);
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 7, actionsById } });
+    const built = buildDeferredDaemonProjectionSections(response);
+    expect(built.manifest.sessionPluginIds).toEqual(['qa.message', 'qa.session']);
+    const session = daemonProjectionPluginSectionId('actionsById', DAEMON_PROJECTION_SESSION_PLUGINS);
+    expect(demandedDaemonProjectionSections(built.manifest, [session]))
+      .toEqual(['base', 'installedPackagesById', 'actionsById#qa.message', 'actionsById#qa.session']);
+    const text = (digest: string, frame: boolean) => {
+      const chunks: string[] = [];
+      for (let offset = 0; ;) {
+        const page = DaemonProjectionSectionBodyResponseSchema.parse(built.read(digest, offset, []));
+        chunks.push(page.chunk);
+        if (page.nextOffset === null) break;
+        offset = page.nextOffset;
+      }
+      return frame ? [chunks.join('')] : JSON.parse(chunks.join('')) as string[];
+    };
+    const index = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(JSON.parse(text(built.manifest.sections.actionsById!, true)[0]!));
+    const selected = new Set(['qa.message', 'qa.session']);
+    const parts = index.parts.filter(part => typeof part !== 'string');
+    const needed = parts.filter(part => typeof part !== 'string' && selected.has(readDaemonProjectionSectionPartPlugin(index, part) ?? ''));
+    // Bodies a Session reads: 2 of 22 plugin groups.
+    expect({ parts: parts.length, needed: needed.length }).toEqual({ parts: 22, needed: 2 });
+    const held = new Map(needed.map(part => [(part as { digest: string }).digest, text((part as { digest: string }).digest, false)] as const));
+    const assembled = reassembleDaemonProjectionSections(index, held, selected)?.response as { projection: { actionsById: Record<string, unknown> } };
+    expect(Object.keys(assembled.projection.actionsById).sort()).toEqual(['qa.message/quote', 'qa.session/continue', 'qa.session/other']);
+    expect(assembled.projection.actionsById['qa.session/continue']).toEqual(actionsById['qa.session/continue']);
+    // A missing selected body still refuses assembly.
+    expect(reassembleDaemonProjectionSections(index, new Map(), selected)).toBeNull();
+    // Coverage: a plugin's slice never claims the whole section; the whole section covers every slice.
+    const always = ['base', 'installedPackagesById'];
+    expect(daemonProjectionSectionsCover(built.manifest, [...always, 'actionsById#qa.session', 'actionsById#qa.message'], [session])).toBe(true);
+    expect(daemonProjectionSectionsCover(built.manifest, [...always, 'actionsById#qa.session'], ['actionsById'])).toBe(false);
+    expect(daemonProjectionSectionsCover(built.manifest, [...always, 'actionsById'], [session, 'actionsById#qa.palette-3'])).toBe(true);
+    expect(readDaemonProjectionSectionPlugins(['actionsById#qa.session'], 'actionsById')).toEqual(new Set(['qa.session']));
+    expect(readDaemonProjectionSectionPlugins(['actionsById', 'actionsById#qa.session'], 'actionsById')).toBe('all');
+    // A manifest without a Session summary (older daemon) reads the whole section.
+    const { sessionPluginIds: _ids, ...older } = built.manifest;
+    expect(demandedDaemonProjectionSections(older, [session])).toEqual(['base', 'installedPackagesById', 'actionsById']);
+  });
+
+  it('reads additive fields a newer daemon adds to manifests, indexes and pages', () => {
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1, installedPackagesById: {
+        'acme.one': { id: 'acme.one', displayName: 'One', enabled: true, source: { kind: 'bundled', locator: 'acme.one' } } } } });
+    const built = buildDeferredDaemonProjectionSections(response);
+    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, futureHint: 1 }).success).toBe(true);
+    const page = built.read(built.manifest.sections.installedPackagesById!, 0, [])!;
+    expect(DaemonProjectionSectionBodyResponseSchema.safeParse({ ...page, futureHint: 1 }).success).toBe(true);
+    const index = JSON.parse(page.chunk) as { parts: unknown[] };
+    const future = { ...index, futureHint: 1, parts: index.parts.map(part => typeof part === 'string' ? part : { ...part as object, futureHint: 1 }) };
+    const admitted = DaemonContributionRegistryProjectionSectionsResponseSchema.safeParse(future);
+    expect(admitted.success).toBe(true);
+    // Known discriminators stay closed.
+    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, sectionFrameVersion: 3 }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionSectionsResponseSchema.safeParse({ ...future, sectioned: false }).success).toBe(false);
+  });
+
   it('addresses section bodies by the same SHA-256 hex on every engine', async () => {
     const { createHash } = await import('node:crypto');
     const vectors: readonly (readonly string[])[] = [[], [''], ['{"a":1}', ',"b":'], ['é', '\u2028', '😀\uD83D'],

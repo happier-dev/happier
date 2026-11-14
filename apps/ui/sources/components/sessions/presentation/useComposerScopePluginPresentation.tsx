@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useDaemonProjectionPluginSlices } from '@/agents/backendCatalog/useDaemonProjectionPluginSlices';
+import { useMountedClientActionDemand } from '@/components/appShell/plugins/mountedClientActionDemand';
 import { Platform, View } from 'react-native';
 
 import type {
@@ -311,6 +313,16 @@ export function useComposerScopePluginPresentation(
         (pluginId, value) => localizePluginTextRef.current(pluginId, value),
         [],
     );
+    const pluginSlices = useDaemonProjectionPluginSlices({
+        machineId: params.machineId, serverId: params.serverId ?? null, accountLifetime: params.accountLifetime,
+    });
+    // A Composer reads its Session's plugin slices, not the AppShell's complete
+    // catalogue: they feed the executable owner as mounted demand.
+    const composerProjection = params.projectionPhase === 'ready' ? params.projectionInputs?.pluginUiProjection ?? null : null;
+    const composerClientSource = React.useMemo(() => composerProjection && params.machineId ? { projection: composerProjection,
+        directMachineAuthority: { machineId: params.machineId, serverId: params.serverId ?? null } } : null,
+    [composerProjection, params.machineId, params.serverId]);
+    useMountedClientActionDemand(params.accountLifetime ?? null, composerClientSource);
     const actionSnapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
     const actionSnapshot = React.useMemo<PluginContributedActionCurrentSnapshot | null>(() => {
         const inputs = params.projectionInputs;
@@ -336,6 +348,7 @@ export function useComposerScopePluginPresentation(
             resolveContributedAction: createPluginUiProjectedActionResolver(
                 projection.actionsById,
             ),
+            pluginSlices,
             host: {
                 machineId: params.machineId,
                 serverId: params.serverId ?? null,
@@ -379,6 +392,7 @@ export function useComposerScopePluginPresentation(
         physicalTargetKey,
         readCurrentComposerSnapshot,
         scopeAbort,
+        pluginSlices,
     ]);
     actionSnapshotRef.current = actionSnapshot;
     const actionController = React.useMemo(() => createPluginContributedActionController({

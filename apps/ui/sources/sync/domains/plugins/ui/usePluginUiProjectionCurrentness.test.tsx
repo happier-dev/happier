@@ -426,7 +426,8 @@ describe('usePluginUiProjectionCurrentness', () => {
                 // The full catalogue has issued a page but cannot finish. Search
                 // must publish current and a usable result without its reply.
                 expect(fullSettled).toBe(false);
-                expect(manifests).toBe(2);
+                // Search hydrates from the in-flight full describe's manifest.
+                expect(manifests).toBe(1);
             }
             expect.soft(sectionDigests.has(deferred.manifest.sections.resourcesById!)).toBe(false);
             if (!concurrentFull) expect(sectionDigests.has(deferred.manifest.sections.actionsById!)).toBe(false);
@@ -456,7 +457,8 @@ describe('usePluginUiProjectionCurrentness', () => {
                 expect(rendered.getCurrent().renderPlan).toEqual([]);
             });
             expect(projectionRuntime.describe.mock.calls.length - settledReads).toBeLessThanOrEqual(3);
-            expect(manifests).toBe(concurrentFull ? 3 : 2);
+            // One manifest per generation, with or without the concurrent full reader.
+            expect(manifests).toBe(2);
         } finally {
             manifestReady.resolve(); fullPageReady.resolve();
             await rendered.unmount();
@@ -556,7 +558,9 @@ describe('usePluginUiProjectionCurrentness', () => {
             let released = 0;
             let rounds = 0;
             let phaseAtSixtySeconds: string | undefined;
-            const manifestCount = neighbours ? 3 : 1;
+            // Concurrent readers of one generation share its manifest: neighbours
+            // hydrate their own sections from the in-flight describe.
+            const manifestCount = 1;
             for (;;) {
                 await flushHookEffects();
                 const pending = replies.slice(released);

@@ -1,3 +1,6 @@
+import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, DAEMON_PROJECTION_SESSION_PLUGINS,
+    daemonProjectionPluginSectionId } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+
 // Presented UI needs destinations, their executable Actions, physical renderer facts,
 // Account descriptors, Store registry sources, backup destinations, Voice catalog authority and translation Resource declarations.
 // Other catalogues retain separate demand.
@@ -9,6 +12,27 @@ export const CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS = ['actionsById', 'r
 export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.pluginBrowser',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
     'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.backupDestinations', 'resourcesById'] as const;
+/**
+ * A Session presents only the plugins its surfaces render: the Machine's
+ * manifest names them (`sessionPluginIds`). Actions, Resources and plugin UI
+ * entries are read for those plugins; another plugin's slice is read when a
+ * lookup needs it (`pluginSliceSections`), never treated as retired.
+ */
+const SESSION_SLICES: Readonly<Record<string, string>> = Object.fromEntries(DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS
+    .map(section => [section, daemonProjectionPluginSectionId(section, DAEMON_PROJECTION_SESSION_PLUGINS)]));
+function sessionSlices(sections: readonly string[]): readonly string[] {
+    return Object.freeze(sections.map(section => SESSION_SLICES[section] ?? section));
+}
+/** One plugin's slice of every selectable section. */
+export function pluginSliceSections(pluginId: string): readonly string[] {
+    return DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS.map(section => daemonProjectionPluginSectionId(section, pluginId));
+}
+/** Session-tree plugin surfaces (header, panes, runtime, message Actions): the UI demand, Session plugins only. */
+export const SESSION_PLUGIN_UI_SECTIONS = sessionSlices(PLUGIN_UI_SECTIONS);
+// Message Actions resolve their Actions, UI entries and Resources for the Session's plugins.
+export const SESSION_MESSAGE_ACTION_PROJECTION_SECTIONS = sessionSlices(['actionsById', 'familiesById.pluginUi', 'resourcesById']);
+// Transcript Activities render their declared Resource rows from the UI family alone.
+export const TRANSCRIPT_ACTIVITY_PROJECTION_SECTIONS = sessionSlices(['familiesById.pluginUi']);
 // Administration ranks origin candidates from installed-package facts. `base` and
 // `installedPackagesById` are always loaded, so the candidate question demands no family.
 export const PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS = [] as const satisfies readonly string[];
@@ -19,7 +43,7 @@ export const PLUGIN_SEARCH_SECTIONS = ['searchProviders'] as const;
 export const PLUGIN_EVENT_AUTOMATION_SECTIONS = [...PLUGIN_UI_SECTIONS, 'automationEligibleEvents'] as const;
 // A composer host presents Agent/model chips, Composer controls, regions,
 // attachments, references and their Actions; unrelated catalogues load at their consumers.
-export const COMPOSER_HOST_PROJECTION_SECTIONS = ['agentsById', 'actionsById', 'resourcesById', 'familiesById.pluginUi',
+export const COMPOSER_HOST_PROJECTION_SECTIONS = sessionSlices(['agentsById', 'actionsById', 'resourcesById', 'familiesById.pluginUi',
     'familiesById.providers', ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes',
     'familiesById.composerAttachments', 'familiesById.composerControls', 'familiesById.composerRegions',
-    'contributionIntrospection', 'composerSurfaceCatalog'] as const;
+    'contributionIntrospection', 'composerSurfaceCatalog']);

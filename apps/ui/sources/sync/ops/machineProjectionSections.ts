@@ -1,6 +1,7 @@
 import { DaemonContributionRegistryProjectionSectionsResponseSchema, reassembleDaemonProjectionSections,
     DaemonProjectionSectionBodyResponseSchema, computeDaemonProjectionSectionDigestAsync, demandedDaemonProjectionSections,
-    DAEMON_PROJECTION_SECTION_STALE_CODE, type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+    DAEMON_PROJECTION_SECTION_STALE_CODE, DAEMON_PROJECTION_SECTION_FRAME_BYTES, readDaemonProjectionSectionDemand, readDaemonProjectionSectionPartPlugin,
+    type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { digest as platformDigest } from '@/platform/digest';
 import { parseDaemonContributionRegistryProjectionDescribeResponse } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { RpcError } from '@/sync/runtime/rpcErrors';
@@ -62,12 +63,32 @@ export async function readDeferredProjection(params: Readonly<{
     const json = (text: string): unknown => {
         try { return JSON.parse(text); } catch { throw new InvalidDaemonProjectionSection('section-json'); }
     };
+    // Included-peer sizes the admitted indexes advertise. The answering Machine
+    // still decides inclusion; a reader only stops naming peers that cannot fit
+    // beside the others, which a cold catalogue otherwise resent every frame.
+    const peerBytes = new Map<string, number>();
+    const framePeers = (carrier: string, peers: readonly string[]): readonly string[] => {
+        const carrierBytes = peerBytes.get(carrier);
+        if (carrierBytes === undefined) return peers;
+        // A carrier larger than a frame pages after its peers and reserves only progress.
+        let used = carrierBytes > DAEMON_PROJECTION_SECTION_FRAME_BYTES ? 0 : carrierBytes;
+        const named: string[] = [];
+        for (const peer of peers) {
+            const bytes = peerBytes.get(peer);
+            if (bytes !== undefined) {
+                if (used + bytes + 1 > DAEMON_PROJECTION_SECTION_FRAME_BYTES) continue;
+                used += bytes + 1;
+            }
+            named.push(peer);
+        }
+        return named;
+    };
     const readBody = async (digest: string, includeDigests: readonly string[], frame: boolean,
         revealIncluded: (repack: boolean) => void): Promise<readonly string[]> => {
         const chunks: string[] = [];
         let offset = 0;
         for (;;) {
-            const response = await params.read(digest, offset, offset === 0 ? includeDigests : []);
+            const response = await params.read(digest, offset, offset === 0 ? framePeers(digest, includeDigests) : []);
             if (response && typeof response === 'object' && 'errorCode' in response
                 && response.errorCode === DAEMON_PROJECTION_SECTION_STALE_CODE) {
                 throw new RpcError('Projection section is no longer current', DAEMON_PROJECTION_SECTION_STALE_CODE);
@@ -160,8 +181,18 @@ export async function readDeferredProjection(params: Readonly<{
         resourcesById: {}, settingsById: {}, familiesById: {} };
     const response: Record<string, unknown> = { projection };
     const loadedSections = demandedDaemonProjectionSections(params.manifest, params.sections);
-    const indexDigests = loadedSections.map(section => params.manifest.sections[section]!);
-    const frames = new Map(await Promise.all(loadedSections.map(async section => {
+    // A plugin-sliced demand reads its section's index once and only the
+    // selected plugins' bodies; a whole-section demand reads every body.
+    const pluginsBySection = new Map<string, Set<string> | null>();
+    for (const id of loadedSections) {
+        const { section, pluginId } = readDaemonProjectionSectionDemand(id);
+        const selected = pluginsBySection.get(section);
+        if (pluginId === null) pluginsBySection.set(section, null);
+        else if (selected !== null) pluginsBySection.set(section, new Set([...(selected ?? []), pluginId]));
+    }
+    const indexSections = [...pluginsBySection.keys()];
+    const indexDigests = indexSections.map(section => params.manifest.sections[section]!);
+    const frames = new Map(await Promise.all(indexSections.map(async section => {
         const digest = params.manifest.sections[section]!;
         const index = await body(digest, indexDigests.filter(peer => peer !== digest), true);
         if (index.length !== 1) throw new InvalidDaemonProjectionSection('section-index');
@@ -169,13 +200,23 @@ export async function readDeferredProjection(params: Readonly<{
         if (!admitted.success) throw new InvalidDaemonProjectionSection('section-index-schema');
         return [section, admitted.data] as const;
     })));
+    for (const frame of frames.values()) {
+        for (const part of frame.parts) {
+            if (typeof part !== 'string' && part.peerBytes !== undefined) peerBytes.set(part.digest, part.peerBytes);
+        }
+    }
     // Indexes disclose the body demand. Gather across every selected section
     // before awaiting a body so the existing wire-frame owner can include peers.
-    const digests = [...new Set([...frames.values()].flatMap(frame => frame.parts.flatMap(part => typeof part === 'string' ? [] : [part.digest])))];
+    const digests = [...new Set([...frames].flatMap(([section, frame]) => frame.parts.flatMap(part => {
+        if (typeof part === 'string') return [];
+        const plugins = pluginsBySection.get(section);
+        const plugin = readDaemonProjectionSectionPartPlugin(frame, part);
+        return !plugins || part.plugin === undefined || (plugin !== undefined && plugins.has(plugin)) ? [part.digest] : [];
+    })))];
     await Promise.all(digests.map(digest => body(digest,
         digests.filter(peer => peer !== digest && !bodies.has(peer) && !params.held.has(peer)))));
     for (const [section, framed] of frames) {
-        const assembled = reassembleDaemonProjectionSections(framed, bodies);
+        const assembled = reassembleDaemonProjectionSections(framed, bodies, pluginsBySection.get(section) ?? undefined);
         if (!assembled || !assembled.response || typeof assembled.response !== 'object' || Array.isArray(assembled.response)) throw new InvalidDaemonProjectionSection('section-assembly');
         const fragment = assembled.response as Record<string, unknown>;
         const keysAre = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => Boolean(value

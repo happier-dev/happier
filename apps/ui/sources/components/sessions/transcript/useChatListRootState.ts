@@ -44,6 +44,9 @@ import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/ser
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { SESSION_MESSAGE_ACTION_PROJECTION_SECTIONS, TRANSCRIPT_ACTIVITY_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { useDaemonProjectionPluginSlices } from '@/agents/backendCatalog/useDaemonProjectionPluginSlices';
+import { useMountedClientActionDemand } from '@/components/appShell/plugins/mountedClientActionDemand';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { usePluginTranscriptActivities } from '@/components/sessions/transcript/items/usePluginTranscriptActivities';
 import { buildV2PluginProjectionById } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -178,6 +181,9 @@ export function useChatListRootState(props: ChatListProps) {
     // same session machine/server authority as the existing session operation;
     // shared/read-only viewers do not probe a local plugin Resource.
     const pluginActivityProjection = usePluginUiProjectionCurrentness({
+        // Activities read only their Transcript Activity declarations (UI family);
+        // the complete UI catalogue belongs to its own presenting consumers.
+        sections: TRANSCRIPT_ACTIVITY_PROJECTION_SECTIONS,
         machineId: operationMachineId,
         serverId: sessionServerId,
         enabled: isExactOwner,
@@ -312,11 +318,26 @@ export function useChatListRootState(props: ChatListProps) {
     // Message Actions share the exact Home's Account + Machine catalog. Live
     // transcript Activities above retain their Machine-owned Resource demand.
     const pluginMessageActionProjection = useScopedPluginUiProjection({
-        sections: ['actionsById', 'familiesById.pluginUi', 'resourcesById'],
+        sections: SESSION_MESSAGE_ACTION_PROJECTION_SECTIONS,
         machineId: operationMachineId,
         serverId: sessionServerId,
         enabled: isExactOwner,
     });
+    const pluginMessageActionSlices = useDaemonProjectionPluginSlices({
+        machineId: pluginMessageActionProjection.machineId,
+        serverId: pluginMessageActionProjection.serverId,
+        accountLifetime: pluginMessageActionProjection.accountLifetime,
+    });
+    // The Session's slices are not the AppShell's complete catalogue: they feed
+    // its executable owner as mounted demand, so their client Actions register.
+    const pluginMessageActionClientSource = React.useMemo(() => {
+        const projection = pluginMessageActionProjection.pluginUiProjection;
+        const machineId = pluginMessageActionProjection.machineId;
+        return projection && machineId && isExactOwner ? { projection,
+            directMachineAuthority: { machineId, serverId: pluginMessageActionProjection.serverId } } : null;
+    }, [isExactOwner, pluginMessageActionProjection.machineId, pluginMessageActionProjection.pluginUiProjection,
+        pluginMessageActionProjection.serverId]);
+    useMountedClientActionDemand(pluginMessageActionProjection.accountLifetime, pluginMessageActionClientSource);
     const pluginMessageActionSnapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
     const pluginMessageActionScope = React.useMemo(
         () => new AbortController(),
@@ -348,6 +369,7 @@ export function useChatListRootState(props: ChatListProps) {
                 actionsById: projection.actionsById, resourcesById: projection.resourcesById }),
             pluginUiProjection: projection,
             resolveContributedAction,
+            pluginSlices: pluginMessageActionSlices,
             host: {
                 machineId: pluginMessageActionProjection.machineId,
                 serverId: pluginMessageActionProjection.serverId,
@@ -379,6 +401,7 @@ export function useChatListRootState(props: ChatListProps) {
         pluginMessageActionProjection.serverId,
         pluginMessageActionProjection.pluginUiProjection,
         pluginMessageActionScope,
+        pluginMessageActionSlices,
         props.session.id,
     ]);
     pluginMessageActionSnapshotRef.current = pluginMessageActionSnapshot;

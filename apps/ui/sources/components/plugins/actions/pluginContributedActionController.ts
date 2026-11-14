@@ -234,7 +234,20 @@ export type PluginContributedActionCurrentSnapshot = Readonly<{
      * to the generic projection when this fact is missing.
      */
     targetedContributions?: PluginUiTargetedContributionsV1 | null;
+    /**
+     * A Session reads plugin slices of its Machine's catalogue. A plugin
+     * outside them is not loaded, never retired: lookups report it as
+     * `action_not_loaded` and `load` reads that plugin's slice. Absent when
+     * the snapshot holds the complete catalogue.
+     */
+    pluginSlices?: PluginContributedActionPluginSlices | null;
     host: PluginContributedActionHostFacts;
+}>;
+
+export type PluginContributedActionPluginSlices = Readonly<{
+    isLoaded(pluginId: string): boolean;
+    /** Reads the plugin's slice and settles once the holder's current snapshot carries it. */
+    load(pluginId: string, signal?: AbortSignal): Promise<void>;
 }>;
 
 export type PluginContributedActionSelector = Readonly<{
@@ -285,7 +298,9 @@ export type PluginContributedActionUnavailableOutcome = Readonly<{
         | 'action_ambiguous'
         | 'secret_input_unsupported'
         | 'connected_account_ambiguous'
-        | 'invalid_draft';
+        | 'invalid_draft'
+        /** The Action's plugin is outside the snapshot's loaded slices; never a retirement. */
+        | 'action_not_loaded';
 }>;
 
 export type PluginContributedActionStaleOutcome = Readonly<{
@@ -769,6 +784,35 @@ export function createPluginContributedActionController(params: Readonly<{
         }
     }
 
+    /** A missing plugin or Action of an unloaded slice is unknown, not retired. */
+    function notLoaded(snapshot: PluginContributedActionCurrentSnapshot, pluginId: string) {
+        return snapshot.pluginSlices?.isLoaded(pluginId) === false
+            ? { kind: 'unavailable' as const, reason: 'action_not_loaded' as const } : null;
+    }
+
+    function isNotLoadedOutcome(outcome: Readonly<{ kind: string; reason?: string }>): boolean {
+        return outcome.kind === 'unavailable' && outcome.reason === 'action_not_loaded';
+    }
+
+    /** Reads the missing plugin slice once, then answers from the snapshot that carries it. */
+    async function resolveLoaded<T extends Readonly<{ kind: string; reason?: string }>>(
+        identity: Readonly<{ pluginId: string; localId: string }>,
+        resolve: () => T,
+        signal?: AbortSignal,
+    ): Promise<T> {
+        const first = resolve();
+        if (!isNotLoadedOutcome(first)) return first;
+        const slices = currentSnapshot(identity)?.pluginSlices;
+        if (!slices) return first;
+        await slices.load(identity.pluginId, signal);
+        return resolve();
+    }
+
+    /** Synchronous availability starts the slice read; the holder re-renders when it lands. */
+    function demandIfNotLoaded(identity: Readonly<{ pluginId: string; localId: string }>, outcome: Readonly<{ kind: string; reason?: string }>) {
+        if (isNotLoadedOutcome(outcome)) void currentSnapshot(identity)?.pluginSlices?.load(identity.pluginId).catch(() => {});
+    }
+
     function hostStatus(snapshot: PluginContributedActionCurrentSnapshot):
         | Readonly<{
             kind: 'ready';
@@ -878,6 +922,11 @@ export function createPluginContributedActionController(params: Readonly<{
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
         const plugin = snapshot.pluginProjectionById[requested.identity.pluginId];
+        const action = plugin?.actions.find((candidate) => candidate.id === requested.identity.localId);
+        if (!action) {
+            const unloaded = notLoaded(snapshot, requested.identity.pluginId);
+            if (unloaded) return unloaded;
+        }
         if (
             !plugin
             || plugin.pluginId !== requested.identity.pluginId
@@ -885,7 +934,6 @@ export function createPluginContributedActionController(params: Readonly<{
         ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
-        const action = plugin.actions.find((candidate) => candidate.id === requested.identity.localId);
         const expectedOccurrenceId = readRequiredString(action?.occurrenceId);
         if (
             !action
@@ -942,6 +990,11 @@ export function createPluginContributedActionController(params: Readonly<{
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
         const plugin = snapshot.pluginProjectionById[identity.data.pluginId];
+        const action = plugin?.actions.find((candidate) => candidate.id === identity.data.localId);
+        if (!action) {
+            const unloaded = notLoaded(snapshot, identity.data.pluginId);
+            if (unloaded) return unloaded;
+        }
         if (
             !plugin
             || plugin.pluginId !== identity.data.pluginId
@@ -949,7 +1002,6 @@ export function createPluginContributedActionController(params: Readonly<{
         ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
-        const action = plugin.actions.find((candidate) => candidate.id === identity.data.localId);
         // Snapshot placement is immutable presentation, while this narrow
         // current check admits only an actually UI-available target. It never
         // replaces the snapshot's action reference with another declaration.
@@ -1428,6 +1480,11 @@ export function createPluginContributedActionController(params: Readonly<{
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
         const plugin = snapshot.pluginProjectionById[identity.data.pluginId];
+        const action = plugin?.actions.find((candidate) => candidate.id === identity.data.localId);
+        if (!action) {
+            const unloaded = notLoaded(snapshot, identity.data.pluginId);
+            if (unloaded) return unloaded;
+        }
         if (
             !plugin
             || plugin.pluginId !== identity.data.pluginId
@@ -1435,7 +1492,6 @@ export function createPluginContributedActionController(params: Readonly<{
         ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
-        const action = plugin.actions.find((candidate) => candidate.id === identity.data.localId);
         if (
             !action
             || readRequiredString(action.occurrenceId) !== expectedOccurrenceId
@@ -1560,7 +1616,14 @@ export function createPluginContributedActionController(params: Readonly<{
         request: PluginExactBoundActionInputRequest,
         isAdditionallyCurrent: () => boolean = () => true,
     ): Promise<PluginContributedActionExactInputSelectionPrimitiveOutcome> {
-        const resolved = resolveExactBoundAction(request);
+        let resolved = resolveExactBoundAction(request);
+        if ('kind' in resolved && isNotLoadedOutcome(resolved)) {
+            const slices = currentSnapshot(request.action)?.pluginSlices;
+            if (slices) {
+                await slices.load(request.action.pluginId);
+                resolved = resolveExactBoundAction(request);
+            }
+        }
         if ('kind' in resolved) return resolved;
         const resolveCurrent = () => resolveCurrentExactBoundAction(
             request,
@@ -1968,15 +2031,17 @@ export function createPluginContributedActionController(params: Readonly<{
         },
         isReferenceAvailable(requested) {
             const current = resolveReference(requested);
+            demandIfNotLoaded(requested, current);
             return current.kind === 'resolved'
                 && canPresentAction(current.value, resolveMessageReferenceInvocationPlacement(current.value));
         },
         isSessionReferenceAvailable(requested) {
             const current = resolveSessionReference(requested);
+            demandIfNotLoaded(requested, current);
             return current.kind === 'resolved' && canPresentAction(current.value, current.value.descriptor.placement);
         },
         async invokeReference(requested, input) {
-            const current = resolveReference(requested);
+            const current = await resolveLoaded(requested, () => resolveReference(requested));
             if (current.kind !== 'resolved') return current;
             return await dispatchResolvedAction(
                 current.value,
@@ -1987,7 +2052,7 @@ export function createPluginContributedActionController(params: Readonly<{
             );
         },
         async openSessionReference(requested, input, anchor) {
-            const current = resolveSessionReference(requested);
+            const current = await resolveLoaded(requested, () => resolveSessionReference(requested));
             if (current.kind !== 'resolved') return current;
             if (input === undefined && isResolvedFormAction(current.value)) {
                 if (!current.value.snapshot.host.accountLifetime) {

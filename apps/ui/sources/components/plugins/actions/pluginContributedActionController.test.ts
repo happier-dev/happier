@@ -2356,6 +2356,50 @@ describe('plugin contributed Action controller', () => {
         expect(dispatch).toHaveBeenCalledTimes(1);
     });
 
+    it('reads an unloaded plugin slice for a Message reference and never reports its Action as retired', async () => {
+        publishMachineAccess('use');
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { opened: true } });
+        const messageActionReference = { v: 1 as const, sessionId: SESSION_ID, messageId: 'message-a', observedRevision: 'revision-a' };
+        const full = snapshot([action({ id: 'open-report', placementBindings: ['message.menu'], scopes: ['message'] })]);
+        const loaded = new Set<string>();
+        const loads: string[] = [];
+        let current: PluginContributedActionCurrentSnapshot;
+        const pluginSlices = {
+            isLoaded: (pluginId: string) => loaded.has(pluginId),
+            load: async (pluginId: string) => {
+                loads.push(pluginId);
+                loaded.add(pluginId);
+                current = { ...full, pluginSlices, host: { ...full.host, messageActionReference } };
+            },
+        };
+        // The Session read other plugins' slices; acme.channels is not loaded yet.
+        current = { ...full, pluginProjectionById: {}, pluginSlices, host: { ...full.host, messageActionReference } };
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current, dispatch });
+        const reference = { pluginId: 'acme.channels', localId: 'open-report' };
+
+        // Synchronous availability starts one slice read instead of hiding a retired Action.
+        expect(controller.isReferenceAvailable(reference)).toBe(false);
+        expect(loads).toEqual(['acme.channels']);
+        await Promise.resolve();
+        await expect(controller.invokeReference(reference, { reportId: 'report-1' })).resolves.toEqual({
+            kind: 'settled', outcome: { ok: true, result: { opened: true } } });
+        expect(dispatch).toHaveBeenCalledTimes(1);
+
+        // A cold invocation reads the slice itself, then dispatches.
+        loaded.clear();
+        loads.length = 0;
+        current = { ...full, pluginProjectionById: {}, pluginSlices, host: { ...full.host, messageActionReference } };
+        await expect(controller.invokeReference(reference, { reportId: 'report-2' })).resolves.toEqual({
+            kind: 'settled', outcome: { ok: true, result: { opened: true } } });
+        expect({ loads, dispatched: dispatch.mock.calls.length }).toEqual({ loads: ['acme.channels'], dispatched: 2 });
+
+        // Once the slice is loaded, a missing Action is retired.
+        current = { ...full, pluginProjectionById: {}, pluginSlices, host: { ...full.host, messageActionReference } };
+        await expect(controller.invokeReference(reference, { reportId: 'report-3' })).resolves.toEqual({
+            kind: 'stale', reason: 'action_retired' });
+        expect({ loads: loads.length, dispatched: dispatch.mock.calls.length }).toEqual({ loads: 1, dispatched: 2 });
+    });
+
     it('retains a mixed legacy Message reference route instead of adding a host-presented Message arm', async () => {
         const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { opened: true } });
         const messageActionReference = {

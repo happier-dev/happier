@@ -21,6 +21,10 @@ vi.mock('@/platform/digest', async importOriginal => {
     } };
 });
 
+// Frames the fixture needs at the 48 KiB bound; naming fewer peers must not add frames.
+// 31 since each index part names its plugin (P03-PLUGIN-UI-SUMMARY): one more index page.
+const READS_FOR_COLD_CATALOGUE = 31;
+
 describe('deferred Machine projection demand', () => {
     it('reads only two provider Actions from 77 plugins and 616 Actions for scoped Search', async () => {
         const { PLUGIN_SEARCH_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
@@ -62,6 +66,51 @@ describe('deferred Machine projection demand', () => {
         // per provider body at the existing 48 KiB bound; packing reduces this.
         expect.soft(pages).toBeLessThanOrEqual(4);
         expect(bytes).toBeLessThanOrEqual(4 * DAEMON_PROJECTION_SECTION_FRAME_BYTES);
+    });
+
+    it('reads only the Session plugins\' bodies for a Session demand of 77 plugins and 616 Actions', async () => {
+        const { SESSION_MESSAGE_ACTION_PROJECTION_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+        const plugins = Array.from({ length: 77 }, (_, index) => `qa.paged-${index}`);
+        const response = {
+            protocolVersion: 1 as const, projectionDigest: '7'.repeat(64),
+            projection: PluginProjectionV2Schema.parse({ v: 2, generation: 7,
+                installedPackagesById: Object.fromEntries(plugins.map(id => [id, { id, displayName: id,
+                    enabled: true, source: { kind: 'local', locator: `/plugins/${id}` } }])),
+                actionsById: Object.fromEntries(plugins.flatMap((pluginId, plugin) => Array.from({ length: 8 }, (_, index) => {
+                    const id = `action-${index}`;
+                    // Two plugins present a Session/Message Action; the rest are palette Actions.
+                    const scopes = plugin === 3 && index === 0 ? ['session'] : plugin === 9 && index === 0 ? ['message'] : ['global'];
+                    return [`${pluginId}/${id}`, { id, pluginId, occurrenceId: `${pluginId}:7`, title: id,
+                        description: 'Action documentation '.repeat(512), scopes, surfaces: ['ui'],
+                        placementBindings: scopes[0] === 'message' ? ['message.menu'] : [], execution: { target: 'daemon' },
+                        dangerLevel: 'safe', available: true }];
+                }))),
+            }),
+        };
+        const snapshot = buildDeferredDaemonProjectionSections(response);
+        const cost = async (sections: readonly string[]) => {
+            let pages = 0;
+            let bytes = 0;
+            const result = await readDeferredProjection({ manifest: snapshot.manifest, sections, held: new Map(),
+                read: async (digest, offset, peers) => {
+                    const reply = snapshot.read(digest, offset, peers);
+                    pages += 1; bytes += new TextEncoder().encode(JSON.stringify(reply)).length;
+                    return reply;
+                } });
+            return { pages, bytes, actions: Object.keys(result.projection.actionsById).length, loaded: result.deferredProjection.loadedSections };
+        };
+        const whole = await cost(['actionsById', 'familiesById.pluginUi', 'resourcesById']);
+        const session = await cost(SESSION_MESSAGE_ACTION_PROJECTION_SECTIONS);
+        console.info('SESSION_SLICE_COST', JSON.stringify({ whole: { ...whole, loaded: undefined }, session: { ...session, loaded: undefined } }));
+        expect(snapshot.manifest.sessionPluginIds).toEqual(['qa.paged-3', 'qa.paged-9']);
+        // The Session holds both plugins' 16 Actions, read in a bounded number of frames.
+        expect(session.actions).toBe(16);
+        expect(session.loaded).toContain('actionsById#qa.paged-3');
+        expect(session.loaded).not.toContain('actionsById');
+        expect(whole.actions).toBe(616);
+        // Package and Action index frames, then two pages per selected ~85 KB plugin body at 48 KiB.
+        expect(session.pages).toBeLessThanOrEqual(6);
+        expect(session.pages * 10).toBeLessThan(whole.pages);
     });
 
     it.each([false, true])('keeps full inventories when Search and full UI sections share one demand (Search first: %s)', async searchFirst => {
@@ -169,6 +218,36 @@ describe('deferred Machine projection demand', () => {
             expect(Object.keys(carrier.read())).toHaveLength(1 + packageCount * 2);
             expect(Date.now()).toBe(startedAt + delay * 4);
         } finally { vi.useRealTimers(); }
+    });
+
+    it('names only the peers a frame can carry, so a cold catalogue does not resend its digest list per frame', async () => {
+        // Live (P03-FIX-OPEN-SEND, Muse bed): a cold Session open hydrated 1,490 bodies in ~60 serial
+        // body frames, and every request named every unread digest (1,477 → 110): 3.0 MB upstream in
+        // 66 KB requests for frames that each carried ~20 bodies.
+        const pluginCount = 600;
+        const snapshot = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: '7'.repeat(64),
+            projection: PluginProjectionV2Schema.parse({ v: 2, generation: 7,
+                actionsById: Object.fromEntries(Array.from({ length: pluginCount }, (_, index) => {
+                    const pluginId = `qa.cold-${index}`;
+                    return [`${pluginId}/run`, { id: 'run', pluginId, occurrenceId: `${pluginId}:7`, title: 'Run',
+                        description: `Action documentation ${index} `.repeat(70), scopes: ['global'], surfaces: ['ui'],
+                        placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true }];
+                })),
+            }),
+        });
+        let reads = 0;
+        let namedPeers = 0;
+        const result = await readDeferredProjection({ manifest: snapshot.manifest, sections: ['actionsById'], held: new Map(),
+            read: async (digest, offset, peers) => {
+                reads += 1; namedPeers += peers.length;
+                return snapshot.read(digest, offset, peers);
+            } });
+        expect(Object.keys(result.projection.actionsById)).toHaveLength(pluginCount);
+        const bodies = result.sectionBodies.size;
+        console.info('COLD_CATALOGUE_PEER_NAMES', JSON.stringify({ bodies, reads, namedPeers }));
+        // Each body is named about once: beside the carrier that brings it, plus at most one
+        // over-estimated peer per frame that the Machine declines and a later frame carries.
+        expect({ reads, overNamed: namedPeers > bodies + reads }).toEqual({ reads: READS_FOR_COLD_CATALOGUE, overNamed: false });
     });
 
     it('gathers selected indexes before reading their bodies and carries a real package change', async () => {

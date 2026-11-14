@@ -142,6 +142,49 @@ describe('transcript root activity Home', () => {
             expect(controller.isReferenceAvailable({ pluginId: 'acme.transcript', localId: 'review' })).toBe(false);
         } finally { await hook.unmount(); await account.dispose(); }
     });
+    it('demands only the projection sections the transcript reads for its Session Machine', async () => {
+        // Live (P03-FIX-OPEN-SEND): a cold Session open hydrated the complete UI catalogue for the
+        // Session's Machine. The transcript reads row Actions and Transcript Activity declarations.
+        const { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const http = createHomeHubArtifactHttpBoundary('transcript-sections-account');
+        const account = await restoreServerAccountForTest({ serverUrl: 'https://transcript-sections.test',
+            accountId: 'transcript-sections-account', request: http.request,
+            configureSocket: configureConnectedServerSocketBoundary });
+        const snapshot = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: '7'.repeat(64), projection: { v: 2, generation: 7, familiesById: {
+                pluginUi: { family: 'pluginUi', entriesById: {} }, inputTypes: { family: 'inputTypes', entriesById: {} },
+                voiceProviders: { family: 'voiceProviders', entriesById: {} } } } }));
+        const sectionByDigest = new Map(Object.entries(snapshot.manifest.sections).map(([id, digest]) => [digest, id]));
+        const indexesRead = new Set<string>();
+        daemon.reply.mockImplementation(async (request: Readonly<{ method: string; payload?: unknown }>) => {
+            if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                throw new Error(`Unexpected transcript daemon request: ${request.method}`);
+            }
+            const read = (request.payload as { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }).sectionRead;
+            if (!read) return snapshot.manifest;
+            for (const digest of [read.digest, ...read.includeDigests ?? []]) {
+                const section = sectionByDigest.get(digest);
+                if (section) indexesRead.add(section);
+            }
+            return snapshot.read(read.digest, read.offset, read.includeDigests);
+        });
+        const session = createSessionFixture({ id: 'transcript-sections-session', serverId: account.home.id, active: true });
+        const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
+        storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
+        storage.getState().applySessions([session]);
+        const hook = await renderHook(() => useChatListRootState({ session, sessionSurfaceKey: session.id }), {
+            wrapper: ({ children }) => <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={account.home.id} navigation="none">
+                <PluginContextualResourceStoreProvider>{children}</PluginContextualResourceStoreProvider>
+            </AppSessionTranscriptSourceProvider>,
+        });
+        try {
+            // No plugin of this Machine is Session-facing, so the Session reads no Action, Resource or UI body.
+            await vi.waitFor(() => expect(indexesRead.has('installedPackagesById')).toBe(true));
+            await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+            expect([...indexesRead].sort()).toEqual(['base', 'installedPackagesById']);
+        } finally { await hook.unmount(); await account.dispose(); }
+    });
+
     it('keeps a retained operation origin unknown until its exact Home observes Machine presence again', async () => {
         const account = await restoreServerAccountForTest({ serverUrl: 'https://operation-presence.test', accountId: 'operation-account' });
         const now = Date.now();

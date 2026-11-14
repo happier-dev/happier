@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 
 import type { PaneSurfaceScope } from '@/components/appShell/panes/types';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
@@ -68,7 +69,7 @@ export function useSessionPluginRuntime(params: Readonly<{
     // driver snapshot AppPane admitted.
     const scopedProjection = useScopedPluginUiProjection(hasRegisteredPaneScope
         ? { machineId: null, serverId: null, enabled: false }
-        : { machineId: directMachineId, serverId: directServerId });
+        : { machineId: directMachineId, serverId: directServerId, sections: SESSION_PLUGIN_UI_SECTIONS });
     const machineId = hasRegisteredPaneScope
         ? registeredPaneScope?.machineId ?? null
         : directMachineId;
