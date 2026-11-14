@@ -3726,7 +3726,7 @@ export const pt: TranslationStructure = {
     trayOpenInHappier: 'Abrir no Happier',
     traySettings: 'Ajustes…',
     trayStartAtLogin: 'Iniciar ao entrar',
-    trayStopAndQuit: 'Parar os serviços em segundo plano e sair',
+    trayStopAndQuit: 'Sair do Happier (parar os serviços em segundo plano)',
     trayStart: 'Iniciar',
     trayRestart: 'Reiniciar',
     trayStop: 'Parar',

@@ -3315,7 +3315,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         trayOpenInHappier: '在 Happier 中開啟',
         traySettings: '設定…',
         trayStartAtLogin: '登入時啟動',
-        trayStopAndQuit: '停止背景服務並結束',
+        trayStopAndQuit: '結束 Happier（停止背景服務）',
         trayStart: '啟動',
         trayRestart: '重新啟動',
         trayStop: '停止',

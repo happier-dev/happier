@@ -3328,7 +3328,7 @@ export const fr: TranslationStructure = {
         trayOpenInHappier: 'Ouvrir dans Happier',
         traySettings: 'Réglages…',
         trayStartAtLogin: 'Démarrer à la connexion',
-        trayStopAndQuit: 'Arrêter les services en arrière-plan et quitter',
+        trayStopAndQuit: 'Quitter Happier (arrêter les services en arrière-plan)',
         trayStart: 'Démarrer',
         trayRestart: 'Redémarrer',
         trayStop: 'Arrêter',

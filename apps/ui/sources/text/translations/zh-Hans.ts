@@ -3506,7 +3506,7 @@ export const zhHans: TranslationStructure = {
     trayOpenInHappier: '在 Happier 中打开',
     traySettings: '设置…',
     trayStartAtLogin: '登录时启动',
-    trayStopAndQuit: '停止后台服务并退出',
+    trayStopAndQuit: '退出 Happier（停止后台服务）',
     trayStart: '启动',
     trayRestart: '重新启动',
     trayStop: '停止',
