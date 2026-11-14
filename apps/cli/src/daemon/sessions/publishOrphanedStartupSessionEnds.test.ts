@@ -26,6 +26,30 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(removals).toEqual(sameHomeSibling ? [legacyPidSessionTrackingKey(102)] : []);
   });
 
+  it('leaves a dead runner marker to the respawn that holds its Session', async () => {
+    // A runner lost to a crash or a host update is being respawned to adopt its held
+    // Agent. Its marker is not orphaned: ending the Session or its turn here cancels
+    // the turn the adopting runner is about to complete.
+    const marker = { sessionId: 'sess-respawning', trackingKey: legacyPidSessionTrackingKey(7001), pid: 7001, activeTurnId: 'turn-adopted' };
+    const effects: string[] = [];
+    const retained = await publishOrphanedStartupSessionEnds({
+      serverId: 'current-home',
+      orphanedDeadDaemonSessions: [marker],
+      isSessionAlreadyRunning: async () => false,
+      isSessionRespawnPending: sessionId => sessionId === 'sess-respawning',
+      apiMachine: {
+        captureMachineSessionTerminal: async () => {
+          effects.push('capture');
+          return { v: 1 as const, status: 'captured' as const, sessionId: 'sess-respawning', authority: { kind: 'generation' as const, publisherGeneration: '1' } };
+        },
+        enqueueDaemonTerminalExactTurnEnd: async () => { effects.push('turn-end'); },
+        finalizeMachineSessionTerminal: async () => { effects.push('finalize'); return { v: 1 as const, status: 'closed' as const, sessionId: 'sess-respawning' }; },
+      },
+      removeSessionMarkerFn: async () => { effects.push('remove'); },
+    });
+    expect({ effects, retained }).toEqual({ effects: [], retained: [marker] });
+  });
+
   it('awaits exact terminal staging before releasing the orphan marker', async () => {
     const calls: string[] = [];
     const apiMachine = {

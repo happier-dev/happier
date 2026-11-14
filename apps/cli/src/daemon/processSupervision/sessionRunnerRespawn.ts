@@ -32,6 +32,8 @@ export type SessionRunnerRespawnManager = Readonly<{
   hasPendingTerminalSettlements(): boolean;
   awaitTerminalSettlement(sessionId?: string): Promise<void>;
   hasPendingIntendedRestarts: (sessionId?: string) => boolean;
+  /** This owner holds the Session: a respawn is scheduled or in flight, or its terminal settlement is pending. */
+  hasPendingRespawn: (sessionId: string) => boolean;
   markStopRequested: (sessionId: string, request: StopRequest) => void;
   prepareAutomaticResumeAdmission: (sessionId: string) => () => boolean;
   prepareFreshExplicitResumeAdmission: (sessionId: string) => Readonly<{
@@ -620,6 +622,10 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
       if (sessionId !== undefined) return stateBySessionId.get(normalizeSessionId(sessionId))?.intended === true;
       for (const state of stateBySessionId.values()) if (state.intended) return true;
       return false;
+    },
+    hasPendingRespawn: (sessionIdRaw) => {
+      const state = stateBySessionId.get(normalizeSessionId(sessionIdRaw));
+      return state !== undefined && (state.retire !== undefined || state.terminalSettlement?.status === 'pending');
     },
     markStopRequested,
     prepareAutomaticResumeAdmission: (sessionIdRaw: string) => {

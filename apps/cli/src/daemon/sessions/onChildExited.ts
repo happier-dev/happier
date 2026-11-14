@@ -494,7 +494,9 @@ export function createOnChildExited(params: Readonly<{
           releaseMarkerEvidence: async ({ sessionId, turnId }) => {
             if (!isCurrentPidOwner()) return;
             if (shouldPreserveMarker) {
-              if (turnId === null) return;
+              // A spared Agent's turn moved to its respawn (one turn owner at a time): the dead
+              // runner's retained marker must not name it, or an orphan settlement ends it.
+              if (turnId === null && !spare.transaction) return;
               await updateSessionMarkerActiveTurnFn({
                 trackingKey: tracked.trackingKey,
                 sessionId,

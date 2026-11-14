@@ -45,6 +45,33 @@ describe('createOnChildExited', () => {
     expect(order).toEqual(path === 'staging fails' ? ['abandon'] : ['handOff', 'respawn', 'abandon']);
   });
 
+  it('moves the turn out of the retained marker when the exit spares the held Agent', async () => {
+    // The respawn adopts the spared Agent and completes its turn. The dead runner's
+    // retained marker must not name that turn, or a later orphan settlement ends it.
+    const pid = 132;
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'cspare2', activeTurnId: 'turn-10' };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const held = { role: 'primary', socketPath: '/tmp/h2.sock', holderPid: 9003, agentPid: 9004 };
+    const turnEnds: unknown[] = [];
+    const markerTurns: (string | null)[] = [];
+    const onChildExited = createOnChildExited({
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
+      getApiMachineForSessions: () => ({ enqueueDaemonTerminalExactTurnEnd: async (mutation: unknown) => { turnEnds.push(mutation); } }),
+      ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
+      spareHeldAgent: async () => ({ held, turnId: 'turn-10', handOff: () => undefined, abandon: async () => undefined }),
+      updateSessionMarkerActiveTurnFn: async ({ activeTurnId }: { activeTurnId: string | null }) => { markerTurns.push(activeTurnId); },
+      beforeUnexpectedExitSettlement: async () => undefined,
+      onUnexpectedExit: vi.fn(async () => undefined),
+      shouldPreserveSessionMarkerOnExit: () => true,
+    } as any);
+
+    await onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
+
+    expect({ turnEnds: turnEnds.length, markerTurns }).toEqual({ turnEnds: 0, markerTurns: [null] });
+  });
+
   it('does not register disconnected terminal recovery after an owned startup launch was cancelled before acknowledgement', async () => {
     const pid = 121;
     const tracked = {

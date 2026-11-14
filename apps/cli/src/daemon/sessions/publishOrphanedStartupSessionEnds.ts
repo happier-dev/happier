@@ -25,6 +25,8 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
   };
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
   isSessionAlreadyRunning?: (sessionId: string) => Promise<boolean>;
+  /** The respawn owner holds this Session (a respawn or its terminal settlement is pending). */
+  isSessionRespawnPending?: (sessionId: string) => boolean;
   retireTerminalControlServiceability?: (marker: OrphanedDeadDaemonSession) => Promise<void>;
   isShuttingDown?: () => boolean;
   now?: () => number;
@@ -90,6 +92,9 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
   await Promise.all(Array.from(groups, async ([sessionId, evidence]) => {
     try {
       if (isShuttingDown()) return;
+      // A dead runner whose Session is being respawned is not orphaned: the respawn adopts
+      // its held Agent and turn, or its terminal settlement ends them. Its evidence is retained.
+      if (params.isSessionRespawnPending?.(sessionId)) return;
       // Retained evidence can outlive startup and a subsequent Session resume.
       // Reuse the current runner owner before capturing terminal authority.
       if (evidence.some((marker) => marker.recoveredLiveSession === true)

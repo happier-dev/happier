@@ -101,6 +101,29 @@ describe('createSessionRunnerRespawnManager', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('holds the Session from the scheduled respawn until that respawn succeeds', async () => {
+    // Orphan settlement asks this owner before ending a dead runner's Session or turn.
+    vi.useFakeTimers();
+    try {
+      let launch!: (result: { type: 'success' }) => void;
+      const spawnSession = vi.fn(() => new Promise<{ type: 'success' }>(resolve => { launch = resolve; }));
+      const manager = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: null,
+        baseDelayMs: 1_000, maxDelayMs: 1_000, jitterMs: 0, random: () => 0, stabilityWindowMs: 5_000,
+        isSessionAlreadyRunning: () => false, spawnSession, logDebug: () => {}, logWarn: () => {} });
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(112), pid: 112, happySessionId: 'respawning',
+        vendorResumeId: 'native', spawnOptions: { directory: '/repo' } };
+      const pending = [manager.hasPendingRespawn('respawning')];
+      expect(manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null })).toBe('scheduled');
+      pending.push(manager.hasPendingRespawn('respawning'));
+      await vi.advanceTimersByTimeAsync(1_000);
+      pending.push(manager.hasPendingRespawn('respawning'), manager.hasPendingRespawn('another'));
+      launch({ type: 'success' });
+      await vi.advanceTimersByTimeAsync(0);
+      pending.push(manager.hasPendingRespawn('respawning'));
+      expect({ launches: spawnSession.mock.calls.length, pending }).toEqual({ launches: 1, pending: [false, true, true, false, false] });
+    } finally { vi.useRealTimers(); }
+  });
+
   it('settles an unconfirmed Provider without relaunch or Home polling and leaves explicit Resume available', async () => {
     vi.useFakeTimers();
     try {
