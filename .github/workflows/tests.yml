@@ -784,7 +784,7 @@ jobs:
   gate:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
-    needs: [ci_plan, pre-release-packaged-cli, pre-release-mobile-native, self-host-schtasks-e2e, gate-prepare, gate-compiler, gate-unit, gate-build-artifacts, server-db-contract, installers-smoke-windows]
+    needs: [process-identity-windows, ci_plan, pre-release-packaged-cli, pre-release-mobile-native, self-host-schtasks-e2e, gate-prepare, gate-compiler, gate-unit, gate-build-artifacts, server-db-contract, installers-smoke-windows]
     runs-on: ubuntu-24.04
     # Normally terminating aggregate: 6s; twice that sample rounded up.
     timeout-minutes: 1
@@ -1617,6 +1617,23 @@ jobs:
       - name: Check generated public Action contract
         if: inputs.select_jobs_explicitly || steps.changes.outputs.action_dtos == 'true'
         run: pnpm exec turbo run generated:finite --filter=@happier-dev/plugin-sdk
+
+  process-identity-windows:
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_shared_packages }}
+    name: Process identity (Windows)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || (github.event_name == 'schedule' && 'v0.3' || github.sha) }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Verify Windows process fingerprints
+        run: node --test packages/cli-common/processInstance.test.mjs
 
   shared-packages-unit:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_shared_packages) }}
@@ -3584,7 +3601,7 @@ jobs:
   ci_summary:
     if: ${{ always() && !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: CI result summary (all lanes)
-    needs: [ci_plan, pre-release-packaged-cli, pre-release-mobile-native, cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, action-map-drift, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    needs: [process-identity-windows, ci_plan, pre-release-packaged-cli, pre-release-mobile-native, cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, action-map-drift, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

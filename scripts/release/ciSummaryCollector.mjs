@@ -5,7 +5,7 @@ export const SELECTOR_JOBS = Object.freeze({
   run_mobile_e2e_android: ['mobile-e2e-android'],
   run_mobile_e2e_ios: ['mobile-e2e-ios'],
   run_ui: ['ui-unit', 'ui-integration', 'ui', 'action-map-drift'],
-  run_shared_packages: ['shared-packages-unit'],
+  run_shared_packages: ['shared-packages-unit', 'process-identity-windows'],
   run_plugin_workspaces: ['plugin-workspaces-unit', 'action-map-drift'],
   run_server: ['server'],
   run_home_iroh_real: ['home-iroh-real'],

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 
 import {
   parseLinuxProcStartTime,
@@ -101,7 +102,7 @@ test('readProcessStartTimeMsSync produces the same Linux numeric witness as the 
   }), Date.parse('Mon Jul 20 12:34:56 2026'));
   assert.equal(readProcessStartTimeMsSync(42, {
     platform: 'win32',
-    spawnSyncImpl: () => ({ status: 0, signal: null, stdout: 'CreationDate=20260723013456.123456+120\r\n' }),
+    spawnSyncImpl: () => ({ status: 0, signal: null, stdout: '2026-07-22T23:34:56.1234560Z\r\n' }),
   }), Date.parse('2026-07-22T23:34:56.1234560Z'));
   assert.equal(readProcessStartTimeMsSync(42, {
     platform: 'linux',
@@ -161,21 +162,22 @@ test('readProcessInstanceFingerprintSync uses the platform-owned incarnation sou
   }]);
 });
 
-test('readProcessInstanceFingerprintSync writes predecessor-compatible Windows ISO fingerprints from WMIC', () => {
+test('readProcessInstanceFingerprintSync writes predecessor-compatible Windows ISO fingerprints through the native fast path', () => {
   const calls = [];
   assert.equal(readProcessInstanceFingerprintSync(42, {
     platform: 'win32',
-    spawnSyncImpl: (command, args) => {
-      calls.push({ command, args });
+    spawnSyncImpl: (command, args, options) => {
+      calls.push({ command, args, options });
       return {
         status: 0,
         signal: null,
-        stdout: 'CreationDate=20260723013456.123456+120\r\n',
+        stdout: '2026-07-22T23:34:56.1234560Z\r\n',
       };
     },
   }), 'win32-cim:2026-07-22T23:34:56.1234560Z');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, 'wmic.exe');
+  assert.equal(calls[0].command, 'powershell.exe');
+  assert.equal(calls[0].options.timeout, 5_000);
 });
 
 test('readProcessInstanceFingerprintSync normalizes WMIC and PowerShell Windows creation dates identically', () => {
@@ -260,7 +262,7 @@ test('readProcessInstanceFingerprintSync preserves the predecessor ISO Windows f
       return {
         status: 0,
         signal: null,
-        stdout: script.includes('ToUniversalTime().ToString("O")')
+        stdout: script.includes('Get-CimInstance')
           ? '2026-07-23T12:34:56.1234567Z\r\n'
           : 'samedi, 25 juillet 2026 16:49:20\r\n',
       };
@@ -268,7 +270,8 @@ test('readProcessInstanceFingerprintSync preserves the predecessor ISO Windows f
   }), expectedFingerprint);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, 'powershell.exe');
-  assert.match(calls[0].args.at(-1), /ToUniversalTime\(\)\.ToString\("O"\)/);
+  assert.match(calls[0].args.at(-1), /Get-CimInstance/);
+  assert.doesNotMatch(calls[0].args.at(-1), /GetProcessById/);
 });
 
 test('readProcessInstanceFingerprintSync fails closed when every incarnation source is unavailable', () => {
@@ -372,4 +375,73 @@ test('readProcessHostIdentitySync fails closed when the host identity source is 
     spawnSyncImpl: failedSpawn,
   }), null);
   assert.equal(readProcessHostIdentitySync({ platform: 'freebsd' }), null);
+});
+
+const windowsOnly = { skip: process.platform !== 'win32' && 'requires Windows' };
+
+function readCimFingerprint(pid) {
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction Stop; if ($null -eq $p) { exit 3 }; $p.CreationDate.ToUniversalTime().ToString("O")`,
+  ], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr);
+  return `win32-cim:${result.stdout.trim()}`;
+}
+
+// Only intercept the OS command boundary; execute the owner's real PowerShell script.
+function windowsProbe({ pid = process.pid, transform = (script) => script } = {}) {
+  let result;
+  let stderrMode;
+  const fingerprint = readProcessInstanceFingerprintSync(pid, {
+    platform: 'win32',
+    spawnSyncImpl(command, args, options) {
+      stderrMode = options.stdio?.[2];
+      result = spawnSync(command, [...args.slice(0, -1), transform(args.at(-1))], {
+        ...options, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return result;
+    },
+  });
+  return { fingerprint, result, stderrMode };
+}
+
+function replaceStartTime(script, expression, pid = process.pid) {
+  const original = `[System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime()`;
+  assert.ok(script.includes(original), 'must intercept the actual OS read');
+  return script.replace(original, expression);
+}
+
+const rejectCim = 'function Get-CimInstance { throw "CIM must not run" }; ';
+
+test('Windows fast path matches CIM with CIM disabled in the production probe', windowsOnly, () => {
+  const expected = readCimFingerprint(process.pid);
+  const { fingerprint, result } = windowsProbe({ transform: (script) => rejectCim + script });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fingerprint, expected);
+  assert.equal(result.stderr, '');
+});
+
+test('Windows fast path truncates sub-microsecond ticks to the persisted CIM precision', windowsOnly, () => {
+  const { fingerprint, result } = windowsProbe({ transform: (script) => rejectCim + replaceStartTime(script,
+    '[DateTime]::Parse("2026-07-23T12:34:56.1234567Z").ToUniversalTime()') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fingerprint, 'win32-cim:2026-07-23T12:34:56.1234560Z');
+});
+
+test('Windows fallback preserves the fingerprint and reports the slow path on stderr', windowsOnly, () => {
+  const expected = readCimFingerprint(process.pid);
+  const { fingerprint, result, stderrMode } = windowsProbe({ transform: (script) => replaceStartTime(script,
+    '$(throw [System.ComponentModel.Win32Exception]::new(5))') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fingerprint, expected);
+  assert.match(result.stderr, /process.*fingerprint.*CIM/i);
+  assert.equal(stderrMode, 'inherit', 'the diagnostic must be visible without opt-in logging');
+});
+
+test('Windows expired process returns null without querying CIM', windowsOnly, () => {
+  const expired = spawnSync(process.execPath, ['-e', '']);
+  assert.equal(expired.status, 0);
+  const { fingerprint, result } = windowsProbe({ pid: expired.pid, transform: (script) => rejectCim + script });
+  assert.equal(fingerprint, null);
+  assert.equal(result.status, 3, result.stderr);
+  assert.equal(result.stderr, '');
 });

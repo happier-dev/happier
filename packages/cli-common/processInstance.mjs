@@ -173,58 +173,34 @@ function readWindowsProcessCreationDateLegacySync(pid, spawnSyncImpl) {
   ));
 }
 
-function convertWindowsDmtfCreationDateToPredecessorIso(value) {
-  const match = String(value ?? '').match(
-    /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3})$/,
-  );
-  if (!match) return null;
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction, sign, offsetText] = match;
-  const [year, month, day, hour, minute, second] = [
-    yearText,
-    monthText,
-    dayText,
-    hourText,
-    minuteText,
-    secondText,
-  ].map(Number);
-  const localEpochMs = Date.UTC(year, month - 1, day, hour, minute, second);
-  const localDate = new Date(localEpochMs);
-  if (
-    year < 1000
-    || localDate.getUTCFullYear() !== year
-    || localDate.getUTCMonth() !== month - 1
-    || localDate.getUTCDate() !== day
-    || localDate.getUTCHours() !== hour
-    || localDate.getUTCMinutes() !== minute
-    || localDate.getUTCSeconds() !== second
-  ) {
-    return null;
-  }
-  const signedOffsetMinutes = Number(offsetText) * (sign === '+' ? 1 : -1);
-  const utcDate = new Date(localEpochMs - signedOffsetMinutes * 60_000);
-  return `${utcDate.toISOString().slice(0, 19)}.${fraction}0Z`;
-}
-
 function readWindowsProcessCreationDatePredecessorIsoSync(
   pid,
   spawnSyncImpl,
   expectedCreationDate = '',
 ) {
-  if (!expectedCreationDate || /\.\d{6}0Z$/.test(expectedCreationDate)) {
-    const dmtfCreationDate = readWindowsProcessCreationDateDmtfSync(pid, spawnSyncImpl);
-    const convertedCreationDate =
-      convertWindowsDmtfCreationDateToPredecessorIso(dmtfCreationDate);
-    if (convertedCreationDate) return convertedCreationDate;
-  }
-  const script = [
-    `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"`,
+  // New fingerprints retain CIM's microsecond precision. Existing ISO fingerprints with a
+  // nonzero seventh digit still use their exact CIM observation rather than being truncated.
+  const useNativeStartTime = !expectedCreationDate || /\.\d{6}0Z$/.test(expectedCreationDate);
+  const cimScript = [
+    `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop`,
     'if ($null -eq $process) { exit 3 }',
-    '$process.CreationDate.ToUniversalTime().ToString("O")',
+    '$t = $process.CreationDate.ToUniversalTime()',
+  ].join('; ');
+  const script = [
+    ...(useNativeStartTime ? [
+      `$t = $null; try { $t = [System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime() } catch [System.ArgumentException] { exit 3 } catch { $t = $null }`,
+      'if ($null -ne $t) { $t = [DateTime]::new($t.Ticks - ($t.Ticks % 10), [DateTimeKind]::Utc) } else {',
+      '[Console]::Error.WriteLine("[happier] Windows process fingerprint: .NET StartTime unavailable; using slower CIM probe.")',
+      cimScript,
+      '}',
+    ] : [cimScript]),
+    '$t.ToString("O")',
   ].join('; ');
   return readSpawnOutput(spawnSyncImpl(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
+    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'inherit'] },
   ));
 }
 

@@ -34,7 +34,7 @@ test('explicit CLI selection owns the managed runtime without spilling into othe
 
 test('every run selector resolves to its complete job set', () => {
   assert.deepEqual(SELECTOR_JOBS.run_ui, ['ui-unit', 'ui-integration', 'ui', 'action-map-drift']);
-  assert.deepEqual(SELECTOR_JOBS.run_shared_packages, ['shared-packages-unit']);
+  assert.deepEqual(SELECTOR_JOBS.run_shared_packages, ['shared-packages-unit', 'process-identity-windows']);
   assert.deepEqual(SELECTOR_JOBS.run_build_smoke, ['build-smoke']);
   assert.deepEqual(SELECTOR_JOBS.run_installers_smoke, [
     'installers-smoke-linux',
