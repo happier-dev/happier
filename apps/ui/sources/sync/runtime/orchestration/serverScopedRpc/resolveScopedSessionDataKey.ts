@@ -1,4 +1,5 @@
 import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import {
@@ -205,6 +206,11 @@ export async function resolveScopedSessionEncryption(params: Readonly<{
     viewerRole: 'owner' | 'recipient';
     isCurrent: () => boolean;
   }>;
+  /**
+   * The caller operation's Account currentness owner. Read only when a missing envelope needs the
+   * viewer's recipient readiness to name its remedy; it never opens anything.
+   */
+  readAccountCurrentness?: () => Promise<AccountEncryptionIdentity>;
 }>): Promise<SessionEncryption> {
   const { context, sessionId, admittedSession } = params;
   const assertCurrent = () => {
@@ -247,13 +253,30 @@ export async function resolveScopedSessionEncryption(params: Readonly<{
   assertCurrent();
   const sessionEncryption = installed ? encryption.getSessionEncryption(sessionId) : null;
   if (!sessionEncryption) {
-    // Keep the hydration owner's settled reason (envelope pending or needing repair).
-    const availability = cryptoContext.encryptionMode === 'unknown' && cryptoContext.hydrationState
-      ? readBlockedSessionContentAvailability(deriveSessionContentAvailability({ hydrationState: cryptoContext.hydrationState }))
+    // Keep the hydration owner's settled reason, with the Account owner's recipient readiness
+    // for a missing envelope (pending, setup required, or repair).
+    const hydrationState = cryptoContext.encryptionMode === 'unknown' ? cryptoContext.hydrationState : undefined;
+    const recipientReadiness = hydrationState === 'missing_envelope' && params.readAccountCurrentness
+      ? await readRecipientEnvelopeReadiness(params.readAccountCurrentness) : undefined;
+    const availability = hydrationState
+      ? readBlockedSessionContentAvailability(deriveSessionContentAvailability({ hydrationState, recipientReadiness }))
       : null;
     throw createSessionEncryptionUnavailableError(sessionId, 'scoped_session_encryption_unavailable', availability ?? undefined);
   }
   return sessionEncryption;
+}
+
+/** The Account owner's recipient readiness: observed, or carried by its readiness refusal. */
+async function readRecipientEnvelopeReadiness(read: () => Promise<AccountEncryptionIdentity>) {
+  try {
+    return (await read()).recipientEnvelopeReadiness;
+  } catch (error) {
+    const { AccountEncryptionCurrentnessReadinessError } = await import('@/sync/api/account/apiAccountEncryptionMode');
+    if (error instanceof AccountEncryptionCurrentnessReadinessError) return error.recipientEnvelopeReadiness;
+    if (isTerminalAuthError(error)) throw error;
+    // Without an answer the refusal keeps the default reason; it still fails closed.
+    return undefined;
+  }
 }
 
 /**

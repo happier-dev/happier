@@ -53,19 +53,32 @@ describe('resolveScopedSessionDataKey', () => {
   });
 
   it.each([
-    { name: 'a recipient without its envelope', viewerRole: 'recipient' as const, envelope: null, availability: 'encrypted_access_pending' },
-    { name: 'an envelope this Account cannot open', viewerRole: 'recipient' as const, envelope: 'AAAA', availability: 'encrypted_access_needs_repair' },
-  ])('fails closed with the content availability of $name', async ({ viewerRole, envelope, availability }) => {
+    { name: 'a recipient without its envelope', envelope: null, readiness: undefined, availability: 'encrypted_access_pending' },
+    { name: 'an envelope this Account cannot open', envelope: 'AAAA', readiness: undefined, availability: 'encrypted_access_needs_repair' },
+    { name: 'a recipient whose Account needs encryption setup', envelope: null,
+      readiness: { refused: { status: 'unavailable', reason: 'encryption_setup_required' } }, availability: 'recipient_encryption_setup_required' },
+    { name: 'a plain recipient Account', envelope: null,
+      readiness: { observed: { status: 'unavailable', reason: 'plain_account' } }, availability: 'recipient_encryption_setup_required' },
+    { name: 'an inconsistent recipient Account', envelope: null,
+      readiness: { observed: { status: 'unavailable', reason: 'encryption_inconsistent' } }, availability: 'encrypted_access_needs_repair' },
+  ] as const)('fails closed with the content availability of $name', async ({ envelope, readiness, availability }) => {
     const { Encryption } = await import('@/sync/encryption/encryption');
+    const { AccountEncryptionCurrentnessReadinessError } = await import('@/sync/api/account/apiAccountEncryptionMode');
     const encryption = await Encryption.create(new Uint8Array(32).fill(7));
     const { resolveScopedSessionEncryption } = await import('./resolveScopedSessionDataKey');
     const context = { scope: 'scoped', encryption, credentials: { token: 't', secret: 's' }, targetServerId: 'server-a',
       targetServerUrl: 'https://server-a.test', token: 't', timeoutMs: 1000 } as unknown as Parameters<typeof resolveScopedSessionEncryption>[0]['context'];
+    // The Account currentness owner answers readiness (or refuses with it); this resolver only consumes it.
+    const readAccountCurrentness = readiness === undefined ? undefined : async () => {
+      if ('refused' in readiness) throw new AccountEncryptionCurrentnessReadinessError(readiness.refused);
+      return { recipientEnvelopeReadiness: readiness.observed } as unknown as import('@happier-dev/sync-client').AccountEncryptionIdentity;
+    };
     const failure = await resolveScopedSessionEncryption({ context, sessionId: 'team-session', admittedSession: {
-      id: 'team-session', encryptionMode: 'e2ee', dataEncryptionKey: envelope, viewerRole, isCurrent: () => true,
-    } }).catch((error: unknown) => error);
+      id: 'team-session', encryptionMode: 'e2ee', dataEncryptionKey: envelope, viewerRole: 'recipient', isCurrent: () => true,
+    }, ...(readAccountCurrentness ? { readAccountCurrentness } : {}) }).catch((error: unknown) => error);
     // The scoped code stays; the typed reason is the canonical availability, never plaintext.
     expect(failure).toMatchObject({ code: 'scoped_session_encryption_unavailable', contentAvailability: availability });
+    expect(encryption.getSessionEncryption('team-session')).toBeNull();
   });
 
   it('retires one caller-owned Session key read without cancelling another reader', async () => {

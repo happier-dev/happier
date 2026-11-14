@@ -7,6 +7,7 @@ import { SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER, SESSION_SYSTEM_RECORDS_PRO
     SessionSystemRecordStoredUpsertRequestSchema, SessionSystemRecordStoredUpsertResponseSchema,
     readSessionSystemRecordErrorCodeV1 } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import { resolveScopedSessionEncryption } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
 import type { UsageQueryAccountContext } from './usageQueryResource';
 import type { SessionInputEvidence } from './usageQuerySessionInputs';
@@ -20,6 +21,8 @@ type OpeningContext = Parameters<typeof resolveScopedSessionEncryption>[0]['cont
 export async function openUsageCompactInput(input: Readonly<{
     context: UsageQueryAccountContext; opening: OpeningContext;
     row: UsageSessionEvidenceResponse['results'][number]; isCurrent(): boolean;
+    /** This operation's Account currentness owner, for the remedy of an unopenable Session. */
+    readAccountCurrentness?: () => Promise<AccountEncryptionIdentity>;
     recordKinds?: readonly UsageSessionFactKindV1[];
 }>): Promise<SessionInputEvidence | null> {
     const compact = input.row.workFacts;
@@ -33,7 +36,8 @@ export async function openUsageCompactInput(input: Readonly<{
     }
     const contentContext = identity.encryptionMode === 'plain' ? { mode: 'plain' as const }
         : { mode: 'e2ee' as const, encryption: await resolveScopedSessionEncryption({ context: input.opening,
-            sessionId: identity.id, admittedSession: { ...identity, isCurrent: input.isCurrent } }) };
+            sessionId: identity.id, admittedSession: { ...identity, isCurrent: input.isCurrent },
+            ...(input.readAccountCurrentness ? { readAccountCurrentness: input.readAccountCurrentness } : {}) }) };
     const facts: UsageSessionFactRecordV1[] = [];
     for (const record of compact.records) {
         if (record.content === null) continue;
@@ -78,6 +82,7 @@ export async function openUsageCompactInput(input: Readonly<{
 export async function persistUsageCompactInput(input: Readonly<{
     context: UsageQueryAccountContext; opening: OpeningContext; value: SessionInputEvidence;
     signal?: AbortSignal; isCurrent(): boolean;
+    readAccountCurrentness?: () => Promise<AccountEncryptionIdentity>;
 }>): Promise<boolean> {
     if (!input.value.completeMessageCoverage) return false;
     const { session } = input.value;
@@ -87,7 +92,8 @@ export async function persistUsageCompactInput(input: Readonly<{
         : { mode: 'e2ee' as const, encryption: await resolveScopedSessionEncryption({ context: input.opening,
             sessionId: session.id, admittedSession: { id: session.id, encryptionMode: 'e2ee',
                 dataEncryptionKey: input.value.callerDataKeyEnvelope, viewerRole: session.access?.role ?? 'recipient',
-                isCurrent: input.isCurrent } }) };
+                isCurrent: input.isCurrent },
+            ...(input.readAccountCurrentness ? { readAccountCurrentness: input.readAccountCurrentness } : {}) }) };
     // Publish work last: it marks conversion complete only after its Coach sibling was saved.
     for (const fact of [...facts].reverse()) {
         const payload = projectNativeJsonValueForTransport(fact);

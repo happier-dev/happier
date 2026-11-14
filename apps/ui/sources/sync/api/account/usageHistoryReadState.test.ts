@@ -22,6 +22,11 @@ it.each([
     { code: 'forbidden', error: new SessionPartsHttpError(403, { error: 'forbidden' }) },
     { code: 'scoped_session_encryption_unavailable', error: createSessionEncryptionUnavailableError('denied', 'scoped_session_encryption_unavailable') },
     { code: 'encrypted_access_pending', error: createSessionEncryptionUnavailableError('denied', 'scoped_session_encryption_unavailable', 'encrypted_access_pending') },
+    // Only a known content availability replaces the code; any other thrown value keeps its own code.
+    { code: 'scoped_session_encryption_unavailable', error: Object.assign(new Error('denied'), {
+        code: 'scoped_session_encryption_unavailable', contentAvailability: 'ready' }) },
+    { code: 'scoped_session_encryption_unavailable', error: Object.assign(new Error('denied'), {
+        code: 'scoped_session_encryption_unavailable', contentAvailability: 'anything_else' }) },
 ])('keeps lasting Session refusals as quiet partial coverage and transient failures retryable ($code)', ({ code, error }) => {
     const history = new UsageHistoryEntry();
     history.coverage(new Set(['denied', 'unsupported', 'transient']), 0);

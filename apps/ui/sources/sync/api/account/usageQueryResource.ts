@@ -805,7 +805,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     try {
                         const value = await openUsageCompactInput({ context, opening: authority.context, row,
                             recordKinds: getUsageSessionFactKinds(query),
-                            isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent() });
+                            isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent(),
+                            readAccountCurrentness: accountCurrentnessSource.read });
                         if (value) inputs.set(row.sessionId, { value });
                         else summaryIds.push(row.sessionId);
                     } catch (error) { inputs.set(row.sessionId, { error }); }
@@ -993,7 +994,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                                 id: session.id, encryptionMode: 'e2ee', dataEncryptionKey: callerDataKeyEnvelope,
                                 viewerRole: session.access?.role ?? 'recipient',
                                 isCurrent: () => { assertCurrent(); return accountCurrentnessSource.isCurrent(); },
-                            } });
+                            }, readAccountCurrentness: accountCurrentnessSource.read });
                         let allPagesOpened = true;
                         let beforeSeq: number | undefined;
                         while (true) {
@@ -1041,7 +1042,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 if (!completeMessageCoverage) return value;
                 try {
                     const workFactsPersisted = await persistUsageCompactInput({ context, opening: authority.context, value, signal,
-                        isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent() });
+                        isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent(),
+                        readAccountCurrentness: accountCurrentnessSource.read });
                     if (workFactsPersisted) history?.converted(sessionId);
                     return { ...value, workFactsPersisted };
                 } catch (error) {

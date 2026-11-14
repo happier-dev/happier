@@ -2,6 +2,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { isBlockedSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 
 /** These settled input facts need changed access/content/client support, rather than another attempt. */
 function isLastingCoverageReason(code: string): boolean {
@@ -38,7 +39,8 @@ export function readUsageHistoryFailure(error: unknown): Readonly<{
     const httpStatus = error && typeof error === 'object' && 'httpStatus' in error && typeof error.httpStatus === 'number'
         ? error.httpStatus : error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
     // A settled content availability (envelope pending/needing repair) is the Session's typed reason.
-    const code = error && typeof error === 'object' && 'contentAvailability' in error && typeof error.contentAvailability === 'string'
+    const code = error && typeof error === 'object' && 'contentAvailability' in error
+        && isBlockedSessionContentAvailability(error.contentAvailability)
         ? error.contentAvailability
         : error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode
         : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;

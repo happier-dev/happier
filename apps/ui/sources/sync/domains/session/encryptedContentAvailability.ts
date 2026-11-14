@@ -57,6 +57,11 @@ export function deriveSessionContentAvailability(params: Readonly<{
 /** Every availability that must be explained instead of showing content. */
 export type BlockedSessionContentAvailability = Exclude<SessionContentAvailability, 'ready'>;
 
+/** Admits an untyped value (for example a thrown error's field) only when it is a known blocked availability. */
+export function isBlockedSessionContentAvailability(value: unknown): value is BlockedSessionContentAvailability {
+    return value !== 'ready' && (SESSION_CONTENT_AVAILABILITIES as readonly unknown[]).includes(value);
+}
+
 /** The two fields every Session and list row carry for the content fact. */
 export type SessionContentAvailabilitySubject = Readonly<{
     encryptionMode?: 'e2ee' | 'plain' | null;
