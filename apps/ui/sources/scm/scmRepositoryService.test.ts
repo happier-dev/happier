@@ -184,6 +184,16 @@ describe('snapshotToScmStatus', () => {
         expect(status.behindCount).toBe(1);
         expect(status.stashCount).toBe(3);
     });
+
+    it('derives counters from the full-set totals when the entry list is a truncated prefix', () => {
+        const status = snapshotToScmStatus(makeSnapshot({
+            entriesPresentation: 'truncated',
+            totals: { changedFiles: 900, untrackedFiles: 400 } as UiScmWorkingSnapshot['totals'],
+        }));
+        expect(status.isDirty).toBe(true);
+        expect(status.modifiedCount).toBe(500);
+        expect(status.untrackedCount).toBe(400);
+    });
 });
 
 describe('ScmRepositoryService.fetchSnapshotForSession', () => {
@@ -479,6 +489,27 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(result?.entries[0]?.stats.pendingAdded).toBe(4);
         expect(result?.capabilities?.writeInclude).toBe(false);
         expect(result?.capabilities?.operationLabels?.commit).toBe('Commit changes');
+    });
+
+    it('carries the entry truncation facts into the ui snapshot', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: { id: 'session_1', metadata: { machineId: 'machine-a', path: '/repo' } },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: {
+                ...makeScmSnapshot(),
+                entriesPresentation: 'truncated',
+                totals: { ...makeScmSnapshot().totals, changedFiles: 9_000 },
+            },
+        } as any);
+
+        const result = await new ScmRepositoryService().fetchSnapshotForSession('session_1');
+
+        expect(result?.entriesPresentation).toBe('truncated');
+        expect(result?.totals.changedFiles).toBe(9_000);
     });
 
     it('preserves protocol repo metadata in the ui snapshot shape', async () => {

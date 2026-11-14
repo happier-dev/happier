@@ -113,4 +113,27 @@ describe('buildScmStatusSummaryFromSnapshot', () => {
             hasAnyChanges: false,
         });
     });
+
+    it('reports the full changed-file count when the entry list is a truncated prefix', () => {
+        const summary = buildScmStatusSummaryFromSnapshot(
+            buildSnapshot({
+                entries: [
+                    { path: 'a.txt', previousPath: null, kind: 'modified', includeStatus: ' ', pendingStatus: 'M', hasIncludedDelta: false, hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false } },
+                ],
+                entriesPresentation: 'truncated',
+                totals: {
+                    includedFiles: 0,
+                    pendingFiles: 900,
+                    untrackedFiles: 0,
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 1,
+                    pendingRemoved: 0,
+                    changedFiles: 900,
+                },
+            })
+        );
+
+        expect(summary?.changedFiles).toBe(900);
+    });
 });

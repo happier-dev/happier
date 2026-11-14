@@ -1,4 +1,5 @@
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { scmSnapshotEntriesAreComplete } from '@/scm/core/snapshotMappers';
 
 type SnapshotEntryComparable = {
     path: string;
@@ -84,6 +85,7 @@ export function areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(
     if (a.projectKey !== b.projectKey) return false;
     if (a.hasConflicts !== b.hasConflicts) return false;
     if (a.stashCount !== b.stashCount) return false;
+    if (a.entriesPresentation !== b.entriesPresentation) return false;
     if (!areJsonComparableValuesEqual(a.repo, b.repo)) return false;
     if (!areJsonComparableValuesEqual(a.capabilities, b.capabilities)) return false;
     if (!areJsonComparableValuesEqual(a.branch, b.branch)) return false;
@@ -95,6 +97,11 @@ export function areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(
 }
 
 export function collectChangedPaths(previous: ScmWorkingSnapshot | null | undefined, next: ScmWorkingSnapshot): string[] {
+    // A truncated side lacks the paths beyond its prefix, so a diff would report them as removed
+    // or added. Report nothing rather than misattribute. A missing previous snapshot is not a gap.
+    if (!scmSnapshotEntriesAreComplete(next) || (previous && !scmSnapshotEntriesAreComplete(previous))) {
+        return [];
+    }
     const previousMap = toComparableMap(previous);
     const nextMap = toComparableMap(next);
     const candidatePaths = new Set<string>([

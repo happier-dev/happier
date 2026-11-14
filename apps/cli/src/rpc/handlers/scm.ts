@@ -53,6 +53,7 @@ import type {
     ScmWorktreesEnrichmentRequest,
     ScmWorktreesEnrichmentResponse,
 } from '@happier-dev/protocol';
+import { SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -63,10 +64,48 @@ import {
 } from '@/scm/rpc/dispatch';
 import type { ScmFilesystemAccessPolicy } from '@/scm/runtime';
 import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
 import { registerScmPullRequestHandlers } from './scm/registerScmPullRequestHandlers';
 import { registerScmRepositoryProvisioningHandlers } from './scm/registerScmRepositoryProvisioningHandlers';
 import type { ScmHandlerRouteBase } from './scm/scmHandlerRouteBase';
+
+/** Serialized bytes of the ',' between two entries of the entries array. */
+const STATUS_SNAPSHOT_ENTRY_SEPARATOR_BYTES = 1;
+
+/**
+ * Bounds the entry list of a snapshot reply at the one choke point every backend's snapshot
+ * passes through, so a huge working tree (e.g. an untracked build output) cannot produce a reply
+ * that drops the machine socket. The backend computed totals from its full entry set; they are
+ * kept, and `totals.changedFiles` records the full changed-file count before truncation. Entries
+ * are cut only between whole entries, in shipped order, and the snapshot is then marked
+ * `entriesPresentation: 'truncated'`. A first entry larger than the budget yields an empty prefix.
+ */
+function applyStatusSnapshotEntryBudget(response: ScmStatusSnapshotResponse): ScmStatusSnapshotResponse {
+    const snapshot = response.success === true ? response.snapshot : undefined;
+    if (!snapshot || !Array.isArray(snapshot.entries)) return response;
+    const totals = { ...snapshot.totals, changedFiles: snapshot.totals.changedFiles ?? snapshot.entries.length };
+    let accumulatedBytes = 0;
+    let shippedCount = 0;
+    for (const entry of snapshot.entries) {
+        const separatorBytes = shippedCount > 0 ? STATUS_SNAPSHOT_ENTRY_SEPARATOR_BYTES : 0;
+        const entryBytes = estimateJsonUtf8BytesBounded(entry, SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
+        if (accumulatedBytes + separatorBytes + entryBytes > SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES) {
+            return {
+                ...response,
+                snapshot: {
+                    ...snapshot,
+                    entries: snapshot.entries.slice(0, shippedCount),
+                    entriesPresentation: 'truncated',
+                    totals,
+                },
+            };
+        }
+        accumulatedBytes += separatorBytes + entryBytes;
+        shippedCount += 1;
+    }
+    return { ...response, snapshot: { ...snapshot, totals } };
+}
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
@@ -129,7 +168,8 @@ export function registerScmHandlers(
                 }),
             runWithBackend: ({ context, selection }) =>
                 selection.backend.statusSnapshot({ context, request }),
-        }).then((value) => {
+        }).then((backendValue) => {
+            const value = applyStatusSnapshotEntryBudget(backendValue);
             if (statusSnapshotCacheTtlMs > 0 && cacheGeneration === statusSnapshotCacheGeneration) {
                 statusSnapshotCache.set(key, { value, expiresAtMs: Date.now() + statusSnapshotCacheTtlMs });
             }

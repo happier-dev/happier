@@ -209,6 +209,13 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
   pullRequest: ScmPullRequestSummarySchema.nullable().optional(),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
+  /**
+   * Entry-list delivery fact. Absent = `'complete'` (every entry is shipped, as from daemons
+   * that predate this field). `'truncated'` = the entries are a whole-entry prefix of the full
+   * set because the reply's entry byte budget was reached. Orthogonal to `totals.isComplete`,
+   * which tracks line-stat completeness.
+   */
+  entriesPresentation: z.enum(['complete', 'truncated']).optional(),
   totals: z.object({
     includedFiles: z.number().int().nonnegative(),
     pendingFiles: z.number().int().nonnegative(),
@@ -218,6 +225,11 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
     pendingAdded: z.number().int().nonnegative(),
     pendingRemoved: z.number().int().nonnegative(),
     isComplete: z.boolean().optional(),
+    /**
+     * Changed-file count of the full working set (one per path), taken before the entry list
+     * is truncated. Absent from daemons that predate it, which always ship every entry.
+     */
+    changedFiles: z.number().int().nonnegative().optional(),
   }),
 }));
 export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;
@@ -299,6 +311,19 @@ export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSc
  * keeping the upper bound on per-request server work small.
  */
 export const SCM_WORKTREES_ENRICHMENT_MAX_PATHS = 64;
+
+/**
+ * Serialized-byte budget for the entry list of one `scm.status.snapshot` reply, applied at the
+ * daemon status handler after the backend computed totals from the full entry set. Bytes rather
+ * than an entry count, because entry size varies roughly 10x with path length.
+ *
+ * Basis: a machine socket was observed to drop on a ~17 MB snapshot reply (an untracked tree)
+ * while replies up to ~11 MB were delivered. 4 MiB of entries encrypts to roughly 5.6 MB on the
+ * wire, well under that band and under the relay's default packet limit
+ * (SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES). At ~530 bytes per entry it first truncates near
+ * 7,900 changed files.
+ */
+export const SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES = 4_194_304;
 
 export const ScmWorktreesEnrichmentRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   worktreePaths: z

@@ -1,4 +1,5 @@
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { readScmSnapshotChangedFileCount } from '@/scm/core/snapshotMappers';
 import type { ScmUiBackendPlugin } from './scmUiBackendPlugin';
 import { gitScmUiPlugin } from '@/scm/backends/git/plugin';
 import { saplingScmUiPlugin } from '@/scm/backends/sapling/plugin';
@@ -60,7 +61,7 @@ const fallbackPlugin: ScmUiBackendPlugin = {
     statusSummaryMapper(snapshot) {
         if (!snapshot) return null;
         return {
-            changedFiles: snapshot.entries.length,
+            changedFiles: readScmSnapshotChangedFileCount(snapshot),
             includedFiles: snapshot.totals.includedFiles,
             pendingFiles: snapshot.totals.pendingFiles,
             untrackedFiles: snapshot.totals.untrackedFiles,
