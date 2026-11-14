@@ -164,6 +164,7 @@ function serviceSpec<const Id extends MachineServiceActionId>(id: Id, title: str
   const write = id === 'machines.services.watch' || id === 'machines.services.unwatch';
   return { id, title, description, safety: 'safe', sideEffectClass: write ? 'write' : 'read', approval: { result: 'none' },
     approvalScope: 'machine', executionPlacement: 'machine', placements: [], approvalPolicy: { uiConfirmation: 'direct' },
+    originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
     toolExposure: { agent: 'discoverable_only' }, surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false },
     bindings: { rpcMethod: rpcMethods[id], mcpToolName: id.replaceAll('.', '_') },
     inputSchema: MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[id], outputSchema: MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS[id],

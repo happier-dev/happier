@@ -77,6 +77,7 @@ import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/o
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineRolesSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machineRoles';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 // Terminal reads and controlling-TTY availability are genuine user/OS boundaries;
 // the consent owner and its default-no answer parsing stay real.
@@ -94,6 +95,47 @@ const homeIdentityId = 'srv_requester_home';
 // is Account-local declaration discovery and does not originate a Machine call.
 const ownMachineInput = AgentsModelsListInputSchema.parse({ agentId: 'codex', machineId: 'alice-machine' });
 const ownMachineResult = PUBLIC_ACTION_OUTPUT_SCHEMAS['agents.models.list'].parse({ items: [] });
+it.each(['own', 'shared-accepted', 'shared-declined'] as const)(
+  'keeps friendly CLI service reads in original requester admission (%s)', async access => {
+    // Generic Machine RPC is the network boundary that loses requester custody.
+    const genericRpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(
+      Object.assign(new Error('requester_credentials_unavailable'), { code: 'requester_credentials_unavailable' }));
+    try {
+      const events: string[] = [];
+      const result = { kind: 'snapshot', services: [] };
+      const target = await home('plain', events, { originalOwnAction: 'machines.services.list',
+        authenticationKind: 'terminal', machineRole: 'manage',
+        custodianAccountId: access === 'own' ? 'bob' : 'alice', ownExecution: { ok: true, result } });
+      const disclosures: string[] = [];
+      const credentials: StoredCredentials = { token: token('terminal'), encryption: null, credentialProvenance: 'stored_session' };
+      const executor = createCliActionExecutorFromCredentials({ credentials,
+        serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+        onRequesterSessionCredentialDisclosure: async disclosure => {
+          disclosures.push(disclosure.custodian?.accountId ?? 'missing');
+          return access !== 'shared-declined';
+        } });
+      const execution = await executor.execute('machines.services.list', { serverId: 'home', machineId: 'alice-machine' },
+        { surface: 'cli', authority: 'account_automation', actionRequestId: 'request-1' });
+      expect(disclosures).toEqual(access === 'own' ? [] : ['alice']);
+      if (access === 'shared-declined') {
+        expect(execution).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_declined' });
+        expect(events).not.toContain('dispatch');
+        return;
+      }
+      expect(execution).toEqual({ ok: true, result });
+      const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      const requester = openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+        purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+        serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true });
+      expect(requester).toMatchObject({ credentials: { token: credentials.token }, invocation: { surface: 'cli' } });
+      expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob',
+        custodianAccountId: access === 'own' ? 'bob' : 'alice' });
+      expect(events).toEqual(['home-authorized', 'dispatch']);
+    } finally {
+      genericRpc.mockRestore();
+    }
+  });
 it('requires installed requester custody for private deployment observation reads', () => {
   expect(requiresOriginalAccountMachineActionProof('deployments.observation.get', {
     serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime',
