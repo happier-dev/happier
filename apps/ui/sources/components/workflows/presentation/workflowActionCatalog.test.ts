@@ -13,6 +13,19 @@ import { createPluginLocalizedTextResolver, createPluginUiTranslationRuntime } f
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 describe('workflow executing-machine Action catalog', () => {
+    it('offers bundled Actions from the daemon producer local-id shape', () => {
+        // READY206 projection, produced by registry/projection/v2.ts buildActionsById:
+        // the record key is qualified; the declaration id stays local (including slashes).
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: {
+            'happier.channels/binding/list-v1': {
+                id: 'binding/list-v1', pluginId: 'happier.channels', occurrenceId: 'channels-runtime',
+                title: 'List conversation bindings', scopes: ['global'], surfaces: ['agent'],
+                execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
+            },
+        } });
+        expect(listWorkflowStepActionSpecs(projection).find(spec => spec.id === 'happier.channels/actions/binding/list-v1'))
+            .toMatchObject({ title: 'List conversation bindings', plugin: { id: 'happier.channels' } });
+    });
     it('offers every Daily health digest Action while excluding Run composition controls', () => {
         const specs = listWorkflowStepActionSpecs();
         walkWorkflowBlocks(createDailyHealthDigestWorkflowV1().blocks).forEach(block => {
@@ -42,11 +55,11 @@ describe('workflow executing-machine Action catalog', () => {
     });
 
     it('retains a typed unavailable contributed Action beside healthy host and plugin choices', () => {
-        const action = { id: 'example.tools/healthy', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
+        const action = { id: 'healthy', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
             title: 'Healthy', scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' },
             dangerLevel: 'safe', available: true };
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: {
-            [action.id]: action, 'example.tools/broken': { ...action, id: 'example.tools/broken' },
+            'example.tools/healthy': action, 'example.tools/broken': { ...action, id: 'broken' },
         } });
         const inputSchema = z.lazy(() => { throw new Error('Malformed declaration schema'); });
         Object.defineProperty(projection.actionsById['example.tools/broken'], 'inputHints', {
@@ -73,11 +86,11 @@ describe('workflow executing-machine Action catalog', () => {
                 ? { title: 'Résumer', prompt: 'Quel sujet ?' } : { title: 'Summarize', prompt: 'Which topic?' }))
         ) });
         await runtime.demand(pluginId, 'fr');
-        const action = { id: `${pluginId}/summarize`, pluginId, occurrenceId: 'occurrence-a',
+        const action = { id: 'summarize', pluginId, occurrenceId: 'occurrence-a',
             title: { key: 'title', fallback: 'Summarize' }, scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' },
             dangerLevel: 'safe', available: true,
             inputHints: { fields: [{ path: 'topic', title: 'Topic', prompt: { key: 'prompt', fallback: 'Which topic?' }, widget: 'text' }] } };
-        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: { [action.id]: action } });
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: { [`${action.pluginId}/${action.id}`]: action } });
         const specs = listWorkflowStepActionSpecs(projection, presentation,
             createPluginLocalizedTextResolver({ projection: presentation, runtime, locale: 'fr' }));
         expect(specs.find(spec => spec.id === `${pluginId}/actions/summarize`)).toMatchObject({
@@ -104,11 +117,11 @@ describe('workflow executing-machine Action catalog', () => {
         await preloadTranslations('fr');
         setPreferredLanguageFromSettings('fr');
         try {
-            const action = { id: 'example.tools/select', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
+            const action = { id: 'select', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
                 title: 'Select', scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' },
                 dangerLevel: 'safe', available: true,
                 inputHints: { fields: [{ path: 'project', title: 'Plugin project', prompt: 'Which project?', widget: 'text' }] } };
-            const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: { [action.id]: action } });
+            const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: { [`${action.pluginId}/${action.id}`]: action } });
             const specs = listWorkflowStepActionSpecs(projection);
             expect(specs.find(spec => spec.id === 'projects.context.update')?.inputHints?.fields.find(field => field.path === 'target'))
                 .toMatchObject({ title: 'Qualified Project', prompt: t('widgetAdd.prompts.project') });
@@ -134,15 +147,15 @@ describe('workflow executing-machine Action catalog', () => {
     });
 
     it('includes daemon plugin Actions with canonical qualified ids and excludes unavailable/client-only Actions', () => {
-        const action = { id: 'example.tools/summarize', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
+        const action = { id: 'summarize', pluginId: 'example.tools', occurrenceId: 'occurrence-a',
             title: 'Summarize', scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' },
             dangerLevel: 'safe', available: true,
             inputHints: { fields: [{ path: 'topic', title: 'Topic', widget: 'text', required: true }] } };
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {}, actionsById: {
-            [action.id]: action,
-            'example.tools/missing': { ...action, id: 'example.tools/missing', available: false },
-            'example.tools/ui-only': { ...action, id: 'example.tools/ui-only', surfaces: ['ui'] },
-            'example.tools/client-only': { ...action, id: 'example.tools/client-only',
+            'example.tools/summarize': action,
+            'example.tools/missing': { ...action, id: 'missing', available: false },
+            'example.tools/ui-only': { ...action, id: 'ui-only', surfaces: ['ui'] },
+            'example.tools/client-only': { ...action, id: 'client-only',
                 execution: { target: 'client', client: { artifactId: 'client', exportName: 'activate' }, platforms: ['web'] } },
         } });
         const specs = listWorkflowStepActionSpecs(projection);

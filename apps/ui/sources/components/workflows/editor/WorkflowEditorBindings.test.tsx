@@ -7,6 +7,7 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProje
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -73,10 +74,10 @@ beforeEach(async () => {
     await home.reset();
     serverId = await home.addHome({ name: 'Editor bindings', serverUrl: 'https://editor-bindings.test', accountId: 'account-a' });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    getStorage().setState({ profileScope: { serverId, accountId: 'account-a' },
-        // account-a is the Machine's custodian: automatic Account relays use only an own Machine.
-        machines: { 'machine-a': createMachineFixture({ id: 'machine-a', activeAt: Date.now(),
-            access: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }).access }) }, machineListByServerId: {} });
+    getStorage().setState({ profileScope: { serverId, accountId: 'account-a' } });
+    // Publish through the same Home-scoped inventory owner as the live Machine list.
+    await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [createMachineFixture({ id: 'machine-a', activeAt: Date.now(),
+        access: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }).access })]);
     clearDaemonMergedProjectionCacheForTests(); resetWorkflowLibraryReadsForTests();
     machineRpc.mockReset();
     machineRpc.mockResolvedValue(childProjection());

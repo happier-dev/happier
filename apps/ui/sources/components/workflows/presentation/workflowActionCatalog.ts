@@ -57,8 +57,8 @@ export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[]): Wo
 export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | null, presentation?: PluginUiProjectionModel | null,
     localize?: PluginLocalizedTextResolver): readonly WorkflowActionSpec[] {
     const host = projectWorkflowHostActionSpecs(listActionSpecs());
-    const contributed = Object.values(projection?.actionsById ?? {}).flatMap((action): WorkflowActionSpec[] => {
-        const identity = parseQualifiedPluginContributionKey(action.id);
+    const contributed = Object.entries(projection?.actionsById ?? {}).flatMap(([key, action]): WorkflowActionSpec[] => {
+        const identity = parseQualifiedPluginContributionKey(key);
         // Workflows execute on the daemon, not inside a mounted client plugin surface.
         if (!identity || identity.pluginId !== action.pluginId || action.available === false
             || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
