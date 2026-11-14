@@ -146,6 +146,25 @@ describe('toggleReadAloud', () => {
         await live;
     });
 
+    it('does not invalidate the playback epoch a live turn captured when it takes over', async () => {
+        const reading = toggleReadAloud({ key: 'm1', text: 'hello', settings });
+        const liveTurnEpoch = localVoicePlaybackController.captureEpoch();
+
+        const live = speakAssistantText({
+            text: 'first chunk',
+            settings,
+            networkTimeoutMs: 1000,
+            registerPlaybackStopper: localVoicePlaybackController.registerStopper,
+            onSpeaking: () => {},
+        });
+        expect(localVoicePlaybackController.isEpochCurrent(liveTurnEpoch)).toBe(true);
+
+        utterances[0].onStopped?.();
+        await reading;
+        utterances[1].onDone?.();
+        await live;
+    });
+
     it('leaves a live voice reply alone when nothing is being read aloud', async () => {
         const liveStopper = vi.fn();
         localVoicePlaybackController.registerStopper(liveStopper);
