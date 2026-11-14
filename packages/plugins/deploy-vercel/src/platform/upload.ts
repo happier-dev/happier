@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -41,7 +42,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
         : new Uint8Array(await readFile(absolute, { signal: context.signal }));
       const sha = createHash('sha1').update(bytes).digest('hex');
       const failed = await uploadVercelSourceFile(bytes, sha, input.providerIdentity.providerAccountId, io);
-      if (failed) throw new PluginError({ code: failed.code, retryable: failed.retryable, details: { phase: failed.phase } });
+      if (failed) throw withActionFailureDiagnostic(new PluginError({ code: failed.code, retryable: failed.retryable, details: { phase: failed.phase },
+        failureCause: projectActionFailureCauseV1(failed, `deployment.vercel.${failed.phase}`) }),
+        { phase: `deployment.vercel.${failed.phase}`, causeKind: 'native_failure', error: failed });
       files.push({ file, sha, size: bytes.byteLength, mode: stat.mode });
     }
   }
@@ -66,7 +69,9 @@ export const uploadAction: Extract<PluginActionDeclaration, { execution?: { targ
   resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
   async run(input: JsonValue, context: PluginInvocationContext) {
     const result = await upload(input as unknown as DeploymentTargetUploadDeployInputV1, context);
-    if ('code' in result) throw new PluginError({ code: result.code, retryable: result.retryable, details: { phase: result.phase } });
+    if ('code' in result) throw withActionFailureDiagnostic(new PluginError({ code: result.code, retryable: result.retryable, details: { phase: result.phase },
+      failureCause: projectActionFailureCauseV1(result, `deployment.vercel.${result.phase}`) }),
+      { phase: `deployment.vercel.${result.phase}`, causeKind: 'native_failure', error: result });
     return result;
   },
 };

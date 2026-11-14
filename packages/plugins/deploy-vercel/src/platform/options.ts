@@ -1,6 +1,6 @@
+import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { InputOption, PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { readVercelProjectCoordinates, vercelEndpoint, vercelRequest } from './operations.js';
@@ -38,8 +38,10 @@ function continuation(url: URL, cursor?: string) {
 async function read(url: URL, context: PluginAccountActionContext): Promise<unknown> {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
   const response = await vercelRequest({ http: context.services.http, signal: context.signal, now: Date.now }, url.href, 'GET');
-  if (response.status < 200 || response.status >= 300) throw new PluginError({ code: response.status === 401 || response.status === 403
-    ? 'deployment_access_denied' : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed' });
+  if (response.status < 200 || response.status >= 300) throw withActionFailureDiagnostic(new PluginError({ code: response.status === 401 || response.status === 403
+    ? 'deployment_access_denied' : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed',
+    failureCause: projectActionFailureCauseV1(response, 'deployment.vercel.options') }), { phase: 'deployment.vercel.options', causeKind: response.status === 404 ? 'not_found'
+      : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   try { return JSON.parse(new TextDecoder().decode(response.body)); } catch { return invalid(); }
 }
 
@@ -122,7 +124,8 @@ const runtime: PluginDynamicResourceRuntime = {
       ...(environment.kind === 'preview' && text(environment.gitBranch) ? { gitBranch: environment.gitBranch } : {}),
       ...(query.query !== undefined ? { query: query.query } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
     }, { signal: options.signal });
-    if (!result.ok) throw new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' });
+    if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable',
+      failureCause: projectActionFailureCauseV1(result, 'deployment.vercel.options') }), { phase: 'deployment.vercel.options', causeKind: 'native_failure', error: result });
     return JSON.stringify(result.result);
   },
   observe: () => ({ dispose() {} }),

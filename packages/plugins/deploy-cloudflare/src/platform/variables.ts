@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
   DeploymentTargetVariablesSyncResultV1ProtocolSchema as syncOutput, PluginError, isPluginError,
@@ -40,7 +41,9 @@ function scope(product: Product, input: Read) {
 async function snapshot(product: Product, input: Read, context: PluginAccountActionContext) {
   const selected = scope(product, input);
   const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, selected.root, 'observe');
-  if ('code' in reply) throw new PluginError({ code: reply.code, details: { phase: reply.phase } });
+  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, details: { phase: reply.phase },
+    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
+    { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
   const value = reply.value;
   if (!isObject(value)) refuse('provider_response_invalid');
   const variables = new Map<string, Metadata>();

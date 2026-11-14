@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetLogsResultV1ProtocolSchema as output,
   PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
@@ -15,7 +16,11 @@ export const buildLogsAction = {
   async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
     // The Action owner has admitted this exact schema, including receipt custody.
     const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
-    const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'build' } }); };
+    const fail = (code: string): never => {
+      const error = new PluginError({ code, retryable: false, details: { phase: 'build' },
+        ...(code === 'deployment_unavailable' ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.vercel.logs.build') } : {}) });
+      throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.logs.build', causeKind: 'not_found' }) : error;
+    };
     if (!context.services.http) return fail('client_required');
     if (!input.providerDeploymentId) return fail('deployment_content_unavailable');
     const sourceRevision = input.providerDeploymentId;

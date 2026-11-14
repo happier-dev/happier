@@ -1,6 +1,6 @@
+import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type JsonValue } from '@happier-dev/plugin-sdk';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { isObject } from '../connectedAccounts/probe.js';
@@ -69,7 +69,9 @@ async function read(input: Input, context: DeploymentContext) {
     } else return missingDependency('product');
     reply = await request(context, accountId, path, 'link');
   }
-  if ('code' in reply) throw new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } });
+  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
+    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
+    { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
   if (!Array.isArray(reply.value)) invalid();
   const rows: Option[] = reply.value.map((row: unknown): Option => {
     if (!isObject(row)) return invalid();
@@ -150,8 +152,10 @@ function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceR
     if (!result.ok) {
       const code = 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable';
       const details = 'details' in result ? result.details : undefined;
-      throw new PluginError({ code, ...(code === 'missing_option_dependency' && isObject(details) && typeof details.requiredDraftPath === 'string'
+      const error = new PluginError({ code, failureCause: projectActionFailureCauseV1(result, 'deployment.cloudflare.options'), ...(code === 'missing_option_dependency' && isObject(details) && typeof details.requiredDraftPath === 'string'
         ? { details: { requiredDraftPath: details.requiredDraftPath } } : {}) });
+      throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error,
+        { phase: 'deployment.cloudflare.options', causeKind: 'native_failure', error: result }) : error;
     }
     return JSON.stringify(result.result);
   },

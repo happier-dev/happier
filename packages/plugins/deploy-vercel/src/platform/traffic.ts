@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRollbackInputV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { vercelEndpoint, vercelRequest, type VercelPlatformContext } from './operations.js';
@@ -5,7 +6,9 @@ import { vercelEndpoint, vercelRequest, type VercelPlatformContext } from './ope
 type Operation = 'promote' | 'rollback';
 type Selection = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerDeploymentId'>;
 const fail = (code: DeploymentTargetRoleFailureV1['code'], phase: DeploymentTargetRoleFailureV1['phase'] = 'observe'): never => {
-  throw new PluginError({ code, retryable: false, details: { phase } });
+  const error = new PluginError({ code, retryable: false, details: { phase },
+    ...(code === 'deployment_unavailable' ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.vercel.traffic') } : {}) });
+  throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.traffic', causeKind: 'not_found' }) : error;
 };
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 

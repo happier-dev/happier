@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRollbackInputV1, type DeploymentTargetRoleResultV1,
   type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -14,7 +15,9 @@ function context(context: PluginAccountActionContext) {
   return { http: context.services.http, signal: context.signal, now: () => Date.now() };
 }
 function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1) {
-  if ('code' in outcome) throw new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase } });
+  if ('code' in outcome) throw withActionFailureDiagnostic(new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase },
+    failureCause: projectActionFailureCauseV1(outcome, `deployment.vercel.${outcome.phase}`) }),
+    { phase: `deployment.vercel.${outcome.phase}`, causeKind: 'native_failure', error: outcome });
   return outcome;
 }
 async function deploy(input: DeploymentTargetDeployInputV1, ctx: PluginAccountActionContext) {

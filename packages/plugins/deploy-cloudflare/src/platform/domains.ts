@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, isPluginError, type DeploymentTargetDomainInputV1, type DeploymentTargetDomainResultV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
@@ -6,12 +7,18 @@ import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 
 type Operation = 'read' | 'add' | 'verify' | 'remove';
-function refuse(code: string): never { throw new PluginError({ code }); }
+function refuse(code: string): never {
+  const error = new PluginError({ code, ...(code === 'deployment_unavailable'
+    ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.cloudflare.domain') } : {}) });
+  throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.cloudflare.domain', causeKind: 'not_found' }) : error;
+}
 async function native(context: PluginAccountActionContext, input: DeploymentTargetDomainInputV1,
   path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown) {
   const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path,
     method === 'GET' ? 'observe' : 'send', method, body);
-  if ('code' in reply) throw new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } });
+  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
+    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
+    { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
   return reply.value;
 }
 function removed(input: DeploymentTargetDomainInputV1): DeploymentTargetDomainResultV1 {

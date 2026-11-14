@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetRoleFailureV1,
   type DeploymentTargetRoleResultV1, type DeploymentTargetObserveInputV1, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -8,7 +9,9 @@ import { observePagesDeployment, pagesDeploymentResult } from './pages.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 
 export function pagesResult(value: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1): DeploymentTargetRoleResultV1 {
-  if ('code' in value) throw new PluginError({ code: value.code, retryable: value.retryable, details: { phase: value.phase } });
+  if ('code' in value) throw withActionFailureDiagnostic(new PluginError({ code: value.code, retryable: value.retryable, details: { phase: value.phase },
+    failureCause: projectActionFailureCauseV1(value, `deployment.cloudflare.${value.phase}`) }),
+    { phase: `deployment.cloudflare.${value.phase}`, causeKind: 'native_failure', error: value });
   return value;
 }
 

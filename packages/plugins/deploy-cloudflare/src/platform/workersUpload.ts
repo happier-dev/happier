@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { readFile } from 'node:fs/promises';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetRoleResultV1,
@@ -25,14 +26,18 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   if (input.providerDeploymentId) {
     const observed = preview && isUploadedPreviewReference(input.providerDeploymentId)
       ? await observeUploadedPreview(input, preview, io) : await observeUploadedWorker(input, io);
-    if ('code' in observed) throw new PluginError({ code: observed.code, retryable: observed.retryable, details: { phase: observed.phase } });
+    if ('code' in observed) throw withActionFailureDiagnostic(new PluginError({ code: observed.code, retryable: observed.retryable, details: { phase: observed.phase },
+      failureCause: projectActionFailureCauseV1(observed, `deployment.cloudflare.${observed.phase}`) }),
+      { phase: `deployment.cloudflare.${observed.phase}`, causeKind: 'native_failure', error: observed });
     return observed;
   }
   const source = await context.services.deploymentSource.materialize({ environmentId: input.environmentId,
     deploymentId: input.deploymentId }, { signal: context.signal });
   const prepared = await prepareWorkerBuild({ rootPath: source.rootPath, actionOperationId: input.actionOperationId,
     scriptName: input.providerEnvironment.scriptName, preview: preview !== null }, { exec: context.services.exec, signal: context.signal });
-  if ('code' in prepared) throw new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } });
+  if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase },
+    failureCause: projectActionFailureCauseV1(prepared, `deployment.cloudflare.${prepared.phase}`) }),
+    { phase: `deployment.cloudflare.${prepared.phase}`, causeKind: 'native_failure', error: prepared });
   const accountId = input.providerIdentity.providerAccountId;
   const scriptName = input.providerEnvironment.scriptName;
   const previewRoot = preview ? `/workers/workers/${encodeURIComponent(scriptName)}/previews/${encodeURIComponent(preview.previewId)}` : null;
@@ -40,7 +45,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   if (previewRoot) {
     const latest = await request(io, accountId, `${previewRoot}/deployments/latest`, 'observe');
     if ('code' in latest && latest.code !== 'deployment_unavailable') {
-      throw new PluginError({ code: latest.code, retryable: latest.retryable, details: { phase: latest.phase } });
+      throw withActionFailureDiagnostic(new PluginError({ code: latest.code, retryable: latest.retryable, details: { phase: latest.phase },
+        failureCause: projectActionFailureCauseV1(latest, `deployment.cloudflare.${latest.phase}`) }),
+        { phase: `deployment.cloudflare.${latest.phase}`, causeKind: 'native_failure', error: latest });
     }
     const latestEnv = !('code' in latest) && isObject(latest.value) && isObject(latest.value.env) ? latest.value.env : {};
     const configuredEnv = isObject(prepared.preview?.env) ? prepared.preview.env : {};
@@ -51,7 +58,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   if (prepared.assets) {
     const manifest = Object.fromEntries(prepared.assets.files.map(asset => [asset.url, { hash: asset.hash, size: asset.size }]));
     const session = await request(io, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/assets-upload-session`, 'send', 'POST', { manifest });
-    if ('code' in session) throw new PluginError({ code: session.code, retryable: session.retryable, details: { phase: session.phase } });
+    if ('code' in session) throw withActionFailureDiagnostic(new PluginError({ code: session.code, retryable: session.retryable, details: { phase: session.phase },
+      failureCause: projectActionFailureCauseV1(session, `deployment.cloudflare.${session.phase}`) }),
+      { phase: `deployment.cloudflare.${session.phase}`, causeKind: 'native_failure', error: session });
     const value = session.value;
     const available = new Map(prepared.assets.files.map(asset => [asset.hash, asset]));
     if (!isObject(value) || typeof value.jwt !== 'string' || !value.jwt || !Array.isArray(value.buckets)
@@ -68,7 +77,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
       }
       const encoded = await encode(form);
       const uploaded = await requestWorkerAssets(io, accountId, value.jwt, encoded.body, encoded.contentType);
-      if ('code' in uploaded) throw new PluginError({ code: uploaded.code, retryable: uploaded.retryable, details: { phase: uploaded.phase } });
+      if ('code' in uploaded) throw withActionFailureDiagnostic(new PluginError({ code: uploaded.code, retryable: uploaded.retryable, details: { phase: uploaded.phase },
+        failureCause: projectActionFailureCauseV1(uploaded, `deployment.cloudflare.${uploaded.phase}`) }),
+        { phase: `deployment.cloudflare.${uploaded.phase}`, causeKind: 'native_failure', error: uploaded });
       if (isObject(uploaded.value) && typeof uploaded.value.jwt === 'string' && uploaded.value.jwt) completionJwt = uploaded.value.jwt;
     }
     if (!completionJwt) throw new PluginError({ code: 'outcome_unknown', details: { phase: 'send' } });
@@ -96,7 +107,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   const reply = await request(io, accountId,
     previewRoot ? `${previewRoot}/deployments` : `/workers/scripts/${encodeURIComponent(scriptName)}?excludeScript=true&bindings_inherit=strict`,
     'send', previewRoot ? 'POST' : 'PUT', encoded.body, encoded.contentType);
-  if ('code' in reply) throw new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } });
+  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
+    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
+    { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
   // The pinned Wrangler deploy adapter reads deployment_id as the uploaded
   // version id for this endpoint. Acceptance is not serving confirmation: the
   // existing deployment operation observes this id before terminal success.
