@@ -92,6 +92,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'setModelMode'
         | 'setModelSelection'
         | 'teamCredentialResources'
+        | 'teamCredentialDisplayNames'
         | 'teamNameById'
         | 'homeNameByTeamId'
         | 'teamCredentialResourceStatusByKey'

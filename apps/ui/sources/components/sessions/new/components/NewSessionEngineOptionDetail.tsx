@@ -82,7 +82,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      */
     providerProjection?: ReturnType<typeof useProviderModelProjection>;
     teamModels?: Readonly<Pick<SessionModelPickerProps,
-        'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
+        'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
         | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource'> & {
         onSelectOtherModel: () => void;
     }>;

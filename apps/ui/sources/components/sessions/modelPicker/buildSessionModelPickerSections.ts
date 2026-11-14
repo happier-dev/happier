@@ -161,6 +161,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     allowAutomatic?: boolean;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -347,11 +348,11 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 label,
             ].filter((value): value is string => Boolean(value)).join(', ')
             : teamResource
-                ? [teamName, homeName, teamResource.displayName, label, teamDelivery, teamUnavailableReason, teamRecovery]
+                ? [teamName, homeName, input.teamCredentialDisplayNames?.[teamResource.id] ?? t('common.unavailable'), label, teamDelivery, teamUnavailableReason, teamRecovery]
                     .filter((value): value is string => Boolean(value)).join(', ')
                 : undefined;
         const teamDescription = teamResource
-            ? [teamResource.displayName, teamName, homeName, teamDelivery, teamUnavailableReason, teamRecovery]
+            ? [input.teamCredentialDisplayNames?.[teamResource.id] ?? t('common.unavailable'), teamName, homeName, teamDelivery, teamUnavailableReason, teamRecovery]
                 .filter((value): value is string => Boolean(value)).join(' · ')
             : null;
         sections.unshift({
@@ -404,6 +405,7 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
     selected: SessionModelPickerValue;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -442,6 +444,7 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
         teamCredentialResources: teamSelection ? input.teamCredentialResources?.filter(resource => resource.id === teamSelection.resourceId
             && resource.teamId === teamSelection.teamId).map(resource => ({ ...resource,
                 providerModels: resource.providerModels.filter(model => sessionModelSelectionKey(model.selection) === selectedKey) })) : [],
+        teamCredentialDisplayNames: input.teamCredentialDisplayNames,
         teamNameById: input.teamNameById,
         homeNameByTeamId: input.homeNameByTeamId,
         teamCredentialResourceStatusByKey: input.teamCredentialResourceStatusByKey,

@@ -136,6 +136,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                             purposeBindingsWritable={purposeCatalog.status === 'ready' && !purposeCatalog.stale}
                             purposeBindingsLoading={purposeCatalog.status === 'loading'}
                             teamCredentialResources={teamCredentialCatalog.resources}
+                            teamCredentialDisplayNames={teamCredentialCatalog.displayNames}
                             teamNameById={teamCredentialCatalog.teamNameById}
                             teamCredentialResourceStatusByKey={teamCredentialCatalog.resourceStatusByKey}
                             onRecoverTeamCredentialResource={(resource) => {

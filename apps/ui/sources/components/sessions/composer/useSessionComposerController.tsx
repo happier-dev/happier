@@ -4086,6 +4086,7 @@ export function useSessionComposerController({
                         nativeModels={existingSessionNativeModels}
                         providerGroups={providerGroups}
                         teamCredentialResources={embeddedModelNarrowing ? EMPTY_TEAM_CREDENTIAL_RESOURCES : teamCredentialCatalog.resources}
+                        teamCredentialDisplayNames={teamCredentialCatalog.displayNames}
                         teamNameById={teamCredentialCatalog.teamNameById}
                         homeNameByTeamId={teamCredentialCatalog.homeNameByTeamId}
                         teamCredentialResourceStatusByKey={teamCredentialCatalog.resourceStatusByKey}
@@ -4175,7 +4176,7 @@ export function useSessionComposerController({
         publishModelSelection,
         teamCredentialCatalog.resourceStatusByKey,
         teamCredentialCatalog.homeNameByTeamId,
-        teamCredentialCatalog.resources,
+        teamCredentialCatalog.displayNames, teamCredentialCatalog.resources,
         teamCredentialCatalog.teamNameById,
         updateAcpConfigOptionOverride,
         ownerMetadata,
@@ -5013,10 +5014,10 @@ export function useSessionComposerController({
                 transitionPending: Boolean(requestedRouteSelection) || (modelSelectionDisposition?.selectionTransitionPending ?? false),
                 sources: providerModelProjection.data?.groups,
                 teamSources: teamCredentialCatalog.resources.map(resource => ({
-                    teamId: resource.teamId, resourceId: resource.id, displayName: resource.displayName,
+                    teamId: resource.teamId, resourceId: resource.id, displayName: teamCredentialCatalog.displayNames[resource.id] ?? t('common.unavailable'),
                 })),
         }), [session.active, modelSelectionDisposition, requestedRouteSelection, providerLaunchBinding,
-            providerModelProjection.data?.groups, teamCredentialCatalog.resources]);
+            providerModelProjection.data?.groups, teamCredentialCatalog.displayNames, teamCredentialCatalog.resources]);
         const sessionConnectedServicesAuthSwitch = useSessionConnectedServicesAuthSwitch({
             sessionConfiguration: session,
             routeSources: sessionRouteSources,
@@ -5032,6 +5033,7 @@ export function useSessionComposerController({
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)
                 : null,
             teamCredentialResources: teamCredentialConnectedServiceResources,
+            teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
             teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
             teamNameById: teamCredentialCatalog.teamNameById,
             sessionMetadata: ownerMetadata,
@@ -5084,10 +5086,7 @@ export function useSessionComposerController({
                 ) ?? null
                 : null;
             const requestedTeamResourceName = requestedTeamSelection
-                ? teamCredentialCatalog.resources.find((resource) => (
-                    resource.id === requestedTeamSelection.resourceId
-                    && resource.teamId === requestedTeamSelection.teamId
-                ))?.displayName ?? null
+                ? teamCredentialCatalog.displayNames[requestedTeamSelection.resourceId] ?? null
                 : null;
             // Active Sessions already present this exact selection as the D15 arm.
             // Binding drift and unavailable bindings retain their own recovery below.
@@ -5118,9 +5117,7 @@ export function useSessionComposerController({
             if (transitionBanner === null && !hasMeaningfulActivityAfterRuntimeIssue(sessionRuntimeStatusSource)) {
                 const teamCredentialDenial = presentSessionTeamCredentialDenial({
                     issue: sessionRuntimeStatusSource.lastRuntimeIssue ?? null,
-                    resolveResourceDisplayName: (resourceId) => teamCredentialCatalog.resources.find(
-                        (resource) => resource.id === resourceId,
-                    )?.displayName ?? null,
+                    resolveResourceDisplayName: (resourceId) => teamCredentialCatalog.displayNames[resourceId] ?? null,
                 });
                 if (teamCredentialDenial) return teamCredentialDenial;
             }
@@ -5181,7 +5178,7 @@ export function useSessionComposerController({
             sessionRuntimeStatusSource.latestTurnStatus,
             sessionRuntimeStatusSource.latestTurnStatusObservedAt,
             sessionRuntimeStatusSource.meaningfulActivityAt,
-            teamCredentialCatalog.resources,
+            teamCredentialCatalog.displayNames, teamCredentialCatalog.resources,
         ]);
         // The binding family speaks on the composer's one status line, never as a card: its short state,
         // its one recovery when the viewer can take it, and its body as the line's detail.

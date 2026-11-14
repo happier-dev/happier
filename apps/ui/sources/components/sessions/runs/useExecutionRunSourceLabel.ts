@@ -40,6 +40,7 @@ export function useExecutionRunSourceLabel(
         return presentConnectedAccountPurposeTeamResource({
             teamResource: { teamId: teamModel.teamId, selection: teamModel },
             teamResources: teamCatalog.resources,
+            teamResourceDisplayNames: teamCatalog.displayNames,
             teamNameById: teamCatalog.teamNameById,
             serviceTitle: null,
         }).accessibilityLabel;
@@ -49,6 +50,7 @@ export function useExecutionRunSourceLabel(
         return presentConnectedAccountPurposeTeamResource({
             teamResource: { teamId: resource?.teamId ?? '', selection: binding },
             teamResources: teamCatalog.resources,
+            teamResourceDisplayNames: teamCatalog.displayNames,
             teamNameById: teamCatalog.teamNameById,
             serviceTitle: null,
         }).accessibilityLabel;

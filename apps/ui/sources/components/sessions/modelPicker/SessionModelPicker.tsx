@@ -173,6 +173,7 @@ export type SessionModelPickerProps = Readonly<{
     nativeModels: readonly SessionNativeModelOption[];
     providerGroups: readonly SessionModelProjectionGroup[];
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -462,6 +463,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         selectedTeamCredentialModel: props.selectedTeamCredentialModel ?? undefined,
         currentSelectionRecovery: props.currentSelectionRecovery,
         teamCredentialResources: props.teamCredentialResources,
+        teamCredentialDisplayNames: props.teamCredentialDisplayNames,
         teamNameById: props.teamNameById,
         homeNameByTeamId: props.homeNameByTeamId,
         teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
@@ -486,6 +488,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         props.selected,
         props.selectedTeamCredentialModel,
         props.teamCredentialResources,
+        props.teamCredentialDisplayNames,
         props.teamNameById,
         props.homeNameByTeamId,
         props.teamCredentialResourceStatusByKey,

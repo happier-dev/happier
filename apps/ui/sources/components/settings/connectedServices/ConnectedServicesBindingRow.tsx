@@ -56,6 +56,7 @@ export type ConnectedServicesBindingRowProps = Readonly<{
   includeNativeAuthOption?: boolean;
   allowDefaultProfileFallback?: boolean;
   teamCredentialResources?: SelectionContentProps['teamCredentialResources'];
+  teamCredentialDisplayNames?: SelectionContentProps['teamCredentialDisplayNames'];
   teamCredentialResourceStatusByKey?: SelectionContentProps['teamCredentialResourceStatusByKey'];
   teamNameById?: SelectionContentProps['teamNameById'];
   onRecoverTeamCredentialResource?: SelectionContentProps['onRecoverTeamCredentialResource'];
@@ -91,6 +92,9 @@ export function ConnectedServicesBindingRow(
     profileOptionsByServiceId: props.profileOptionsByServiceId,
     accountGroupOptionsByServiceId: props.groupOptionsByServiceId,
     accountGroupsEnabled: props.accountGroupsEnabled,
+    teamCredentialResources: props.teamCredentialResources,
+    teamCredentialDisplayNames: props.teamCredentialDisplayNames,
+    teamNameById: props.teamNameById,
     defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
     resolveServiceTitle: (serviceId) => {
       const service = parseQualifiedPluginContributionKey(serviceId);
@@ -170,6 +174,7 @@ export function ConnectedServicesBindingRow(
         groupOptionsByServiceId: props.groupOptionsByServiceId,
         initialBindingsByServiceId: props.bindingsByServiceId,
         teamCredentialResources: props.teamCredentialResources,
+        teamCredentialDisplayNames: props.teamCredentialDisplayNames,
         teamCredentialResourceStatusByKey:
           props.teamCredentialResourceStatusByKey,
         teamNameById: props.teamNameById,

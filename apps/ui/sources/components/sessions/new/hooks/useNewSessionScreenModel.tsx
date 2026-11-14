@@ -1440,9 +1440,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         sources: teamCredentialCatalog.resources.flatMap(resource => {
             const teamName = teamCredentialCatalog.teamNameById[resource.teamId];
             return teamName ? [{ teamId: resource.teamId, resourceId: resource.id,
-                teamName, accountName: resource.displayName }] : [];
+                teamName, accountName: teamCredentialCatalog.displayNames[resource.id] ?? t('common.unavailable') }] : [];
         }),
-    } : undefined, [targetServerId, teamCredentialCatalog.resources, teamCredentialCatalog.teamNameById]);
+    } : undefined, [targetServerId, teamCredentialCatalog.displayNames, teamCredentialCatalog.resources, teamCredentialCatalog.teamNameById]);
     const selectedAgentScopedPluginSettings = useAgentScopedPluginSettingsSnapshot({
         agentId: selectedRuntimeCarrierAgentId,
         projectionInputs: currentProjectionInputs,
@@ -1915,7 +1915,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         providerSources: providerModelProjection.data?.groups,
         providerSettings: providerSettingsForProfileIntent,
         providerProjection: currentProjectionInputs?.pluginProjectionV2,
-        modelRouteTeamSources: teamCredentialCatalog.resources.map(resource => ({ teamId: resource.teamId, resourceId: resource.id, displayName: resource.displayName })),
+        modelRouteTeamSources: teamCredentialCatalog.resources.map(resource => ({ teamId: resource.teamId, resourceId: resource.id, displayName: teamCredentialCatalog.displayNames[resource.id] ?? t('common.unavailable') })),
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
         selectedMachineId,
@@ -1924,6 +1924,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         connectedAccounts: connectedServicesAgent?.connectedAccounts,
         agentIdentity: connectedServicesAgent?.identity ?? null,
         teamCredentialResources: teamCredentialCatalog.resources,
+        teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
         teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
         teamNameById: teamCredentialCatalog.teamNameById,
         setBackendNewSessionOptionStateByTargetKey,
@@ -2791,6 +2792,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     ]), [cliAvailabilityProbe, credentialResourcesEnabled, teamCredentialCatalog.reload]);
     const teamModels = React.useMemo<NonNullable<React.ComponentProps<typeof NewSessionEngineOptionDetail>['teamModels']>>(() => ({
         teamCredentialResources: teamCredentialCatalog.resources,
+        teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
         teamNameById: teamCredentialCatalog.teamNameById,
         homeNameByTeamId: teamCredentialCatalog.homeNameByTeamId,
         teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
@@ -2799,7 +2801,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         onSelectOtherModel: clearTeamCredentialModel,
     }), [clearTeamCredentialModel, selectDraftTeamModel, selectedTeamCredentialModel,
         teamCredentialCatalog.resourceStatusByKey, teamCredentialCatalog.homeNameByTeamId,
-        teamCredentialCatalog.resources, teamCredentialCatalog.teamNameById]);
+        teamCredentialCatalog.displayNames, teamCredentialCatalog.resources, teamCredentialCatalog.teamNameById]);
     const {
         agentPickerOptions,
         agentPickerSelectedOptionId,
@@ -4444,6 +4446,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             setModelMode: setDraftModelMode,
             setModelSelection: setDraftModelSelection,
             teamCredentialResources: teamCredentialCatalog.resources,
+            teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
             teamNameById: teamCredentialCatalog.teamNameById,
             homeNameByTeamId: teamCredentialCatalog.homeNameByTeamId,
             teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,

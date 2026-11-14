@@ -67,6 +67,7 @@ export function VoiceAgentModelPicker(props: Readonly<{
     retryProjection={projection.refresh}
     currentSelectionRecovery={projection.data?.currentSelectionRecovery ?? null}
     teamCredentialResources={catalog.resources}
+    teamCredentialDisplayNames={catalog.displayNames}
     teamCredentialResourceStatusByKey={catalog.resourceStatusByKey}
     teamNameById={catalog.teamNameById}
     homeNameByTeamId={catalog.homeNameByTeamId}

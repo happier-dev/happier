@@ -50,6 +50,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     declarationContext?: ProviderDeclarationContext;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
@@ -218,6 +219,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             bindingsByServiceId: props.bindingsByServiceId,
             bindingsKnown: props.bindingsKnown,
             teamCredentialResources: props.teamCredentialResources,
+            teamCredentialDisplayNames: props.teamCredentialDisplayNames,
             declarationContext: props.declarationContext,
             teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
             teamNameById: props.teamNameById,
@@ -256,6 +258,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         profileOptionsByServiceId,
         groupOptionsByServiceId,
         props.teamCredentialResources,
+        props.teamCredentialDisplayNames,
         props.declarationContext,
         props.teamCredentialResourceStatusByKey,
         props.teamNameById,

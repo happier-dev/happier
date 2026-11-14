@@ -372,6 +372,7 @@ export function presentConnectedAccountPurposeTeamResource(input: Readonly<{
     selection: Readonly<{ resourceId: string; deliveryMode: TeamCredentialRouteV1 }>;
   }>;
   teamResources: readonly TeamCredentialResourceCatalogEntryV1[];
+  teamResourceDisplayNames?: Readonly<Record<string, string | null>>;
   teamNameById?: Readonly<Record<string, string>>;
   serviceTitle: string | null | undefined;
 }>): QualifiedConnectedAccountTargetPresentation {
@@ -389,7 +390,7 @@ export function presentConnectedAccountPurposeTeamResource(input: Readonly<{
   }
   return createPresentation({
     serviceTitle,
-    primaryLabel: nonEmptyText(resource.displayName) ?? serviceTitle,
+    primaryLabel: nonEmptyText(input.teamResourceDisplayNames?.[resource.id]) ?? serviceTitle,
     secondaryParts: [
       nonEmptyText(input.teamNameById?.[resource.teamId]),
       deliveryModeLabel(input.teamResource.selection.deliveryMode),

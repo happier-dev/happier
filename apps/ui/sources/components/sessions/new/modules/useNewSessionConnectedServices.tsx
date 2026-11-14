@@ -144,6 +144,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
    */
   emitWhenAllNative?: boolean;
   teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+  teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
   teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
   teamNameById?: Readonly<Record<string, string>>;
   router: { push: (path: any) => void };
@@ -489,6 +490,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     nativeLabel: t('connectedServices.authChip.nativeLabel'),
     formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
     teamCredentialResources: params.teamCredentialResources,
+    teamCredentialDisplayNames: params.teamCredentialDisplayNames,
     teamNameById: params.teamNameById,
   }), [
     accountGroupsFeatureEnabled,
@@ -499,6 +501,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
     params.teamCredentialResources,
+    params.teamCredentialDisplayNames,
     params.teamNameById,
   ]);
 
@@ -544,6 +547,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       bindingsKnown={connectedAccountDefaultsStatus === 'ready'}
       declarationContext={providerDeclarationContext(params.sourceMachineId, params.providerProjection)}
       teamCredentialResources={params.teamCredentialResources}
+      teamCredentialDisplayNames={params.teamCredentialDisplayNames}
       teamCredentialResourceStatusByKey={params.teamCredentialResourceStatusByKey}
       teamNameById={params.teamNameById}
       directDelivery={directDelivery}
@@ -584,6 +588,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
     params.teamCredentialResources,
+    params.teamCredentialDisplayNames,
     params.teamCredentialResourceStatusByKey,
     params.teamNameById,
     directDelivery,

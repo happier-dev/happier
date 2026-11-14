@@ -187,7 +187,7 @@ describe('buildSessionModelPickerSections', () => {
         expect(projectedIds).not.toContain('image-model-a');
         expect(projectedIds).not.toContain('image-model-b');
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Connected Pool', resourceRevision: 3,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Connected Pool' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
@@ -213,7 +213,7 @@ describe('buildSessionModelPickerSections', () => {
         });
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Connected Pool' },
             providerGroups: [{ ...group, rows: projected.groups.flatMap(group => group.rows)
                 .filter(row => row.ref.modelId === 'chat-model').map(row => ({ ...row,
                     compatibility: group.rows[0]!.compatibility, endpointHealth: 'available' as const,
@@ -224,16 +224,16 @@ describe('buildSessionModelPickerSections', () => {
         const selectedTeam = resource.providerModels.find(model => model.descriptor.id === 'chat-model')!;
         const triggerInput = { agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
             providerProjectionAuthoritative: true, selected: null, selectedTeamCredentialModel: selectedTeam.selection,
-            teamCredentialResources: [resource], fallbackLabel: 'Choose', fieldLabel: 'Model' };
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Connected Pool' }, fallbackLabel: 'Choose', fieldLabel: 'Model' };
         expect(buildSessionModelSelectedTriggerPresentation({ declarationContext: { kind: 'account' }, ...triggerInput })).toMatchObject({
-            subtitle: selectedTeam.descriptor.name, detail: expect.stringContaining(resource.displayName),
+            subtitle: selectedTeam.descriptor.name, detail: expect.stringContaining('Connected Pool'),
         });
         // Preserve an already-selected model's identity without offering a repair
         // action that could re-admit a model known to lack required capabilities.
         const refusedSelectionKey = sessionModelSelectionKey(resource.providerModels[0]!.selection);
         const retained = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
-            providerGroups: [], teamCredentialResources: [resource],
+            providerGroups: [], teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Connected Pool' },
             selectedTeamCredentialModel: resource.providerModels[0]!.selection,
             onRecoverTeamCredentialResource: vi.fn(),
         });
@@ -438,7 +438,7 @@ describe('buildSessionModelPickerSections', () => {
     it('names a Team model\'s source once, in its description, and still tells the native same-name row apart', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Connected Pool', resourceRevision: 3,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Connected Pool' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
@@ -464,7 +464,7 @@ describe('buildSessionModelPickerSections', () => {
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey, hiddenNativeModelKeys: new Set(),
             nativeModels: [{ value: 'gpt-5.4', label: 'gpt-5.4' }], nativeSourceLabel: 'Codex',
-            providerProjectionAuthoritative: true, providerGroups: [], teamCredentialResources: [resource],
+            providerProjectionAuthoritative: true, providerGroups: [], teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Connected Pool' },
         });
         const favorites = { id: 'favorites', title: 'Favorites', options: sections.flatMap(section => section.options) };
         const displayed = withSessionModelSourceSuffixes([favorites, ...sections], 'favorites');
@@ -480,7 +480,7 @@ describe('buildSessionModelPickerSections', () => {
     });
     it('projects an entitled direct Team resource into the canonical picker without exposing source authority', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Claude Enterprise',
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Claude Enterprise' }, recipientEnvelope: null, legacyPlaintext: true },
             resourceRevision: 7,
             readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: false, mayReceiveDirect: true,
@@ -513,7 +513,7 @@ describe('buildSessionModelPickerSections', () => {
             agentTargetKey: 'agent:happier.agent.codex/codex',
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Claude Enterprise' },
             teamNameById: { 'team-1': 'Acme' },
             homeNameByTeamId: { 'team-1': 'Work Home' },
         });
@@ -589,7 +589,7 @@ describe('buildSessionModelPickerSections', () => {
             agentTargetKey: 'agent:happier.agent.codex/codex',
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Claude Enterprise' },
             teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'homeUnreachable' }]]),
             onRecoverTeamCredentialResource: recover,
         });
@@ -606,7 +606,7 @@ describe('buildSessionModelPickerSections', () => {
             expectedResourceRevision: 7, deliveryMode: 'vendor-native' as const,
             agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'retained-model' };
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Gateway', resourceRevision: 7,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Gateway' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' }, deliveryUnavailableReason: 'provider_credential_transport_unavailable',
             recoveryAction: 'choose_another_resource', mayBroker: false, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
@@ -614,7 +614,7 @@ describe('buildSessionModelPickerSections', () => {
         });
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey: selection.agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
-            providerProjectionAuthoritative: true, selectedTeamCredentialModel: selection, teamCredentialResources: [resource],
+            providerProjectionAuthoritative: true, selectedTeamCredentialModel: selection, teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Gateway' },
         });
         expect(sections[0]?.options[0]?.value).toEqual(selection);
         expect(sections[0]?.options[0]?.disabled).toBe(true);
@@ -634,7 +634,7 @@ describe('buildSessionModelPickerSections', () => {
             modelId: 'claude-sonnet',
         };
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Acme Claude access',
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Acme Claude access' }, recipientEnvelope: null, legacyPlaintext: true },
             resourceRevision: 8,
             readiness: { kind: 'source_unavailable', ...(reason ? { reason } : {}) }, recoveryAction: 'source_owner_action',
             mayBroker: false, mayReceiveDirect: true,
@@ -652,7 +652,7 @@ describe('buildSessionModelPickerSections', () => {
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
             selectedTeamCredentialModel: selection,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Acme Claude access' },
             teamNameById: { 'team-1': 'Acme' },
             homeNameByTeamId: { 'team-1': 'Work Home' },
             teamCredentialResourceStatusByKey: new Map(),
@@ -680,7 +680,7 @@ describe('buildSessionModelPickerSections', () => {
 
     it('never presents source-owner-required Team models as available or as a raw status code', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Acme Claude access',
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Acme Claude access' }, recipientEnvelope: null, legacyPlaintext: true },
             resourceRevision: 7,
             readiness: { kind: 'available' }, recoveryAction: 'source_owner_action',
             mayBroker: true, mayReceiveDirect: false,
@@ -709,7 +709,7 @@ describe('buildSessionModelPickerSections', () => {
             agentTargetKey: 'agent:happier.agent.codex/codex',
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Acme Claude access' },
             teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]),
         });
 
@@ -720,7 +720,7 @@ describe('buildSessionModelPickerSections', () => {
 
     it('names the exhausted allowance and when it reopens instead of a bare "Limit reached"', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource-1', teamId: 'team-1', displayName: 'Acme Claude access',
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Acme Claude access' }, recipientEnvelope: null, legacyPlaintext: true },
             resourceRevision: 7,
             readiness: { kind: 'limit_reached', metric: 'total_tokens', resetsAtUtc: '2026-09-15T00:00:00.000Z' },
             recoveryAction: 'retry',
@@ -750,7 +750,7 @@ describe('buildSessionModelPickerSections', () => {
             agentTargetKey: 'agent:happier.agent.codex/codex',
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Acme Claude access' },
             teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]),
         });
 

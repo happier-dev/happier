@@ -225,7 +225,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
    */
   teamCredentialCatalog?: Pick<
     HomeTeamCredentialModelCatalog,
-    'resources' | 'teamNameById' | 'resourceStatusByKey'
+    'resources' | 'displayNames' | 'teamNameById' | 'resourceStatusByKey'
   >;
   /** The consumer stores one exact account, never a pool: offer accounts only. */
   accountsOnly?: boolean;
@@ -288,6 +288,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     resolveAuthentication: (service: PluginContributionIdentityV1) => getConnectedAccountAuthentication(service, registry),
     teamResources,
     teamResourceStatusByKey: teamCatalog?.resourceStatusByKey,
+    teamResourceDisplayNames: teamCatalog?.displayNames,
     ...(teamCatalog ? { teamNameById: teamCatalog.teamNameById } : {}),
   }), [props.declaration, props.value, props.teamResourceValue, props.noneLabel, serviceTitle, locale,
     effectiveAccountTransport, registry, present, teamResources, teamCatalog]);

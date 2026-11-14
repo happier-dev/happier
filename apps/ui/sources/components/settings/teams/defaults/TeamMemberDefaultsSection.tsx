@@ -515,11 +515,13 @@ const ConnectedServiceDefaultRows = React.memo(
           (resource) => resource.teamId === state.teamId,
         ),
         teamNameById: catalog.teamNameById,
+        displayNames: catalog.displayNames,
         resourceStatusByKey: catalog.resourceStatusByKey,
       }),
       [
         catalog.resources,
         catalog.teamNameById,
+        catalog.displayNames,
         catalog.resourceStatusByKey,
         state.teamId,
       ],

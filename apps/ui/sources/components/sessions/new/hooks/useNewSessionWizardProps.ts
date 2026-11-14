@@ -110,6 +110,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     setModelMode: (mode: ModelMode) => void;
     setModelSelection?: NewSessionWizardAgentProps['setModelSelection'];
     teamCredentialResources?: NewSessionWizardAgentProps['teamCredentialResources'];
+    teamCredentialDisplayNames?: NewSessionWizardAgentProps['teamCredentialDisplayNames'];
     teamNameById?: NewSessionWizardAgentProps['teamNameById'];
     homeNameByTeamId?: NewSessionWizardAgentProps['homeNameByTeamId'];
     teamCredentialResourceStatusByKey?: NewSessionWizardAgentProps['teamCredentialResourceStatusByKey'];
@@ -413,6 +414,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             setModelMode: params.setModelMode,
             setModelSelection: params.setModelSelection,
             teamCredentialResources: params.teamCredentialResources,
+            teamCredentialDisplayNames: params.teamCredentialDisplayNames,
             teamNameById: params.teamNameById,
             homeNameByTeamId: params.homeNameByTeamId,
             teamCredentialResourceStatusByKey: params.teamCredentialResourceStatusByKey,
@@ -483,6 +485,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.setModelMode,
         params.setModelSelection,
         params.teamCredentialResources,
+        params.teamCredentialDisplayNames,
         params.teamNameById,
         params.homeNameByTeamId,
         params.teamCredentialResourceStatusByKey,

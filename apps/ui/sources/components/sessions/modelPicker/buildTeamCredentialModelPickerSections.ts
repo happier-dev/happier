@@ -90,6 +90,7 @@ export function buildTeamCredentialModelPickerSections(
     if (!input.teamCredentialResources?.length) return [];
     return input.teamCredentialResources.flatMap((resource): SessionModelPickerSection[] => {
         // Filtering every model must not create a generic refusal placeholder for another Agent.
+        const displayName = input.teamCredentialDisplayNames?.[resource.id] ?? t('common.unavailable');
         const eligibleModels = resource.providerModels.filter(modelEligible);
         if (resource.providerModels.length > 0 && eligibleModels.length === 0) return [];
         const options = eligibleModels.flatMap((row): SessionModelPickerOption[] => {
@@ -119,8 +120,8 @@ export function buildTeamCredentialModelPickerSections(
                     testID: `team-provider-model-experimental:${sessionModelSelectionKey(row.selection)}`,
                     variant: 'neutral', hideDot: true, label: experimental,
                 }) } : {}),
-                source: { label: resource.displayName, native: false, inDescription: true },
-                description: [resource.displayName, delivery, confidence, unavailableReason, recovery, directDisclosure]
+                source: { label: displayName, native: false, inDescription: true },
+                description: [displayName, delivery, confidence, unavailableReason, recovery, directDisclosure]
                     .filter((value): value is string => Boolean(value)).join(' · '),
                 ...(directDisclosure ? { descriptionLines: 0 } : {}),
                 disabled: !available && !input.onRecoverTeamCredentialResource,
@@ -132,7 +133,7 @@ export function buildTeamCredentialModelPickerSections(
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(resource) } : {}),
                 accessibilityLabel: [
                     input.teamNameById?.[resource.teamId] ?? t('teams.title'), input.homeNameByTeamId?.[resource.teamId],
-                    resource.displayName, row.descriptor.name || row.selection.modelId, delivery, confidence, experimental, directDisclosure,
+                    displayName, row.descriptor.name || row.selection.modelId, delivery, confidence, experimental, directDisclosure,
                     available ? undefined : unavailableReason, available ? undefined : recovery,
                 ].filter((value): value is string => Boolean(value)).join(', '),
             }];
@@ -148,7 +149,7 @@ export function buildTeamCredentialModelPickerSections(
             const recovery = recoveryPresentation === null ? null : teamCredentialRecoveryLabel(recoveryPresentation);
             options.push({
                 value: null,
-                label: resource.displayName,
+                label: displayName,
                 description: [unavailableReason, recovery]
                     .filter((value): value is string => Boolean(value)).join(' · '),
                 disabled: !input.onRecoverTeamCredentialResource,
@@ -158,7 +159,7 @@ export function buildTeamCredentialModelPickerSections(
                         input.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`)),
                 ...(input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(resource) } : {}),
-                accessibilityLabel: [teamName, homeName, resource.displayName, unavailableReason, recovery]
+                accessibilityLabel: [teamName, homeName, displayName, unavailableReason, recovery]
                     .filter((value): value is string => Boolean(value)).join(', '),
             });
         }

@@ -7,7 +7,7 @@ import { buildTeamCredentialModelPickerSections } from './buildTeamCredentialMod
 
 describe('Team resource refusals without model projections', () => {
     const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-        id: 'codex-pool', teamId: 'work-team', displayName: 'Codex pool', resourceRevision: 1,
+        id: 'codex-pool', teamId: 'work-team', displayName: { content: { t: 'plain', v: 'Codex pool' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 1,
         readiness: { kind: 'broker_unavailable' }, recoveryAction: 'source_owner_action',
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
         sessionUsePolicy: 'personal_allowed', providerModels: [], sourcePresentation: null,
@@ -15,7 +15,7 @@ describe('Team resource refusals without model projections', () => {
     const input = {
         declarationContext: { kind: 'account' as const }, agentTargetKey: 'agent:happier.agent.codex/codex',
         nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
-        providerProjectionAuthoritative: true, teamCredentialResources: [resource],
+        providerProjectionAuthoritative: true, teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Codex pool' },
         teamNameById: { 'work-team': 'Work' }, homeNameByTeamId: { 'work-team': 'This Home' },
     };
 
@@ -24,7 +24,7 @@ describe('Team resource refusals without model projections', () => {
         expect(sections).toHaveLength(1);
         expect(sections[0]?.options).toHaveLength(1);
         const option = sections[0]?.options[0];
-        expect(option).toMatchObject({ value: null, label: resource.displayName, disabled: true,
+        expect(option).toMatchObject({ value: null, label: 'Codex pool', disabled: true,
             availability: 'unavailable', unavailableReason: resourceShortUnavailableLabel(resource.readiness) });
         expect(option?.onActivate).toBeUndefined();
         expect(option?.description).toContain(t('teams.credentials.errors.brokerUnavailable'));

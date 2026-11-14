@@ -70,6 +70,7 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     providerGroups?: readonly SessionModelProjectionGroup[];
     declarationContext?: React.ComponentProps<typeof SessionModelPicker>['declarationContext'];
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -168,8 +169,8 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                 const modelName = model?.descriptor.name || props.selectedTeamCredentialModel.modelId;
                 return {
                     subtitle: modelName,
-                    detail: [teamName, resource?.displayName].filter(Boolean).join(' · ') || undefined,
-                    accessibilityLabel: [modelFieldLabel, modelName, teamName, resource?.displayName]
+                    detail: [teamName, resource ? props.teamCredentialDisplayNames?.[resource.id] : null].filter(Boolean).join(' · ') || undefined,
+                    accessibilityLabel: [modelFieldLabel, modelName, teamName, resource ? props.teamCredentialDisplayNames?.[resource.id] : null]
                         .filter(Boolean).join(', '),
                 };
             })()
@@ -198,6 +199,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         modelFieldLabel,
         props.selectedTeamCredentialModel,
         props.teamCredentialResources,
+        props.teamCredentialDisplayNames,
         props.teamNameById,
     ]);
 
@@ -259,6 +261,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             nativeModels={agentTargetKey ? props.modelOptions : []}
             providerGroups={providerGroups}
             teamCredentialResources={props.teamCredentialResources}
+            teamCredentialDisplayNames={props.teamCredentialDisplayNames}
             teamNameById={props.teamNameById}
             homeNameByTeamId={props.homeNameByTeamId}
             teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}

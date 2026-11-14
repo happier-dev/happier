@@ -28,7 +28,7 @@ type ProjectionGroups = NonNullable<
 
 const EMPTY_GROUPS: ProjectionGroups = [];
 
-type TeamModelChoiceProps = Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId'
+type TeamModelChoiceProps = Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId'
   | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'experimentalConfirmation'>;
 
 function ExactModelChoiceModal(
@@ -76,6 +76,7 @@ function ExactModelChoiceModal(
       selected={props.selected}
       experimentalConfirmation={props.experimentalConfirmation}
       teamCredentialResources={props.teamCredentialResources}
+      teamCredentialDisplayNames={props.teamCredentialDisplayNames}
       teamNameById={props.teamNameById}
       homeNameByTeamId={props.homeNameByTeamId}
       teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}

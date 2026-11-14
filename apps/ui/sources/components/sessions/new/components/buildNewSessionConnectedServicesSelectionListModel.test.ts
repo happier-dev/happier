@@ -64,7 +64,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
         const key = `${service.pluginId}/${service.localId}`;
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-muse', teamId: 'team-1', displayName: 'Shared Muse', resourceRevision: 1,
+            id: 'shared-muse', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Muse' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             sourcePresentation: { kind: 'connected_service', service },
@@ -73,7 +73,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const model = buildModel({ supportedServiceIds: [key],
             profileOptionsByServiceId: { [key]: [{ profileId: 'own-muse', status: 'connected' }] },
             nativeRoute: { agentTargetKey: `agent:happier.agent.${agentId}/${agentId}`, active: true },
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Shared Muse' },
         });
         const options = model.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
         expect(options.some(option => option.id === createTeamResourceServiceOptionId(resource.connectedServiceSelections[0]!))).toBe(agentId !== 'muse');
@@ -357,7 +357,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ].map(({ id, displayName }) => ({
             id,
             teamId: 'team-1',
-            displayName,
+            displayName: { content: { t: 'plain' as const, v: displayName }, recipientEnvelope: null, legacyPlaintext: true },
             sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
@@ -380,7 +380,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             bindingsByServiceId: {},
             includeNativeAuthOption: false,
             setBindingForService,
-            teamCredentialResources: resources,
+            teamCredentialResources: resources, teamCredentialDisplayNames: { 'account-resource': 'Brokered account', 'pool-resource': 'Brokered pool' },
             teamNameById: { 'team-1': 'Acme' },
         });
 
@@ -396,7 +396,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const providerRoute = buildModel({
             supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {},
             bindingsByServiceId: { 'service.plugin/mail': resources[1]!.connectedServiceSelections[0] },
-            teamCredentialResources: resources,
+            teamCredentialResources: resources, teamCredentialDisplayNames: { 'account-resource': 'Brokered account', 'pool-resource': 'Brokered pool' },
             nativeRoute: { agentTargetKey: 'agent:acme.agent/reviewer', active: false, onBrowse: vi.fn() },
         });
         const providerRouteRows = providerRoute.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
@@ -409,7 +409,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             const applied = buildModel({
                 supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {},
                 bindingsByServiceId: { 'service.plugin/mail': { source: 'team_resource', resourceId, deliveryMode: 'brokered' } },
-                teamCredentialResources: resources,
+                teamCredentialResources: resources, teamCredentialDisplayNames: { 'account-resource': 'Brokered account', 'pool-resource': 'Brokered pool' },
                 appliedTeamRoute: { teamId: 'team-1', resourceId: 'pool-resource', deliveryMode: 'brokered' },
             });
             const appliedRows = firstStaticSection(applied).options;
@@ -419,7 +419,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         }
         const missingApplied = buildModel({
             supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {}, bindingsByServiceId: {},
-            teamCredentialResources: resources,
+            teamCredentialResources: resources, teamCredentialDisplayNames: { 'account-resource': 'Brokered account', 'pool-resource': 'Brokered pool' },
             appliedTeamRoute: { teamId: 'team-1', resourceId: 'resource-gone', deliveryMode: 'brokered' },
         });
         expect(firstStaticSection(missingApplied).options.filter(isSelectedRow)).toEqual([]);
@@ -443,8 +443,9 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             bindingsByServiceId: {},
             includeNativeAuthOption: false,
             setBindingForService,
+            teamCredentialDisplayNames: { 'resource-1': 'Shared mail' },
             teamCredentialResources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail',
+                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true },
                 sourceOwnerDisplayName: null, resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
@@ -476,8 +477,9 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const model = buildModel({
             supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {}, bindingsByServiceId: {},
             includeNativeAuthOption: false, setBindingForService: vi.fn(),
+            teamCredentialDisplayNames: { 'resource-1': 'Shared mail' },
             teamCredentialResources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', sourceOwnerDisplayName: null, resourceRevision: 7,
+                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 7,
                 readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [], sourcePresentation: { kind: 'connected_service', service: selection.disclosedMember.service },
@@ -507,7 +509,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', sourceOwnerDisplayName: null, resourceRevision: 7,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale' as const, sessionUsePolicy: 'personal_allowed' as const,
@@ -518,7 +520,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const model = buildModel({
             supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {},
             bindingsByServiceId: {}, includeNativeAuthOption: false,
-            setBindingForService, teamCredentialResources: [resource],
+            setBindingForService, teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Shared mail' },
             onRecoverTeamCredentialResource: recover,
             resolveOptionAvailability: () => switchBlocked
                 ? { disabled: true, availability: 'available', subtitle: 'Finish the current turn' } : {},
@@ -543,7 +545,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const resource = {
             id: selection.resourceId,
             teamId: 'team-1',
-            displayName: 'Shared build account',
+            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true },
             sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
@@ -563,7 +565,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             profileOptionsByServiceId: {},
             bindingsByServiceId: {},
             includeNativeAuthOption: false,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Shared build account' },
             teamCredentialResourceStatusByKey: new Map(),
             teamNameById: { 'team-1': 'Acme' },
             onRecoverTeamCredentialResource: recover,
@@ -611,7 +613,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const resource = {
             id: binding.resourceId,
             teamId: 'team-1',
-            displayName: 'Shared build account',
+            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true },
             sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'source_unavailable' as const },
             recoveryAction: 'source_owner_action' as const,
@@ -633,7 +635,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             profileOptionsByServiceId: {},
             bindingsByServiceId: { 'service.plugin/mail': binding },
             includeNativeAuthOption: true,
-            teamCredentialResources: [resource],
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Shared build account' },
             teamNameById: { 'team-1': 'Acme' },
             onRecoverTeamCredentialResource: recover,
         });
@@ -924,10 +926,10 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
     it('folds signed-out accounts and unusable Team resources into one trailing Unavailable section', () => {
         const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Codex', sourceOwnerDisplayName: null, resourceRevision: 1,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Codex' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 1,
             readiness: { kind: 'broker_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'brokered' as const, mayBroker: true, mayReceiveDirect: false,
-            directMaterialState: 'none' as const, sessionUsePolicy: 'personal_allowed' as const,
+            directMaterialState: 'never_delivered' as const, sessionUsePolicy: 'personal_allowed' as const,
             providerModels: [],
             sourcePresentation: { kind: 'connected_service' as const, service: { pluginId: 'service.plugin', localId: 'mail' } },
             connectedServiceSelections: [selection],
@@ -938,7 +940,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
                 { profileId: 'old', status: 'needs_reauth', providerEmail: 'old@example.com' },
                 { profileId: 'work', status: 'connected', providerEmail: 'work@example.com' },
             ] },
-            bindingsByServiceId: {}, teamCredentialResources: [resource],
+            bindingsByServiceId: {}, teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Shared Codex' },
             onRecoverTeamCredentialResource: vi.fn(),
         });
         const browse = { kind: 'static' as const, id: 'route-sources:providers', title: 'Providers', options: [

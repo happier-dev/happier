@@ -112,7 +112,7 @@ describe('SessionModelPicker', () => {
             modelSelectionIntentV1: { v: 1, updatedAt: 11, selection },
             sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 0, currentModelId: selection.modelId,
                 availableModels: [{ id: selection.modelId, name: 'Luna' }], activeSelectionV1: active } });
-        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'QA43 Leeroy brokered', resourceRevision: 0,
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'QA43 Leeroy brokered' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 0,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [{
                 selection: active.teamCredentialModel, descriptor: { id: selection.modelId, name: 'Luna' },
@@ -130,7 +130,7 @@ describe('SessionModelPicker', () => {
                 sessionActive, currentRunnerProcessIdentity: sessionActive ? active.runner : null });
             const screen = await renderScreen(<SessionModelPicker agentTargetKey={selection.agentTargetKey} declarationContext={{ kind: 'account' }}
                 nativeModels={[{ value: selection.modelId, label: 'Luna' }]} providerGroups={[]} providerProjectionAuthoritative
-                teamCredentialResources={[resource]} teamCredentialResourceStatusByKey={new Map([['team:resource', { kind: 'current' as const }]])}
+                teamCredentialResources={[resource]} teamCredentialDisplayNames={{ [resource.id]: 'QA43 Leeroy brokered' }} teamCredentialResourceStatusByKey={new Map([['team:resource', { kind: 'current' as const }]])}
                 selected={selection} selectedTeamCredentialModel={disposition.selectedTeamCredentialModel}
                 reportedModel={{ ref: disposition.reportedTeamCredentialModel ?? selection, status: 'last_used' }}
                 multiColumn onSelectTeamCredentialModel={onSelectTeamCredentialModel}
@@ -157,7 +157,7 @@ describe('SessionModelPicker', () => {
             ] as const) {
                 await screen.update(<SessionModelPicker agentTargetKey={selection.agentTargetKey} declarationContext={{ kind: 'account' }}
                     nativeModels={[]} providerGroups={[]} providerProjectionAuthoritative
-                    teamCredentialResources={[resource]} teamCredentialResourceStatusByKey={new Map([['team:resource', status]])}
+                    teamCredentialResources={[resource]} teamCredentialDisplayNames={{ [resource.id]: 'QA43 Leeroy brokered' }} teamCredentialResourceStatusByKey={new Map([['team:resource', status]])}
                     selected={null} onSelect={() => {}} />);
                 const row = screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(active.teamCredentialModel)}`);
                 expect(row?.props.accessibilityLabel).toContain(expected);

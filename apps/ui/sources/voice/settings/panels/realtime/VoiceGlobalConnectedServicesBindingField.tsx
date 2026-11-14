@@ -53,7 +53,7 @@ function VoiceConnectedServicesSelectionContent(props: Readonly<{
   const currentCatalog = React.useRef(catalog);
   currentCatalog.current = catalog;
   return <NewSessionConnectedServicesSelectionContent {...props.content} inventoryInput={props.inventoryInput}
-    teamCredentialResources={catalog.resources} teamCredentialResourceStatusByKey={catalog.resourceStatusByKey}
+    teamCredentialResources={catalog.resources} teamCredentialDisplayNames={catalog.displayNames} teamCredentialResourceStatusByKey={catalog.resourceStatusByKey}
     teamNameById={catalog.teamNameById} directDelivery={directDelivery}
     onRecoverTeamCredentialResource={resource => {
       if (props.teamCatalogInput?.serverId) router.push(teamCredentialDetailPath({ serverId: props.teamCatalogInput.serverId, teamId: resource.teamId }, resource.id));

@@ -22,8 +22,6 @@ import {
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-import { useOpenedTeamCredentialDisplayNames } from './teamCredentialPrivateLabels';
-
 export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCredentialCatalogSettingsGroup(props: Readonly<{
     /** The active recipient identity that may open the catalog's already-projected labels. */
     scope: ServerAccountScope | null;
@@ -50,11 +48,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         }
         return [...unique.values()];
     }, [props.catalog.resources, props.sourceKind]);
-    const displayNames = useOpenedTeamCredentialDisplayNames({
-        scope: props.scope,
-        resources,
-        enabled: props.scope !== null,
-    });
+    const displayNames = props.catalog.displayNames;
     const orderedResources = React.useMemo(() => [...resources].sort((left, right) => {
         const leftName = displayNames[left.id];
         const rightName = displayNames[right.id];

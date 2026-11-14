@@ -96,6 +96,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     /** Unread inherited defaults are indeterminate, not an implicit Native selection. */
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     declarationContext?: ProviderDeclarationContext;
     /** Exact currentness projection from the Home catalog; stale rows stay visible but cannot be selected. */
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -365,10 +366,10 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 ].filter(Boolean).join('\n\n');
                 options.push({
                     id: optionId,
-                    label: resource.displayName,
+                    label: params.teamCredentialDisplayNames?.[resource.id] ?? params.translate('common.unavailable'),
                     subtitle,
                     subtitleLines: selection.deliveryMode === 'direct' ? 0 : undefined,
-                    accessibilityLabel: [resource.displayName, subtitle].join(', '),
+                    accessibilityLabel: [params.teamCredentialDisplayNames?.[resource.id] ?? params.translate('common.unavailable'), subtitle].join(', '),
                     icon: params.renderRowIcon({ kind: 'team', variant: selectable && !availability.disabled ? 'default' : 'warning' }),
                     selected,
                     disabled: availability.disabled === true || (!selectable && !params.onRecoverTeamCredentialResource),
@@ -404,7 +405,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 : undefined;
             options.push({
                 id: optionId,
-                label: retainedResource?.displayName ?? binding.resourceId,
+                label: params.teamCredentialDisplayNames?.[binding.resourceId] ?? params.translate('common.unavailable'),
                 subtitle: [retainedResource
                     ? joinHappierFacts(
                         retainedTeamName,

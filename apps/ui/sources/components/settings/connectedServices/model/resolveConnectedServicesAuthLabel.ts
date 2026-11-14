@@ -54,6 +54,7 @@ export type ResolveConnectedServicesAuthLabelParams = Readonly<{
     bindingPresentation?: 'effective' | 'requested';
     teamResourceChoicesByServiceId?: Readonly<Record<string, Pick<ConnectedAccountPurposeTargetChoice, 'presentation' | 'eligibility'> | undefined>>;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
 }>;
 
@@ -239,6 +240,7 @@ function resolveConnectedBindingLabel(
         return resource && binding?.source === 'team_resource'
             ? presentConnectedAccountPurposeTeamResource({
                 teamResource: { teamId: resource.teamId, selection: binding },
+                teamResourceDisplayNames: params.teamCredentialDisplayNames,
                 teamResources: params.teamCredentialResources ?? [],
                 teamNameById: params.teamNameById,
                 serviceTitle: params.resolveServiceTitle(serviceId),

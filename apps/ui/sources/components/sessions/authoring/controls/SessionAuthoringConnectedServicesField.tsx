@@ -127,6 +127,7 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
         // restore inheritance.
         emitWhenAllNative: true,
         teamCredentialResources,
+        teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
         teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
         teamNameById: teamCredentialCatalog.teamNameById,
         router,

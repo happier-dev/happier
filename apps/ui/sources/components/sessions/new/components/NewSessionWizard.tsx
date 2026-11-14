@@ -180,6 +180,7 @@ export interface NewSessionWizardAgentProps {
     providerModelGroups?: readonly SessionModelProjectionGroup[];
     declarationContext?: React.ComponentProps<typeof NewSessionModelSelectionContent>['declarationContext'];
     teamCredentialResources?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResources'];
+    teamCredentialDisplayNames?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialDisplayNames'];
     teamNameById?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamNameById'];
     homeNameByTeamId?: React.ComponentProps<typeof NewSessionModelSelectionContent>['homeNameByTeamId'];
     teamCredentialResourceStatusByKey?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResourceStatusByKey'];
@@ -482,6 +483,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setModelSelection,
         providerModelGroups,
         teamCredentialResources,
+        teamCredentialDisplayNames,
         teamNameById,
         homeNameByTeamId,
         teamCredentialResourceStatusByKey,
@@ -1108,6 +1110,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     providerGroups={providerModelGroups}
                                                     declarationContext={props.agent.declarationContext}
                                                     teamCredentialResources={teamCredentialResources}
+                                                    teamCredentialDisplayNames={teamCredentialDisplayNames}
                                                     teamNameById={teamNameById}
                                                     homeNameByTeamId={homeNameByTeamId}
                                                     teamCredentialResourceStatusByKey={teamCredentialResourceStatusByKey}

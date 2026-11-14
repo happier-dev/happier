@@ -57,6 +57,7 @@ export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     connectedAccountGroupsV4?: ReadonlyArray<AccountProfile['connectedAccountGroupsV4'][number]>;
     accountGroupsEnabled: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
@@ -304,6 +305,7 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
             setBindingForService={setBindingForService}
             onOpenSettings={props.onOpenConnectedServicesSettings}
             teamCredentialResources={props.teamCredentialResources}
+            teamCredentialDisplayNames={props.teamCredentialDisplayNames}
             teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
             teamNameById={props.teamNameById}
             onRecoverTeamCredentialResource={props.onRecoverTeamCredentialResource}

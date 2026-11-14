@@ -14,9 +14,12 @@ import { useProviderModelProjection } from '@/providers/hooks/useProviderModelPr
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { useTeamsDirectory } from './useTeamsDirectory';
 import type { TeamCredentialResourceStatus, TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
+import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams/credentials/teamCredentialPrivateLabels';
 
 export type HomeTeamCredentialModelCatalog = Readonly<{
     resources: readonly TeamCredentialResourceCatalogEntryV1[];
+    /** Locally opened recipient labels; wire rows remain intact for model projection. */
+    displayNames: Readonly<Record<string, string | null>>;
     teamNameById: Readonly<Record<string, string>>;
     homeNameByTeamId: Readonly<Record<string, string>>;
     resourceStatusByKey: TeamCredentialResourceStatusByKey;
@@ -178,7 +181,7 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         if (needsMachineProjection) await refreshModels(false);
     }, [declarationState.phase, loadDeclarations, needsMachineProjection, refreshModels, reloadHomeCatalog]);
 
-    return React.useMemo(() => {
+    const catalog = React.useMemo(() => {
         if (!needsMachineProjection) {
             // Generic discovery is useful without a Machine, but its Home rows
             // cannot independently select a delivery route for an Agent.
@@ -214,4 +217,6 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             reload,
         };
     }, [discovered, input.agentTargetKey, modelProjection.data, modelProjection.error, modelProjection.loading, needsMachineProjection, reload]);
+    const displayNames = useOpenedTeamCredentialDisplayNames({ scope, resources: catalog.resources, enabled });
+    return React.useMemo(() => ({ ...catalog, displayNames }), [catalog, displayNames]);
 }

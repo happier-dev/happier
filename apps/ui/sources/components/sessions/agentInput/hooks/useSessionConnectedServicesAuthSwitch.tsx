@@ -431,6 +431,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     }> | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
     sessionMetadata: unknown;
@@ -974,6 +975,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             groupOptionsByServiceId={groupOptionsByServiceId}
             bindingsByServiceId={optimisticBindingsByServiceId}
             teamCredentialResources={params.teamCredentialResources}
+            teamCredentialDisplayNames={params.teamCredentialDisplayNames}
             teamCredentialResourceStatusByKey={params.teamCredentialResourceStatusByKey}
             teamNameById={params.teamNameById}
             onRecoverTeamCredentialResource={(resource) => {
@@ -1003,6 +1005,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         optimisticBindingsByServiceId,
         params.settings.connectedServicesDefaultProfileByServiceId,
         params.teamCredentialResources,
+        params.teamCredentialDisplayNames,
         params.teamCredentialResourceStatusByKey,
         params.teamNameById,
         params.serverId,
@@ -1034,7 +1037,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
             resolveServiceTitle, nativeLabel: t('connectedServices.authChip.nativeLabel'),
             formatConnectedCountLabel: count => t('connectedServices.authChip.connectedCountLabel', { count }),
-            teamCredentialResources: params.teamCredentialResources, teamNameById: params.teamNameById,
+            teamCredentialResources: params.teamCredentialResources, teamCredentialDisplayNames: params.teamCredentialDisplayNames, teamNameById: params.teamNameById,
         });
         return {
             label: label.label, connectedCount: label.connectedCount,
@@ -1042,7 +1045,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         };
     }, [params.settings.connectedServicesDefaultProfileByServiceId, supportedConnectedServiceIds,
         metadataBindingsByServiceId, profileOptionsByServiceId, groupOptionsByServiceId, accountGroupsFeatureEnabled, resolveServiceTitle,
-        params.teamCredentialResources, params.teamNameById]);
+        params.teamCredentialResources, params.teamCredentialDisplayNames, params.teamNameById]);
     const routePresentation = React.useMemo(() => params.route
         ? resolveSessionRoutePresentation({ ...params.route, native: appliedNativeRoute })
         : null, [appliedNativeRoute, params.route]);
@@ -1080,6 +1083,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     presentIdentity: present,
                     resolveAuthentication: getConnectedAccountAuthentication,
                     teamResources: params.teamCredentialResources,
+                    teamResourceDisplayNames: params.teamCredentialDisplayNames,
                     teamResourceStatusByKey: params.teamCredentialResourceStatusByKey,
                     teamNameById: params.teamNameById,
                 }).find((candidate) => candidate.current);
@@ -1163,7 +1167,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             resolveServiceTitle,
             nativeLabel: t('connectedServices.authChip.nativeLabel'),
             formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
-            teamCredentialResources: params.teamCredentialResources, teamNameById: params.teamNameById,
+            teamCredentialResources: params.teamCredentialResources, teamCredentialDisplayNames: params.teamCredentialDisplayNames, teamNameById: params.teamNameById,
         });
 
         const authSource = label.connectedCount === 0
@@ -1201,6 +1205,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         labelsByKey,
         params.teamCredentialResources,
+        params.teamCredentialDisplayNames,
         params.teamCredentialResourceStatusByKey,
         params.teamNameById,
         // Only these profile members are read: a profile refresh restamps the whole profile.

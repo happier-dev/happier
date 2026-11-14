@@ -177,6 +177,7 @@ export type ConnectedAccountPurposeTargetChoicesInput = Readonly<{
    * no source Account or Pool is copied into the recipient's choices.
    */
   teamResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+  teamResourceDisplayNames?: Readonly<Record<string, string | null>>;
   /** Exact Home catalog currentness; stale retained resources stay visible but cannot be selected. */
   teamResourceStatusByKey?: TeamCredentialResourceStatusByKey;
   teamNameById?: Readonly<Record<string, string>>;
@@ -236,6 +237,7 @@ function resolvePurposeTargetChoice(input: ConnectedAccountPurposeTargetChoicesI
     return {
       id: connectedAccountPurposeTargetChoiceId(null, teamResource), target: null, teamResource,
       presentation: presentConnectedAccountPurposeTeamResource({ teamResource, teamResources: input.teamResources ?? [],
+        teamResourceDisplayNames: input.teamResourceDisplayNames,
         serviceTitle: input.serviceTitle, ...(input.teamNameById ? { teamNameById: input.teamNameById } : {}) }),
       kind: resourceCurrent ? 'team_resource' : 'unavailable', eligibility,
       selectable: Boolean(resourceCurrent) && eligibility === 'usable', current,
