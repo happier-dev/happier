@@ -15,6 +15,7 @@ import { useScmSessionAutoRefresh } from './useScmSessionAutoRefresh';
 import { ingestWorkspaceMutationMessages } from './workspaceMutationIngestionRuntime';
 import { buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { getCachedWorkspaceRepositoryDirectoryEntries, setCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
 
 type Request = Parameters<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope>[0];
@@ -372,6 +373,60 @@ describe('presented workspace push through Session and Project demand', () => {
         ingestWorkspaceMutationMessages('watch-session', [toolMessage('unknown-recovery', 'bash', { command: 'echo recovery' })], scope.serverId);
         await advance(31_000);
         expect(hook.getCurrent().snapshot?.branch.head).toBe('unknown-recovery');
+        await hook.unmount();
+    });
+
+    it.each(['method-missing', 'unavailable'] as const)('publishes nothing and renders nothing when the fallback tick reads an equal snapshot (watch %s)', async watchKind => {
+        // I10 (P03 redesign): the 5-min fallback keeps its cadence, but equal content is not a change.
+        watchMethodMissing = watchKind === 'method-missing';
+        let renders = 0;
+        const wrapper = ({ children }: { children?: React.ReactNode }) => (
+            <PluginSurfaceFocusEligibilityProvider active presentationActive>{children}</PluginSurfaceFocusEligibilityProvider>);
+        const hook = await renderHook(() => {
+            renders++;
+            useScmSessionAutoRefresh({ sessionId: 'watch-session', serverId: scope.serverId, intervalMs: 300_000 });
+            useSessionProjectScmSnapshot('watch-session', scope.serverId);
+            return useWorkspaceScmSnapshotController(scope);
+        }, { wrapper });
+        await advance(0);
+        if (watchKind === 'unavailable') {
+            await act(async () => {
+                observation?.({ status: 'unavailable', reason: { code: 'ENOSPC', message: 'Workspace watch limit reached' } });
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            expect(hook.getCurrent().error?.errorCode).toBe('ENOSPC');
+        }
+        // Settle the first fallback read so the held snapshot equals what the next tick returns.
+        await advance(300_000);
+        const heldSnapshot = hook.getCurrent().snapshot;
+        let publishes = 0;
+        const stop = projectManager.subscribeScmSnapshots(() => { publishes++; }, new Set([buildWorkspaceCacheKey(scope)]));
+        const rendersBefore = renders;
+        const before = statusReads();
+        current = { ...initial, fetchedAt: 2 };
+        await advance(300_000);
+        stop();
+        expect({ reads: statusReads() - before, publishes, renders: renders - rendersBefore })
+            .toEqual({ reads: 1, publishes: 0, renders: 0 });
+        expect(hook.getCurrent().snapshot).toBe(heldSnapshot);
+        if (watchKind === 'unavailable') expect(hook.getCurrent().error?.errorCode).toBe('ENOSPC');
+        await hook.unmount();
+    });
+
+    it('publishes a repeated fallback read failure once', async () => {
+        watchMethodMissing = true;
+        const { hook } = await mount();
+        holdStatus = async () => { throw new Error('daemon unreachable'); };
+        await advance(300_000);
+        const firstError = hook.getCurrent().error;
+        expect(firstError).not.toBeNull();
+        let publishes = 0;
+        const stop = projectManager.subscribeScmSnapshots(() => { publishes++; }, new Set([buildWorkspaceCacheKey(scope)]));
+        const before = statusReads();
+        await advance(300_000);
+        stop();
+        expect({ reads: statusReads() - before, publishes }).toEqual({ reads: 1, publishes: 0 });
+        expect(hook.getCurrent().error).toBe(firstError);
         await hook.unmount();
     });
 

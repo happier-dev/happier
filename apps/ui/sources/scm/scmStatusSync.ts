@@ -25,7 +25,7 @@ import {
 import { reportScmStatusSyncError } from './statusSync/errorReporting';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt, isUnchangedCountsOfHeldList } from './sync/snapshotDiff';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { resolveProjectMachineScopeId, type ProjectScmSnapshotError } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
@@ -196,6 +196,12 @@ export class ScmStatusSync {
         this.publishWorkspaceFailure(scope, projectKey, reason);
     }
 
+    private readWorkspaceWatchFailure(projectKey: string): ProjectScmSnapshotError | null {
+        const reason = this.autoRefresh.getUnavailable(projectKey);
+        if (!reason || isRpcMethodNotFoundResult({ errorCode: reason.code })) return null;
+        return { message: reason.message, at: Date.now(), errorCode: reason.code };
+    }
+
     private publishWorkspaceFailure(scope: WorkspaceScopeBase, projectKey: string, reason: ScmWorkspaceWatchUnavailable): void {
         const state = storage.getState();
         const error = { message: reason.message, at: Date.now(), errorCode: reason.code };
@@ -287,6 +293,8 @@ export class ScmStatusSync {
                     }
                 }
             }
+            // A successful read settles the error to the watch's unavailability, if any, in one publication.
+            const settledError = this.readWorkspaceWatchFailure(activeKey);
             const status = snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null;
             const publications = [...refs.values()]
                 .filter(ref => snapshotChanged || !state.getSessionProjectScmSnapshot(ref.sessionId, ref.serverId))
@@ -302,11 +310,9 @@ export class ScmStatusSync {
                         state.pruneWorkspaceScmCommitSelectionPatches(target, paths);
                     }
                 }
-                state.updateWorkspaceScmSnapshotError(target, null);
+                state.updateWorkspaceScmSnapshotError(target, settledError);
             }
-            for (const ref of refs.values()) state.updateSessionProjectScmSnapshotError(ref.sessionId, null, ref.serverId);
-            const unavailable = this.autoRefresh.getUnavailable(activeKey);
-            if (unavailable) this.publishWorkspaceWatchFailure(canonicalScope, activeKey, unavailable);
+            for (const ref of refs.values()) state.updateSessionProjectScmSnapshotError(ref.sessionId, settledError, ref.serverId);
             const signature = buildSnapshotSignature(snapshot);
             const signatureChanged = signature !== this.projectSnapshotSignature.get(activeKey);
             if (snapshotChanged) this.projectLastSnapshot.set(activeKey, snapshot);

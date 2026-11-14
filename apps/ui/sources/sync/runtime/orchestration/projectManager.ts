@@ -501,7 +501,10 @@ class ProjectManager {
     }
 
     private setProjectScmSnapshotError(project: Project, error: ProjectScmSnapshotError | null): boolean {
-        if (shallow(project.scmSnapshotError ?? null, error)) return false;
+        // The same failure observed again is not a change; it keeps the first observation and publishes nothing.
+        const previous = project.scmSnapshotError ?? null;
+        if (previous === error || previous && error && previous.message === error.message
+            && previous.errorCode === error.errorCode) return false;
         project.scmSnapshotError = error;
         project.updatedAt = Date.now();
         this.publishScmSnapshotChange(project.key);
