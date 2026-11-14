@@ -11,6 +11,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
 import { listProcessSnapshot } from './processSnapshotCache';
 import { posixPsEnvironment } from './posixPs';
+import { logger } from '@/ui/logger';
 
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_SQLITE_HOME'] as const;
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
@@ -189,30 +190,29 @@ function parseWindowsProcessInfoOutput(output: string): Map<number, { pid: numbe
   return result;
 }
 
-// Win32_Process queries go through PowerShell + CIM, which commonly takes several seconds (7-14 s
-// observed on a managed Windows 11 laptop). These run inside the daemon, so they must not block the
-// event loop: a synchronous call here stalls every RPC, control-server request and socket heartbeat.
-// The timeout is a safety net only; callers already treat a failed lookup as "no info".
-const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 60_000;
-const WINDOWS_PROCESS_QUERY_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-
-function runWindowsProcessQuery(script: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      {
-        encoding: 'utf8',
-        windowsHide: true,
-        timeout: WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
-        maxBuffer: WINDOWS_PROCESS_QUERY_MAX_BUFFER_BYTES,
-      },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout ?? ''));
-      },
-    );
-  });
+// CIM may take several seconds on Windows. Await completion without blocking the daemon's
+// event loop or imposing a query-local deadline on otherwise valid process evidence.
+async function runWindowsProcessQuery(
+  script: string,
+): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8', windowsHide: true },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        },
+      );
+    });
+    return parseWindowsProcessInfoOutput(output);
+  } catch {
+    // Keep best-effort inspection observable without logging command lines or query output.
+    logger.warnFile('[DAEMON] Windows process query failed; process information is unavailable');
+    return new Map();
+  }
 }
 
 async function getProcessInfosByPidWindows(
@@ -223,32 +223,24 @@ async function getProcessInfosByPidWindows(
   const uniquePids = Array.from(new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0)));
   if (uniquePids.length === 0) return new Map();
 
-  try {
-    const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
-    const script = [
-      `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, Name, CommandLine`,
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    return parseWindowsProcessInfoOutput(await runWindowsProcessQuery(script));
-  } catch {
-    return new Map();
-  }
+  const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
+  const script = [
+    `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, Name, CommandLine`,
+    'if ($null -eq $rows) { return }',
+    '$rows | ConvertTo-Json -Compress',
+  ].join('; ');
+  return await runWindowsProcessQuery(script);
 }
 
 async function getAllProcessInfosWindows(): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
   if (process.platform !== 'win32') return new Map();
 
-  try {
-    const script = [
-      '$rows = Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine',
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    return parseWindowsProcessInfoOutput(await runWindowsProcessQuery(script));
-  } catch {
-    return new Map();
-  }
+  const script = [
+    '$rows = Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine',
+    'if ($null -eq $rows) { return }',
+    '$rows | ConvertTo-Json -Compress',
+  ].join('; ');
+  return await runWindowsProcessQuery(script);
 }
 
 async function getProcessInfoByPidWindows(pid: number): Promise<{ pid: number; name?: string; cmd?: string } | null> {
