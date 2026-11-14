@@ -68,14 +68,20 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
     let target: TerminalControlServiceabilityRetirementTarget;
     if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) {
       const expectedPlainRetirement = readRetiredPlainRunnerObservation(metadata);
-      if (expectedPlainRetirement === null) return incompleteStopSession('missing_topology_proof');
-      target = { terminalMode: 'plain', expectedPlainRetirement };
-      if (params.stoppedAt === undefined) {
+      // Failed startup can leave an inactive Session before any runner or
+      // control projection exists. There is nothing to retire in that case.
+      const inactiveWithoutRunner = rawSession.active === false
+        && pid === undefined && metadata.hostProcessStartTimeMs === undefined
+        && (metadata.terminal === undefined
+          || parsedTerminal.success && parsedTerminal.data.controlServiceabilityV1 === undefined);
+      if (expectedPlainRetirement === null && !inactiveWithoutRunner) return incompleteStopSession('missing_topology_proof');
+      if (params.stoppedAt === undefined || expectedPlainRetirement === null) {
         const attachment = await readTerminalHostAttachmentState({
           happyHomeDir: configuration.happyHomeDir, sessionId: params.sessionId,
         });
         return attachment.status === 'absent' ? { status: 'stopped' } : incompleteStopSession('missing_topology_proof');
       }
+      target = { terminalMode: 'plain', expectedPlainRetirement };
     } else {
       // Only the owning machine can prove this runner absent. The RPC server captures
       // publisher authority before Stop and fences the inactive transition after this proof.

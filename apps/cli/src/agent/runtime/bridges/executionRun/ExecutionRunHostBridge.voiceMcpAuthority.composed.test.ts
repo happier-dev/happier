@@ -183,6 +183,11 @@ describe('OpenCode Voice authority through shared MCP', () => {
       const client = new Client({ name: 'recorded-opencode-acp', version: '1' });
       try {
         await client.connect(transport);
+        const listing = await client.request({ method: 'tools/list' }, ListToolsResultSchema);
+        expect(listing.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['action_spec_search', 'action_spec_get', 'action_execute']));
+        const search = await client.callTool({ name: 'action_spec_search', arguments: { query: 'settings' } });
+        expect(search.isError, JSON.stringify(search)).not.toBe(true);
+        expect(JSON.stringify(search)).toContain('settings.set');
         const discovery = await client.callTool({ name: 'action_spec_get', arguments: { id: 'settings.set' } });
         expect(discovery.isError, JSON.stringify(discovery)).not.toBe(true);
         const result = await client.callTool({ name: 'action_execute', arguments: { actionId: 'settings.set', input: actionInput } });
@@ -193,8 +198,6 @@ describe('OpenCode Voice authority through shared MCP', () => {
         if (canApprove) {
           expect(readBacks).toEqual([]);
         }
-        const listing = await client.request({ method: 'tools/list' }, ListToolsResultSchema);
-        expect(listing.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['action_spec_get', 'action_execute']));
         return 'Setting updated.';
       } finally { await client.close(); }
     });
@@ -457,7 +460,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
           expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: asks[0]!.id, decision: 'approve' },
             { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true }); }
         await pending; expect(version).toBe(2); expect(daemon.actionRequestCount).toBeGreaterThan(0);
-        expect(executed).toMatchObject(canApprove ? { anchor: actionInput.anchor, value: actionInput.value } : { kind: 'approval_request_created', actionId: 'settings.set' });
+        expect(executed).toMatchObject({ anchor: actionInput.anchor, value: actionInput.value });
         if (canApprove) {
           if (!admittedStartInput) throw new Error('Missing signed Start input');
           // Even an ordinary RPC caller naming the same host fields must not

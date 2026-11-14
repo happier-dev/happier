@@ -10,6 +10,7 @@ import { retireObservedSessionRunnerMetadata } from './plainRunnerRetirement';
 
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { recoverStrandedTerminalControlServiceability } from './recoverStrandedTerminalControlServiceability';
 
@@ -67,19 +68,23 @@ function params(input: Readonly<{
 describe('recoverStrandedTerminalControlServiceability', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['retired', 'unproven', 'replacement', 'replacement observation'] as const)(
-    'settles Stop after plain runner exit only with current retirement proof (%s)', async state => {
+  it.each(['retired', 'unproven', 'replacement', 'replacement observation', 'failed-start', 'archived-failed-start', 'inactive-live-runner'] as const)(
+    'settles Stop from current plain runner evidence (%s)', async state => {
       await withConfiguredDaemonTestHome({ prefix: 'stop-topology-' }, async ({ homeDir }) => {
+        const failedStart = state === 'failed-start' || state === 'archived-failed-start';
         const base = { ...createTestMetadata({ machineId: 'machine-current' }),
           systemSessionV1: SessionSystemSessionV1Schema.parse({ v: 1, key: 'voice_conversation', hidden: true }),
         };
-        const metadata = state === 'unproven' ? base : await retireObservedSessionRunnerMetadata({
+        const metadata = state === 'inactive-live-runner' ? { ...base, hostPid: process.pid }
+          : state === 'unproven' || failedStart ? base : await retireObservedSessionRunnerMetadata({
           metadata: { ...base, hostPid: 999_123_456, hostProcessStartTimeMs: 1, lifecycleState: 'running' },
           expectedRunner: { pid: 999_123_456, startTimeMs: 1 },
           trackedSession: { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' }, sessionId: 'session-1', happyHomeDir: homeDir,
         });
         const input = params({ evaluateLiveness: async () => ({ paneAlive: false, observedAt: 1 }), metadata });
         const raw = await input.fetchSession();
+        raw.active = state === 'unproven';
+        raw.archivedAt = state === 'archived-failed-start' ? 200 : null;
         // The real owner detail retains its explicit recipient role across migration.
         raw.share = null;
         // Home HTTP is the boundary. Stop, recovery, owner-envelope opening,
@@ -95,17 +100,22 @@ describe('recoverStrandedTerminalControlServiceability', () => {
         }));
         const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
           const request = SessionMetadataTuplePatchV1Schema.parse(body);
-          if (request.mode !== 'owner_migration') throw new Error('Expected initial owner migration');
-          raw.metadataLayoutVersion = 1;
-          raw.metadata = request.target.sharedMetadata.ciphertext;
-          raw.metadataVersion = 2;
-          raw.ownerMetadata = request.target.ownerMetadata;
-          raw.agentState = request.target.agentState.ciphertext;
-          raw.agentStateVersion = 1;
-          if (request.target.displayProjectionV1 === null) delete raw.displayProjectionV1;
-          else if (request.target.displayProjectionV1 !== undefined) raw.displayProjectionV1 = request.target.displayProjectionV1;
+          if (request.mode === 'owner_migration') {
+            raw.metadataLayoutVersion = 1;
+            raw.metadata = request.target.sharedMetadata.ciphertext;
+            raw.metadataVersion += 1;
+            raw.ownerMetadata = request.target.ownerMetadata;
+            raw.agentState = request.target.agentState.ciphertext;
+            raw.agentStateVersion += 1;
+            if (request.target.displayProjectionV1 === null) delete raw.displayProjectionV1;
+            else if (request.target.displayProjectionV1 !== undefined) raw.displayProjectionV1 = request.target.displayProjectionV1;
+          } else if (request.mode === 'owner') {
+            raw.ownerMetadata = request.ownerMetadata;
+            raw.agentState = request.agentState.ciphertext;
+            raw.agentStateVersion += 1;
+          } else throw new Error(`Unexpected retirement patch: ${request.mode}`);
           return { status: 200, data: { success: true, metadataLayoutVersion: 1,
-            sharedMetadata: { version: 2 }, agentState: { version: 1 } } };
+            sharedMetadata: { version: raw.metadataVersion }, agentState: { version: raw.agentStateVersion } } };
         });
         let retirementFailure = '';
         const stop = createStopSession({ trackedSessionsByKey: new Map(),
@@ -120,15 +130,19 @@ describe('recoverStrandedTerminalControlServiceability', () => {
           }),
         });
         const stopped = await stop('session-1');
-        expect(stopped, retirementFailure).toEqual(state === 'retired' ? { status: 'stopped' }
-          : { status: 'incomplete', reason: state === 'unproven' ? 'missing_topology_proof' : 'attachment_mismatch' });
+        expect(stopped, retirementFailure).toEqual(state === 'retired' || failedStart ? { status: 'stopped' }
+          : { status: 'incomplete', reason: state === 'unproven' ? 'missing_topology_proof'
+            : state === 'inactive-live-runner' ? 'tracked_runner_absent' : 'attachment_mismatch' });
         if (state === 'retired') {
-          expect(SessionMetadataTuplePatchV1Schema.parse(patch.mock.calls[0]?.[1])).toMatchObject({
-            target: { ownerMetadata: { t: 'plain', v: { runtime: { lifecycleState: 'stopped' } } } },
-          });
+          expect(tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
+            accountEncryptionMode: 'plain', rawSession: raw })).toMatchObject({ lifecycleState: 'stopped' });
+          const writes = patch.mock.calls.length;
           expect(await stop('session-1'), retirementFailure).toEqual({ status: 'stopped' });
-          expect(patch).toHaveBeenCalledOnce();
-        } else expect(patch).not.toHaveBeenCalled();
+          expect(patch).toHaveBeenCalledTimes(writes);
+        } else {
+          expect(patch).not.toHaveBeenCalled();
+          if (failedStart) expect(await stop('session-1')).toEqual({ status: 'stopped' });
+        }
       });
     });
 
@@ -158,18 +172,18 @@ describe('recoverStrandedTerminalControlServiceability', () => {
 
   it('does not probe a remote, malformed, or attachment-bound plain runner', async () => {
     const probe = vi.spyOn(process, 'kill');
-    for (const [machineId, pid, expectedAttachmentId, expected] of [
-      ['machine-other', 4321, undefined, null],
-      ['machine-current', undefined, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
-      ['machine-current', 0, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
-      ['machine-current', '4321', undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
-      ['machine-current', 4321, 'attachment-old', { status: 'incomplete', reason: 'attachment_mismatch' }],
+    for (const [machineId, pid, active, expectedAttachmentId, expected] of [
+      ['machine-other', 4321, false, undefined, null],
+      ['machine-current', undefined, true, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
+      ['machine-current', 0, false, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
+      ['machine-current', '4321', false, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
+      ['machine-current', 4321, false, 'attachment-old', { status: 'incomplete', reason: 'attachment_mismatch' }],
     ] as const) {
       const sessionMetadata = { machineId, hostPid: pid, terminal: { mode: 'plain' } };
       await expect(recoverStrandedTerminalControlServiceability({
       credentials: { token: 'token', encryption: null },
       resolveAccountEncryptionMode: async () => 'plain' as const,
-      fetchSession: async () => createSessionRecordFixture({ id: 'session-1', encryptionMode: 'plain', metadataLayoutVersion: 0, metadata: JSON.stringify(sessionMetadata) }),
+      fetchSession: async () => createSessionRecordFixture({ id: 'session-1', active, encryptionMode: 'plain', metadataLayoutVersion: 0, metadata: JSON.stringify(sessionMetadata) }),
         currentMachineId: 'machine-current',
         sessionId: 'session-1',
         expectedAttachmentId,
