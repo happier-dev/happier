@@ -139,7 +139,8 @@ describe('Session MCP through the native holder relay', () => {
             const target = shellTarget(directory, { ...config.env });
             await agents[0]!.connect(sessionMcpAgentTransport(config, { target, socketPath: primarySocketPath, role: 'primary' }));
             // An execution run's Agent in the same target: its own holder, its own Agent tree.
-            await agents[1]!.connect(sessionMcpAgentTransport(config, { target, socketPath: join(directory, 'auxiliary.sock'), role: 'auxiliary' }));
+            // Keep the holder's appended `.mcp` socket within AF_UNIX's pathname limit under executor TMPDIRs.
+            await agents[1]!.connect(sessionMcpAgentTransport(config, { target, socketPath: join(directory, 'aux.sock'), role: 'auxiliary' }));
             const listed = await Promise.all(agents.map(async agent => (await agent.listTools()).tools.length));
             expect(listed.filter(count => count > 0)).toHaveLength(2);
         } finally {
