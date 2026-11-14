@@ -514,6 +514,21 @@ function normalizeRawMessageFromRaw(
             };
         };
 
+        // Retained reasoning and live thinking share one presentation channel.
+        // Preserve the content for transcript readers without making it an assistant reply.
+        if ((raw.content.type === 'codex' || raw.content.type === 'acp') && raw.content.data.type === 'reasoning') {
+            const data = raw.content.data;
+            const structuredSidechain = resolveStructuredContentSidechain(data);
+            return {
+                id, localId, createdAt, ...(seq !== undefined ? { seq } : {}),
+                role: 'agent',
+                isSidechain: structuredSidechain.isSidechain,
+                ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
+                content: [{ type: 'thinking', thinking: typeof data.message === 'string' ? data.message : '', uuid: id, parentUUID: null }],
+                meta: raw.meta,
+            } satisfies NormalizedMessage;
+        }
+
         type OutputAssistantData = {
             type: 'assistant';
             uuid?: string | null;
@@ -819,25 +834,6 @@ function normalizeRawMessageFromRaw(
                     meta: raw.meta
                 };
             }
-              if (raw.content.data.type === 'reasoning') {
-                  // Cast codex messages to agent text messages
-                  return {
-                      id,
-                      ...(seq !== undefined ? { seq } : {}),
-                      localId,
-                      createdAt,
-                      role: 'agent',
-                      isSidechain: structuredSidechain.isSidechain,
-                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
-                    content: [{
-                        type: 'text',
-                        text: raw.content.data.message,
-                        uuid: id,
-                        parentUUID: null
-                    }],
-                    meta: raw.meta
-                } satisfies NormalizedMessage;
-            }
               if (raw.content.data.type === 'tool-call') {
                   const toolName = raw.content.data.name || 'unknown';
                   if (shouldSuppressEmptyCanonicalTurnDiffToolCall({
@@ -985,25 +981,6 @@ function normalizeRawMessageFromRaw(
                         uuid: id,
                         parentUUID: null,
                         ...(peer ? { peer } : {}),
-                    }],
-                    meta: raw.meta
-                } satisfies NormalizedMessage;
-            }
-              if (raw.content.data.type === 'reasoning') {
-                  const messageText = typeof acpDataRecord.message === 'string' ? acpDataRecord.message : '';
-                  return {
-                      id,
-                      ...(seq !== undefined ? { seq } : {}),
-                      localId,
-                      createdAt,
-                      role: 'agent',
-                      isSidechain: structuredSidechain.isSidechain,
-                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
-                    content: [{
-                        type: 'text',
-                        text: messageText,
-                        uuid: id,
-                        parentUUID: null
                     }],
                     meta: raw.meta
                 } satisfies NormalizedMessage;
