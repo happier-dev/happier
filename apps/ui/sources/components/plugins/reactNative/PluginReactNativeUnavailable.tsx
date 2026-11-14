@@ -6,6 +6,7 @@ import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/c
 import { t } from '@/text';
 
 import { PluginSurfaceMachineRecoveryContext, useOfflineSurfaceNotice } from '../shared/pluginSurfaceInteractionAvailability';
+import { usePublishPluginSurfaceStateTitle } from '../shared/pluginSurfaceStateTitle';
 
 type PluginReactNativeUnavailableProps = Readonly<{
     diagnostics?: readonly string[];
@@ -57,11 +58,13 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
             manageAction: props.recoveryAction,
         });
     const offline = props.offline === true && !pending;
+    const title = offline ? offlineNotice.title : card.title;
+    usePublishPluginSurfaceStateTitle(pending ? null : title);
     return (
         <SurfaceStateCard
             testID="plugin-rn-ui-unavailable"
             kind={offline ? offlineNotice.kind : card.kind}
-            title={offline ? offlineNotice.title : card.title}
+            title={title}
             reason={offline ? offlineNotice.reason : card.reason}
             action={action ?? (offline ? machineRecovery?.retry : undefined)}
             secondaryAction={offline ? machineRecovery?.chooseMachine : undefined}

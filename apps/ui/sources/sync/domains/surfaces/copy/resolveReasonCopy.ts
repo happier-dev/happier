@@ -78,6 +78,8 @@ export type PluginSurfaceStatePresentation = Readonly<{
     recoveryAction: Readonly<{
         kind: 'retry' | 'repair' | 'updateCompatible' | 'managePlugin' | 'enable';
         label: string;
+        /** An acquisition refusal retries the Account owner before a renderer retries its mount. */
+        retryTarget?: 'accountAvailability';
     }> | null;
 }>;
 
@@ -204,6 +206,7 @@ const LOCAL_SERVICE_LAUNCHER_KEYS = {
     unavailable: 'localServices.launcher.unavailableReason.unavailable',
     // Unsettled native custody (CA2-02): not Running, and Stop is the cleanup.
     managed_service_native_state_unknown: 'localServices.launcher.unavailableReason.nativeStateUnknown',
+    managed_service_custody_unavailable: 'localServices.launcher.unavailableReason.custodyUnavailable',
     managed_service_native_cleanup_unconfirmed: 'localServices.launcher.unavailableReason.nativeCleanupUnconfirmed',
 } as const satisfies Record<string, LocalServiceLauncherMessageKey>;
 
@@ -270,6 +273,7 @@ const LOCAL_SERVICE_ACTION_KEYS = {
     service_not_listening: 'localServices.actions.failure.serviceNotRunning',
     preview_service_not_listening: 'localServices.actions.failure.serviceNotRunning',
     unknown_managed_service: 'localServices.actions.failure.serviceNotRunning',
+    managed_service_custody_unavailable: 'localServices.launcher.unavailableReason.custodyUnavailable',
     preview_unknown_managed_service: 'localServices.actions.failure.serviceNotRunning',
     preview_registration_failed: 'localServices.actions.failure.previewFailed',
     preview_server_unavailable: 'localServices.actions.failure.previewUnavailable',
@@ -629,6 +633,11 @@ function resolvePluginSurfaceRecoveryAction(
     reasonCode: string | null | undefined,
 ): PluginSurfaceStatePresentation['recoveryAction'] {
     switch (reasonCode) {
+        case 'plugin_availability_unavailable':
+        case 'plugin_availability_invalid_response':
+            // An explicit Retry asks for fresh bytes. Invalid bytes still do not
+            // acquire an automatic retry loop in the Availability queue.
+            return Object.freeze({ kind: 'retry', label: t('common.retry'), retryTarget: 'accountAvailability' });
         case 'targeted_contributions_error':
         case 'targeted_contributions_timeout':
         case 'hosted_web_bridge_timeout':
@@ -714,10 +723,12 @@ type LocalServiceLauncherMessageKey =
     | 'localServices.launcher.unavailableReason.starting'
     | 'localServices.launcher.unavailableReason.stale'
     | 'localServices.launcher.unavailableReason.nativeStateUnknown'
+    | 'localServices.launcher.unavailableReason.custodyUnavailable'
     | 'localServices.launcher.unavailableReason.nativeCleanupUnconfirmed'
     | 'localServices.launcher.unavailableReason.unavailable';
 
 type LocalServiceActionMessageKey =
+    | 'localServices.launcher.unavailableReason.custodyUnavailable'
     | 'actionConfirmations.turnedOffUnnamedMessage'
     | 'localServices.actions.failure.outcomeUnknown'
     | 'localServices.actions.failure.serviceNotRunning'
@@ -815,6 +826,7 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
         case 'localServiceAction': {
             const key = LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
             return key === 'localServices.actions.failure.unavailable' || key === 'localServices.actions.failure.browserViewUnavailable'
+                || key === 'localServices.launcher.unavailableReason.custodyUnavailable'
                 || key === 'actionConfirmations.turnedOffUnnamedMessage' ? t(key)
                 : key ? t(key, { servicesActionOffered }) : resolveLocalServicePublicPreviewPolicyReasonText(reasonCode);
         }

@@ -204,7 +204,7 @@ const { PluginSurfaceHost, PluginSurfacePlacementHost } = await import('@/compon
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
 const { PluginAppPageScreen } = await import('@/components/appShell/plugins/PluginAppPageScreen');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('./projection');
+const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection, failPluginAccountAvailabilityProjection } = await import('./projection');
 const { BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_UI_APP_DECLARATIONS } = await import('./generatedBundledPluginUiArtifacts');
 const { PluginMachineMaterializationV1Schema } = await import('@happier-dev/protocol/plugins/availability');
 const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
@@ -827,6 +827,26 @@ it('mounts the admitted Account source detail from the real Account page without
         });
         expect(JSON.stringify(screen.tree.toJSON())).toContain('Personal Account detail');
         expect(packaged.machineRpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+});
+
+it.each(['plugin_availability_unavailable', 'plugin_availability_invalid_response'] as const)(
+'retries failed Account availability from an open page through the shared unavailable action (%s)', async (code) => {
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    clearPluginAccountAvailabilityProjection();
+    failPluginAccountAvailabilityProjection({ scope: storage.getState().profileScope!, code });
+    const screen = await renderWithAppProviders(<AppPaneProvider><AppShellPluginUiProjectionProvider>
+        <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
+    </AppShellPluginUiProjectionProvider></AppPaneProvider>);
+    try {
+        const action = screen.tree.root.findAllByProps({ testID: 'plugin-app-page-unavailable-action' })
+            .find(node => typeof node.props.onPress === 'function');
+        expect(action).toBeDefined();
+        await act(async () => { action!.props.onPress(); });
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.tree.root.findAllByProps({ testID: 'host-bundled-account-page' }), JSON.stringify(screen.tree.toJSON())).toHaveLength(1);
+        });
     } finally { await screen.unmount(); }
 });
 

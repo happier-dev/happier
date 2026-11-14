@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useDaemonProjectionPluginSlices } from '@/agents/backendCatalog/useDaemonProjectionPluginSlices';
 import { useMountedClientActionDemand } from '@/components/appShell/plugins/mountedClientActionDemand';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 
 import type {
     ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
@@ -25,11 +25,8 @@ import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadD
 import { compareOrderedComposerContributions } from '@/components/plugins/actions/pluginComposerPlacement';
 export { compareOrderedComposerContributions } from '@/components/plugins/actions/pluginComposerPlacement';
 import {
-    createComposerControlSurfaceListRootStep,
-    createComposerControlSurfaceSplitOptions,
     createPluginContributedActionComposerChips,
     EMPTY_PLUGIN_COMPOSER_ACTION_CHIPS,
-    type ComposerControlSurfaceLayoutContent,
     type PluginComposerControlHost,
     type PluginComposerControlSurfacePresentation,
 } from '@/components/plugins/actions/pluginContributedActionComposerChips';
@@ -50,8 +47,6 @@ import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugi
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import type { BoundPluginSurfaceMountLifetime } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
-import { AgentInputChipPickerSurface } from '@/components/sessions/agentInput/components/AgentInputChipPickerSurface';
-import { SelectionList } from '@/components/ui/selectionList';
 import type {
     AgentInputAttachmentRowBadge,
     AgentInputExtraActionChip,
@@ -72,7 +67,8 @@ import {
     ComposerPluginSurface,
     type ComposerPluginSurfaceMountRequest,
 } from '@/components/sessions/presentation/ComposerPluginSurface';
-import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { Modal } from '@/modal';
+import { ComposerScopePluginSurfaceDialog } from './ComposerScopePluginSurfaceDialog';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
@@ -164,72 +160,6 @@ export type ComposerScopePluginPresentationParams = Readonly<{
     onOpenControlAction?: (input: ComposerScopeControlActionInput) => void;
     onOpenContributedAction?: (input: ComposerScopeContributedActionInput) => void;
 }>;
-
-const dialogFrameStyle = { minWidth: 280, maxWidth: 720 } as const;
-const contentDialogFillStyle = { ...dialogFrameStyle, flex: 1 } as const;
-
-function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Readonly<{
-    title: string;
-    layout?: 'content' | 'list' | 'split';
-    surfaceKey?: string;
-    accessibilityLabel?: string;
-    children: React.ReactNode;
-}>): React.ReactElement {
-    React.useEffect(() => {
-        props.setChrome?.({
-            kind: 'card',
-            title: props.title,
-            scrollHost: 'body',
-            // A declared layout means the surface owns its scrolling: `content`
-            // fills the bounded body and scrolls its own List, as the list and
-            // split shells do. Only an undeclared dialog (a chip's preview)
-            // lets the modal body scroll for it.
-            bodyScroll: props.layout === undefined ? 'auto' : 'none',
-        });
-        return () => props.setChrome?.(null);
-    }, [props.layout, props.setChrome, props.title]);
-
-    const layoutContent: ComposerControlSurfaceLayoutContent = {
-        surfaceKey: props.surfaceKey ?? `composer-surface-dialog:${props.title}`,
-        label: props.title,
-        accessibilityLabel: props.accessibilityLabel ?? props.title,
-        renderContent: () => props.children,
-    };
-    const content = props.layout === 'list'
-        ? (
-            <SelectionList
-                rootStep={createComposerControlSurfaceListRootStep(layoutContent)}
-                selectedOptionId={layoutContent.surfaceKey}
-                onSelect={() => {
-                    // The mounted surface owns its own interaction. The list
-                    // shell only provides its semantic scrolling container.
-                }}
-                onRequestClose={props.onClose}
-                optionsHostInlineControls
-            />
-        )
-        : props.layout === 'split'
-            ? (
-                <AgentInputChipPickerSurface
-                    title=""
-                    showCloseButton={false}
-                    options={createComposerControlSurfaceSplitOptions(layoutContent)}
-                    selectedOptionId={layoutContent.surfaceKey}
-                    onSelect={() => {
-                        // The mounted surface owns its own interaction. The
-                        // rail only selects its incumbent detail presentation.
-                    }}
-                    onRequestClose={props.onClose}
-                />
-            )
-            : props.children;
-
-    return (
-        <View style={props.layout === 'content' ? contentDialogFillStyle : dialogFrameStyle}>
-            {content}
-        </View>
-    );
-}
 
 /** One identity for an omitted catalog, so the surface renderer (and every region the Session composer shows) stays stable across host renders. */
 const EMPTY_COMPOSER_SURFACE_CATALOG: NonNullable<NonNullable<ComposerScopePluginPresentationParams['projectionInputs']>['composerSurfaceCatalog']> = [];

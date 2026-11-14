@@ -5,6 +5,8 @@ import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfa
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
+import { usePublishPluginSurfaceStateTitle } from '../shared/pluginSurfaceStateTitle';
+
 export type PluginHostedWebUnavailableDiagnosticCode =
     | 'asset_not_declared'
     | 'directory_listing_disabled'
@@ -166,6 +168,7 @@ export function PluginHostedWebUnavailable(props: Readonly<{
     if (!card) {
         throw new Error('plugin_hosted_web_unavailable_presentation_missing_card');
     }
+    usePublishPluginSurfaceStateTitle(card.title);
     const action = resolvePluginSurfaceStateAction({
             recoveryAction: presentation.recoveryAction,
             onRetry: props.onRetry,

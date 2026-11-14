@@ -6,6 +6,7 @@ import { CollectionLoadingRows } from '@happier-dev/plugin-ui/components';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginSurfacePageHeaderContext } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
+import { usePublishPluginSurfaceStateTitle } from '@/components/plugins/shared/pluginSurfaceStateTitle';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import {
@@ -20,6 +21,7 @@ import {
     type PluginSurfaceStatePresentation,
 } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 
 type PluginSurfaceFallbackState = Extract<PluginSurfacePresentationState, 'loading' | 'unavailable'>;
 
@@ -58,6 +60,8 @@ const LOADING_SKELETON_ROWS = 4;
  * - a configuration reason gets the route-owned management callback under the
  *   semantic label (Manage plugin / Update / Enable);
  * - an unclassified reason gets Retry only when the renderer offers one.
+ * - an Account acquisition refusal joins Sync's existing Availability queue
+ *   before retrying the optional renderer-local mount.
  *
  * At most one action is returned, so a card never competes with itself.
  */
@@ -67,6 +71,14 @@ export function resolvePluginSurfaceStateAction(input: Readonly<{
     manageAction?: SurfaceStateAction;
 }>): SurfaceStateAction | undefined {
     const semantic = input.recoveryAction;
+    if (semantic?.kind === 'retry' && semantic.retryTarget === 'accountAvailability') {
+        return { label: semantic.label, onPress: () => {
+            void getSyncSingleton().refreshPluginAccountAvailability()
+                .then(() => input.onRetry?.())
+                // The acquisition owner publishes the typed failed state.
+                .catch(() => {});
+        } };
+    }
     if (semantic === null) {
         return input.onRetry ? { label: t('common.retry'), onPress: input.onRetry } : undefined;
     }
@@ -115,6 +127,7 @@ export function PluginSurfaceFallback(props: Readonly<{
     if (!card) {
         throw new Error('plugin_surface_unavailable_presentation_missing_card');
     }
+    usePublishPluginSurfaceStateTitle(card.kind === 'loading' ? null : card.title);
     if (card.kind === 'loading') {
         const skeleton = (
             <PluginSurfaceLoadingSkeleton

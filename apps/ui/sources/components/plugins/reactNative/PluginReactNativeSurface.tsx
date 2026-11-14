@@ -698,6 +698,12 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         && (Boolean(props.load) || isPluginReactNativeSurfaceModule(props.module));
     const shouldOfferRetry = canRetryCurrentArtifact
         && (loadFailed || pendingQuarantine);
+    const previousInteractionEnabled = React.useRef(interactionEnabled);
+    React.useEffect(() => {
+        const reconnected = !previousInteractionEnabled.current && interactionEnabled;
+        previousInteractionEnabled.current = interactionEnabled;
+        if (reconnected && shouldOfferRetry) handleRetry();
+    }, [handleRetry, interactionEnabled, shouldOfferRetry]);
     // Inside a widget card the first load draws the frame's rows (see the initial-load branch below).
     const widgetFrameBody = useIsWidgetFrameBody();
     const animationEnabled = props.renderContext.surface.reducedMotion !== true;

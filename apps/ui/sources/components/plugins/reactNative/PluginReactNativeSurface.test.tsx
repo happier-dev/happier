@@ -78,6 +78,29 @@ afterAll(() => {
 });
 
 describe('PluginReactNativeSurface', () => {
+    it('retries a failed mount at reconnect through its existing local retry owner', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        let reachable = false;
+        const load = async () => {
+            if (!reachable) throw new Error('Home disconnected');
+            return { renderSurface: () => React.createElement('RecoveredSurface', { testID: 'reconnected-surface' }) };
+        };
+        const element = (interactionEnabled: boolean) => <PluginReactNativeSurface surfaceId="reconnect-surface"
+            cacheKey="reconnect-surface" decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            load={load} loadPolicy={{ source: 'installedArtifact' }} renderContext={defaultRenderContext}
+            interactionEnabled={interactionEnabled} />;
+        const screen = await renderScreen(element(true));
+        try {
+            await flushHookEffects();
+            expect(screen.findByTestId('plugin-rn-ui-unavailable-action')).toBeTruthy();
+            await screen.update(element(false));
+            reachable = true;
+            await screen.update(element(true));
+            await flushHookEffects();
+            expect(screen.findByTestId('reconnected-surface')).toBeTruthy();
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps hidden content reveal motion stopped without retiring the renderer', async () => {
         const animated = await import('react-native-reanimated');
         const timing = vi.spyOn(animated, 'withTiming');
