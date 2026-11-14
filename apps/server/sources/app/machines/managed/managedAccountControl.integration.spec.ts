@@ -12,6 +12,7 @@ import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { createMachinePreset, getMachinePreset } from './machinePresetService';
+import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, createManagedPolicyProofV1, encodeManagedPolicyProofV1,
@@ -208,7 +209,7 @@ describe('Account-owned managed control without a controller', () => {
         const reviewedFacts = { launch, provisioner, optionStatus: 'current', billing: provisioner.billing,
             prerequisites: [], retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
         const requestId = randomUUID();
-        const input = { requestId, requestEnvelopeDigest: 'a'.repeat(43), continuationPresent: false, input: { enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
+        const input = { requestId, requestEnvelopeDigest: 'a'.repeat(43), continuationPresent: false, input: { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
             selection: { kind: 'one-off', homeId, launch, retention: reviewedFacts.retention, wakeOnAcceptedMessage: true }, reviewedFacts } };
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
@@ -238,15 +239,23 @@ describe('Account-owned managed control without a controller', () => {
             expect(await db.accountPluginIntent.count({ where: { accountId: owner.id } })).toBe(0);
             expect((await post('admit', input)).json()).toMatchObject({ replayed: true, machine: { id: machine.id } });
             expect((await post('admit', { ...input, requestEnvelopeDigest: 'b'.repeat(43) })).statusCode).toBe(409);
-            const saved = await createMachinePreset({ accountId: owner.id, input: { id: randomUUID(), homeId, name: 'Portable cloud',
-                owner: { kind: 'account', accountId: owner.id }, launch } });
+            const presetId = randomUUID();
+            const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: { v: 1, name: 'Portable cloud', launch } });
+            const saved = await createMachinePreset({ accountId: owner.id, input: { id: presetId, homeId,
+                owner: { kind: 'account', accountId: owner.id }, contentEncryptionMode: 'plain', ...sealed } });
             if (saved.kind !== 'saved') throw new Error('Expected the owner preset to save');
             const preset = { id: saved.preset.id, revision: saved.preset.revision };
+            const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+                projection: { content: sealed.content, recipientEnvelope: null },
+                enrollmentIdentity: input.input.enrollmentIdentity });
+            if (!presetContentOverride) throw new Error('Expected the owner preset acquire override');
             const presetAdmission = await post('admit', { requestId: randomUUID(), requestEnvelopeDigest: 'c'.repeat(43), continuationPresent: false,
-                input: { enrollmentIdentity: input.input.enrollmentIdentity, selection: { kind: 'preset', homeId, ...preset },
-                    retention: reviewedFacts.retention, wakeOnAcceptedMessage: true, reviewedFacts: { ...reviewedFacts, preset } } });
+                input: { selection: { kind: 'preset', homeId, ...preset }, presetContentOverride,
+                    retention: reviewedFacts.retention, wakeOnAcceptedMessage: true } });
             expect(presetAdmission.statusCode, presetAdmission.body).toBe(200);
-            expect(presetAdmission.json().machine).toMatchObject({ preset, launch, custodianAccountId: owner.id });
+            expect(presetAdmission.json()).toMatchObject({ machine: { preset, custodianAccountId: owner.id },
+                presetContent: sealed, presetContentOverride });
+            expect(presetAdmission.json().machine).not.toHaveProperty('launch');
             expect(presetAdmission.json().machine.controller).toBeUndefined();
             expect(await db.machine.count({ where: { accountId: owner.id } })).toBe(0);
             const current = { homeId, managedId: machine.id, expectedIntentRevision: 0, requestId };
@@ -585,8 +594,10 @@ describe('Account-owned managed control without a controller', () => {
     it('saves an Account launch preset without installed Machines and keeps it private to its owner', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const input = { id: randomUUID(), homeId, name: 'Cloud preset', owner: { kind: 'account' as const, accountId: owner.id },
-            launch: { provider: { pluginId: 'fixture.portable', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} } };
+        const id = randomUUID();
+        const input = { id, homeId, owner: { kind: 'account' as const, accountId: owner.id }, contentEncryptionMode: 'plain' as const,
+            ...sealManagedMachinePresetContentV1({ presetId: id, mode: 'plain', content: { v: 1, name: 'Cloud preset',
+                launch: { provider: { pluginId: 'fixture.portable', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} } } }) };
         const saved = await createMachinePreset({ accountId: owner.id, input });
         expect(saved).toMatchObject({ kind: 'saved', preset: input });
         expect(await getMachinePreset({ accountId: owner.id, input: { homeId, id: input.id } })).toMatchObject({ kind: 'found', preset: { id: input.id } });
@@ -594,7 +605,7 @@ describe('Account-owned managed control without a controller', () => {
         expect(await db.machine.count({ where: { accountId: owner.id } })).toBe(0);
     });
 
-    it('resolves personal setup references from the portable Account preset owner without granting them to a shared target', async () => {
+    it('resolves opaque portable setup only for its preset owner, including on a shared target', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
         const metadata = encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' });
@@ -605,13 +616,19 @@ describe('Account-owned managed control without a controller', () => {
             principal: { kind: 'account', accountId: owner.id }, level: 'admin' }));
         expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: owner.id, machineId: shared.id }))).toBe('manage');
         const setup = { secretRefs: { v: 1 as const, bindings: { TOKEN: { ref: 'personal-token' } } } };
-        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: owner.id, name: 'Portable private setup', setup,
-            launch: { provider: { pluginId: 'fixture.portable', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} } } });
-        const sources = [{ kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision, setup },
+        const presetId = randomUUID();
+        const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: { v: 1, name: 'Portable private setup', setup } });
+        const saved = await createMachinePreset({ accountId: owner.id, input: { id: presetId, homeId,
+            owner: { kind: 'account', accountId: owner.id }, contentEncryptionMode: 'plain', ...sealed } });
+        if (saved.kind !== 'saved') throw new Error('Expected the owner setup preset to save');
+        const sources = [{ kind: 'accountPresetOpaque' as const, presetId, presetRevision: saved.preset.revision, contentEncryptionMode: 'plain' as const },
             { kind: 'direct' as const, setup: {} }];
         expect(await resolveMachineSetup({ actorAccountId: owner.id, custodianAccountId: owner.id, input: { homeId, machineId: guest.id, sources } }))
-            .toMatchObject({ sources });
-        await expect(resolveMachineSetup({ actorAccountId: owner.id, custodianAccountId: other.id,
-            input: { homeId, machineId: shared.id, sources } })).rejects.toMatchObject({ code: 'credential_unavailable' });
+            .toMatchObject({ sources: [{ ...sources[0], presetContent: { content: sealed.content, recipientEnvelope: null } }, sources[1]] });
+        expect(await resolveMachineSetup({ actorAccountId: owner.id, custodianAccountId: other.id,
+            input: { homeId, machineId: shared.id, sources } }))
+            .toMatchObject({ sources: [{ ...sources[0], presetContent: { content: sealed.content, recipientEnvelope: null } }, sources[1]] });
+        await expect(resolveMachineSetup({ actorAccountId: other.id, custodianAccountId: other.id,
+            input: { homeId, machineId: shared.id, sources } })).rejects.toMatchObject({ code: 'preset_not_found' });
     });
 });
