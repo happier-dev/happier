@@ -69,6 +69,8 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
 
   return {
     startedBy: marker.startedBy ?? params.startedByFallback,
+    ...(marker.sessionRunnerStartingMode !== undefined
+      ? { sessionRunnerStartingMode: marker.sessionRunnerStartingMode } : {}),
     happySessionId: marker.happySessionId,
     ...(marker.linuxLaunchUnit ? { linuxLaunchUnit: marker.linuxLaunchUnit } : {}),
     ...(marker.requesterWorkAttributionV1

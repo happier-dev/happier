@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { SessionRunnerStartingModeV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { retireGoneLocalSessionRpcHost } from '@/session/transport/rpc/localSessionRpcChannel';
 import { configuration } from '@/configuration';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
@@ -72,6 +73,7 @@ const DaemonSessionMarkerSchema = lazyZodSchema(() => z.object({
   processInstanceFingerprint: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
   // Optional debug-only sample of the observed command; not an identity witness.
   processCommand: z.optional(z.string()),
+  sessionRunnerStartingMode: z.optional(SessionRunnerStartingModeV1Schema),
   metadata: z.optional(z.any()),
   // Safe daemon respawn inputs (no secrets). Used to reconstruct SpawnSessionOptions after reattach.
   respawn: z.optional(SessionRunnerRespawnDescriptorV1Schema),
@@ -546,6 +548,15 @@ async function writeSessionMarkerUnlocked(
         }
       : {}),
     ...(preservedRespawn ? { respawn: preservedRespawn } : {}),
+    ...(marker.sessionRunnerStartingMode === undefined
+      && existingMarkerFromDisk?.sessionRunnerStartingMode !== undefined
+      && marker.processStartTimeMs !== undefined
+      && sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
+        happySessionId: marker.happySessionId,
+        processStartTimeMs: marker.processStartTimeMs,
+      })
+      ? { sessionRunnerStartingMode: existingMarkerFromDisk.sessionRunnerStartingMode }
+      : {}),
     ...(preservedRunnerAgentSourceCustody
       ? {
           runnerAgentSourceCustodyV1: preservedRunnerAgentSourceCustody,

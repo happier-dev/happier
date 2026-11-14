@@ -903,6 +903,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
           processStartTimeMs,
           processCommand,
           metadata: persistedMetadata,
+          ...(trackedForPid.sessionRunnerStartingMode !== undefined
+            ? { sessionRunnerStartingMode: trackedForPid.sessionRunnerStartingMode } : {}),
           ...(respawn ? { respawn } : {}),
           // The spawn-captured binding is a Session fact. A reattaching daemon
           // adopts this runner marker, so it must carry the binding that

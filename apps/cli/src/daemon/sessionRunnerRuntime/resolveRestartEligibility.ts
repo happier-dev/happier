@@ -7,8 +7,7 @@ import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCo
 import {
   isSessionRunnerColdResumeSupported,
 } from '../processSupervision/sessionRunnerRespawn';
-import { readSessionRunnerStartingModeFromProcessCommand } from './readSessionRunnerStartingMode';
-import { readTrackedSessionRunnerProcessCommand } from './resolveRunnerEntrypointIdentity';
+import { readTrackedSessionRunnerStartingMode } from './readSessionRunnerStartingMode';
 import type { SessionRunnerRestartDisabledReason } from './types';
 
 export type SessionRunnerRestartEligibility =
@@ -68,7 +67,7 @@ export function resolveSessionRunnerRestartEligibility(
   if (!tracked) return { eligible: false, disabledReason: 'no_tracked_process' };
   const daemonLaunchRefusal = readSessionRunnerDaemonLaunchRefusalV1(tracked.startedBy);
   if (daemonLaunchRefusal) return { eligible: false, disabledReason: daemonLaunchRefusal };
-  if (readSessionRunnerStartingModeFromProcessCommand(readTrackedSessionRunnerProcessCommand(tracked)) !== 'remote') {
+  if (readTrackedSessionRunnerStartingMode(tracked) !== 'remote') {
     return { eligible: false, disabledReason: 'not_remote_started' };
   }
   if (!isActiveTrackedRunner(tracked)) return { eligible: false, disabledReason: 'not_active' };

@@ -93,6 +93,8 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
     pid: processPid,
     happySessionId: canonicalSessionId ?? `PID-${processPid}`,
     startedBy: 'daemon',
+    ...(trackedSession.sessionRunnerStartingMode !== undefined
+      ? { sessionRunnerStartingMode: trackedSession.sessionRunnerStartingMode } : {}),
     cwd: trackedSession.spawnOptions.directory,
     processStartTimeMs: processIdentity.processStartTimeMs,
     ...(trackedSession.linuxLaunchUnit ? { linuxLaunchUnit: trackedSession.linuxLaunchUnit } : {}),

@@ -9,7 +9,7 @@ import {
   resolveSessionRunnerEntrypointIdentityFromProcessCommand,
   readTrackedSessionRunnerProcessCommand,
 } from './resolveRunnerEntrypointIdentity';
-import { readSessionRunnerStartingModeFromProcessCommand } from './readSessionRunnerStartingMode';
+import { readTrackedSessionRunnerStartingMode } from './readSessionRunnerStartingMode';
 import { resolveSessionRunnerRestartEligibility } from './resolveRestartEligibility';
 import type {
   SessionRunnerEntrypointIdentity,
@@ -147,7 +147,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
       processCommandHash: normalizeString(processIdentity?.processCommandHash) || null,
       entrypointSource: runnerIdentity.status === 'known' ? runnerIdentity.source : 'unknown',
       startedBy: readStartedBy(tracked?.startedBy),
-      startingMode: readSessionRunnerStartingModeFromProcessCommand(runnerCommand),
+      startingMode: readTrackedSessionRunnerStartingMode(tracked),
     },
     daemon: {
       cliVersion: params.currentIdentity.status === 'known'

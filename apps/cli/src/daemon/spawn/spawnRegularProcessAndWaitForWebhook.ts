@@ -17,6 +17,7 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionR
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import { launchDetachedHappierProcess } from './launchDetachedHappierProcess';
 import type { DaemonSessionHost, HostedSessionHandle } from '../sessionHost/daemonSessionHost';
+import { readSessionRunnerStartingModeFromProcessCommand } from '../sessionRunnerRuntime/readSessionRunnerStartingMode';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import {
   armSessionWebhookStartupCustody,
@@ -187,7 +188,10 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     pid,
     ...(started.linuxLaunchUnit ? { linuxLaunchUnit: started.linuxLaunchUnit } : {}),
     ...(started.childProcess ? { childProcess: started.childProcess } : {}),
-    ...(started.hosted ? { hostedSession: { end: started.hosted.end, observed: hostedEndObserved } } : {}),
+    ...(started.hosted ? {
+      hostedSession: { end: started.hosted.end, observed: hostedEndObserved },
+      sessionRunnerStartingMode: readSessionRunnerStartingModeFromProcessCommand(params.args.join(' ')),
+    } : {}),
     spawnOptions: params.trackedSpawnOptions,
     ...(params.sessionCreationOutcome
         ? { sessionCreationOutcome: params.sessionCreationOutcome }

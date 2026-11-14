@@ -1,4 +1,15 @@
 import type { SessionRunnerStartingModeV1 } from '@happier-dev/protocol';
+import type { TrackedSession } from '../types';
+import { readTrackedSessionRunnerProcessCommand } from './resolveRunnerEntrypointIdentity';
+
+/** A hosted Session's argv is not the shared host's OS command. */
+export function readTrackedSessionRunnerStartingMode(
+  tracked: TrackedSession | null | undefined,
+): SessionRunnerStartingModeV1 {
+  if (!tracked) return 'unknown';
+  return tracked.sessionRunnerStartingMode
+    ?? readSessionRunnerStartingModeFromProcessCommand(readTrackedSessionRunnerProcessCommand(tracked));
+}
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';

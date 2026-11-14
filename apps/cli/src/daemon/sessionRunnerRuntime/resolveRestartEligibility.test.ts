@@ -28,6 +28,20 @@ function trackedRunner(overrides: Partial<TrackedSession> = {}): TrackedSession 
 }
 
 describe('resolveSessionRunnerRestartEligibility', () => {
+  it('uses each hosted Session launch mode instead of the shared host command', () => {
+    const hosted = trackedRunner({
+      processCommand: '/runtime/bin/happier session-host',
+      hostedSession: { end: async () => true, observed: Promise.resolve() },
+    });
+    expect(resolveSessionRunnerRestartEligibility({ ...hosted, sessionRunnerStartingMode: 'remote' }))
+      .toEqual({ eligible: true, disabledReason: null });
+    expect(resolveSessionRunnerRestartEligibility({ ...hosted, sessionRunnerStartingMode: 'local' }))
+      .toEqual({ eligible: false, disabledReason: 'not_remote_started' });
+    expect(resolveSessionRunnerRestartEligibility({ ...hosted, sessionRunnerStartingMode: 'unknown' }))
+      .toEqual({ eligible: false, disabledReason: 'not_remote_started' });
+    expect(resolveSessionRunnerRestartEligibility(trackedRunner({ processCommand: '/runtime/bin/happier codex' })))
+      .toEqual({ eligible: false, disabledReason: 'not_remote_started' });
+  });
   it('exposes an observed unsupported restart handshake as a recovery refusal', () => {
     expect(resolveSessionRunnerRestartEligibility(trackedRunner({ runnerRestartAdmissionUnsupportedPid: 4242 })))
       .toEqual({ eligible: false, disabledReason: 'restart_admission_unsupported' });

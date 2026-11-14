@@ -10,6 +10,7 @@ import type { ProcessIdentityWitness } from '@happier-dev/cli-common/processInst
 import type {
   AgentSessionStartupInstructionsMarkerV1,
   PluginSourceCustodyV1,
+  SessionRunnerStartingModeV1,
 } from '@happier-dev/protocol';
 import type { CancelStartupLaunch } from './spawn/startupLaunchCancellation';
 import type {
@@ -229,6 +230,8 @@ export interface TrackedSession {
   sessionMarkerPersistence?: Promise<boolean>;
   /** Best-effort observed process command line used for startup runtime refresh checks. */
   processCommand?: string;
+  /** Per-Session launch mode when the OS command belongs to a shared Session host. */
+  sessionRunnerStartingMode?: SessionRunnerStartingModeV1;
   childProcess?: ChildProcess;
   /**
    * Set when this Session runs in the daemon's session host (`pid` is the host's): the host ends

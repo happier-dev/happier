@@ -4,6 +4,13 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 Hosted Sessions bind physical Stop to the runtime's ordinary Stop callback before native construction. A native-open refusal can therefore keep serving Pending input and still stop through its existing cleanup owner. Caller-owned child runtimes retain their caller's Stop binding; ending one Session never signals the shared host.
 
+Restart eligibility and runtime status read a hosted Session's own launch mode,
+captured from its runner arguments and retained in its daemon marker across
+reports and daemon reattachment. The shared host's OS command has no per-Session
+launch mode. Direct runners retain command-based mode discovery. Earlier hosted
+markers without the captured mode remain unknown and require a fresh resume
+before a mode-dependent restart can be admitted.
+
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
 Native Agent adapters read their inherited configuration selectors through

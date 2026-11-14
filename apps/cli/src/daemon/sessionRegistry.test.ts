@@ -39,6 +39,26 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
 }
 
 describe('sessionRegistry', () => {
+  it('preserves a hosted Session launch mode through reports and daemon reattachment', async () => {
+    const { writeSessionMarker, listSessionMarkers } = await import('./sessionRegistry');
+    const { buildTrackedSessionFromMarker } = await import('./sessions/trackedSessionFromMarker');
+    const { resolveSessionRunnerRuntimeState } = await import('./sessionRunnerRuntime/resolveRuntimeState');
+    const marker = { trackingKey: legacyPidSessionTrackingKey(123451), pid: 123451,
+      happySessionId: 'hosted-remote', startedBy: 'daemon' as const, processStartTimeMs: 123,
+      processCommand: '/runtime/bin/happier session-host', processCommandHash: 'a'.repeat(64) };
+    await writeSessionMarker({ ...marker, sessionRunnerStartingMode: 'remote' });
+    // A normal marker refresh has no new launch decision.
+    await writeSessionMarker(marker);
+    const [stored] = await listSessionMarkers();
+    const tracked = buildTrackedSessionFromMarker({ marker: stored, startedByFallback: 'reattached',
+      spawnOptions: { directory: '/work', resume: 'vendor-resume' }, reattachedFromDiskMarker: true });
+    const state = resolveSessionRunnerRuntimeState({ sessionId: 'hosted-remote', tracked,
+      currentIdentity: { status: 'known', source: 'launch_spec', comparableId: 'path:/runtime/bin' } });
+    expect(state.runner.startingMode).toBe('remote');
+    expect(state.plannedRestart).toMatchObject({ eligible: true, disabledReason: null });
+    await writeSessionMarker({ ...marker, processStartTimeMs: 124 });
+    expect((await listSessionMarkers())[0]).not.toHaveProperty('sessionRunnerStartingMode');
+  });
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
   const originalPublicReleaseChannel = process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
   const originalReleaseRing = process.env.HAPPIER_RELEASE_RING;

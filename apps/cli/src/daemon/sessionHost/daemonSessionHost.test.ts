@@ -122,6 +122,9 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import { createStopSession } from '../sessions/stopSession';
 import { retireExactTerminalControlServiceability, retireStoppedPlainRunnerControlServiceability } from '../sessions/retireTerminalControlServiceability';
 import { waitForTrackedRunnerProcessesExit } from '../sessions/waitForTrackedRunnerProcessesExit';
+import { readSessionMarker } from '../sessionRegistry';
+import { buildTrackedSessionFromMarker } from '../sessions/trackedSessionFromMarker';
+import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
 
 function resolvePeerHelper(): string {
   const staged = resolveProcessCustodySupportExecutable(process.platform);
@@ -209,7 +212,7 @@ async function createHarness() {
   const spawnOneSession = async (sessionId: string, extraEnv: Record<string, string>) => {
     const before = new Set(tracked.keys());
     const pending = spawnRegularProcessAndWaitForWebhook({
-      args: ['codex', '--started-by', 'daemon'], directory: testHome, options: { directory: testHome }, trackedSpawnOptions: { directory: testHome },
+      args: ['codex', '--happy-starting-mode', 'remote', '--started-by', 'daemon'], directory: testHome, options: { directory: testHome }, trackedSpawnOptions: { directory: testHome },
       normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false, extraEnvForChildWithMessage: extraEnv,
       processEnv: { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir },
       trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
@@ -306,6 +309,11 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(a.record.pid).toBe(process.pid);
     expect(b.record.pid).toBe(process.pid);
     expect(a.record.childProcess).toBeUndefined();
+    // Real spawn + report + marker reattachment retain the Session's mode, not the host argv.
+    const marker = await readSessionMarker(a.record.trackingKey);
+    const reattached = buildTrackedSessionFromMarker({ marker: marker!, startedByFallback: 'reattached',
+      spawnOptions: { directory: testHome, existingSessionId: 'session-a' }, reattachedFromDiskMarker: true });
+    expect(resolveSessionRunnerRestartEligibility(reattached)).toEqual({ eligible: true, disabledReason: null });
 
     // Stop of A goes through the host; its end is observed for A only, never as the host's exit.
     await expect(a.record.hostedSession!.end()).resolves.toBe(true);
