@@ -1,13 +1,108 @@
-import { SpawnSessionErrorDetailSchema } from '../spawnSession.js';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS, type SpawnSessionErrorDetail, type SpawnSessionErrorDetailKind } from '../spawnSession.js';
+import { SessionSpawnChildExitV1Schema, SessionSpawnLaunchErrorV1Schema } from '../creation/sessionSpawnLaunchErrorV1.js';
+import { SessionRuntimeFailureCauseV1Schema } from '../control/runtimeIssueV1.js';
+import { SpawnFailureV1Schema } from '../../machines/processes/spawnFailureV1.js';
+import { ProviderErrorV1Schema } from '../../providers/errors.js';
+import { ConnectedServiceUxDiagnosticCurrentV1Schema, type ConnectedServiceUxDiagnosticV1 } from '../../connect/connectedServiceUxDiagnostics.js';
 import type { PendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
 import { normalizePendingDeliveryBlockedReason } from './pendingDeliveryBlockedReason.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 
+const K = SPAWN_SESSION_ERROR_DETAIL_KINDS;
+const DETAILED_FAILURE_CAUSE_KINDS = [K.LAUNCH_ERROR, K.SPAWN_FAILURE, K.PROVIDER_ERROR,
+  K.CONNECTED_SERVICE_RESUME_UNREACHABLE, K.CONNECTED_SERVICE_UX_DIAGNOSTIC] as const;
+type KindOnlyFailureCauseKind = Exclude<SpawnSessionErrorDetailKind, (typeof DETAILED_FAILURE_CAUSE_KINDS)[number]>;
+const KIND_ONLY_FAILURE_CAUSE_KINDS = Object.values(K).filter((kind): kind is KindOnlyFailureCauseKind =>
+  !(DETAILED_FAILURE_CAUSE_KINDS as readonly string[]).includes(kind));
+
+/** The UI-actionable part of a connected-service diagnostic; free-form `diagnostics` and ids stay local. */
+const PendingDeliveryFailureUxDiagnosticV1Schema = lazyZodSchema(() => {
+  const { code, failurePhase, source, retryable, suggestedActions } = ConnectedServiceUxDiagnosticCurrentV1Schema.shape;
+  return z.strictObject({ code, failurePhase, source, retryable, suggestedActions });
+});
+
+/** Native provider codes are kept only when they are code-shaped, never prose. */
+const PROVIDER_ERROR_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+const PendingDeliveryFailureRuntimeCauseV1Schema = lazyZodSchema(() => {
+  const { providerErrorMessage: _message, providerErrorCode: _code, ...typed } = SessionRuntimeFailureCauseV1Schema.shape;
+  return z.strictObject({ ...typed,
+    providerErrorCode: z.optional(z.union([z.string().check(z.regex(PROVIDER_ERROR_CODE_PATTERN)), z.number().check(z.int())])) });
+});
+
+/**
+ * Content-free cause of a refused resume, stored in plaintext beside the Pending input.
+ * The server never holds E2EE Session content: no message prose, child stderr, cwd,
+ * profile ids or free-form diagnostics. The full spawn detail stays on the requesting CLI.
+ */
+export const PendingDeliveryFailureCauseV1Schema = lazyZodSchema(() => {
+  const launch = SessionSpawnLaunchErrorV1Schema.shape;
+  const childExit = SessionSpawnChildExitV1Schema.shape;
+  const spawnFailure = SpawnFailureV1Schema.shape;
+  const typedSpawnFailure = z.strictObject({ reason: spawnFailure.reason, errno: spawnFailure.errno });
+  return z.union([
+    z.strictObject({
+      kind: z.literal(K.LAUNCH_ERROR), code: launch.code, subtype: launch.subtype, rpcErrorCode: launch.rpcErrorCode,
+      connectionPhase: launch.connectionPhase, currentnessFailure: launch.currentnessFailure,
+      childExit: z.optional(z.strictObject({ code: childExit.code, signal: childExit.signal })),
+      spawnFailure: z.optional(typedSpawnFailure),
+      failureCause: z.optional(PendingDeliveryFailureRuntimeCauseV1Schema),
+      uxDiagnostic: z.optional(PendingDeliveryFailureUxDiagnosticV1Schema),
+    }),
+    z.strictObject({ kind: z.literal(K.SPAWN_FAILURE), reason: spawnFailure.reason, errno: spawnFailure.errno }),
+    z.strictObject({ kind: z.literal(K.PROVIDER_ERROR), providerError: ProviderErrorV1Schema }),
+    z.strictObject({
+      kind: z.enum([K.CONNECTED_SERVICE_RESUME_UNREACHABLE, K.CONNECTED_SERVICE_UX_DIAGNOSTIC]),
+      uxDiagnostic: PendingDeliveryFailureUxDiagnosticV1Schema,
+    }),
+    z.strictObject({ kind: z.enum(KIND_ONLY_FAILURE_CAUSE_KINDS as [KindOnlyFailureCauseKind, ...KindOnlyFailureCauseKind[]]) }),
+  ]);
+});
+export type PendingDeliveryFailureCauseV1 = z.infer<typeof PendingDeliveryFailureCauseV1Schema>;
+
+function projectUxDiagnostic(diagnostic: ConnectedServiceUxDiagnosticV1): z.infer<typeof PendingDeliveryFailureUxDiagnosticV1Schema> {
+  const { code, failurePhase, source, retryable, suggestedActions } = diagnostic;
+  return { code, failurePhase, source, retryable, suggestedActions };
+}
+
+/** The one projection from a local spawn detail into the server-stored cause. */
+export function projectPendingDeliveryFailureCauseV1(detail: SpawnSessionErrorDetail): PendingDeliveryFailureCauseV1 {
+  switch (detail.kind) {
+    case K.LAUNCH_ERROR: {
+      const failureCause = detail.failureCause;
+      const providerErrorCode = failureCause?.providerErrorCode;
+      const { providerErrorMessage: _message, providerErrorCode: _code, ...typedFailureCause } = failureCause ?? {};
+      return {
+        kind: detail.kind, code: detail.code,
+        ...(detail.subtype ? { subtype: detail.subtype } : {}),
+        ...(detail.rpcErrorCode ? { rpcErrorCode: detail.rpcErrorCode } : {}),
+        ...(detail.connectionPhase ? { connectionPhase: detail.connectionPhase } : {}),
+        ...(detail.currentnessFailure ? { currentnessFailure: detail.currentnessFailure } : {}),
+        ...(detail.childExit ? { childExit: { code: detail.childExit.code, signal: detail.childExit.signal } } : {}),
+        ...(detail.spawnFailure ? { spawnFailure: { reason: detail.spawnFailure.reason,
+          ...(detail.spawnFailure.errno ? { errno: detail.spawnFailure.errno } : {}) } } : {}),
+        ...(failureCause ? { failureCause: { ...typedFailureCause, phase: failureCause.phase, failureReason: failureCause.failureReason,
+          ...(typeof providerErrorCode === 'number' || (typeof providerErrorCode === 'string' && PROVIDER_ERROR_CODE_PATTERN.test(providerErrorCode))
+            ? { providerErrorCode } : {}) } } : {}),
+        ...(detail.uxDiagnostic ? { uxDiagnostic: projectUxDiagnostic(detail.uxDiagnostic) } : {}),
+      };
+    }
+    case K.SPAWN_FAILURE:
+      return { kind: detail.kind, reason: detail.reason, ...(detail.errno ? { errno: detail.errno } : {}) };
+    case K.PROVIDER_ERROR:
+      return { kind: detail.kind, providerError: detail.providerError };
+    case K.CONNECTED_SERVICE_RESUME_UNREACHABLE:
+    case K.CONNECTED_SERVICE_UX_DIAGNOSTIC:
+      return { kind: detail.kind, uxDiagnostic: projectUxDiagnostic(detail.uxDiagnostic) };
+    default:
+      return { kind: detail.kind };
+  }
+}
+
 /** Definite pre-runner refusal retained with the original Pending input. */
 export const PendingDeliveryFailureV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.literal('resume_failed'),
-  errorDetail: z.optional(SpawnSessionErrorDetailSchema),
+  errorDetail: z.optional(PendingDeliveryFailureCauseV1Schema),
 }));
 export type PendingDeliveryFailureV1 = z.infer<typeof PendingDeliveryFailureV1Schema>;
 

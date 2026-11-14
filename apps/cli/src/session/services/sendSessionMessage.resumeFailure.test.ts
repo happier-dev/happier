@@ -392,7 +392,18 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
       diagnostics: { reason: 'gemini_resume_unreachable' } } } as const
     : { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
     message: 'Review the selected model.', failureCause: { code: 'agent_startup_model_reconciliation_failed',
-      phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } as const;
+      phase: 'client_start', failureReason: 'model_selection_required', retryable: false },
+    childExit: { code: 1, signal: null, stderrHead: 'Error: cannot open /home/alice/private-repo/.env' },
+    spawnFailure: { reason: 'too_many_open_files', errno: 'EMFILE', cwd: '/home/alice/private-repo' } } as const;
+  // Pending settlement is plaintext on the server: only the typed cause leaves this CLI.
+  const settledCause = entry === 'continuity-action' ? { kind: 'connected_service_resume_unreachable',
+    uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+      source: 'spawn_resume', retryable: false,
+      suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } }
+    : { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
+      failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+        failureReason: 'model_selection_required', retryable: false },
+      childExit: { code: 1, signal: null }, spawnFailure: { reason: 'too_many_open_files', errno: 'EMFILE' } };
   let retainedInput: unknown;
   let settled = false;
   const readSession = http.get.getMockImplementation();
@@ -412,7 +423,8 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
       return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
     }
     if (url.endsWith(`/pending/${localId}/discard`)) {
-      expect(body).toEqual({ reason: 'resume_failed', errorDetail });
+      expect(body).toEqual({ reason: 'resume_failed', errorDetail: settledCause });
+      expect(JSON.stringify(body)).not.toMatch(/private-repo|cannot open|Review the selected model|gemini_resume_unreachable/u);
       settled = true;
       return { status: 200, data: { ok: true, didUpdate: true } };
     }

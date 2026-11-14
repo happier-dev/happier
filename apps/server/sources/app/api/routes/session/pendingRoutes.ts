@@ -1,4 +1,4 @@
-import { SpawnSessionErrorDetailSchema } from '@happier-dev/protocol/sessions/spawnSession';
+import { PendingDeliveryFailureCauseV1Schema } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { z } from "zod/mini";
 import { sendTransactionUnavailable } from '@/app/api/utils/sendTransactionUnavailable';
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
@@ -742,7 +742,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ runId, sessionId: z.string(), localId: PendingLocalIdSchema }),
-                body: z.optional(mutationBody({ reason: z.optional(z.string()), errorDetail: z.optional(SpawnSessionErrorDetailSchema) })),
+                body: z.optional(mutationBody({ reason: z.optional(z.string()), errorDetail: z.optional(PendingDeliveryFailureCauseV1Schema) })),
             },
             config: {
                 rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),

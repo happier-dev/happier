@@ -1,3 +1,4 @@
+import { projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { randomUUID } from 'node:crypto';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -2138,7 +2139,9 @@ export async function sendSessionMessage(
         // The Machine refused this attempt before a runner claimed the input.
         // Retire that exact custody through Pending's existing settlement owner.
         await discardPendingQueueV2Messages({ token: params.credentials.token, sessionId, localIds: [localId],
-          reason: 'resume_failed', ...(resumeResult.errorDetail ? { errorDetail: resumeResult.errorDetail } : {}), ...(params.signal ? { signal: params.signal } : {}),
+          reason: 'resume_failed', ...(resumeResult.errorDetail
+            // The server stores this cause in plaintext: only the typed projection leaves the CLI.
+            ? { errorDetail: projectPendingDeliveryFailureCauseV1(resumeResult.errorDetail) } : {}), ...(params.signal ? { signal: params.signal } : {}),
           ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
       } else if (resumeResult.code === 'authority_unavailable') {
         // The input is already in custody. Keep it recoverable and visible as

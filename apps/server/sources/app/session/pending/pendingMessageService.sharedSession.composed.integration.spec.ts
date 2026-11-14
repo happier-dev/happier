@@ -125,13 +125,27 @@ const updatePendingRequestedAction = (params: WithoutAuthentication<Parameters<t
 
 describe("pendingMessageService (shared sessions)", () => {
     it.each([true, false])('retains refused resume cause through the Pending route (reply observer %s)', async (observeReply) => {
-        const errorDetail = { kind: 'connected_service_resume_unreachable', continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'], diagnostics: { reason: 'gemini_resume_unreachable' } } } as const;
+        const errorDetail = { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } as const;
         const owner = await createAccount('resume-refused');
         const session = await createSession(owner.id);
         const localId = 'resume-refused-input';
         expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId,
             ciphertext: 'retained-input', ...(observeReply ? { reply: { mode: 'wait' as const } } : {}) })).toMatchObject({ ok: true });
         await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            // The cause is plaintext beside the input: Session content (prose, stderr, cwd, diagnostics) is refused.
+            for (const contentBearing of [
+                { ...errorDetail, uxDiagnostic: { ...errorDetail.uxDiagnostic, diagnostics: { reason: 'gemini_resume_unreachable' } } },
+                { kind: 'launch_error', code: 'spawn_failed', message: 'Runner exited in /home/alice/private-repo' },
+                { kind: 'launch_error', code: 'spawn_failed', childExit: { code: 1, signal: null, stderrHead: 'Error: /home/alice/.env' } },
+                { kind: 'spawn_failure', reason: 'other', cwd: '/home/alice/private-repo' },
+            ]) {
+                const refused = await app.inject({ method: 'POST',
+                    url: `/v2/sessions/${session.id}/pending/${localId}/discard`,
+                    headers: { 'x-test-user-id': owner.id }, payload: { reason: 'resume_failed', errorDetail: contentBearing } });
+                expect(refused.statusCode).toBe(400);
+            }
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                .toMatchObject({ status: 'queued', deliveryFailure: null });
             const response = await app.inject({ method: 'POST',
                 url: `/v2/sessions/${session.id}/pending/${localId}/discard`,
                 headers: { 'x-test-user-id': owner.id }, payload: { reason: 'resume_failed', errorDetail } });

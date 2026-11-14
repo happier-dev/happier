@@ -145,10 +145,17 @@ export function resolvePendingDeliveryFailureMessage(failure: PendingDeliveryFai
     const label = t('session.pendingMessages.errors.sendFailed');
     const detail = failure.errorDetail;
     if (!detail) return label;
-    if (detail.kind === 'launch_error' || detail.kind === 'provider_error') {
+    if (detail.kind === 'provider_error') {
         return label + '\n' + resolveSessionSpawnNewResultFailureMessage({
-            type: 'error', code: 'spawn_failed', retryable: false,
-            ...(detail.kind === 'launch_error' ? { launchError: detail } : { providerError: detail.providerError }),
+            type: 'error', code: 'spawn_failed', retryable: false, providerError: detail.providerError,
+        });
+    }
+    if (detail.kind === 'launch_error') {
+        // The stored cause is typed only; the launch message and child stderr stay on the Machine,
+        // so the typed launch presentation never reads them here.
+        const { childExit: _childExit, ...typedLaunchError } = detail;
+        return label + '\n' + resolveSessionSpawnNewResultFailureMessage({
+            type: 'error', code: 'spawn_failed', retryable: false, launchError: { ...typedLaunchError, message: '' },
         });
     }
     const diagnostic = resolveConnectedServiceUxDiagnosticPresentation('uxDiagnostic' in detail ? detail.uxDiagnostic : undefined);

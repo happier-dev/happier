@@ -2,12 +2,16 @@
 
 ## Retained resume refusal causes (unreleased 0.3)
 
-Pending discard requests accept optional `errorDetail` through the existing
-projectable spawn-detail schema. The server persists a nullable `deliveryFailure`
-JSON field and projects typed `failure` on retained inputs. CLI public send error
-details retain the same cause; UI uses the existing typed-error presentation.
-Existing rows without a stored cause remain visible as generic failed inputs
-when their recorded reason is `resume_failed`. User discards remain distinct.
+Pending discard requests accept optional `errorDetail` only as the closed,
+content-free `PendingDeliveryFailureCauseV1` (kind, codes and enums); the route
+rejects launch prose, child stderr, cwd, profile ids and free-form diagnostics
+with 400. The CLI projects its local spawn detail into that cause before
+settlement; its public send error details keep the full local detail. The server
+persists a nullable `deliveryFailure` JSON field and projects typed `failure` on
+retained inputs; UI uses the existing typed-error presentation. Existing rows
+without a stored cause, or with a stored detail that is not the closed cause,
+remain visible as generic failed inputs when their recorded reason is
+`resume_failed`. User discards remain distinct.
 Apply the new PostgreSQL, SQLite or MySQL additive migration before reloading
 the server, then reload matching 0.3 daemon and UI peers together. No released
 SDK contract, reply-observer state, ciphertext, feature gate or retry changes.

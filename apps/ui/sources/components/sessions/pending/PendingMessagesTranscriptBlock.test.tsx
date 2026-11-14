@@ -336,7 +336,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     }
 
     it('presents a retained resume refusal as failed with its own cause', async () => {
-        const errorDetail = { kind: 'connected_service_resume_unreachable', continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'], diagnostics: { reason: 'gemini_resume_unreachable' } } } as const;
+        const errorDetail = { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } as const;
         const message = { ...queuedMessage('resume', 1), discardedAt: 2, discardedReason: 'resume_failed' as const, pendingFailure: { code: 'resume_failed' as const, errorDetail } };
         const Component = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
@@ -344,6 +344,19 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(renderedText).toContain(t('session.pendingMessages.errors.sendFailed'));
         expect(renderedText).not.toContain(t('session.pendingMessages.discarded.label'));
         expect(renderedText).toContain(t('connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume'));
+    });
+
+    it('presents a retained launch refusal from its typed cause alone', async () => {
+        const pendingFailure = { code: 'resume_failed' as const, errorDetail: { kind: 'launch_error' as const,
+            code: 'agent_startup_model_reconciliation_failed', childExit: { code: 1, signal: null },
+            failureCause: { code: 'agent_startup_model_reconciliation_failed' as const, phase: 'client_start' as const,
+                failureReason: 'model_selection_required' as const, retryable: false } } };
+        const message = { ...queuedMessage('launch', 1), discardedAt: 2, discardedReason: 'resume_failed' as const, pendingFailure };
+        const Component = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
+        const renderedText = screen.findByTestId('pendingMessages.discarded.message:launch')?.findAll(node => node.type === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect(renderedText).toContain(t('session.pendingMessages.errors.sendFailed'));
+        expect(renderedText).toContain(t('newSession.selectModelTitle'));
     });
 
     it.each([undefined, { kind: 'execution_run' as const, runId: 'run-a' }])('keeps main Pending presentation isolated from a Run row for recipient %j', async (recipient) => {

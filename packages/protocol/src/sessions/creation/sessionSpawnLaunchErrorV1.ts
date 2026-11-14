@@ -23,7 +23,7 @@ const diagnosticText = () => z.string().check(z.refine(
 ));
 
 /** Closed, redacted presentation only; absence means the exit was not observed. */
-const SessionSpawnChildExitV1Schema = lazyZodSchema(() => z.strictObject({
+export const SessionSpawnChildExitV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.nullable(z.number().check(z.int())),
   signal: z.nullable(z.string().check(z.regex(/^SIG[A-Z0-9]+$/u))),
   stderrHead: z.optional(diagnosticText()),

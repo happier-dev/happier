@@ -69,8 +69,9 @@ export function mapPendingMessageRow(row: PendingMessageRowRaw, accountActor: Se
     const deliveryBlockedReason =
         typeof row.deliveryBlockedReason === "string" && row.deliveryBlockedReason.length > 0 ? row.deliveryBlockedReason : null;
     const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
-    const failure = row.status === 'discarded' && row.discardedReason === 'resume_failed'
-        ? PendingDeliveryFailureV1Schema.parse(row.deliveryFailure ?? { code: 'resume_failed' }) : undefined;
+    // A stored cause that is not the closed typed cause still reads as a failed input, without its detail.
+    const failure: PendingDeliveryFailureV1 | undefined = row.status === 'discarded' && row.discardedReason === 'resume_failed'
+        ? (PendingDeliveryFailureV1Schema.safeParse(row.deliveryFailure).data ?? { code: 'resume_failed' }) : undefined;
     return {
         localId: row.localId,
         ...(failure ? { failure } : {}),

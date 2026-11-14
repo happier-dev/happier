@@ -72,7 +72,7 @@ describe('pendingQueueV2 decrypt mapping', () => {
         const encryption = await createPendingQueueEncryption({ sessionId });
         const content = { t: 'encrypted', c: await encryptRawRecordForPending({ encryption, sessionId,
             rawRecord: { role: 'user', content: { type: 'text', text: 'Keep my refused input' } } }) };
-        const failure = { code: 'resume_failed', errorDetail: { kind: 'connected_service_resume_unreachable', continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini', reason: 'gemini_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'], diagnostics: { reason: 'gemini_resume_unreachable' } } } };
+        const failure = { code: 'resume_failed', errorDetail: { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } };
         await fetchAndApplyPendingMessagesV2({ sessionId, encryption,
             request: async () => Response.json({ pending: [{ localId: 'refused', messageRole: 'user', content,
                 status: 'discarded', discardedReason: 'resume_failed', discardedAt: 2, failure,

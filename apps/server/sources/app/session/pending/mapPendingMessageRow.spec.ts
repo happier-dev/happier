@@ -6,6 +6,18 @@ import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessi
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 
 describe("mapPendingMessageRow", () => {
+    it('drops a stored refusal detail that is not the typed cause instead of failing the Pending list', () => {
+        const now = new Date('2026-11-14T00:00:00Z');
+        const row = { localId: 'refused', messageRole: 'user', content: { t: 'encrypted' as const, c: 'opaque' },
+            status: 'discarded' as const, position: 0, createdAt: now, updatedAt: now, discardedAt: now,
+            discardedReason: 'resume_failed', authorAccountId: null, replyProgress: null,
+            deliveryFailure: { code: 'resume_failed', errorDetail: { kind: 'launch_error', code: 'spawn_failed',
+                message: 'Runner exited in /home/alice/private-repo', childExit: { code: 1, signal: null, stderrHead: 'boom' } } } };
+        expect(mapPendingMessageRow(row)).toHaveProperty('failure', { code: 'resume_failed' });
+        const typed = { code: 'resume_failed', errorDetail: { kind: 'spawn_failure', reason: 'process_limit', errno: 'EAGAIN' } };
+        expect(mapPendingMessageRow({ ...row, deliveryFailure: typed })).toHaveProperty('failure', typed);
+    });
+
     it('projects host Follow identity only from admitted custody, never from authored content', () => {
         const follow = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn',
             original: { sourceSessionId: 'worker', sourceTurn: { id: 'turn-1', status: 'completed' } },

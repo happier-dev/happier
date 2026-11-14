@@ -5,6 +5,8 @@ import {
   isPendingDeliveryStatusTransitionAllowedV1,
   normalizePendingDeliveryStatusV1,
   parsePendingDeliveryStatusV1,
+  PendingDeliveryFailureV1Schema,
+  projectPendingDeliveryFailureCauseV1,
   pendingDeliveryStatusV1ToPersistedFields,
   shouldExposePendingDeliveryInDiscardedHistoryV1,
   type PendingDeliveryStatusV1,
@@ -156,4 +158,55 @@ describe('PendingDeliveryStatusV1', () => {
     },
   );
 
+});
+
+describe('PendingDeliveryFailureV1 cause', () => {
+  const launchError = { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK',
+    message: 'Runner exited in /home/alice/private-repo', rpcErrorCode: 'RPC_OUTCOME_UNKNOWN',
+    childExit: { code: 1, signal: null, stderrHead: 'Error: cannot read /home/alice/private-repo/.env',
+      cause: { kind: 'module_not_found', specifierBasename: 'secret-module' } },
+    spawnFailure: { reason: 'too_many_open_files', errno: 'EMFILE', nativeErrno: -24, cwd: '/home/alice/private-repo' },
+    failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+      failureReason: 'model_selection_required', retryable: false, providerErrorCode: 'model_not_found',
+      providerErrorMessage: 'Model gpt-x is not available for /home/alice' },
+    profileRefusal: { profileId: 'work-profile', reason: 'profile_resume_unavailable' },
+    uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+      source: 'spawn_resume', agentId: 'gemini', retryable: false, suggestedActions: ['resume_current_account'],
+      diagnostics: { note: 'session at ~/private-repo' } },
+  } as const;
+
+  it('projects a full local spawn detail into typed fields only', () => {
+    const cause = projectPendingDeliveryFailureCauseV1(launchError);
+    expect(cause).toEqual({ kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK', rpcErrorCode: 'RPC_OUTCOME_UNKNOWN',
+      childExit: { code: 1, signal: null },
+      spawnFailure: { reason: 'too_many_open_files', errno: 'EMFILE' },
+      failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+        failureReason: 'model_selection_required', retryable: false, providerErrorCode: 'model_not_found' },
+      uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+        source: 'spawn_resume', retryable: false, suggestedActions: ['resume_current_account'] } });
+    expect(JSON.stringify(cause)).not.toMatch(/alice|private-repo|secret-module|work-profile|gpt-x/u);
+    expect(PendingDeliveryFailureV1Schema.parse({ code: 'resume_failed', errorDetail: cause }))
+      .toEqual({ code: 'resume_failed', errorDetail: cause });
+    expect(projectPendingDeliveryFailureCauseV1({ kind: 'spawn_failure', reason: 'process_limit', errno: 'EAGAIN',
+      cwd: '/home/alice/private-repo' })).toEqual({ kind: 'spawn_failure', reason: 'process_limit', errno: 'EAGAIN' });
+    expect(projectPendingDeliveryFailureCauseV1({ kind: 'connected_service_resume_unreachable',
+      continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', agentId: 'gemini',
+      reason: 'gemini_resume_unreachable', uxDiagnostic: launchError.uxDiagnostic }))
+      .toEqual({ kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume',
+        failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['resume_current_account'] } });
+    expect(projectPendingDeliveryFailureCauseV1({ kind: 'launch_retired', spawnNonce: 'nonce', wrapperPid: 7 }))
+      .toEqual({ kind: 'launch_retired' });
+  });
+
+  it.each([
+    { kind: 'launch_error', code: 'spawn_failed', message: 'free text' },
+    { kind: 'launch_error', code: 'spawn_failed', childExit: { code: 1, signal: null, stderrHead: 'stderr' } },
+    { kind: 'launch_error', code: 'spawn_failed', spawnFailure: { reason: 'other', cwd: '/home/alice' } },
+    { kind: 'launch_error', code: 'spawn_failed', uxDiagnostic: { ...launchError.uxDiagnostic } },
+    { kind: 'launch_error', code: 'spawn_failed', failureCause: { phase: 'turn', failureReason: 'unknown', providerErrorMessage: 'x' } },
+    { kind: 'launch_retired', spawnNonce: 'nonce' },
+    { kind: 'not_a_kind' },
+  ])('rejects a cause carrying free text or unknown fields (%j)', errorDetail => {
+    expect(PendingDeliveryFailureV1Schema.safeParse({ code: 'resume_failed', errorDetail }).success).toBe(false);
+  });
 });
