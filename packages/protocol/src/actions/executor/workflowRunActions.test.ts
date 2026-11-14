@@ -679,7 +679,7 @@ describe('shared Account workflow run owner', () => {
   it('uses the same approved-operation producer for a captured native person token save', async () => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const parent = { actionId: 'account.apiTokens.create' as const, input: {
-      tokenId: '11111111-1111-4111-8111-111111111111', label: 'CI',
+      tokenId: '11111111-1111-4111-8111-111111111111', label: { content: { t: 'plain', v: 'CI' }, recipients: [] },
       deployment: { serverId: 'home', environmentId: 'staging', deployApproval: 'automatic' },
     } };
     const context: ActionExecutorContext = { authority: 'present_user', surface: 'cli',

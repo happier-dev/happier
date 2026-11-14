@@ -1,5 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import sodium from '@/encryption/libsodium.lib';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
@@ -293,7 +294,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const execution = failure ? { ok: false as const, ...failure } : { ok: true as const, result };
             if (envelope.v === 2 && material) return Response.json(prepareExternalActionResponseV2({
                 binding: { ...binding, requestId: envelope.requestId }, request: envelope, material, executedMachineId: machine.id, execution,
-                randomBytes: length => sodium.randombytes_buf(length),
+                randomBytes: getRandomBytes,
             }).response);
             return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
                 v: 1, requestId: envelope.requestId, actionId: params.actionId,

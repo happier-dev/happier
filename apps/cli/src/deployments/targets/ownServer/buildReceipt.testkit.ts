@@ -12,7 +12,7 @@ import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentActionInputSchemasV1, De
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentImageV1,
     type MachineSecretGrantV1, type EnvironmentSecretBindingV1, createDeploymentReceiptArtifactHeaderV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -105,8 +105,8 @@ export async function withOwnServerBuildChildHttpFixture(run: (value: Readonly<{
                 reads.receipts++;
                 if (options?.editApprovedInputBeforePublish && !editedApprovedInput
                     && nativeRequests.some(call => call.args.includes('--metadata-file'))) {
-                    receipt.content.ownServer!.approvedInputBasis.bindings.push({ purpose: 'variable', phase: 'build', name: 'EDITED',
-                        source: { kind: 'value', value: 'unreviewed' } });
+                    receipt.content.ownServer!.approvedInputBasis.bindings.push(createDeploymentVariableBindingV1({ phase: 'build', name: 'EDITED',
+                        source: { kind: 'value', value: 'unreviewed' } }));
                     editedApprovedInput = true;
                 }
                 return { status: 200, data: { ok: true, deployment: receipt.deployment } };
@@ -288,12 +288,14 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         environment.content.definition = receipt.content.sourceIntent.kind === 'stored'
             ? structuredClone(receipt.content.sourceIntent)
             : { kind: 'repository', ref: 'main', compose: structuredClone(receipt.content.sourceIntent.compose) };
-        const buildBinding = { purpose: 'variable' as const, phase: 'build' as const, name: 'BUILD_TOKEN',
-            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('build-token'), resourceRevision: secretRevision } };
-        environment.content.bindings = [...(usesBuildSecret ? [buildBinding] : []), { ...buildBinding, phase: 'runtime', name: 'RUNTIME_TOKEN' }];
+        const buildBinding = createDeploymentSecretVariableBindingV1({ phase: 'build', name: 'BUILD_TOKEN',
+            resourceId: 'build-token', resourceRevision: secretRevision });
+        environment.content.bindings = [...(usesBuildSecret ? [buildBinding] : []),
+            createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'RUNTIME_TOKEN',
+                resourceId: 'build-token', resourceRevision: secretRevision })];
         if (options.buildReference) {
-            environment.content.bindings.push({ purpose: 'variable', phase: 'build', name: 'BUILD_DATABASE_URL',
-                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'privateNetwork' } });
+            environment.content.bindings.push(createDeploymentVariableBindingV1({ phase: 'build', name: 'BUILD_DATABASE_URL',
+                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'privateNetwork' } }));
         }
         const referenceEnvironment = createDeploymentEnvironmentDetailV1();
         referenceEnvironment.environment.id = 'source-database';

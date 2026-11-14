@@ -12,6 +12,14 @@ type OwnServerDeploymentFixtureV1 = Omit<DeploymentV1, 'content'> & {
 };
 type OwnServerReceiptDetailFixtureV1 = Omit<DeploymentReceiptDetailV1, 'content'> & { content: DeploymentOwnServerContentV1 };
 
+/** Current variable content, including its opaque reference, through the strict binding owner. */
+export function createDeploymentVariableBindingV1(input: Readonly<Pick<EnvironmentVariableBindingV1, 'name' | 'phase' | 'source'> & {
+    grantRef?: string;
+}>): EnvironmentVariableBindingV1 {
+    return EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', ...input,
+        grantRef: input.grantRef ?? crypto.randomUUID() });
+}
+
 /** Current producer-built opaque binding fixture; consumers never reconstruct the Saved Secret namespace. */
 export function createDeploymentSecretVariableBindingV1(input: Readonly<{
     name: string; phase: 'build' | 'runtime'; resourceId: string; resourceRevision: number;
@@ -19,8 +27,8 @@ export function createDeploymentSecretVariableBindingV1(input: Readonly<{
 }>): EnvironmentVariableBindingV1 {
     const source = DeploymentSecretBindingSourceV1Schema.parse({ kind: 'secret',
         ref: formatSharedSavedSecretRefV1(input.resourceId), resourceRevision: input.resourceRevision });
-    const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: input.name, phase: input.phase,
-        grantRef: input.grantRef ?? crypto.randomUUID(), source });
+    const binding = createDeploymentVariableBindingV1({ name: input.name, phase: input.phase,
+        ...(input.grantRef === undefined ? {} : { grantRef: input.grantRef }), source });
     return { ...binding, source };
 }
 

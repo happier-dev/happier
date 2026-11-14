@@ -119,7 +119,7 @@ describe('deployment UI Action callbacks', () => {
         });
         await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
             actionId: 'deployments.backups.configure', tokenEpoch: 0, execute: (raw, context) => {
-                expect(raw).toEqual({ serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                expect(raw).toEqual({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), environmentId: environment.id, expectedRevision: environment.revision,
                     intent: 'markNotNeeded' });
                 expect(context.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
                 return { kind: 'notNeeded', environmentId: environment.id, revision: environment.revision + 1 };
@@ -447,7 +447,7 @@ describe('deployment UI Action callbacks', () => {
             definition: { from: 'repository' as const, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
             firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } };
         const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
-            serverId, projectSourceId: 'source-app', requestKey: input.requestKey, protection: input.protection,
+            serverId: resolveServerProfileScopeIdForIdentifier(serverId), projectSourceId: 'source-app', requestKey: input.requestKey, protection: input.protection,
             purpose: input.purpose, deployerMode: input.deployerMode, controllerMachineId: 'reviewed-controller', buildMachineId: 'reviewed-builder',
             contentArtifactId: 'reviewed-content', contentHeaderVersion: 2, contentBodyVersion: 3,
             firstTargetLink: { ...input.firstTargetLink, contentArtifactId: 'reviewed-link', contentHeaderVersion: 4, contentBodyVersion: 5 },
@@ -462,7 +462,7 @@ describe('deployment UI Action callbacks', () => {
             const isPreview = typeof received === 'object' && received !== null && 'mode' in received;
             if (isPreview) {
                 previews++;
-                expect(received).toEqual({ ...input, mode: 'preview', serverId, projectSourceId: 'source-app' });
+                expect(received).toEqual({ ...input, mode: 'preview', serverId: resolveServerProfileScopeIdForIdentifier(serverId), projectSourceId: 'source-app' });
                 expect(context.target).toEqual({ kind: 'machine', machineId: 'runtime' });
             } else {
                 commits++;
@@ -509,7 +509,7 @@ describe('deployment UI Action callbacks', () => {
         const input = { name: 'Staging', requestKey: 'create-review', protection: 'nonProduction' as const,
             purpose: 'standard' as const, deployerMode: 'managers' as const, ...authored };
         const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
-            serverId, projectSourceId: 'source-app', requestKey: input.requestKey, protection: input.protection,
+            serverId: resolveServerProfileScopeIdForIdentifier(serverId), projectSourceId: 'source-app', requestKey: input.requestKey, protection: input.protection,
             purpose: input.purpose, deployerMode: input.deployerMode,
             contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1, ...reviewed,
         }, review: { creationDefaults: { values: { controllerMachineId: 'controller', retainPreviousDeployments: 0 },
@@ -571,7 +571,7 @@ describe('deployment UI Action callbacks', () => {
             actionId: 'deployments.environments.update', tokenEpoch: 0, execute: (raw, context) => {
             expect(context.target).toEqual({ kind: 'machine', machineId: header.controllerMachineId });
             const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
-            expect(input).toEqual({ serverId, environmentId: header.id, expectedRevision: header.revision,
+            expect(input).toEqual({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), environmentId: header.id, expectedRevision: header.revision,
                 contentArtifactId: header.contentArtifactId, contentHeaderVersion: header.contentHeaderVersion,
                 contentBodyVersion: header.contentBodyVersion, patch: { protection: 'nonProduction' } });
             return { ok: true, environmentId: header.id, revision: 8 };

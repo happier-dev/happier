@@ -9,6 +9,7 @@ import nacl from 'tweetnacl';
 import type { DeploymentImageV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -171,15 +172,13 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             { machineId: 'runtime-b', installationId: 'installation-b', seed: new Uint8Array(32).fill(85) }]
             .map(installation => ({ ...installation, publicKey: nacl.sign.keyPair.fromSeed(installation.seed).publicKey }));
         const bindings: EnvironmentSecretBindingV1[] = [
-            { purpose: 'variable', phase: 'build', name: 'BUILD_PUBLIC', source: { kind: 'value', value: 'visible-build-value' } },
-            { purpose: 'variable', phase: 'build', name: 'PUBLIC_IMAGE_REGISTRY', source: { kind: 'value', value: 'registry.example.test' } },
-            { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET_ENV_NAME', source: { kind: 'value', value: 'BUILD_SECRET' } },
-            { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET', source: { kind: 'secret',
-                ref: formatSharedSavedSecretRefV1('build-secret'), resourceRevision: 2 } },
-            { purpose: 'variable', phase: 'runtime', name: 'RUNTIME_SECRET', source: { kind: 'secret',
-                ref: formatSharedSavedSecretRefV1('runtime-secret'), resourceRevision: 2 } },
-            { purpose: 'variable', phase: 'runtime', name: 'RUNTIME_PLATFORM', source: { kind: 'value', value: 'linux/arm64' } },
-            { purpose: 'variable', phase: 'runtime', name: 'RUNTIME_PORT', source: { kind: 'value', value: '3000' } },
+            createDeploymentVariableBindingV1({ phase: 'build', name: 'BUILD_PUBLIC', source: { kind: 'value', value: 'visible-build-value' } }),
+            createDeploymentVariableBindingV1({ phase: 'build', name: 'PUBLIC_IMAGE_REGISTRY', source: { kind: 'value', value: 'registry.example.test' } }),
+            createDeploymentVariableBindingV1({ phase: 'build', name: 'BUILD_SECRET_ENV_NAME', source: { kind: 'value', value: 'BUILD_SECRET' } }),
+            createDeploymentSecretVariableBindingV1({ phase: 'build', name: 'BUILD_SECRET', resourceId: 'build-secret', resourceRevision: 2 }),
+            createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'RUNTIME_SECRET', resourceId: 'runtime-secret', resourceRevision: 2 }),
+            createDeploymentVariableBindingV1({ phase: 'runtime', name: 'RUNTIME_PLATFORM', source: { kind: 'value', value: 'linux/arm64' } }),
+            createDeploymentVariableBindingV1({ phase: 'runtime', name: 'RUNTIME_PORT', source: { kind: 'value', value: '3000' } }),
         ];
         const resource = { resourceId: 'build-secret', ownerAccountId: 'account', displayName: 'Build secret', kind: 'password' as const,
             encryptionMode: 'plain' as const, revision: 2, materialStatus: 'ready' as const, capabilities: { use: true },
@@ -187,8 +186,8 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
         const registryUse: Extract<EnvironmentSecretBindingV1, { purpose: 'registry' }> = { purpose: 'registry', targetLinkId: 'builder-c',
             registryOrigin: 'https://registry.example.test', access: options?.publication ? 'pushPull' : 'pull', source: { kind: 'secret',
                 ref: formatSharedSavedSecretRefV1('registry-secret'), resourceRevision: 1 } };
-        if (options?.publication === 'engineMismatch') bindings.push({ purpose: 'variable', phase: 'build', name: 'DOCKER_HOST',
-            source: { kind: 'value', value: 'tcp://approved-engine:2375' } });
+        if (options?.publication === 'engineMismatch') bindings.push(createDeploymentVariableBindingV1({ phase: 'build', name: 'DOCKER_HOST',
+            source: { kind: 'value', value: 'tcp://approved-engine:2375' } }));
         const registryResource = { ...resource, resourceId: 'registry-secret', displayName: 'Registry secret', revision: 1,
             storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Registry secret', kind: 'password' as const,
                 value: JSON.stringify({ username: 'native-registry-user', password: 'native-registry-sentinel' }) } } };
