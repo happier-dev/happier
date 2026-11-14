@@ -1,6 +1,7 @@
 import { resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
+import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarnings';
 import * as React from 'react';
 import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -204,8 +205,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
     const onPlatform = recommendation.target?.targetClass === 'platform';
     const platformDefinitionAccepted = recommendation.offeredTargetIds.includes(targetKey);
-    const imagePortNumber = Number(imagePort.trim());
-    const imagePortValid = /^\d+$/.test(imagePort.trim()) && imagePortNumber >= 1 && imagePortNumber <= 65535;
+    // The Configure preflight owner (DEPLOY-ACTIVITY-READ-1113) decides name and port syntax, as the server will.
+    const configure = projectDeploymentConfigurePreflightV1({ name, port: imagePort });
+    const imagePortValid = configure.port.status === 'valid';
+    const imagePortNumber = configure.port.value ?? Number.NaN;
     // A Compose Environment reads the chosen Machine's readiness once; required host settings and an explicit
     // Review precede its setup Plan. Saving can wait for it; nothing runs until Apply.
     const host = useDeployHostReadiness(onPlatform || creatingMachine ? null : props.lifetime,
@@ -234,7 +237,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const reusableBindings = copyChoices?.secrets.filter(choice => choice.kind !== 'omit' && choice.binding.purpose === 'variable')
       .map(choice => choice.binding) ?? [];
     const valid =
-      name.trim().length > 0 && (!props.projectChoice || projectSelection != null) &&
+      configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) &&
       (copyChoices?.data.every(choice => choice.kind === 'createEmpty' ? provisionDrafts[choice.targetLinkId] != null
         : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
           reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
