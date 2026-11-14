@@ -1,10 +1,12 @@
 import { ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 /** Existing Details disclosures accept only typed causes and the Action's correlation identity. */
-export function describeManagedActionFailureDiagnostic(code: string, details?: unknown, requestId?: string): string {
+export function describeManagedActionFailureDiagnostic(code: string, details?: unknown, requestId?: string, failureCause?: ActionFailureCauseV1): string {
     let diagnostic = code;
     const native = ManagedNativeFailureDetailsV1Schema.safeParse(details);
     const controller = ManagedControllerRequestFailureDetailsV1Schema.safeParse(details);
@@ -19,6 +21,10 @@ export function describeManagedActionFailureDiagnostic(code: string, details?: u
             const cause = parsed.data.diagnostic;
             diagnostic = [code, cause.reason, 'errorCode' in cause ? cause.errorCode : undefined].filter(Boolean).join(' · ');
         }
+    }
+    if (failureCause) {
+        const presentation = presentActionExecutionFailure({ ok: false, errorCode: code, failureCause });
+        diagnostic = [diagnostic, ...presentation.technicalDetails.filter(detail => detail.key !== 'code').map(detail => detail.value)].join(' · ');
     }
     return requestId ? `${diagnostic} · ${t('session.startFailure.requestId', { id: requestId })}` : diagnostic;
 }
@@ -62,7 +68,8 @@ export function describeManagedPresetAvailabilityFailure(code: string): string {
 export function describeManagedOperationDiagnostic(error: NonNullable<ActionOperationSnapshotV1['error']>): string {
     const details = error.details;
     if (details && 'kind' in details && details.kind === 'managedNative') {
-        return describeManagedNativeFailureDiagnostic(error.errorCode, details.nativeCause);
+        return describeManagedActionFailureDiagnostic(error.errorCode, details, undefined, error.failureCause);
     }
-    return [error.errorCode, error.error].filter((part, index, parts) => part && parts.indexOf(part) === index).join(' · ');
+    return [describeManagedActionFailureDiagnostic(error.errorCode, details, undefined, error.failureCause), error.error]
+        .filter((part, index, parts) => part && parts.indexOf(part) === index).join(' · ');
 }

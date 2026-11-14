@@ -17,7 +17,7 @@ import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemo
 import type { PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
 
 export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string; requestId?: string;
-    nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1 }>
+    nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1; failureCause?: ActionExecuteFailure['failureCause'] }>
     & Pick<PluginErrorContractData, 'message'> & Pick<PluginActionFailureAuthorPayloadV1, 'remediation'>;
 export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'failed' }>
     | ManagedProvisionerFailure
@@ -29,13 +29,14 @@ export type ManagedProvisionerClientOptions<T> = Omit<MachinePresetCollectionOpt
     onApprovalAdmitted?: (receipt: ExternalActionManagedAdmissionReceiptV1) => void;
     onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>;
-function managedFailure(code: string, details?: unknown, requestId?: string): ManagedProvisionerFailure {
+function managedFailure(code: string, details?: unknown, requestId?: string, failureCause?: ActionExecuteFailure['failureCause']): ManagedProvisionerFailure {
     // Only the canonical PluginError payload carries an authored reason; arbitrary transport text stays private.
     const authored = isPluginErrorData(details) && details.code === code ? details : undefined;
     const message = authored?.message?.trim();
     const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
     const native = ManagedNativeFailureDetailsV1Schema.safeParse(authored && 'details' in authored ? authored.details : details);
     return { kind: 'failed', code, ...(requestId ? { requestId } : {}), ...(message ? { message } : {}),
+        ...(failureCause ? { failureCause } : {}),
         ...(remediation.success ? { remediation: remediation.data } : {}),
         ...(native.success ? { details: native.data, nativeCause: native.data.nativeCause } : {}) };
 }
@@ -86,7 +87,8 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
                 const code = homeDomainFailureCode(outcome.failure);
                 const receipt = admittedReceipt(actionId, code, outcome.failure.details);
                 return receipt ? { kind: 'admitted', receipt } : managedFailure(code, result.ok ? undefined : result.details,
-                    actionId === 'machines.managed.acquire' && !result.ok ? result.requestId : undefined);
+                    actionId === 'machines.managed.acquire' && !result.ok ? result.requestId : undefined,
+                    result.ok ? undefined : result.failureCause);
             }
             if (outcome.kind === 'approval_pending') {
                 options?.onApprovalPending?.(outcome.approval);
@@ -111,7 +113,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
                 return result.kind === 'approval_pending' ? { approvalPending: true }
                     : result.kind === 'succeeded' ? succeeded(result.value) : result;
             },
-            succeeded, failed: (code, failure) => managedFailure(code, failure?.details),
+            succeeded, failed: (code, failure) => managedFailure(code, failure?.details, undefined, failure?.failureCause),
             aborted: () => ({ kind: 'failed', code: 'aborted' }), ...(options?.signal ? { signal: options.signal } : {}),
         });
     }

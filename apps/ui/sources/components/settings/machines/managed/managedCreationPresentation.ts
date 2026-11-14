@@ -7,6 +7,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveMachineWakeNativeIntentV1, resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isManagedMachineBootstrapIncomplete, isManagedMachineRetentionWaitOperation, managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
 export { isManagedMachineResourceAbsent } from './managedMachineResource';
@@ -30,7 +31,8 @@ export function describeManagedInstallationFailure(
         && progress.phase === 'ssh.auth.wait') return t('managedMachines.creation.enrollmentUnavailable');
     // A refusal outside the typed controller codes reaches the executor's result as `action_failed` with its code as the message.
     const code = error.errorCode === 'action_failed' ? error.error : error.errorCode;
-    return resolveSystemTaskFailureMessage({ code, message: null, details }) ?? null;
+    return resolveActionExecutionFailureMessage({ ok: false, ...error },
+        resolveSystemTaskFailureMessage({ code, message: null, details }) ?? '') || null;
 }
 
 /** Setup is observed on the admitted row; Join alone cannot complete this stage. */

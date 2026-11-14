@@ -2,8 +2,9 @@ import { answerSshSystemTaskPrompt } from '@/components/systemTasks/ssh/answerSs
 import type { ManagedMachineBootstrapEstablishPromptV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-type Response = Readonly<{ kind: 'completed'; value: unknown }> | Readonly<{ kind: 'failed'; code: string }>;
+type Response = Readonly<{ kind: 'completed'; value: unknown }> | Readonly<{ kind: 'failed'; code: string; failure?: ActionExecuteFailure }>;
 
 /** Reuse the installer's human question; the managed Action remains the only answer authority. */
 export async function answerManagedCreationPrompt(input: Readonly<{

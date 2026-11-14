@@ -121,19 +121,21 @@ describe('managed configurator uses the exact Home Action front door', () => {
             serverIdentityId: 'srv_failed_options', accountId: 'owner', currentAccount: true });
         const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
         const details = { kind: 'managedNative', nativeCause } as const;
+        const failureCause = { phase: 'machines.provisioners.options', errorClass: 'ManagedMachineControllerError',
+            errorCode: 'credential_scope_denied', httpStatus: null } as const;
         harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'action_failed', error: 'action_failed', details } } };
+                execution: { ok: false, errorCode: 'action_failed', error: 'action_failed', details, failureCause } } };
         } });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_failed_options');
         const input = { homeId: 'srv_failed_options', controller: { machineId: 'host', installationId: 'installation' },
             contribution: { pluginId: 'custom.compute', localId: 'vm' }, selectors: {} };
-        for (const execute of [client.execute, client.read]) {
-            expect(await execute('machines.provisioners.options', input))
-                .toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details });
-        }
+        expect(await client.execute('machines.provisioners.options', input))
+            .toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details, failureCause });
+        expect(await client.read('machines.provisioners.options', input))
+            .toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details, failureCause });
     });
 
     it.each(['native', 'authored'] as const)('preserves the %s failure when options settle after approval', async (shape) => {
@@ -155,12 +157,14 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const authored = readPluginActionError(new PluginError({ code: 'action_failed',
             message: '  Sign in to Docker: run sbx login  ', remediation: { kind: 'retry' }, details: nativeDetails }));
         const details = shape === 'authored' ? authored?.data : nativeDetails;
+        const failureCause = { phase: actionId, errorClass: 'ManagedMachineControllerError' as const,
+            errorCode: 'credential_scope_denied', httpStatus: null };
         const request: ApprovalRequestV2 = { v: 2, status: 'failed', createdAtMs: 1, updatedAtMs: 2,
             createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId, actionArgs: input, summary: 'Read native options',
             executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
                 serverId: homeId, accountId: 'owner', actionId, requestId: 'options-request' },
             decision: { kind: 'approve', decidedAtMs: 2 },
-            execution: { executedAtMs: 2, ok: false, errorCode: 'action_failed', error: 'action_failed', details } };
+            execution: { executedAtMs: 2, ok: false, errorCode: 'action_failed', error: 'action_failed', details, failureCause } };
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         let approval: ActionApprovalRegistration | undefined;
         const pending = createManagedProvisionerClient({ serverId, accountId: 'owner' }, homeId).read(actionId, input,
@@ -170,7 +174,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         approval.onTerminal?.('failed', { id: 'native-approval', title: null,
             header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true });
-        expect(await pending).toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details: nativeDetails,
+        expect(await pending).toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details: nativeDetails, failureCause,
             ...(shape === 'authored' ? { message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' } } : {}) });
     });
 

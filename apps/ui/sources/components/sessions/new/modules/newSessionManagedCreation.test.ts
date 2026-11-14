@@ -399,6 +399,7 @@ describe('New managed durable workflow continuation', () => {
 function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string; denyCrossMachine?: boolean; preset?: ManagedMachinePresetV1; accountExecution?: boolean;
     requesterConsent?: boolean; trustBeforeConsent?: boolean; administratorAsk?: boolean; serverId?: string; homeId?: string;
     unreadableMachine?: boolean;
+    actionFailure?: Readonly<{ actionId: string; error: Error }>;
     agentStartFailure?: { code: string; machineId: string; agentId: string };
     agentUpdate?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionAgentUpdateNoticeV1;
     createConfirmation?: boolean; pairingReview?: 'admitted' | 'absent' | 'forged' | 'unrelated';
@@ -466,6 +467,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         machineManagedInstallationRespond: createManagedMachineInstallationRespond(),
         managedMachineAction: async request => {
             actions.push(request);
+            if (request.actionId === input.actionFailure?.actionId) throw input.actionFailure.error;
             if (request.actionId === 'machines.managed.get') return input.unreadableMachine ? null : machine;
             if (request.actionId === 'machines.managed.delete') return {
                 kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision + 1,
@@ -646,6 +648,19 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
 }
 
 describe('ordinary managed creation continuation', () => {
+    it.each(['machines.managed.acquire', 'machines.managed.get'])('retains the typed owner cause from %s in creation progress', async actionId => {
+        const failureCause = { phase: actionId, errorClass: 'ManagedMachineControllerError' as const,
+            errorCode: 'credential_scope_denied', httpStatus: null };
+        const boundary = transport({ actionFailure: { actionId,
+            error: Object.assign(new Error('Private native diagnostic'), { code: 'action_failed', failureCause }) } });
+        expect(await boundary.run()).toMatchObject({ kind: 'failed', code: 'action_failed' });
+        const progress = boundary.progress.at(-1);
+        expect(progress).toMatchObject({ kind: 'failed', code: 'action_failed' });
+        if (progress?.kind !== 'failed') throw new Error('Expected failed creation progress');
+        expect(progress.diagnosticDetail).toContain('credential_scope_denied');
+        expect(progress.diagnosticDetail).toContain('ManagedMachineControllerError');
+        expect(progress.diagnosticDetail).not.toContain('Private native diagnostic');
+    });
     it.each([false, true])('keeps the managed read refusal in both result and progress (retained=%s)', async retained => {
         const boundary = transport({ unreadableMachine: true });
         const result = await boundary.run(retained ? { acquisition: { ...initial, managedId: baseMachine.id } } : {});

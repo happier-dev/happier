@@ -14,6 +14,7 @@ import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValue
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -713,9 +714,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code, 'save');
     };
-    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string) => { if (activeBinding?.isCurrent()) {
+    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string, failureCause?: ActionFailureCauseV1) => { if (activeBinding?.isCurrent()) {
         if (props.presetId && isMachinePresetAccessLost(code)) presetQuery.withdraw(code);
-        else { setBusy(false); setError(code, during, undefined, diagnosticDetail); }
+        else { setBusy(false); setError(code, during, failureCause
+            ? resolveActionExecutionFailureMessage({ ok: false, errorCode: code, failureCause }, '') || undefined
+            : undefined, diagnosticDetail); }
     } };
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
         if (!catalogCurrent || !activeBinding?.isCurrent() || !catalogController && !accountAcquire || !catalogProvisioner || busy) return;
@@ -809,9 +812,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const result = await catalog.client.execute('machines.managed.acquire', input, { signal: abort.signal,
             ...(input.selection.kind === 'preset' && creationPreset ? { managedPresetOrigin: creationPreset } : {}),
             onApprovalPending, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
-            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId)) });
+            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
         if (!abort.signal.aborted) { if (result.kind === 'succeeded') created(result.value); else if (result.kind === 'admitted') admitted(result.receipt); else if (result.kind === 'failed')
-            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId)); }
+            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause); }
         } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
     };
     const rename = async () => {
@@ -921,10 +924,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // One failure line for the page, shared by the setup-only and creation forms.
     const errorNotice = error ? <ItemGroup>
         {/* A read retries its read; a refused Create or Save is retried from the receipt's own action, which stays in view. */}
-        <SurfaceStateCard kind="error" size="line" title={error.code === 'conflict' ? t('machinePresets.conflict')
+        <SurfaceStateCard kind="error" size="line" title={error.reason ?? (error.code === 'conflict' ? t('machinePresets.conflict')
             : error.code === 'machine_setup_conflict' ? t('machinePresets.setup.itemConflict')
             : error.during === 'create' ? resolveSystemTaskFailureMessage({ code: error.code, message: null }) ?? t('managedMachines.options.createFailed')
-            : error.during === 'save' ? t('managedMachines.options.saveFailed') : t('managedMachines.options.error')}
+            : error.during === 'save' ? t('managedMachines.options.saveFailed') : t('managedMachines.options.error'))}
             diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} diagnosticDetail={error.diagnosticDetail} testID="managed-config.error"
             {...(error.code === 'conflict' || error.during === 'read' ? { action: { label: t(error.code === 'conflict' ? 'managedMachines.actions.review'
                 : 'managedMachines.actions.tryAgain'), onPress: retry } } : {})} />
@@ -954,10 +957,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     if (!input) return;
                     const result = await catalog.client?.execute('machines.managed.acquire', input, { signal: abort.signal,
                         onApprovalPending, managedPresetOrigin: selected.presetOrigin, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
-                        onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId)) });
+                        onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
                     if (result?.kind === 'succeeded') created(result.value);
                     else if (result?.kind === 'admitted') admitted(result.receipt);
-                    else if (result?.kind === 'failed') failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId));
+                    else if (result?.kind === 'failed') failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause);
                 }
             } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
             finally { if (!abort.signal.aborted && activeBinding.isCurrent()) setBusy(false); }

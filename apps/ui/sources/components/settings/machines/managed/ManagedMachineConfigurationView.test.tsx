@@ -1719,6 +1719,31 @@ describe('mounted managed configurator', () => {
         harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input,
       ).envelope,
     ).input;
+  it('presents an acquire Action failure through its typed owner cause', async () => {
+    const screen = await mountAddRoute('typed-acquire-failure');
+    const serverId = route.params.serverId!;
+    const { t } = await import('@/text');
+    harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
+      const { envelope: request } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+      return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId,
+        execution: { ok: false, errorCode: 'action_failed', error: 'Private native diagnostic',
+          failureCause: { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
+            errorCode: 'credential_scope_denied', httpStatus: null } } } };
+    } });
+    try {
+      await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('managed-config.error')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        const diagnostic = screen.tree.findAll(node => typeof node.props.diagnosticDetail === 'string')
+          .map(node => node.props.diagnosticDetail).join('\n');
+        expect(diagnostic).toContain('credential_scope_denied');
+        expect(diagnostic).toContain('ManagedMachineControllerError');
+        expect(screen.getTextContent()).not.toContain('Private native diagnostic');
+      });
+    } finally { await screen.unmount(); }
+  });
   it('returns the admitted managed resource to its retained creation host without navigating away', async () => {
     const initial = await mountAddRoute('retained-create');
     const serverId = route.params.serverId!;

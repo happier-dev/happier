@@ -36,6 +36,7 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
 
 export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
 
@@ -44,9 +45,11 @@ export function ManagedProvisionerRepairFailureNotice(props: Readonly<{ failure:
     const failure = props.failure;
     const fallback = failure.layer ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: failure.code }).body : t('pluginRuntime.actionFailed');
     const message = resolveActionExecutionFailureMessage({ ok: false, errorCode: failure.code,
-        error: failure.message, details: failure.details }, fallback) ?? fallback;
+        error: failure.message, details: failure.details, failureCause: failure.failureCause }, fallback) ?? fallback;
     return <SurfaceStateCard testID={props.testID} kind="error" size="line" title={message}
-        diagnosticCode={failure.reason} diagnosticDetail={failure.diagnostics?.join('\n')} />;
+        diagnosticCode={failure.reason} diagnosticDetail={[failure.diagnostics?.join('\n'),
+            failure.failureCause ? describeManagedActionFailureDiagnostic(failure.code, failure.details, undefined, failure.failureCause) : undefined,
+        ].filter(Boolean).join('\n') || undefined} />;
 }
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];

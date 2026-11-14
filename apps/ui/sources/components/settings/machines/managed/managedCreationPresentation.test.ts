@@ -16,16 +16,16 @@ import {
 } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
+import {
+  ProviderObservationV1Schema,
+  type RetentionCapabilitiesV1,
+} from '@happier-dev/protocol/machines/managed/providerFactsV1';
+
 it('presents the typed acquire cause instead of its generic Action wrapper', () => {
   expect(describeManagedInstallationFailure({ errorCode: 'action_failed', error: 'Private native diagnostic',
     failureCause: { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
       errorCode: 'credential_scope_denied', httpStatus: null } }, undefined)).toBe(t('errors.permissionDenied'));
 });
-
-import {
-  ProviderObservationV1Schema,
-  type RetentionCapabilitiesV1,
-} from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 const machine = {
   id: 'managed',

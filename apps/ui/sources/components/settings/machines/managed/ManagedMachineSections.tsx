@@ -13,7 +13,7 @@ import { isMachineRetainedWakeEligibleV1, supportedMachineRetentionEffectsV1 } f
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionOperationListV1ResponseSchema, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { readInputPath } from '@happier-dev/protocol/inputs';
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -390,9 +390,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             pendingRef.current = false;
             setPending(null);
         };
-        const fail = (code: string, failure?: Readonly<{ details?: unknown }>) => {
+        const fail = (code: string, failure?: Pick<ActionExecuteFailure, 'details' | 'requestId' | 'failureCause'>) => {
             if (!binding.isCurrent() || interest.signal.aborted) return;
-            setError(describeManagedActionFailureDiagnostic(code, failure?.details));
+            setError(describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause));
             onFailed?.();
             if (code === 'intent_changed') props.onChanged();
             // The native owner can complete the controller CAS before its
@@ -440,7 +440,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 if (!binding.isCurrent() || interest.signal.aborted) return false;
                 if (!prepared) return false;
                 if (!prepared.ok) {
-                    fail(homeDomainFailureCode(homeDomainFailureFromActionFailure(prepared, 'machines.setup.plan')));
+                    fail(homeDomainFailureCode(homeDomainFailureFromActionFailure(prepared, 'machines.setup.plan')), prepared);
                     return false;
                 }
                 actionInput = prepared.input;
@@ -458,7 +458,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 onSucceeded: value => { complete(value); }, onFailed: fail,
             });
             if (outcome.kind === 'failed') {
-                fail(homeDomainFailureCode(outcome.failure), outcome.failure);
+                fail(homeDomainFailureCode(outcome.failure), observed.ok ? undefined : observed);
                 return false;
             }
             if (outcome.kind === 'approval_pending') {
@@ -473,7 +473,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             return succeeded;
         } catch (error) {
             fail(readActionErrorCodeV1(error) ?? 'managed_request_failed',
-                error && typeof error === 'object' && 'details' in error ? { details: error.details } : undefined);
+                { failureCause: projectActionFailureCauseV1(error),
+                    ...(error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) });
             return false;
         } finally {
             if (!awaitingApproval) release();
