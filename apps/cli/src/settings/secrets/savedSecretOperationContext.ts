@@ -49,6 +49,17 @@ export type SavedSecretOperationContextV1 = Readonly<{
   withdrawCatalog(): void;
 }>;
 
+/** Each holder retires its own keys; borrowed catalogs must not share mutable buffers. */
+function captureInvocationSecretMaterial(
+  snapshot: ActiveAccountSettingsSnapshot,
+  retainedResources?: ActiveAccountSettingsSnapshot['savedSecretResources'],
+): ActiveAccountSettingsSnapshot {
+  const resources = snapshot.savedSecretResources;
+  if (resources === retainedResources || !resources?.some(resource => resource.resourceDataKey)) return snapshot;
+  return { ...snapshot, savedSecretResources: resources.map(resource => resource.resourceDataKey
+    ? { ...resource, resourceDataKey: new Uint8Array(resource.resourceDataKey) } : resource) };
+}
+
 export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   secretSources?: TargetSecretSourcesV1;
@@ -63,7 +74,7 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
   if (!scopeKey || scopeKey !== resolveAccountSettingsScopeKeyForToken(input.credentials.token)) {
     throw new Error('saved_secret_account_snapshot_unavailable');
   }
-  let snapshot: ActiveAccountSettingsSnapshot | null = input.snapshot;
+  let snapshot: ActiveAccountSettingsSnapshot | null = captureInvocationSecretMaterial(input.snapshot);
   const settingsListeners = new Set<ActiveAccountSettingsSnapshotListener>();
   const replaceSnapshot = (next: ActiveAccountSettingsSnapshot | null) => {
     const previous = snapshot;
@@ -99,7 +110,8 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       return null;
     }
     if (next !== sourceSnapshot) {
-      const refreshed = preserveAccountCatalogsInSnapshot(snapshot, next, sourceSnapshot);
+      const refreshed = captureInvocationSecretMaterial(
+        preserveAccountCatalogsInSnapshot(snapshot, next, sourceSnapshot), snapshot.savedSecretResources);
       const admission = refreshed.acpCatalog ? resolveAcpCatalogRevisionAdmission({ catalog: refreshed.acpCatalog,
         retainedRevision: acpRevision, settingsVersion: refreshed.settingsVersion }) : null;
       sourceSnapshot = next;
@@ -145,7 +157,8 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       signal?.throwIfAborted();
       if (next.scopeKey !== scopeKey || !readSnapshot() || !snapshot) return false;
       if (next.settingsVersion <= snapshot.settingsVersion) return true;
-      const resources = next.savedSecretResources ?? snapshot.savedSecretResources ?? [];
+      const captured = captureInvocationSecretMaterial(next, snapshot.savedSecretResources);
+      const resources = captured.savedSecretResources ?? snapshot.savedSecretResources ?? [];
       const catalog = replaceSavedSecretCatalogInSnapshot(snapshot, {
         resources, state: next.savedSecretCatalogState ?? snapshot.savedSecretCatalogState ?? 'temporarily_unavailable',
       });
