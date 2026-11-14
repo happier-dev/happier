@@ -138,6 +138,19 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         await standardCleanup();
     });
 
+    it.each([true, false])('uses completed presentation after private state compaction (machine online: %s)', async (machineOnline) => {
+        const presentation = createPresentation({ status: 'completed', phase: 'publishing' });
+        machineExternalSessionOperationStatusSpy.mockResolvedValue({ ok: false,
+            error: { code: 'invalid_state', message: 'Settled operation has no private recovery state.' } });
+        const hook = await renderOwnerHydration({ isExactOwner: true, machineOnline,
+            presentation });
+        await flushHookEffects();
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().progress).toBeNull();
+        expect(machineExternalSessionOperationStatusSpy).not.toHaveBeenCalled();
+        await expect(hook.getCurrent().checkAgain()).resolves.toBe(false);
+    });
+
     it('loads complete progress once per mounted exact key without rerender polling', async () => {
         const progress4 = createProgress();
         const progress5 = createProgress({ revision: 5, phase: 'staging' });

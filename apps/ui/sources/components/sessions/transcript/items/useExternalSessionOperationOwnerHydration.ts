@@ -79,7 +79,9 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         && machineId !== null
         && ownerScopeKey !== null
         && serverId !== null;
-    const readEligible = authorized && machineOnline && presentationActive;
+    // Completed presentation survives compaction of private recovery state.
+    const completed = presentation?.status === 'completed';
+    const readEligible = authorized && machineOnline && presentationActive && !completed;
     const currentKey = authorized && presentation
         ? createOperationKey({
             machineId,
@@ -343,13 +345,15 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         : null;
     const status: ExternalSessionOperationOwnerHydrationStatus = !authorized || !presentation
         ? 'not_owner'
-        : currentRead?.outcome === 'unavailable'
-            ? 'unavailable'
-            : !readEligible
-                ? 'offline'
-                : progress !== null
-                    ? 'ready'
-                    : 'loading';
+        : completed
+            ? 'ready'
+            : currentRead?.outcome === 'unavailable'
+                ? 'unavailable'
+                : !readEligible
+                    ? 'offline'
+                    : progress !== null
+                        ? 'ready'
+                        : 'loading';
 
     return React.useMemo(() => ({
         checkAgain,
