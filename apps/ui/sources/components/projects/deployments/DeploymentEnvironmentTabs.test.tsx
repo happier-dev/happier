@@ -23,6 +23,7 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
+  waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 vi.mock('react-native', async () => {
@@ -59,6 +60,8 @@ vi.mock('@/modal', async () => {
 });
 afterEach(standardCleanup);
 afterEach(async () => {
+  // The modal presentation boundary outlives individual screen mounts.
+  (await import('@/modal')).Modal.hideAll();
   machineProjectionReplies.clear();
   (await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs')).clearDaemonMergedProjectionCacheForTests();
 });
@@ -150,6 +153,25 @@ function withDatabase(detail: ReturnType<typeof createDeploymentEnvironmentDetai
     definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
     services: ['postgres'], data: [{ engine: 'postgres' as const, version: '17', service: 'postgres', port: 5432 }],
   } } } as ReturnType<typeof createDeploymentEnvironmentDetailV1>;
+}
+
+async function publishBundledBackupDestination(account: Awaited<ReturnType<typeof captureLazyActionAccountContext>>, machineId: string) {
+  const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/backup-destinations/src/manifest');
+  const { BackupDestinationContributionV1Schema } = await import('@happier-dev/protocol/plugins/contributions/backupDestinations');
+  const definition = BackupDestinationContributionV1Schema.parse(PLUGIN_MANIFEST.contributes.backupDestinations?.find(row => row.id === 's3'));
+  const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
+    pluginVersion: PLUGIN_MANIFEST.version, definition };
+  const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+  machineProjectionReplies.set(machineId,
+    DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: { v: 2, generation: 1,
+      familiesById: { backupDestinations: { family: 'backupDestinations', entriesById: { [destination.id]: destination } } } } }));
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  storage.setState({ endpointStatus: 'online' });
+  await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
+    id: machineId, active: true, activeAt: Date.now(), daemonStateVersion: 1 })]);
+  return destination;
 }
 
 async function renderTab(
@@ -251,6 +273,8 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
       const mode = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.mode`)!;
@@ -344,6 +368,8 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
         const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0];
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
         chooser?.props.onChange({ kind: 'account', account: credentialRef }, null);
       });
       await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
@@ -427,6 +453,8 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
         screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: credentialRef }, null);
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       expect(screen.findByTestId(`${id}.ingress.accountId`)).toBeNull();
       expect(screen.findByTestId(`${id}.ingress.imageRef`)).toBeNull();
@@ -510,6 +538,8 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.add.service`, 'web');
         screen.changeTextByTestId(`${id}.add.port`, '3000');
         screen.changeTextByTestId(`${id}.add.path`, '/docs');
+        screen.changeTextByTestId(`${id}.add.check`, '/');
+        screen.changeTextByTestId(`${id}.add.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.add.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith({
@@ -1039,14 +1069,17 @@ describe('Environment → Settings: checks, backups, previews', () => {
       environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
     const id = 'project-deployments.environment.settings.backups';
     const { t } = await import('@/text');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     try {
       expect(await settle(`${id}.schedule`)).not.toBeNull();
       await vi.waitFor(() => expect(homes.requestsFor('/v3/automations/query')).not.toHaveLength(0));
       await vi.waitFor(() => {
         const subtitle = screen.findAllByProps({ testID: `${id}.schedule` })[0]?.props.subtitle;
         expect(subtitle).toContain(t('common.unavailable'));
-        // The unavailable label alone is insufficient: the Action's failure must also be visible.
-        expect(subtitle).not.toBe(t('common.unavailable'));
+        const failure = presentActionFailureOutcome({ errorCode: 'storage_unavailable', error: 'storage_unavailable' }, 'deployment');
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.schedule.failed`)?.props)
+          .toMatchObject({ title: failure.reason, diagnosticCode: 'storage_unavailable' });
       });
       expect(screen.findByTestId(`${id}.schedule.on`)).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
@@ -1065,22 +1098,27 @@ describe('Environment → Settings: checks, backups, previews', () => {
       body: await createMachineReadBatchResponseFixture(body, id =>
         createPlainMachineRowFixture({ id, accountId: 'account-owner' })).json(),
     }) });
+    homes.answer(serverId, 'POST /v3/automations', { status: 403, body: { error: 'approval_required' } });
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
       environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
     const id = 'project-deployments.environment.settings.backups';
     const { t } = await import('@/text');
     const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const subtitle = () => screen.findAllByProps({ testID: `${id}.schedule` })[0]?.props.subtitle;
     try {
       expect(await settle(`${id}.schedule.on`)).not.toBeNull();
       const off = t('projects.deployments.settingsSections.scheduleOff');
       expect(subtitle()).toBe(off);
-      // The real Action policy refuses creation without approval, before the Home write.
+      // The Home refuses the person's schedule creation before storing an Automation.
       await screen.pressByTestIdAsync(`${id}.schedule.on`);
-      const failure = presentActionFailureOutcome({ ok: false, errorCode: 'approval_required', error: 'approval_required' }, 'deployment');
-      expect(subtitle()).toBe(`${off} · ${failure.reason}`);
+      const failure = presentActionFailureOutcome({ errorCode: 'approval_required', error: 'approval_required' }, 'deployment');
+      await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.schedule.failed`)?.props)
+        .toMatchObject({ title: failure.reason, diagnosticCode: 'approval_required' }));
+      expect(subtitle()).toBe(off);
       expect(screen.findByTestId(`${id}.schedule.on`)).not.toBeNull();
-      expect(homes.requestsFor('/v3/automations')).toHaveLength(0);
+      expect(homes.requestsFor('/v3/automations')).toHaveLength(1);
+      expect(homes.artifacts(serverId).list()).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1091,8 +1129,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       serverIdentityId, accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const base = createDeploymentEnvironmentDetailV1();
-    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content,
-      backup: { ...backup, config: { bucket: 'team-recovery', prefix: 'staging/', region: 'eu-central-1' } } } });
+    const destination = await publishBundledBackupDestination(account, base.environment.controllerMachineId);
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId }, content: { ...base.content,
+      backup: { ...backup, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
+        config: { bucket: 'team-recovery', prefix: 'staging/', region: 'eu-central-1' } } } });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
       body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) },
     });
@@ -1142,15 +1182,33 @@ describe('Environment → Settings: checks, backups, previews', () => {
         return result;
       } });
     }
-    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
-    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'deployments.backups.configure', tokenEpoch: 0,
+      installationId: 'installation-a',
+      execute: (input, context) => {
+        expect(context.target.machineId).toBe(detail.environment.controllerMachineId);
+        const parsed = DeploymentBackupConfigureInputV1Schema.parse(input);
+        effects.push({ actionId: 'deployments.backups.configure', input: parsed });
+        return { kind: 'configured', environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+          configuration: DeploymentBackupConfigurationV1Schema.parse(Reflect.get(parsed, 'configuration')) };
+      },
+    });
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      environmentActions: { setController: vi.fn(), updateEnvironment } });
+      serverId, environmentActions: actions });
     const id = 'project-deployments.environment.settings.backups';
     try {
       expect(await settle(`${id}.run`)).not.toBeNull();
-      expect(screen.getTextContent()).toContain('team-recovery');
-      expect(screen.getTextContent()).toContain('staging/');
+      const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+      // Descriptor-driven values are read-only form controls, rather than text children of the row.
+      await vi.waitFor(() => {
+        const fields = screen.findAllByType(HappierInputField);
+        expect(fields.find(node => node.props.field.path === 'bucket')?.props).toMatchObject({ value: 'team-recovery', disabled: true });
+        expect(fields.find(node => node.props.field.path === 'prefix')?.props).toMatchObject({ value: 'staging/', disabled: true });
+      });
       // Opening Settings reads only the recorded history (the owner's facts); it runs and verifies nothing.
       await vi.waitFor(() => expect(screen.getTextContent()).toContain('Backup failed'));
       expect(effects.map((effect) => effect.actionId)).toEqual(['deployments.backups.history']);
@@ -1192,7 +1250,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.prune', input: {
         retention: { kind: 'keep', last: 7 }, configRevision: 1, machineId: 'machine-a' } });
       expect(screen.getTextContent()).toContain('Removed 2 old backups');
-      // Keep counts are edited in place and saved once through environments.update (lab database/keep).
+      // Keep counts are edited in place and saved through the same Configure owner (lab database/keep).
       await screen.pressByTestIdAsync(`${id}.retention.change`);
       await act(async () => {
         screen.changeTextByTestId(`${id}.retention.last.input`, '');
@@ -1200,14 +1258,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
         screen.changeTextByTestId(`${id}.retention.weekly.input`, '8');
       });
       await screen.pressByTestIdAsync(`${id}.retention.save`);
-      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, {
-        backupRetention: { configRevision: 1, retention: { kind: 'keep', daily: 14, weekly: 8 } } });
-      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-      // The agent path sends the same Action and patch.
-      expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: serverIdentityId, environmentId: detail.environment.id,
-        expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
-        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
-        patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+      await vi.waitFor(() => expect(effects.filter(effect => effect.actionId === 'deployments.backups.configure')).toHaveLength(1));
+      expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.configure', input: {
+        intent: 'save', environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        configuration: { ...detail.content.backup, retention: { kind: 'keep', daily: 14, weekly: 8 } },
+      } });
       // History and missed schedules belong to the Database page (P9), never a second list here.
       expect(screen.findByTestId(`${id}.history`)).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
@@ -1238,6 +1293,145 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await screen.pressByTestIdAsync(`${editor.props.testID}-cancel`);
       expect(screen.findAllByType(TriggerPopover)).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('saves a mounted Preview toggle after one confirmation of the controller enrollment children', async () => {
+    await homes.reset();
+    const homeId = `srv_${'8'.repeat(32)}`;
+    const serverId = await homes.addHome({ name: 'Mounted Preview review', serverUrl: 'https://mounted-preview-review.test',
+      serverIdentityId: homeId, accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const template = { v: 1 as const, enabled: false, forkPreviews: 'off' as const,
+      repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' },
+      runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] };
+    let detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId: homeId },
+      content: { ...base.content, previewTemplate: template } });
+    const artifactHeader = { kind: 'deployment-environment.v1', title: detail.content.name };
+    const seeded = await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+      header: artifactHeader, body: JSON.stringify(detail.content) });
+    detail = { ...detail, environment: { ...detail.environment,
+      contentHeaderVersion: seeded.revision.headerVersion, contentBodyVersion: seeded.revision.bodyVersion } };
+    const initialDetail = detail;
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { select: () => ({ body: {
+      ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink),
+    } }) });
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const { resolveInvocationAuthority } = await import('@happier-dev/protocol/actions/invocationAuthority');
+    const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
+    const { resolveActionsSettingsV1FromState } = await import('@/sync/domains/settings/actionsSettings');
+    const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { createPreviewEnrollmentForHost } = await import('../../../../../cli/src/deployments/previewEnrollment');
+    // The controller's real enrollment owner prepares its workflow effects; the
+    // Home HTTP/Artifact fixture below is the persistent storage boundary.
+    const enrollment = createPreviewEnrollmentForHost({ serverId: homeId,
+      machineId: detail.environment.controllerMachineId, readEnvironment: async () => detail });
+    let preparations = 0;
+    let effects = 0;
+    const admissions: Array<Readonly<{ input: unknown; requestId?: string; reviewDigest?: string }>> = [];
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: detail.environment.id } }),
+      prepareHostReviewedChildren: async ({ actionId, input, context }) => actionId === 'deployments.environments.update'
+        ? enrollment.prepare(DeploymentActionInputSchemasV1[actionId].parse(input), context) : null,
+      deploymentAction: async (_actionId, raw) => {
+        const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        if (input.mode === 'preview') {
+          preparations += 1;
+          return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+            forkEligibility: { kind: 'eligible' } };
+        }
+        if (!input.patch?.previewTemplate) throw new Error('Expected reviewed Preview template update');
+        expect(input.patch.previewTemplate).toEqual({ ...template, enabled: true });
+        const content = { ...detail.content, previewTemplate: input.patch.previewTemplate };
+        const saved = await account.updateArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+          expectedRevision: { headerVersion: detail.environment.contentHeaderVersion, bodyVersion: detail.environment.contentBodyVersion },
+          header: artifactHeader, body: JSON.stringify(content) });
+        if (!saved.ok) throw new Error(saved.errorCode);
+        detail = createDeploymentEnvironmentDetailV1({ ...detail,
+          environment: { ...detail.environment, revision: detail.environment.revision + 1,
+            contentHeaderVersion: saved.revision.headerVersion, contentBodyVersion: saved.revision.bodyVersion }, content });
+        effects += 1;
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision };
+      },
+      approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
+        read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+        create: async (artifactId, header, body, idScope) =>
+          (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+    }));
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+      deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+      failure: result => { const parsed = ActionExecuteFailureSchema.safeParse(result); return parsed.success ? parsed.data : null; },
+      execute: async (input, transport) => {
+        if (!('authentication' in transport.authorization.binding)) throw new Error('Expected signed Home Account admission');
+        const receivingAccount = await captureLazyActionAccountContext(serverId);
+        try {
+          const authority = resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+            surface: transport.invocation.surface, actionId: 'deployments.environments.update' });
+          if (!(typeof input === 'object' && input !== null && 'mode' in input)) admissions.push({ input,
+            requestId: transport.requestId, reviewDigest: transport.invocation.presentUserConfirmation?.reviewDigest });
+          const result = await receiver.execute('deployments.environments.update', input, {
+            surface: transport.invocation.surface, authority, actionCaller: transport.invocation.caller,
+            actionsSettings: resolveActionsSettingsV1FromState({ settings: await receivingAccount.readSettings() }),
+            presentUserConfirmation: transport.invocation.presentUserConfirmation,
+            serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId,
+            externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+            originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+            signExternalActionApprovalInput: ({ actionId, input: reviewed, target, requesterConfirmation, sessionTargetsV1 }) =>
+              boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input: reviewed, target,
+                ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+          });
+          return result.ok ? result.result : result;
+        } finally { receivingAccount.dispose(); }
+      },
+    });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const transport = (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime);
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockClear();
+    const mounted = await renderTab('settings', detail, { readEnvironment: transport.readEnvironment },
+      { serverId, environmentActions: actions, lifetime: account.accountLifetime });
+    let reloaded: Awaited<ReturnType<typeof renderTab>> | undefined;
+    let mountedDisposed = false;
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await mounted.settle(`${id}.enabled`)).not.toBeNull();
+      await vi.waitFor(() => expect(preparations).toBe(1));
+      expect(Modal.show).not.toHaveBeenCalled();
+      expect(effects).toBe(0);
+      await mounted.screen.pressByTestIdAsync(`${id}.enabled`);
+      expect(await mounted.settle('actions.confirmation-review.decision-approve')).not.toBeNull();
+      await act(async () => {});
+      expect(effects).toBe(0);
+      const reviews = vi.mocked(Modal.show).mock.calls.filter(([config]) => config.chrome?.testID === 'actions.confirmation-review.modal');
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.[0].props).toMatchObject({ actionId: 'deployments.environments.update',
+        preview: { summary: expect.any(String) } });
+      expect(JSON.stringify(reviews[0]?.[0].props?.preview)).toContain('workflow.trigger.add');
+      await mounted.screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+      await vi.waitFor(() => expect(effects).toBe(1));
+      // The controller refuses before effects, then admits the exact carried
+      // review after the person answers it once on the mounted UI host.
+      expect(admissions).toHaveLength(2);
+      expect(admissions[0]?.requestId).toEqual(expect.any(String));
+      expect(detail.content.previewTemplate?.enabled).toBe(true);
+      await mounted.screen.unmount(); mounted.controller.retire(); mountedDisposed = true;
+      reloaded = await renderTab('settings', initialDetail, { readEnvironment: transport.readEnvironment },
+        { serverId, environmentActions: actions, lifetime: account.accountLifetime });
+      const enabled = await reloaded.settle(`${id}.enabled`);
+      expect(enabled, reloaded.screen.getTextContent()).not.toBeNull();
+      const { Switch } = await import('@/components/ui/forms/Switch');
+      expect(enabled!.findByType(Switch).props.value).toBe(true);
+      expect(effects).toBe(1);
+      expect(homes.artifacts(serverId).list().map(row => row.id)).toEqual([detail.environment.contentArtifactId]);
+      expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(0);
+    } finally {
+      await reloaded?.screen.unmount(); reloaded?.controller.retire();
+      if (!mountedDisposed) { await mounted.screen.unmount(); mounted.controller.retire(); }
+      account.dispose(); await homes.reset();
+    }
   });
 
   it('shows the preview template it carries: on, where previews run, their address, data and that forks get none', async () => {
@@ -1447,7 +1641,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it.each(['empty', 'capture'] as const)('authors an unseeded native preview with %s data through the existing intent writer', async mode => {
+  it.each(['empty', 'capture'] as const)('authors an unseeded native preview with %s data and a localized template title through the existing intent writer', async mode => {
     await homes.reset();
     // The app entry initializes sync before a Saved Secret catalog consumer mounts.
     await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
@@ -1487,7 +1681,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     if (!bundled || typeof bundled !== 'object' || !('apps' in bundled) || !Array.isArray(bundled.apps)) throw new Error('Expected bundled catalog');
     const entry: unknown = bundled.apps.find((row: { itemId: string }) => row.itemId === 'postgresql');
     if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected canonical PostgreSQL');
-    const app = DeploymentTemplateV1Schema.parse(entry.app);
+    const app = { ...DeploymentTemplateV1Schema.parse(entry.app),
+      title: { key: 'preview.databaseTitle', fallback: 'Localized PostgreSQL template' } };
     homes.answer(serverId, '/apps.json', { body: { schemaVersion: 1, apps: [{ itemId: 'postgresql', app }] } });
     const base = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId: serverIdentityId }, content: { ...base.content,
@@ -1574,6 +1769,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
       const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
       expect(await settle(rowId)).not.toBeNull();
       await screen.pressByTestIdAsync(rowId);
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.getTextContent()).toContain('Localized PostgreSQL template'); });
       if (mode === 'empty') {
         expect(await settle(`${id}.native.empty.save`)).not.toBeNull();
         expect(inventoryReads).toBe(0);
@@ -1855,10 +2052,36 @@ describe('Environment → Settings: checks, backups, previews', () => {
       serverIdentityId: 'srv_backup_setup', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const detail = withDatabase(createDeploymentEnvironmentDetailV1());
-    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
-    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const configureInputs: Array<ReturnType<typeof DeploymentBackupConfigureInputV1Schema.parse>> = [];
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: [] },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+      execute: input => {
+        expect(input).toMatchObject({ mode: 'preview', defaultsFor: 'backups' });
+        expect(input).not.toHaveProperty('patch');
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+          creationDefaults: { values: { retainPreviousDeployments: 1, backupRetention: { kind: 'keep', daily: 7, weekly: 4 } }, sources: {} },
+          backupSourceChoices: [{ kind: 'dump', sourceId: 'postgres', service: 'postgres', consistency: 'logical' }] };
+      },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'deployments.backups.configure', tokenEpoch: 0,
+      execute: input => {
+        const parsed = DeploymentBackupConfigureInputV1Schema.parse(input);
+        configureInputs.push(parsed);
+        expect(parsed.intent).toBe('save');
+        return { kind: 'needsBinding', configuration: DeploymentBackupConfigurationV1Schema.parse(
+          Reflect.get(parsed, 'configuration')), missingRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] };
+      },
+    });
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
-    // The descriptor the backup-destinations family publishes; its identity and roles must reach the patch unchanged.
+    // The descriptor the backup-destinations family publishes; its identity and fields must reach Configure unchanged.
     const destination = { id: 'example.storage/bucket-store', pluginId: 'example.storage', pluginVersion: '1.0.0',
       definition: { id: 'bucket-store', title: 'Bucket store', resticTransport: 's3', locality: 'unknown',
         credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' },
@@ -1893,7 +2116,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId,
       active: true, activeAt: Date.now(), daemonStateVersion: 1 })]);
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      environmentActions: { setController: vi.fn(), updateEnvironment },
+      environmentActions: actions,
       // #99: the Account selected an older bundled Machine with no destination family.
       serverId,
       pluginUiProjection: { value: EMPTY_PLUGIN_UI_PROJECTION,
@@ -1904,9 +2127,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await vi.waitFor(() => expect(screen.findByTestId(`${id}.start`)).not.toBeNull());
       expect(screen.findByTestId(`${id}.store`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.start`);
-      // The optional transport settings open from More options inside the one setup sheet.
-      expect(await settle(`${id}.more`)).not.toBeNull();
-      await screen.pressByTestIdAsync(`${id}.more`);
+      // Configure renders the controller descriptor directly, including its optional transport settings.
+      expect(await settle(`${id}.save`)).not.toBeNull();
       const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
       const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
       const field = (name: string) => screen.findAllByType(HappierInputField).find((node) => node.props.field.path === name)!;
@@ -1926,45 +2148,67 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).toContain('Optional');
       await act(async () => { field('attempts').props.onChange('invalid integer'); });
       expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
-      expect(updateEnvironment).not.toHaveBeenCalled();
+      expect(configureInputs).toEqual([]);
       await act(async () => { field('attempts').props.onChange(3); });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { backup: expect.objectContaining({
-        destinationRef: { pluginId: 'example.storage', localId: 'bucket-store' },
-        config: { endpoint: 'http://minio.internal:9000', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1',
-          addressing: 'path', enabled: false, attempts: 3, advanced: { label: 'QA' } },
-        credentialBindings: [
-          { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' },
-          { purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
-          { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' }],
-        sources: [{ kind: 'dump', sourceId: 'postgres', service: 'postgres', consistency: 'logical' }],
-        ownership: { environmentId: detail.environment.id, prefix: 'shop/' },
-        retention: { kind: 'keep', daily: 7, weekly: 4 } }) });
-      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-      // An agent sends the same Action and patch.
-      expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: 'srv', environmentId: detail.environment.id,
-        expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
-        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
-        patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+      await vi.waitFor(() => expect(configureInputs).toHaveLength(1));
+      expect(configureInputs[0]).toMatchObject({ intent: 'save', environmentId: detail.environment.id,
+        expectedRevision: detail.environment.revision, configuration: {
+          destinationRef: { pluginId: 'example.storage', localId: 'bucket-store' },
+          config: { endpoint: 'http://minio.internal:9000', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1',
+            addressing: 'path', enabled: false, attempts: 3, advanced: { label: 'QA' } },
+          credentialBindings: [
+            { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' },
+            { purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
+            { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' }],
+          sources: [{ kind: 'dump', sourceId: 'postgres', service: 'postgres', consistency: 'logical' }],
+          ownership: { environmentId: detail.environment.id, prefix: '' },
+          retention: { kind: 'keep', daily: 7, weekly: 4 },
+        } });
+      // Required roles describe the candidate; no saved secret has been selected for any role yet.
+      expect(configureInputs[0]).toMatchObject({ backupBindings: [] });
+      expect(await settle(`${id}.needsBinding`)).not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('offers no backup setup for an Environment that runs no database and leads to Add a database instead', async () => {
+  it('keeps backup configuration unsaveable when the controller offers no database sources', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'No database', serverUrl: 'https://no-database.test',
-      accountId: 'account-owner', currentAccount: true });
+      serverIdentityId: 'srv_no_database', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const detail = createDeploymentEnvironmentDetailV1();
+    await publishBundledBackupDestination(account, detail.environment.controllerMachineId);
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: [] },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+      execute: input => {
+        expect(input).toMatchObject({ mode: 'preview', defaultsFor: 'backups' });
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+          creationDefaults: { values: { retainPreviousDeployments: 1 }, sources: {} }, backupSourceChoices: [] };
+      },
+    });
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      serverId, environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+      serverId, environmentActions: actions });
     const id = 'project-deployments.environment.settings.backups.setup';
     try {
-      expect(await settle(`${id}.noDatabase`)).not.toBeNull();
-      expect(screen.findByTestId(`${id}.start`)).toBeNull();
-      const { Modal } = await import('@/modal');
-      vi.mocked(Modal.show).mockClear();
-      await screen.pressByTestIdAsync(`${id}.addDatabase`);
-      expect(vi.mocked(Modal.show).mock.calls.map(([config]) => config.chrome?.testID)).toEqual(['project-deployments.add.modal']);
+      expect(await settle(`${id}.start`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.start`);
+      expect(await settle(`${id}.save`)).not.toBeNull();
+      const { t } = await import('@/text');
+      const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+      expect(screen.getTextContent()).toContain(t('projects.deployments.settingsSections.setupNoDatabaseTitle'));
+      expect(screen.getTextContent()).toContain(t('projects.deployments.settingsSections.setupNoDatabaseBody'));
+      const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+      // Valid destination fields still cannot make a backup without a controller-provided source.
+      for (const [path, value] of Object.entries({ endpoint: 'http://minio.internal:9000', bucket: 'acme-backups', prefix: 'shop/' })) {
+        await act(async () => screen.findAllByType(HappierInputField)
+          .find(node => node.props.field.path === path)!.props.onChange(value));
+      }
+      expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 

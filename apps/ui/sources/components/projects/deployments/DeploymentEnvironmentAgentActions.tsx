@@ -29,7 +29,7 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   const investigation = useInvestigateFailure(subject, options);
   // Until the catalog answers, the Environment's declared records wait in their settled place (DEPLOY-ACCEPT-143 A6).
   const waiting = investigation.actions === undefined;
-  const actions = investigation.actions ?? declaredSubjectAgentActions('deploymentEnvironment');
+  const actions = waiting ? declaredSubjectAgentActions('deploymentEnvironment') : investigation.actions ?? [];
   if (!props.preparation && actions.length === 0 && !investigation.showOutcome) return null;
   return (
     <>

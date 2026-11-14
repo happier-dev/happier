@@ -20,7 +20,6 @@ import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-prot
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
-import type { InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -437,6 +436,8 @@ describe('Project deployments page', () => {
     { phone: false, stored: false }, { phone: true, stored: false },
     { phone: false, stored: true }, { phone: true, stored: true },
   ])('shows the Environment catalog action with a serving deployment (phone=$phone, stored=$stored)', async ({ phone, stored }) => {
+    const { createDeferred } = await import('@/dev/testkit');
+    const catalogAnswer = createDeferred<void>();
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
@@ -472,6 +473,7 @@ describe('Project deployments page', () => {
     await answerExternalActionAccountForHome(homes, scope.serverId, {
       machineId: detail.environment.controllerMachineId, actionId: 'action.invoke', tokenEpoch: 0,
       requesterInvocation: 'required', execute: async (input, request) => {
+        await catalogAnswer.promise;
         const invocation = getActionSpec('action.invoke').inputSchema.parse(input);
         expect(invocation.action).toEqual({ pluginId: TRIAGE_PLUGIN.manifest.id, localId: 'actions/read-v1' });
         // The external controller HTTP, Account KV and admitted host-contribution services are boundaries;
@@ -490,15 +492,21 @@ describe('Project deployments page', () => {
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
         review={noReview} onOpenReceipt={() => {}} />);
       const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+      const declared = screen.findAllByType(AgentActionButton);
+      expect(declared.length).toBeGreaterThan(0);
+      expect(declared.every(button => button.props.disabled === true)).toBe(true);
+      await act(async () => catalogAnswer.resolve());
       await waitForHomeGovernance(async () => {
         await act(async () => {});
         expect(screen!.findAllByType(AgentActionButton).map(button => ({ title: button.props.title,
-          launchMode: button.props.launchMode, startUnavailableReason: button.props.startUnavailableReason })))
-          .toContainEqual({ title: 'Set it up', launchMode: 'review', startUnavailableReason: undefined });
+          launchMode: button.props.launchMode, startUnavailableReason: button.props.startUnavailableReason,
+          disabled: button.props.disabled })))
+          .toContainEqual({ title: 'Set it up', launchMode: 'review', startUnavailableReason: undefined, disabled: false });
         expect(screen!.root.findAll(node => typeof node.type === 'string' && node.props.role === 'button'
           && node.props.accessibilityLabel === 'Set it up').length).toBeGreaterThan(0);
       });
     } finally {
+      catalogAnswer.resolve();
       await screen?.unmount();
       await act(async () => { controller.retire(); });
       await installed.dispose();
@@ -519,7 +527,11 @@ describe('Project deployments page', () => {
         review={noReview} onOpenReceipt={() => {}} />);
       await waitForContent(screen, 'project-deployments.environment.menu');
       const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
-      expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
+      const { InvestigationAgentActionButtons } = await import('@/components/inbox/detail/InvestigationAgentActionButtons');
+      await waitForHomeGovernance(async () => {
+        expect(screen.findAllByType(InvestigationAgentActionButtons).every(node => !node.props.pending)).toBe(true);
+        expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
+      });
       expect(screen.findByTestId('project-deployments.environment.prepare')).toBeNull();
       await screen.unmount();
     } finally { await act(async () => { controller.retire(); }); }
@@ -1478,19 +1490,6 @@ describe('Project deployments page', () => {
     controller.retire();
   });
 
-  it('draws the Environment\'s declared agent action in its settled place before the catalog answers (DEPLOY-ACCEPT-143 A6)', async () => {
-    const { InvestigationAgentActionButtons } = await import('@/components/inbox/detail/InvestigationAgentActionButtons');
-    const { controller, detail } = controllerFor({});
-    try {
-      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
-        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
-        onOpenReceipt={() => {}} />);
-      // First paint already holds "Set it up", waiting, so its later answer never pushes the page down.
-      const first = screen.findAllByType(InvestigationAgentActionButtons)
-        .flatMap(buttons => buttons.props.actions.map((action: InvestigationAgentActionButtonModel) => action.label));
-      expect(first).toContain('Set it up');
-    } finally { controller.retire(); }
-  });
 
   describe('the first deploy ends on the live address (FIRST-DEPLOY-URL-1112)', () => {
     const liveDomains = (targetLinkId: string): DeploymentReadTransportV1['listDomains'] => async () => ({ ok: true as const, value: {
