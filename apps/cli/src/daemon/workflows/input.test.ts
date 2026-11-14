@@ -461,10 +461,11 @@ describe('workflow input materialization', () => {
     expect(materialized.values[1]).toBe('other'.repeat(4_000));
   });
 
-  it('retains the input-too-large failure when the goal and prompt cannot fit without turns', async () => {
-    await expect(materializeWorkflowStepInput({ document: { text: 'x'.repeat(256 * 1024), references: [], attachments: [] },
+  it.each([0, 1])('retains the input-too-large failure when the goal and prompt cannot fit with %s turns', async turnCount => {
+    await expect(materializeWorkflowStepInput({ document: { text: 'x'.repeat(248 * 1024), references: [], attachments: [] },
       references: [{ kind: 'session_context', recentTurns: 1 }], runtime: { ...runtime, resolveSessionContext: async () => ({
-        goal: contextGoal, usage: { kind: 'unavailable' }, turns: [{ initiator: 'user', text: 'drop' }], truncated: false,
+        goal: { ...contextGoal, title: 'g'.repeat(4_000), summary: 's'.repeat(8_000) }, usage: { kind: 'unavailable' },
+        turns: Array.from({ length: turnCount }, () => ({ initiator: 'user' as const, text: 'drop' })), truncated: false,
       }) } })).rejects.toMatchObject({ code: 'workflow_input_too_large' });
   });
   it('projects the immutable schedule occurrence into the named workflow input seed', () => {

@@ -1499,6 +1499,17 @@ describe("workflowRunService (integration)", () => {
             .resolves.toMatchObject({ invocation: { index: { id, attempt: "1", contentRevision: "0" }, contentEnvelope } });
         await expect(admitWorkflowInvocationsOwner(request)).resolves.toMatchObject({ disposition: "existing" });
         expect(await db.workflowRunInvocation.count({ where: { runId: seeded.runId } })).toBe(3);
+        // Even the superseded row's exact updated token cannot authorize review:
+        // membership belongs to the mutation transaction, not a caller preflight.
+        const retired = { ...seeded, invocationId: seeded.invocationId, invocationAttempt: 0n,
+            expectedContentRevision: 2n, accountCurrentness: await accountCurrentness(seeded.accountId),
+            contentEnvelope: seeded.fact.contentEnvelope };
+        const { publishWorkflowInvocationDraft, completeWorkflowInvocationReview } = await import("./workflowRunService");
+        await expect(publishWorkflowInvocationDraft(retired)).rejects.toMatchObject({ code: "currentness_conflict" });
+        for (const mode of ["use_result", "generate"] as const) {
+            await expect(completeWorkflowInvocationReview({ ...retired, mode }))
+                .rejects.toMatchObject({ code: "currentness_conflict" });
+        }
     });
 
     it("refuses review parking while another current leaf has unresolved custody", async () => {

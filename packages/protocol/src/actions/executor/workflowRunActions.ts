@@ -2546,10 +2546,6 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const existing = await rejoin(opened, prior);
     if (existing) return existing;
     if (prior.index.contentRevision !== input.expectedContentRevision) throw workflowError('currentness_conflict');
-    const current = record(await deps.storage.execute({ operation: 'invocations.current', runId: input.runId,
-      parentRecordId: prior.index.parentRecordId, memberOrdinal: prior.index.memberOrdinal }, signal ? { signal } : {}));
-    const currentIndex = WorkflowRunInvocationIndexV1Schema.parse(record(current.invocation).index);
-    if (currentIndex.id !== prior.index.id || currentIndex.contentRevision !== prior.index.contentRevision) throw workflowError('currentness_conflict');
     const held = prior.index.lifecycle === 'waiting_for_review';
     if (completing && !held) throw workflowError('ineligible_state');
     if (!isWorkflowDraftPublicationLifecycleV1(prior.index.lifecycle)

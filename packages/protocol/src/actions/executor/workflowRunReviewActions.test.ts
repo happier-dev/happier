@@ -308,6 +308,7 @@ describe('Account review Actions', () => {
     await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode },
       context: { ...actor, authority: 'account_automation', externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } }))
       .resolves.toMatchObject({ disposition: mode === 'use_result' ? 'completed' : 'generation_requested' });
+    expect(h.operations.filter(operation => operation.operation === 'invocations.current')).toHaveLength(0);
   });
 
   it('accepts supplied bytes with the answering Account while retaining exact owned input', async () => {
@@ -425,6 +426,7 @@ describe('Account review Actions', () => {
     expect(published).toMatchObject({ invocation: { index: { lifecycle, contentRevision: '5' }, progress: {
       result: 'stop', review: { resultSource: { kind: 'published', by: 'agent' } }, execution: { localInputId: 'initial-input' } } } });
     expect(h.run.revision).toBe(7);
+    expect(h.operations.filter(operation => operation.operation === 'invocations.current')).toHaveLength(0);
   });
 
   it('records generation intent on the held row and rejoins a lost response once', async () => {

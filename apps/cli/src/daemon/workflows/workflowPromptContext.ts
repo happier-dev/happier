@@ -112,8 +112,11 @@ export function compactWorkflowPromptContext(entries: WorkflowPromptContext[], r
     }
     return render();
   }
-  const candidates = entries.filter(entry => !(entry.reference.kind === 'input'
-    && (entry.reference.name === 'question' || entry.reference.name === 'request')));
+  // Session context has a typed value and an indivisible goal. Its owner drops
+  // oldest turns; if that cannot fit, materialization must refuse unchanged.
+  const candidates = entries.filter(entry => entry.reference.kind !== 'session_context'
+    && !(entry.reference.kind === 'input'
+      && (entry.reference.name === 'question' || entry.reference.name === 'request')));
   const largest = candidates.map(entry => ({ entry, text: typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value) }))
     .filter(candidate => candidate.text.length > 1 && candidate.entry.value !== null)
     .sort((left, right) => right.text.length - left.text.length)[0];
