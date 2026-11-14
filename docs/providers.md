@@ -1317,10 +1317,9 @@ source does not supply a native startup model. A missing selection returns
 `model_selection_required` with the existing `choose_model` recovery; an explicit
 selection absent from the source catalog remains `provider_model_not_found`.
 Admission does not choose an arbitrary catalog model.
-Continuation inspection consumes that same requirement when the current purpose
-catalog already establishes a managed source. Unavailable purpose projections
-retain the ordinary launch owner's dynamic refusal path; native purposes retain
-their Agent-owned startup defaults.
+Continuation inspection keeps a target without a model selection available so
+the person can open its model picker. The launch owner reports the typed
+required-model refusal if the person continues without choosing one.
 
 In unreleased 0.3 development, the shared Session model picker and
 `agents.models.list` send selected Account or Pool bindings through

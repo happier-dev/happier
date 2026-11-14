@@ -6,7 +6,7 @@ import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOver
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { resolveAgentManagedPurposeSelections, resolveManagedPurposeModelSelectionRejection } from '@/providers/managed/agentPurposeSelections';
+import { resolveAgentManagedPurposeSelections } from '@/providers/managed/agentPurposeSelections';
 import { readLeasedAgentProviderBindingAdapter, prepareLeasedAgentProviderBinding, materializeLeasedAgentProviderBinding, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { getProviderContribution } from '@/providers/registry/lookup';
@@ -71,9 +71,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   const refuse = (code: Parameters<typeof createProviderErrorV1>[0], cause?: unknown) => ({ ok: false as const,
     error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}, cause) });
   if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) return refuse('provider_feature_disabled');
-  const modelSelectionRejection = resolveManagedPurposeModelSelectionRejection({ candidates,
-    selection: input.selection, machineId: input.machineId });
-  if (modelSelectionRejection) return { ok: false, error: modelSelectionRejection };
+  if (!input.selection) return refuse('model_selection_required');
   const selectedTarget = input.resolveSelectionTarget();
   if (!selectedTarget) return refuse('provider_incompatible_with_agent');
   const { agentTargetKey, selection: canonicalSelection } = selectedTarget;

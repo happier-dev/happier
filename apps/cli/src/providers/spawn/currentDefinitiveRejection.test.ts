@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse, DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema, ProviderSettingsV1Schema } from '@happier-dev/protocol';
+import { accountSettingsParse, AccountEncryptionCurrentnessResponseSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema, ProviderSettingsV1Schema, V2SessionRecordSchema } from '@happier-dev/protocol';
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { inspectSessionContinuation } from '@/session/agentTransition/sessionContinuationInspection';
 import { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -14,11 +16,11 @@ import { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshot, 
 import { resolveAgentNativeSpawnDefinitiveRejection, resolveCurrentProviderSpawnDefinitiveRejection } from './currentDefinitiveRejection';
 
 describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
-  it('refuses a known managed source without a model before continuation, preserving explicit and native choices', async () => {
+  it('keeps a managed target available so its required model can be chosen', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'continuation-purpose-model-' }, async ({ homeDir }) => {
       const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
-        physicalGateway: true, includeBundledDeclarations: true,
+        controller: pluginReloadController, physicalGateway: true, includeBundledDeclarations: true,
         connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
           managedProviderEndpoint: { provider: { pluginId: 'acme.shared-registry', localId: 'gateway' },
             purpose: 'upstream', modelIdPrefix: 'native/' } }] });
@@ -33,8 +35,21 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
         const deps = { getActiveAccountSettingsSnapshot,
           tryAcquireAuthoritativePluginRuntimeRegistryLease: () => fixture.gateway!.controller.tryAcquireRuntimeRegistry() };
         const target = { agentId: fixture.agentId, agentTargetKey: fixture.agentTargetKey, deps };
+        const rawSession = V2SessionRecordSchema.parse({ id: 'source-session', machineId: fixture.machineId, encryptionMode: 'plain',
+          metadata: JSON.stringify({ flavor: 'codex', path: homeDir, machineId: fixture.machineId }),
+          metadataVersion: 1, metadataLayoutVersion: 0, agentState: null, agentStateVersion: 1,
+          active: false, seq: 1, createdAt: 1, updatedAt: 1, activeAt: 1, dataEncryptionKey: null });
+        const accountEncryptionCurrentness = AccountEncryptionCurrentnessResponseSchema.parse({
+          mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+        await expect(inspectSessionContinuation({ credentials: { token: 'token', encryption: null },
+          request: { v: 1, sourceSessionId: 'source-session', selection: { v: 1, agentId: fixture.agentId } },
+          // Network transport is the boundary; catalog publication, identity,
+          // metadata reader and definitive Provider inspection remain real.
+          deps: { resolveSessionTransportContext: async () => ({ ok: true, sessionId: 'source-session',
+            rawSession, accountEncryptionCurrentness, ctx: null, mode: 'plain' }) },
+        })).resolves.toEqual({ type: 'available', protocolVersion: 1, sameSessionTransition: true });
         await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
-          .resolves.toMatchObject({ ok: false });
+          .resolves.toEqual({ ok: true, ref: null });
         await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelId: 'native/example' } }))
           .resolves.toMatchObject({ ok: true, ref: { modelId: 'native/example' } });
         expect(commitActiveConnectedAccountCatalog({ ...purposePublication,
