@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
+import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import { RowMark } from '@/components/store/inventory/ManagedInventoryDirectory';
 import type { ManagedInventorySectionsState } from '@/components/store/inventory/ManagedInventorySections';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
@@ -71,7 +72,8 @@ function familyState(state: ManagedInventorySectionsState, kind: 'configuredChec
       </ItemGroup>
     );
   }
-  return null;
+  // Partly read (a Machine not read yet) is not "none": the inventory's own coverage line, never the empty scene.
+  return <ManagedInventoryCoverage families={[family]} testIDPrefix={testID} />;
 }
 
 /**

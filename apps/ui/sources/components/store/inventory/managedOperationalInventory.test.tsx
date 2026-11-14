@@ -186,6 +186,31 @@ it('keeps watch content unchanged for heartbeat and unrelated metadata, then pub
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.watchedService.rows).toEqual([]));
 });
 
+// QA-DEPLOY-1114 #16: Account A (175 Machines, some still loading) read "Nothing watched yet". A Machine whose content
+// isn't readable yet can hold watches, so the family is partial until it is read, as Setup already says.
+it('keeps watched services partial while a visible Machine\'s content is unread, and complete once it is read', async () => {
+    const watches = watchesField({ v: 1, watches: [{ v: 1, watchId: 'recorded-service', name: 'Database',
+        adapter: { pluginId: 'example.service', localId: 'native' }, nativeResourceId: 'native-database', lifecyclePurpose: 'infrastructure' }] });
+    const machine = createMachineFixture({ id: 'unread-machine', metadata: { ...createMachineFixture().metadata!,
+        agentInventory: { checkedAt: 1, installedAgentIds: [] }, serviceWatchesV1: watches } });
+    await account.restore({ serverIdentityId: 'srv_inventory_watch_unread', machines: [machine] });
+    const scope = storage.getState().settingsScope!;
+    const admitted = storage.getState().machines[machine.id]!;
+    await act(async () => { storage.getState().applyMachines([{ ...admitted, metadata: null, metadataVersion: machine.metadataVersion + 1 }], false,
+        { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }); });
+    const query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await flushHookEffects();
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.watchedService.coverage).not.toBe('loading'));
+    expect(hook.getCurrent().operationalFamilies.watchedService.rows).toEqual([]);
+    expect(hook.getCurrent().operationalFamilies.watchedService.coverage).not.toBe('available');
+    await act(async () => { storage.getState().applyMachines([{ ...admitted, metadataVersion: machine.metadataVersion + 2 }], false,
+        { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }); });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.watchedService.rows).toHaveLength(1));
+    expect(hook.getCurrent().operationalFamilies.watchedService.coverage).toBe('available');
+    await hook.unmount();
+});
+
 function setupField(sources: readonly unknown[]) {
     return MachinePublishedMetadataV1Schema.parse({ ...createMachineFixture().metadata!,
         setup: { version: 1, revision: 1, exclusions: [], sources } }).setup!;
