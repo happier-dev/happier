@@ -50,6 +50,7 @@ import { resolveMachineNetworkProviderTitle, type MachineNetworkProviderTitle } 
 import type { MachineNetworkExposureFacts, MachineNetworkPortFact } from './networkExposureFacts';
 import { buildNetworkConsoleConfirmationChange, projectMachineNetworkAccessFacts } from './networkAccessFacts';
 import { useMachineNetworkProviderTitle } from './useMachineNetworkProviderTitle';
+import { MachineFirewallRecovery } from './MachineFirewallRecovery';
 
 type ReviewControls = Readonly<{
   review: MachineNetworkReview;
@@ -1024,6 +1025,7 @@ function NetworkReviewFoot(
   }
   if (review.kind === 'settled') {
     return (
+      <>
       <ItemGroup surface="none">
         <SurfaceStateCard
           testID="machine-network-settled"
@@ -1036,6 +1038,8 @@ function NetworkReviewFoot(
           diagnosticCode={review.result.errorCode ?? null}
         />
       </ItemGroup>
+      {review.result.recovery ? <MachineFirewallRecovery recovery={review.result.recovery} /> : null}
+      </>
     );
   }
   if (review.kind === 'failed') {

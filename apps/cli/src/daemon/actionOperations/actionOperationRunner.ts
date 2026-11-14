@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createPendingSessionBirth } from './pendingSessionBirth';
-import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
+import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -21,10 +21,12 @@ import { normalizeSessionCreationSelectionIdentityV1 } from '@happier-dev/protoc
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectServiceRelocateInputV1, ProjectServiceMoveStartClaimResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol';
-import { MachineServiceExecResultV1Schema } from '@happier-dev/protocol';
-import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
-import { MachineAdminAccessMutationResultV1Schema, MachineRebootResultV1Schema, MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol';
+import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { MachineServiceExecResultV1Schema } from '@happier-dev/protocol/local/services/serviceExecV1';
+import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
+import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineRebootResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/reboot';
+import { MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 
 import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -427,11 +429,11 @@ export function createActionOperationRunner(deps: Readonly<{
               return executionResult;
             }
           }
-          const reachability = action.actionId === 'machines.reachability.configure' && executionResult.ok
+          const reachability = action.actionId === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 && executionResult.ok
             ? MachineReachabilityConfigureResultV1Schema.safeParse(executionResult.result) : null;
           if (reachability?.success && reachability.data.status === 'outcome_unknown') {
             deps.store.updateObservation(operationId, { kind: 'outcome_uncertain',
-              code: reachability.data.errorCode ?? 'action_outcome_unknown' });
+              code: reachability.data.errorCode ?? 'action_outcome_unknown' }, reachability.data);
             return executionResult;
           }
           const adoption = action.actionId === 'machines.services.adopt' && executionResult.ok

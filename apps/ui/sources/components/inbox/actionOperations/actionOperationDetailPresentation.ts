@@ -13,6 +13,9 @@ import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/q
 import { t } from '@/text';
 import { describeMachineSetupFailureCause } from '@/components/machines/setup/machineSetupReasonText';
 import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemStatus } from '@/components/systemTasks/planChecklist';
+import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
@@ -74,6 +77,7 @@ export type ActionOperationDetailProjection = Readonly<{
     kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin' | 'projectCommand' | 'machineSetup' | 'machineReboot';
     projectCommand: ProjectCommandAttachmentV1 | null;
     machineSetup: MachineSetupOutputAttachment | null;
+    machineFirewallRecovery: MachineFirewallRecoveryV1 | null;
     machineReboot: MachineRebootAttachment | null;
     agentIsolationReview: AgentIsolationReviewDetail | null;
     fields: readonly ActionOperationDetailField[];
@@ -97,6 +101,7 @@ type DetailProjector = (
 const EMPTY_DETAIL = Object.freeze({
     projectCommand: null,
     machineSetup: null,
+    machineFirewallRecovery: null,
     machineReboot: null,
     agentIsolationReview: null,
     fields: Object.freeze([]),
@@ -340,12 +345,28 @@ export function readProjectCommandOutputWorkspace(attachment: ProjectCommandAtta
 function projectMachineSetup(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
     const attachment = snapshot.domainRef;
     if (attachment?.kind !== 'machineSetup') return projectPlugin(snapshot);
+    let machineFirewallRecovery: MachineFirewallRecoveryV1 | null = null;
+    let summary: unknown = snapshot.result;
+    if (snapshot.actionId === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1) {
+        const configured = MachineReachabilityConfigureResultV1Schema.safeParse(unwrapResult(snapshot));
+        if (configured.success) {
+            const { recovery, ...result } = configured.data;
+            machineFirewallRecovery = recovery ?? null;
+            // The complete capture has its own copyable surface, never a truncated generic summary.
+            summary = result;
+        }
+        if (snapshot.error) {
+            const failure = MachineReachabilityConfigureFailureDetailsV1Schema.safeParse(snapshot.error.details);
+            if (failure.success && 'recovery' in failure.data) machineFirewallRecovery = failure.data.recovery ?? null;
+        }
+    }
     return {
         ...EMPTY_DETAIL,
         kind: 'machineSetup',
         machineSetup: attachment,
+        machineFirewallRecovery,
         failure: presentFailure(snapshot),
-        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(summary) : [],
         nextAction: attachment.terminalId ? {
             kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId, terminalId: attachment.terminalId,
         } : null,

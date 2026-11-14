@@ -8,6 +8,7 @@ import { MachineFirewallTransitionFactsV1Schema, MachineFirewallTransitionIntent
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './machineReachabilityPostureV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from './nativeFailureV1.js';
+import { MachineFirewallRecoveryV1Schema } from '../adminAccessV1.js';
 export { MachineReachabilityNativeFailureDetailsV1Schema } from './nativeFailureV1.js';
 
 const text = () => z.string().check(z.trim(), z.minLength(1));
@@ -62,6 +63,7 @@ export const MachineReachabilityConfigureResultV1Schema = lazyZodSchema(() => z.
   status: z.enum(['applied', 'unchanged', 'outcome_unknown']), machineId: text(), metadataVersion: revision(),
   posture: z.nullable(MachineReachabilityPostureV1Schema), selections: z.array(AccessProviderSelectionV1Schema),
   observation: MachineReachabilityObservationV1Schema, errorCode: z.optional(text()),
+  recovery: z.optional(MachineFirewallRecoveryV1Schema),
 }).check(z.refine(result => result.errorCode === undefined || result.status === 'outcome_unknown',
   { message: 'A role result code is supplied only for an unknown reachability outcome.' })));
 export type MachineReachabilityConfigureResultV1 = z.infer<typeof MachineReachabilityConfigureResultV1Schema>;

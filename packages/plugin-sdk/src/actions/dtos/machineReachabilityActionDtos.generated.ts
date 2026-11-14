@@ -3658,5 +3658,25 @@ export type MachineReachabilityActionResultById = {
             };
         };
         errorCode?: string | undefined;
+        recovery?: undefined | {
+            rules: {
+                kind: 'absent';
+            } | {
+                kind: 'file';
+                content: string;
+            };
+            unit: {
+                kind: 'absent';
+            } | {
+                kind: 'file';
+                content: string;
+            };
+            table: null | string;
+            boot: {
+                present: boolean;
+                enabled: boolean;
+                running: boolean;
+            };
+        };
     };
 };

@@ -20,6 +20,7 @@ import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { logger } from '@/ui/logger';
@@ -58,6 +59,10 @@ const SETTLED_RETENTION_LIMIT = 50;
 const SETTLED_RETENTION_MS = 24 * 60 * 60 * 1_000;
 
 const TERMINAL_STATES = new Set<ActionOperationStateV1>(['succeeded', 'failed', 'cancelled']);
+
+function retainsReturnedRecoveryResult(actionId: string): boolean {
+  return isDeploymentTargetLinkActionIdV1(actionId) || actionId === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1;
+}
 
 type CreateActionOperationInput = Readonly<{
   operationId: string;
@@ -213,7 +218,7 @@ export function createActionOperationStore(options?: Readonly<{
     // Recovery needs admission, returned resource facts and terminal settlement, not each progress revision.
     const transientProgressOnly = previous !== undefined && !isTerminal(snapshot)
       && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
-        || isDeploymentTargetLinkActionIdV1(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
+        || retainsReturnedRecoveryResult(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
     if (!transientProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
       try {
         if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
@@ -311,8 +316,8 @@ export function createActionOperationStore(options?: Readonly<{
     const settledAt = Math.max(prior.startedAt ?? prior.createdAt, now());
     const snapshot = isTerminal(prior) ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
       ...remaining,
-      // A created provider resource remains adoptable after the coordinator is lost.
-      ...(isDeploymentTargetLinkActionIdV1(prior.actionId) && prior.result !== undefined ? { result: prior.result } : {}),
+      // Returned resource and recovery facts remain useful after the coordinator is lost.
+      ...(retainsReturnedRecoveryResult(prior.actionId) && prior.result !== undefined ? { result: prior.result } : {}),
       revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
       startedAt: prior.startedAt ?? settledAt, settledAt,
       error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before the Action operation settled',

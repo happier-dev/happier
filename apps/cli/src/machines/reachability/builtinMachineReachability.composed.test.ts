@@ -3,7 +3,7 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
   journey, machineId, parseCompletedReachabilityConfigure, parseReachabilityInspectResult, selection,
 } from './genericMachineReachability.testkit';
 import { userInfo } from 'node:os';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nativeCaddyImage, nativeCaddyProfile, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
@@ -317,9 +317,19 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(review.plan?.basis).toMatchObject({ firewallTransition: {
         intent: { kind: 'retainSsh', publicSsh: { kind: 'closed' } },
       } });
+      const priorFile = async (path: string) => readFile(path, 'utf8')
+        .then(content => ({ kind: 'file' as const, content }), error => {
+          if (error.code !== 'ENOENT') throw error;
+          return { kind: 'absent' as const };
+        });
+      const priorRules = await priorFile('/etc/happier/firewall/rules.nft');
+      const priorUnit = await priorFile('/etc/systemd/system/happier-firewall.service');
       const configured = await executeReviewedReachabilityConfigure(f, api, review);
       expect(parseCompletedReachabilityConfigure(configured.result)).toMatchObject({ status: 'applied', posture,
-        observation: { management: { publicSsh: 'closed' } } });
+        observation: { management: { publicSsh: 'closed' } },
+        recovery: { rules: priorRules, unit: priorUnit, boot: {
+          present: expect.any(Boolean), enabled: expect.any(Boolean), running: expect.any(Boolean),
+        } } });
       const rules = await import('node:fs/promises').then(fs => fs.readFile('/etc/happier/firewall/rules.nft', 'utf8'));
       expect(rules).toContain('ct state new drop');
       expect(rules).not.toContain('tcp dport 2205 accept');

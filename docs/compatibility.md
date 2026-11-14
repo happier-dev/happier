@@ -9781,6 +9781,11 @@ The persisted `reachabilityPosture.management.publicSsh` format is unchanged:
 no records are removed or reinterpreted, and Domain reconciliation still uses
 `preserveSsh`. This wiring does not hold a payload refresh already in progress.
 
+The unreleased Configure result also retains the firewall owner's optional
+`recovery` capture through the [existing Action outcome](actions.md). Matching
+0.3 protocol, daemon, UI and generated SDK readers refresh together; no migration
+is needed. Existing results without the optional capture remain readable.
+
 The unreleased Domain failure details also distinguish a missing post-stage
 Home-routed daemon ACK (`requiredFact: 'homeRoutedDaemonAck'`) from a native
 firewall observation. They retain the observer's optional non-secret RPC error

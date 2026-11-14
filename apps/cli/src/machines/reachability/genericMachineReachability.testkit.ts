@@ -60,6 +60,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { startDaemonSessionControlRuntime } from '@/daemon/startup/startDaemonSessionControlRuntime';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
@@ -1534,6 +1535,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
   let client: ApiMachineClient | undefined;
   let runtime: Awaited<ReturnType<typeof createPublicGenericRuntime>> | undefined;
   let daemonRuntime: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>> | undefined;
+  let sessionsRoleRuntime: Awaited<ReturnType<typeof activateSessionsRoleForMachineClient>> | undefined;
   let signedHome: Awaited<ReturnType<typeof createExternalActionHomeProcessForTests>> | undefined;
   const processBoundary = installGenericDefaultHostProcessBoundary(fixture);
   const sockets: ReturnType<typeof createApiSessionSocketStub>[] = [];
@@ -1652,7 +1654,8 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     // transport requests while reply sockets and OS adapters are still live.
     receivingRpc?.cancelTransportRequests();
     const elevation = await Promise.allSettled([fixture.elevation.dispose()]);
-    const results = [...elevation, ...await Promise.allSettled([client?.shutdown(), daemonRuntime?.stopControlServer()])];
+    const roles = await Promise.allSettled([sessionsRoleRuntime?.stop()]);
+    const results = [...elevation, ...roles, ...await Promise.allSettled([client?.shutdown(), daemonRuntime?.stopControlServer()])];
     try { await runtime?.dispose(); }
     finally {
       await Promise.allSettled([...pendingRpc]);
@@ -1897,10 +1900,11 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     });
     const ingressOwner = daemonRuntime.externalActionIngressOwner;
     if (!ingressOwner) throw new Error('Expected the actual credentialed daemon Action ingress producer');
-    installed.setRPCHandlers({ spawnSession: async () => { throw new Error('Reachability must not start an Agent'); },
+    const machineRpc = installed.setRPCHandlers({ spawnSession: async () => { throw new Error('Reachability must not start an Agent'); },
       stopSession: async () => true, requestShutdown() {} }, {
       actionsSettingsProvider: createActionSettingsProvider(), externalActionIngressOwner: ingressOwner,
     });
+    sessionsRoleRuntime = await activateSessionsRoleForMachineClient(installed, machineRpc);
     const target = { serverId: 'generic-home', machineId, installationId, custodianAccountId: 'generic-owner' };
     const adminAccess = createDaemonMachineAdminAccessRoutes({ target: () => target, getMachineClient: () => installed,
       nativeDependencies: fixture.identity.nativeDependencies });

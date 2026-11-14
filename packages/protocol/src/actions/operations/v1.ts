@@ -41,6 +41,8 @@ import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '../../machines/reachability/nativeFailureV1.js';
+import { MachineReachabilityConfigureResultV1Schema } from '../../machines/reachability/actionsV1.js';
+import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '../../machines/reachability/actionIdsV1.js';
 import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
@@ -568,6 +570,12 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     const projectOpen = snapshot.actionId === 'projects.open' ? OpenProjectResultV1Schema.safeParse(snapshot.result) : null;
     const projectOpenReceipt = projectOpen?.success && (snapshot.state === 'failed' && projectOpen.data.kind === 'refused'
       || snapshot.state === 'running' && snapshot.observation?.kind === 'outcome_uncertain' && projectOpen.data.kind === 'outcomeUnknown');
+    const reachability = snapshot.actionId === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1
+      ? MachineReachabilityConfigureResultV1Schema.safeParse(snapshot.result) : null;
+    const reachabilityReceipt = reachability?.success && reachability.data.status === 'outcome_unknown'
+      && (snapshot.state === 'failed' && snapshot.error?.errorCode === 'action_outcome_unknown'
+        || snapshot.state === 'running' && snapshot.observation?.kind === 'outcome_uncertain'
+          && snapshot.observation.code === (reachability.data.errorCode ?? 'action_outcome_unknown'));
     const spawn = snapshot.actionId === 'session.spawn_new' && snapshot.state === 'failed'
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
     const spawnRefusal = spawn?.success && spawn.data.type === 'error'
@@ -592,7 +600,7 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     const contributedRefusal = contributed?.success && contributed.data.code === snapshot.error?.errorCode;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
       && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
-      && !backupFailure && !restore?.success && !linkProvisioned?.success && !contributedRefusal && !isolationRefusal) {
+      && !backupFailure && !restore?.success && !linkProvisioned?.success && !contributedRefusal && !isolationRefusal && !reachabilityReceipt) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }

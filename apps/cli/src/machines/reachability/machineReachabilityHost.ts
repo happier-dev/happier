@@ -3,8 +3,10 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { executeRetainedSshTransition, type RetainedSshTransitionInput } from './retainedSshTransition';
 import { prepareMachineRecipeProgramV1 } from '@/machines/setup/prepareMachineRecipeProgram';
-import { getMachineSetupDesiredV1, mutateMachineMetadataFieldV1,
-  type ActionExecutorContext } from '@happier-dev/protocol';
+import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { mutateMachineMetadataFieldV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -16,9 +18,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { MachineRecipeSelectionV1Schema, type MachineRecipeSelectionV1, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1,
-  type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1,
-  type MachineReachabilityPlanBasisV1 } from '@happier-dev/protocol';
+import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityPlanBasisV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { checkMachineSetupEffectPlan, createMachineSetupEffectPlan, createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
@@ -387,6 +387,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     };
     let status: 'applied' | 'unchanged' | 'outcome_unknown' = 'applied';
     let verifiedPublicSsh: 'closed' | undefined;
+    let firewallRecovery: MachineFirewallRecoveryV1 | undefined;
     let failureCode: string | undefined;
     let knownFailure: ActionExecuteFailure | undefined;
     let anyNativeEffectPossible = false;
@@ -428,6 +429,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
             signal: deps.context.signal });
           currentState = { ...currentState, metadataVersion: transitioned.metadataVersion, posture: transitioned.posture };
           anyNativeEffectPossible = transitioned.effectAttempted;
+          firewallRecovery = transitioned.recovery;
           if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged') {
             const code = transitioned.errorCode ?? transitioned.status;
             return { ok: false as const, errorCode: code, error: code, effectAttempted: transitioned.effectAttempted,
@@ -681,6 +683,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     }
     if (knownFailure) return knownFailure;
     return { status, machineId: deps.target.machineId, ...currentState, observation,
+      ...(firewallRecovery ? { recovery: firewallRecovery } : {}),
       ...(failureCode ? { errorCode: failureCode } : {}) };
   });
   } catch (error) {

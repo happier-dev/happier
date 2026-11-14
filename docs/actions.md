@@ -23,6 +23,16 @@ This page describes the platform's owners and its admission vocabulary. The publ
 contract lives in [api.md](api.md#external-action-api-developer-preview-source-contract); the CLI
 host is in [cli-architecture.md](cli-architecture.md#action-derived-command-arguments).
 
+In unreleased 0.3 source, `machines.reachability.configure` retains the firewall
+owner's exact prior owned rules, unit, table and boot state in the existing
+encrypted device-local Action receipt. Receipt storage uses the operation owner's
+existing admission failure semantics; progress alone does not rewrite it. The
+scoped V2 operation read and Action detail expose the saved capture without an
+interactive task or an SSH connection. This is recovery material, not evidence
+that restoration occurred. The existing 24-hour/50-settled-operation retention
+applies. There is no Home-side durable copy: a fresh reader still needs the
+daemon's outbound Home route.
+
 In unreleased 0.3 source, plugin-provenance-only Actions are excluded from
 standalone CLI invocation by the canonical Action spec exposure normalizer.
 `actions get`, generated help and Action context descriptions direct callers to

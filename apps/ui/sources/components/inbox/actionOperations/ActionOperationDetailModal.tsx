@@ -61,6 +61,7 @@ import {
 } from './useAgentIsolationRecovery';
 import { ProjectCommandOutputPane } from './ProjectCommandOutputPane';
 import { MachineSetupStepsChecklist } from './MachineSetupStepsChecklist';
+import { MachineFirewallRecovery } from '@/components/machines/security/network/MachineFirewallRecovery';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { ActionOperationSudoQuestion } from './ActionOperationSudoQuestion';
@@ -476,6 +477,7 @@ export const ActionOperationDetailModal = React.memo(
         ) : null}
 
         {detail.machineSetup ? <MachineSetupStepsChecklist attachment={detail.machineSetup} /> : null}
+        {detail.machineFirewallRecovery ? <MachineFirewallRecovery recovery={detail.machineFirewallRecovery} /> : null}
 
         {/* Setup without attached output would only restate the status and Machine shown above. */}
         {detail.projectCommand || detail.machineSetup?.terminalId ? (
