@@ -39,12 +39,6 @@ vi.mock('expo-constants', async original => {
     } };
 });
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: native.fetch }));
-// The receiving CLI uses Undici directly. Replace that third-party HTTP
-// boundary too, keeping Account activation and credential materialization real.
-vi.mock('undici/index.js', async original => ({ ...await original<typeof import('undici')>(),
-    fetch: (url: string, init?: RequestInit) => new URL(url).origin === 'https://api.vercel.com'
-        ? native.fetch(url, init) : globalThis.fetch(url, init),
-}));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 // Packaged assets and the native HTTP SDK are platform boundaries. The public
@@ -874,9 +868,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect(await executor.execute('machines.provisioners.check', probe, discoveryContext))
             .toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
         const providerCheck = await executor.execute('machines.provisioners.check', { ...probe, credentials: launch.credentials }, discoveryContext);
-        expect(providerCheck, JSON.stringify({ providerCheck, homePaths,
-            vendorPaths: native.fetch.mock.calls.map(([url]) => new URL(String(url)).pathname) }))
-            .toMatchObject({ ok: true, result: { available: true } });
+        expect(providerCheck, JSON.stringify(providerCheck)).toMatchObject({ ok: true, result: { available: true } });
         expect(await executor.execute('machines.provisioners.options', {
             ...probe, credentials: launch.credentials, selectors: launch.choices,
         }, discoveryContext)).toMatchObject({ ok: true, result: { base: { available: true, launch: launch.choices } } });

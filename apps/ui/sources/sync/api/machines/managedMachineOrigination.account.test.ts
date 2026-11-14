@@ -25,6 +25,41 @@ const { executeManagedMachineNativeAction } = await import('./managedMachineOrig
 const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
 
 describe('Account managed creation through the app Action executor', () => {
+    it('retires a controllerless resource through the existing Account control admission', async () => {
+        const serverUrl = 'https://account-managed-retire.test';
+        const homeId = 'srv_account_managed_retire';
+        const profile = await upsertAndActivateServer({ serverUrl });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, {
+            token: createAccountTokenForTests('creator', { currentAccount: true }),
+        });
+        const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
+        const machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: 'creator',
+            launch: { provider, schemaVersion: 1, name: 'Retained', choices: {} }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 2, archivedAt: 1,
+            cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const requests: unknown[] = [];
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/actions/get')) return Response.json(machine);
+            if (path.endsWith('/admit-control')) {
+                requests.push(JSON.parse(String(init?.body)));
+                return Response.json({ machine, replayed: false });
+            }
+            throw new Error(`Unexpected HTTP effect: ${path}`);
+        });
+        onTestFinished(resetRuntimeFetch);
+        const account = await captureLazyActionAccountContext(profile.id);
+        onTestFinished(() => account.dispose());
+        const input = { homeId, managedId: machine.id, expectedIntentRevision: 1, manualResponsibility: true };
+        expect(await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.retire', input,
+            context: { surface: 'ui', authority: 'present_user', actionRequestId: 'retire-reviewed' } }))
+            .toEqual({ ok: true, result: machine });
+        expect(requests).toEqual([{ action: 'machines.managed.retire', input, requestId: 'retire-reviewed' }]);
+    });
+
     it('preserves the typed unsupported dimension from an admitted Account resize', async () => {
         const serverUrl = 'https://account-managed-resize.test';
         const homeId = 'srv_account_managed_resize';

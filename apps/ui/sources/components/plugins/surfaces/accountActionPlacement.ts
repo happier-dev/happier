@@ -8,6 +8,8 @@ import { ActionExecuteResultSchema, projectActionFailureCauseV1, actionTargetUna
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiAccountAction, resolveUiAccountActionReceiverMachineId } from '@/sync/ops/actions/accountActionDeps';
@@ -30,6 +32,12 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
     confirmedInvocation?: Readonly<{ input: unknown; inputDigest: string }>;
     executeLocal(): unknown;
 }>): unknown {
+    const purpose = params.context.invocationServices?.connectedAccountPurposeBinding;
+    // The managed owner already selected this host for the whole operation.
+    // Its private exact child proof retains that placement with its custody.
+    if (purpose?.managedOperation && purpose.identity.pluginId === params.action.pluginId
+        && purpose.identity.localId === params.action.localId && readHostReviewedChildOperationV1(params.context,
+        formatQualifiedPluginActionId(params.action), params.input)) return params.executeLocal();
     if (params.execution.invokingUi) return params.executeLocal();
     return executeOnSelectedHost();
 

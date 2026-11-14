@@ -98,11 +98,14 @@ it.each(['projects.inspect', 'projects.manifest.update'] as const)('routes quali
 
 const controller = { machineId: 'controller', installationId: 'installation' };
 const contribution = { pluginId: 'acme.compute', localId: 'machine' };
+const presetContentOverride = { content: { t: 'plain', v: { v: 1, name: 'Guest',
+  launch: { provider: contribution, schemaVersion: 1, name: 'Guest', choices: {} },
+  enrollmentIdentity: { kind: 'existingUser', role: 'personal' } } } };
 it.each([
   ['machines.provisioners.check', { homeId: 'home', controller, contribution }],
   ['machines.provisioners.options', { homeId: 'home', controller, contribution, selectors: {} }],
-  ['machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
-    controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }],
+  ['machines.managed.acquire', { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+    presetContentOverride, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }],
   ['machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off', homeId: 'home', controller,
     launch: { provider: contribution, schemaVersion: 1, name: 'worker', choices: {} },
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }],
@@ -116,9 +119,8 @@ it.each([
 });
 
 it.each([
-  { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
-    selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
-    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+  { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+    presetContentOverride, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
   { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
     selection: { kind: 'one-off', homeId: 'home',
       launch: { provider: contribution, schemaVersion: 1, name: 'worker', choices: {} },
