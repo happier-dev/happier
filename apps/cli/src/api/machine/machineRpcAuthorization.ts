@@ -168,10 +168,15 @@ const nativeFilesystemMethods: readonly string[] = [
   RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD,
   RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL,
 ];
-const nativeSessionMethods = collectActionSpecRpcMethodsForScopes(
-  ACTION_SPECS,
-  [...SESSION_SPAWN_NEW_RPC_SCOPES, ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES],
-);
+// Derived on the first authorization that reaches it: deriving it at module
+// evaluation built the whole Action catalog in every importing process.
+let nativeSessionMethods: readonly string[] | undefined;
+function readNativeSessionMethods(): readonly string[] {
+  return nativeSessionMethods ??= collectActionSpecRpcMethodsForScopes(
+    ACTION_SPECS,
+    [...SESSION_SPAWN_NEW_RPC_SCOPES, ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES],
+  );
+}
 const privateSessionMethods: readonly string[] = Object.values(
   PRIVATE_SPAWN_SESSION_RPC_METHODS,
 );
@@ -1775,7 +1780,7 @@ export async function authorizeMachineRpcRequest(
           rpcMethod === RPC_METHODS.PROJECTS_OPEN ||
           rpcMethod === RPC_METHODS.CAPABILITIES_DETECT ||
           rpcMethod === RPC_METHODS.CAPABILITIES_INVOKE ||
-          nativeSessionMethods.includes(rpcMethod) ||
+          readNativeSessionMethods().includes(rpcMethod) ||
           nativeSessionResume ||
           nativeSessionEffect === 'session.spawn_new' ||
           nativeSessionEffect === 'session.agent.transition'));
