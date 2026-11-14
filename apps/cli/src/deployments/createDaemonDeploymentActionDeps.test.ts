@@ -2016,7 +2016,8 @@ describe('installed deployment storage and target composition', () => {
                 if (scenario === 'rollback retained platform') {
                     // A new Link revision permits fresh review, not substituting
                     // the provider resource that owns the retained deployment.
-                    row.content = { ...row.content, providerIdentity: { ...row.content.providerIdentity,
+                    const linkedProvider = DeploymentTargetLinkProviderContentV1Schema.parse(row.content);
+                    row.content = { ...linkedProvider, providerIdentity: { ...linkedProvider.providerIdentity,
                         providerResourceId: 'another-provider-project' } };
                     put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
                     await expect(deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
