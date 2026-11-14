@@ -115,6 +115,48 @@ afterEach(async () => {
 });
 
 describe('deployment preparation entry', () => {
+  it('shows what Happier recognized in the chosen checkout before an agent is asked (lab f1prep)', async () => {
+    const { serverId, account } = await fixture();
+    const { DeploymentPreparationEntry } = await import('./DeploymentPreparation');
+    const { readProjectManifestDocument } = await import('@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument');
+    const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const inspected: unknown[] = [];
+    // The Action root discovers the checkout Machine's custody before it admits the read.
+    const { createPlainMachineRowFixture } = await import('@/dev/testkit');
+    const machine = createPlainMachineRowFixture({ id: 'workspace-machine', accountId: 'owner' });
+    homes.answer(serverId, '/v1/machines', { body: [machine] });
+    homes.answer(serverId, 'GET /v1/machines/workspace-machine', { body: { machine } });
+    // The Home's Action route is the boundary; the UI's read, its Action admission and the sheet stay real.
+    homes.answer(serverId, '/v1/actions/projects.inspect', { select: body => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      inspected.push(envelope.input);
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect', requestId: envelope.requestId,
+        execution: { ok: true, result: {
+          definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument('{ "version": 1 }\n') },
+          detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'partial', diagnostics: [],
+            applications: [{ file: 'package.json', framework: 'Next.js', runtime: { name: 'Node.js', version: '22' },
+              build: null, start: null, port: 3000 }] },
+          importCandidates: [] } } }) };
+    } });
+    const screen = await renderAccountScreen(<ModalProvider><DeploymentPreparationEntry
+      lifetime={account.accountLifetime} projectSourceId="project" mode="prepare" /></ModalProvider>);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.prepare.open');
+      // Settles on what the read reported: recognized rows, nothing recognized, or a refused read.
+      await waitForTestEvent(screen.subscribe, () => ['recognized.package.json', 'recognized.none', 'recognized.failed']
+        .some(id => screen.findByTestId(`project-deployments.prepare.${id}`)), Boolean);
+      expect(screen.findByTestId('project-deployments.prepare.recognized.package.json'), screen.getTextContent()).not.toBeNull();
+      const text = screen.getTextContent();
+      expect(text).toContain('Next.js');
+      expect(text).toContain(t('projects.deployments.preparation.listensOn', { port: 3000 }));
+      // A partial read says so instead of reading as everything there is.
+      expect(text).toContain(t('projects.deployments.preparation.recognizedPartial'));
+      // The checkout the agent works in is the one read, once.
+      expect(inspected).toHaveLength(1);
+      expect(inspected[0]).toMatchObject({ workspace: { workspaceId: 'checkout', machineId: 'workspace-machine', rootPath: '/app' },
+        read: { kind: 'applications' } });
+    } finally { await screen.unmount(); account.dispose(); }
+  });
   it('retains a refused child Session cause through real HTTP preparation and the existing disclosure', async () => {
     const { serverId, account } = await fixture();
     const { DeploymentPreparationEntry } = await import('./DeploymentPreparation');

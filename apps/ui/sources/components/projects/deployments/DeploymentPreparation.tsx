@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectDetectedApplicationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { projectActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -37,6 +38,7 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { DeploymentPreparationResult } from './DeploymentPreparationResult';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { readDeploymentPreparationFacts } from './deploymentPreflightWarnings';
 
 export type DeploymentPreparationContext = Readonly<{
     lifetime: ServerAccountScopeLifetime;
@@ -60,6 +62,56 @@ function PreparationProposal() {
             title={row.title ?? t(row.id === 'health' ? 'projects.deployments.preparation.addsHealth' : 'projects.deployments.preparation.addsVariables')}
             subtitle={t(`projects.deployments.preparation.${row.detail}`)} showChevron={false}
             icon={<Icon name={row.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />} />)}
+    </ItemGroup>;
+}
+
+type RecognizedRead =
+    | Readonly<{ status: 'loading' }>
+    | Readonly<{ status: 'failed'; code: string }>
+    | Readonly<{ status: 'ready'; applications: readonly ProjectDetectedApplicationV1[]; partial: boolean }>;
+
+/** Lab f1prep: what the checkout's own files declare (projects.inspect), read once per chosen checkout. Never a guess. */
+function useRecognizedApplications(lifetime: ServerAccountScopeLifetime, workspace: WorkspaceRefV1 | null, enabled: boolean) {
+    const [read, setRead] = React.useState<(RecognizedRead & Readonly<{ workspaceId: string }>) | null>(null);
+    const [retry, setRetry] = React.useState(0);
+    const workspaceId = enabled ? workspace?.id ?? null : null;
+    React.useEffect(() => {
+        if (!workspace || !workspaceId) return;
+        const cancellation = new AbortController();
+        setRead(previous => previous?.workspaceId === workspaceId && previous.status === 'ready' ? previous : { status: 'loading', workspaceId });
+        readDeploymentPreparationFacts(lifetime, { configure: {}, workspace: { serverId: workspace.serverId, workspaceId,
+            machineId: workspace.machineId, rootPath: workspace.rootPath } }, { signal: cancellation.signal })
+            .then(result => {
+                if (cancellation.signal.aborted) return;
+                setRead(!result.ok ? { status: 'failed', code: result.errorCode, workspaceId }
+                    : result.repository.status === 'notInspected' ? { status: 'failed', code: 'unavailable', workspaceId }
+                    : { status: 'ready', workspaceId, applications: result.repository.status === 'observed' ? result.repository.applications : [],
+                        partial: result.repository.coverage === 'partial' });
+            })
+            .catch((error: unknown) => { if (!cancellation.signal.aborted) setRead({ status: 'failed', code: failureCode(error), workspaceId }); });
+        return () => cancellation.abort();
+    }, [lifetime, workspace, workspaceId, retry]);
+    return { read: read?.workspaceId === workspaceId ? read : null, retry: () => setRetry(value => value + 1) };
+}
+
+function PreparationRecognized(props: Readonly<{ read: RecognizedRead | null; onRetry: () => void }>) {
+    const { theme } = useUnistyles();
+    const { read } = props;
+    if (!read) return null;
+    return <ItemGroup testID="project-deployments.prepare.recognized" title={t('projects.deployments.preparation.recognized')}
+        description={read.status === 'ready' && read.partial ? t('projects.deployments.preparation.recognizedPartial') : undefined}>
+        {read.status === 'loading' ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
+            : read.status === 'failed' ? <SurfaceStateCard testID="project-deployments.prepare.recognized.failed" size="line" kind="error"
+                title={t('projects.deployments.unavailableTitle')} reason={deploymentActionRefusalRemedy(read.code)} diagnosticCode={read.code}
+                action={{ label: t('common.retry'), onPress: props.onRetry }} />
+            : read.applications.length === 0 ? <Item testID="project-deployments.prepare.recognized.none" mode="info"
+                title={t('projects.deployments.preparation.recognizedNone')} subtitleLines={0} showChevron={false} />
+            : read.applications.map(app => <Item key={app.file} testID={`project-deployments.prepare.recognized.${app.file}`}
+                title={app.framework ?? app.file}
+                subtitle={[app.runtime ? `${app.runtime.name} ${app.runtime.version}` : null, app.framework ? app.file : null]
+                    .filter(Boolean).join(' · ') || undefined}
+                detail={app.port === null ? undefined : t('projects.deployments.preparation.listensOn', { port: app.port })}
+                showChevron={false} icon={<Icon name="package" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />} />)}
     </ItemGroup>;
 }
 
@@ -124,6 +176,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const chosen = workspaces?.find(workspace => workspace.id === chosenId)
         ?? (workspaces?.length === 1 ? workspaces[0] : null);
     const [menuOpen, setMenuOpen] = React.useState(false);
+    const recognized = useRecognizedApplications(lifetime, chosen ?? null, props.mode === 'prepare');
     const [tool, setTool] = React.useState('');
     const [paths, setPaths] = React.useState('');
     const configurationPaths = paths.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
@@ -194,7 +247,6 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
         <View testID="project-deployments.prepare.sheet" style={deploymentSheetStyles.body}>
             <Text style={deploymentSheetStyles.lead}>{t(props.mode === 'import'
                 ? 'projects.deployments.preparation.importLead' : 'projects.deployments.preparation.needsSetupLead')}</Text>
-            {props.mode === 'prepare' && repository ? <PreparationProposal /> : null}
             {!source && (sourceRead.status === 'initial' || sourceRead.status === 'loading') ?
                 <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : !source ?
                 <SurfaceStateCard size="line" kind="error" title={t('projects.deployments.unavailableTitle')}
@@ -216,6 +268,8 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
                         title: workspace.label ?? workspace.rootPath, subtitle: workspace.rootPath, checked: chosen?.id === workspace.id }))}
                     selectedId={chosen?.id ?? null} onSelect={id => { setChosenId(id); setMenuOpen(false); setRefused(null); setPartial(null); }}
                     itemTrigger={{ title: t('projects.deployments.preparation.workspace'), showSelectedSubtitle: true }} /></ItemGroup>}
+            {props.mode === 'prepare' ? <PreparationRecognized read={recognized.read} onRetry={recognized.retry} /> : null}
+            {props.mode === 'prepare' && repository ? <PreparationProposal /> : null}
             {props.mode === 'import' ? <ItemGroup header="none">
                 <Item title={t('projects.deployments.preparation.tool')} accessoryLayout="stacked" rightElement={
                     <FieldTextInput testID="project-deployments.import.tool" value={tool} onChangeText={setTool} editable={!busy}
