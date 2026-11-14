@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
@@ -21,7 +21,9 @@ import { HappierTreeDisclosure } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
-import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
+import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
+import { useOpenProjectsTreeEnvironment, useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
@@ -59,7 +61,10 @@ export const ProjectsListView = React.memo(() => {
     // The list keeps membership, order and disclosure; each row reads its own checkouts' live facts.
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);
     const [query, setQuery] = React.useState('');
-    const projects = React.useMemo(() => filterProjectsTreeByQuery(model.treeProjects, query), [model.treeProjects, query]);
+    // The same Environments the column lists under each Project (pfc-redesign dProject tree).
+    const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
+    const openEnvironment = useOpenProjectsTreeEnvironment();
+    const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     const projectGroupsByKey = React.useMemo(() => new Map([...groups.projectGroups, ...groups.hiddenProjectGroups]
         .map(group => [group.projectKey.projectKey, group] as const)), [groups.projectGroups, groups.hiddenProjectGroups]);
     const hidden = React.useMemo(() => ({
@@ -110,8 +115,8 @@ export const ProjectsListView = React.memo(() => {
     }, []);
     // The column's press owner: a Project opens on its lead checkout, a checkout opens itself.
     const openRow = React.useCallback((row: ProjectsTreeRow) => {
-        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded));
-    }, [model.openTreeRef, toggle]);
+        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded), openEnvironment);
+    }, [model.openTreeRef, openEnvironment, toggle]);
     const toggleRow = React.useCallback((row: ProjectsTreeRow) => toggle(row.key, row.expanded), [toggle]);
     // The phone rows are the same tree items as the column's, through the same shared tree owner.
     const keyboard = useProjectsTreeKeyboard(rows, {
@@ -152,26 +157,29 @@ export const ProjectsListView = React.memo(() => {
                 <ProjectRowsStaleLine testID="projects-list:stale" asOf={model.staleRows.asOf} />
             ) : null}
 
+            {/* The rows are the tree's treeitems (`useProjectsTreeKeyboard`), so the tree contains them, as in the column. */}
             {rows.length > 0 ? (
-                <ItemGroup>
-                    {rows.map((row) => (
-                        <ProjectsListRow
-                            key={row.key}
-                            row={row}
-                            project={projectOfRow.get(row.key)!}
-                            source={factsSource}
-                            expandedKeys={expandedKeys}
-                            collapsedKeys={collapsedKeys}
-                            model={model}
-                            rowCreation={rowCreation}
-                            refsById={refsById}
-                            hideGroup={row.kind === 'project' ? projectGroupsByKey.get(row.key) : undefined}
-                            rowProps={keyboard.getRowProps(row)}
-                            onOpenRow={openRow}
-                            onToggleRow={toggleRow}
-                        />
-                    ))}
-                </ItemGroup>
+                <View testID="projects-list:tree" {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
+                    <ItemGroup>
+                        {rows.map((row) => (
+                            <ProjectsListRow
+                                key={row.key}
+                                row={row}
+                                project={projectOfRow.get(row.key)!}
+                                source={factsSource}
+                                expandedKeys={expandedKeys}
+                                collapsedKeys={collapsedKeys}
+                                model={model}
+                                rowCreation={rowCreation}
+                                refsById={refsById}
+                                hideGroup={row.kind === 'project' ? projectGroupsByKey.get(row.key) : undefined}
+                                rowProps={keyboard.getRowProps(row)}
+                                onOpenRow={openRow}
+                                onToggleRow={toggleRow}
+                            />
+                        ))}
+                    </ItemGroup>
+                </View>
             ) : null}
 
             {model.projectOpenResolution ? (
@@ -315,8 +323,9 @@ function ProjectsListRow(props: Readonly<{
             title={row.title}
             titleQualifier={row.titleQualifier}
             subtitle={subtitle || undefined}
+            subtitleLeading={row.needsYouStatus ? <WorkStatusRowMark status={row.needsYouStatus} testIDSuffix={`projects-list-project-${row.key}`} /> : undefined}
             subtitleLines={ref ? model.workspaceSubtitleLines(ref) : 1}
-            icon={<Icon name={row.glyph === 'project' ? 'folder' : row.glyph === 'machine' ? 'desktop' : 'git-branch'} size={20} color={theme.colors.text.secondary} />}
+            icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
             rightElement={trailing}
             style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX } : undefined}

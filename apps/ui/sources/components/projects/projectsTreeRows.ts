@@ -5,6 +5,7 @@ import { readSourceTeamId } from './sources/projectSourceGroups';
 import { shallow } from 'zustand/vanilla/shallow';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
+import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 
 /**
  * The Projects tree's rows (plan 10 §2/§8, lab p-projects TREE/RULES): one Project's accepted
@@ -61,13 +62,29 @@ export type ProjectsTreeProject = Readonly<{
     checkouts: readonly ProjectsTreeCheckout[];
     /** Which checkout a press on the Project opens: the one opened most recently (default: the first). */
     lead?: number;
+    /** The Environments this Project's Source deploys (pfc-redesign dProject tree), drawn after its checkouts. */
+    environments?: readonly ProjectsTreeEnvironment[];
+}>;
+
+/** Where an Environment row opens: the Environment page, the same route Services and the Machine open. */
+export type ProjectsTreeEnvironmentAddress = Readonly<{ serverId: string; projectSourceId: string; environmentId: string }>;
+
+/** An Environment as its tree row reads it: the one environment row's rail facts (`useDeploymentEnvironmentRowParts`). */
+export type ProjectsTreeEnvironment = ProjectsTreeEnvironmentAddress & Readonly<{
+    title: string;
+    titleQualifier: string | null;
+    /** Its state while it needs a look or deploys, otherwise where it runs. */
+    subtitle: string | null;
+    attention: ProjectsTreeAttention;
+    /** The one environment row's trouble mark (failed rose, unverified amber), drawn before its state word. */
+    needsYouStatus?: WorkStatusPresentation | null;
 }>;
 
 export type ProjectsTreeRow = Readonly<{
     key: string;
     source?: ProjectSurfaceTargetV1['source'];
     level: number;
-    kind: 'project' | 'machine' | 'checkout';
+    kind: 'project' | 'machine' | 'checkout' | 'environment';
     title: string;
     /** Quiet text on the title's line: the Team, the folded machine's name, or a machine leaf's label. */
     titleQualifier?: string | null;
@@ -76,7 +93,7 @@ export type ProjectsTreeRow = Readonly<{
     /** The machine whose glyph a machine row (or a machine leaf) carries. */
     machineId?: string | null;
     /** Machine leaves draw the machine's glyph; checkout leaves under a machine draw a branch. */
-    glyph: 'project' | 'machine' | 'branch';
+    glyph: 'project' | 'machine' | 'branch' | 'environment';
     expandable: boolean;
     expanded: boolean;
     /** The exact checkout this row stands for (a leaf, or a one-checkout Project): its menu acts on it. */
@@ -92,6 +109,10 @@ export type ProjectsTreeRow = Readonly<{
     selected: boolean;
     /** Drawn through `projectsTreeRowSubtitle` as the row's second line. */
     newFromSession?: boolean;
+    /** An Environment row: the Environment page it opens. Read through `projectsTreeRowEnvironment`. */
+    environment?: ProjectsTreeEnvironmentAddress;
+    /** An Environment row in trouble: its mark leads the state word, so the row needs no second dot. */
+    needsYouStatus?: WorkStatusPresentation | null;
 }>;
 
 export type ProjectsTreeOpenTarget = Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV1 }>;
@@ -100,6 +121,45 @@ export type ProjectsTreeOpenTarget = Readonly<{ refId: string; workspaceAddress?
 export function projectsTreeRowOpenTarget(row: Pick<ProjectsTreeRow, 'refId' | 'workspaceAddress' | 'opens'>): ProjectsTreeOpenTarget | null {
     if (row.refId) return row.workspaceAddress ? { refId: row.refId, workspaceAddress: row.workspaceAddress } : { refId: row.refId };
     return row.opens ?? null;
+}
+
+/** A row's mark, the same in the column and on the phone: a Project's folder, a Machine, a checkout's branch, an Environment. */
+export function projectsTreeGlyphIcon(glyph: ProjectsTreeRow['glyph']): 'folder' | 'desktop' | 'git-branch' | 'hard-drives' {
+    switch (glyph) {
+        case 'project': return 'folder';
+        case 'machine': return 'desktop';
+        case 'branch': return 'git-branch';
+        case 'environment': return 'hard-drives';
+    }
+}
+
+/** The Environment an Environment row opens; `null` for every other row. */
+export function projectsTreeRowEnvironment(row: Pick<ProjectsTreeRow, 'environment'>): ProjectsTreeEnvironmentAddress | null {
+    return row.environment ?? null;
+}
+
+/** A Project's Environments as rows one level under it, after its checkouts; the one on screen is selected. */
+function environmentRows(project: ProjectsTreeProject, openEnvironmentId: string | null | undefined): ProjectsTreeRow[] {
+    return (project.environments ?? []).map((environment): ProjectsTreeRow => ({
+        key: `${project.key}/environment/${environment.environmentId}`,
+        level: 1,
+        kind: 'environment',
+        title: environment.title,
+        titleQualifier: environment.titleQualifier,
+        subtitle: environment.subtitle,
+        glyph: 'environment',
+        expandable: false,
+        expanded: false,
+        refId: null,
+        attention: environment.needsYouStatus ? null : environment.attention,
+        needsYouStatus: environment.needsYouStatus ?? null,
+        selected: environment.environmentId === openEnvironmentId,
+        environment: { serverId: environment.serverId, projectSourceId: environment.projectSourceId, environmentId: environment.environmentId },
+    }));
+}
+
+function holdsEnvironment(project: ProjectsTreeProject, openEnvironmentId: string | null | undefined): boolean {
+    return Boolean(openEnvironmentId) && (project.environments ?? []).some(environment => environment.environmentId === openEnvironmentId);
 }
 
 function projectOpenTarget(project: ProjectsTreeProject): ProjectsTreeOpenTarget | null {
@@ -117,7 +177,7 @@ export function projectsTreeRowSubtitle(row: Pick<ProjectsTreeRow, 'subtitle' | 
     return [newFromSessionLabel, row.subtitle].filter((part): part is string => Boolean(part)).join(' · ');
 }
 
-function mostUrgent(checkouts: readonly ProjectsTreeCheckout[]): ProjectsTreeAttention {
+function mostUrgent(checkouts: readonly Readonly<{ attention: ProjectsTreeAttention }>[]): ProjectsTreeAttention {
     if (checkouts.some((checkout) => checkout.attention === 'needs-you')) return 'needs-you';
     if (checkouts.some((checkout) => checkout.attention === 'working')) return 'working';
     return null;
@@ -147,6 +207,8 @@ function groupByMachine(checkouts: readonly ProjectsTreeCheckout[]): ProjectsTre
 export function buildProjectsTreeRows(input: Readonly<{
     projects: readonly ProjectsTreeProject[];
     openRefId: string | null;
+    /** The Environment on screen, if any: its row is selected and its Project open. */
+    openEnvironmentId?: string | null;
     expandedKeys: ReadonlySet<string>;
     collapsedKeys?: ReadonlySet<string>;
 }>): ProjectsTreeRow[] {
@@ -178,12 +240,15 @@ export function buildProjectsTreeRows(input: Readonly<{
     for (const project of input.projects) {
         const checkouts = project.checkouts;
         if (checkouts.length === 0) continue;
-        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId);
+        const environments = project.environments ?? [];
+        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || holdsEnvironment(project, input.openEnvironmentId);
         const machines = groupByMachine(checkouts);
 
         if (checkouts.length === 1) {
+            // One checkout is the Project row itself; its Environments, if any, are what it discloses.
             const only = checkouts[0]!;
             const selected = only.refId === input.openRefId;
+            const open = environments.length > 0 && isOpen(project.key, holdsOpen);
             rows.push({
                 key: project.key,
                 level: 0,
@@ -194,15 +259,16 @@ export function buildProjectsTreeRows(input: Readonly<{
                 subtitle: `${only.machineName} · ${selected ? only.path : checkoutWhere(only)}`,
                 machineId: only.machineId,
                 glyph: 'project',
-                expandable: false,
-                expanded: false,
+                expandable: environments.length > 0,
+                expanded: open,
                 refId: only.refId,
                 workspaceAddress: only.workspaceAddress,
-                attention: only.attention,
+                attention: open ? only.attention : mostUrgent([only, ...environments]),
                 offline: only.offline,
                 selected,
                 newFromSession: project.newFromSession === true,
             });
+            if (open) rows.push(...environmentRows(project, input.openEnvironmentId));
             continue;
         }
 
@@ -226,7 +292,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             refId: null,
             opens: projectOpenTarget(project),
             count: projectOpen ? null : checkouts.length,
-            attention: projectOpen ? null : mostUrgent(checkouts),
+            attention: projectOpen ? null : mostUrgent([...checkouts, ...environments]),
             selected: false,
             newFromSession: project.newFromSession === true,
         });
@@ -234,11 +300,13 @@ export function buildProjectsTreeRows(input: Readonly<{
 
         if (singleMachine) {
             for (const checkout of checkouts) rows.push(leaf(checkout, 1, `${project.key}/${projectsTreeCheckoutKey(checkout)}`, false));
+            rows.push(...environmentRows(project, input.openEnvironmentId));
             continue;
         }
         if (machines.every((group) => group.length === 1)) {
             // Many machines, one checkout each: no machine level; each checkout names its machine.
             for (const [checkout] of machines) rows.push(leaf(checkout!, 1, `${project.key}/${projectsTreeCheckoutKey(checkout!)}`, false));
+            rows.push(...environmentRows(project, input.openEnvironmentId));
             continue;
         }
         for (const group of machines) {
@@ -268,6 +336,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             if (!machineOpen) continue;
             for (const checkout of group) rows.push(leaf(checkout, 2, `${machineKey}/${projectsTreeCheckoutKey(checkout)}`, true));
         }
+        rows.push(...environmentRows(project, input.openEnvironmentId));
     }
     return rows;
 }
@@ -434,6 +503,7 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
 export function buildProjectsPhoneTreeRows(input: Readonly<{
     projects: readonly ProjectsTreeProject[];
     openRefId: string | null;
+    openEnvironmentId?: string | null;
     expandedKeys: ReadonlySet<string>;
     collapsedKeys?: ReadonlySet<string>;
     describe: Readonly<{
@@ -447,7 +517,8 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
         const checkouts = project.checkouts;
         if (checkouts.length === 0) continue;
         const machines = groupByMachine(checkouts);
-        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId);
+        const environments = project.environments ?? [];
+        const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || holdsEnvironment(project, input.openEnvironmentId);
         const single = checkouts.length === 1 ? checkouts[0]! : null;
         const offlineMachines = machines.filter((group) => group.every((checkout) => checkout.offline === true)).length;
         const subtitle = single
@@ -456,7 +527,8 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
                 ? `${machines[0]![0]!.machineName} · ${input.describe.checkoutCount(checkouts.length)}`
                 : [input.describe.machineCount(machines.length), offlineMachines > 0 ? input.describe.offlineCount(offlineMachines) : null]
                     .filter((part): part is string => part !== null).join(' · ');
-        const expanded = !single && (input.collapsedKeys?.has(project.key) === true
+        const expandable = !single || environments.length > 0;
+        const expanded = expandable && (input.collapsedKeys?.has(project.key) === true
             ? false
             : input.expandedKeys.has(project.key) || holdsOpen);
         rows.push({
@@ -469,20 +541,20 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             source: project.source,
             machineId: single?.machineId ?? null,
             glyph: 'project',
-            expandable: !single,
+            expandable,
             expanded,
             refId: single?.refId ?? null,
             workspaceAddress: single?.workspaceAddress,
             opens: single ? null : projectOpenTarget(project),
             // Collapsed, the second line already says how many; the count beside it belongs to the open Project.
             count: single || !expanded ? null : checkouts.length,
-            attention: single ? single.attention : expanded ? null : mostUrgent(checkouts),
+            attention: expanded ? (single ? single.attention : null) : mostUrgent([...checkouts, ...environments]),
             offline: single?.offline,
             selected: single?.refId === input.openRefId,
             newFromSession: project.newFromSession === true,
         });
         if (!expanded) continue;
-        for (const checkout of checkouts) {
+        for (const checkout of single ? [] : checkouts) {
             rows.push({
                 key: `${project.key}/${projectsTreeCheckoutKey(checkout)}`,
                 level: 1,
@@ -501,12 +573,13 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
                 selected: checkout.refId === input.openRefId,
             });
         }
+        rows.push(...environmentRows(project, input.openEnvironmentId));
     }
     return rows;
 }
 
 /**
- * The Projects search: a Project stays when its name, its Team, or any checkout's Machine, label or path holds the
+ * The Projects search: a Project stays when its name, its Team, an Environment's name, or any checkout's Machine, label or path holds the
  * query (case-insensitive). An empty query keeps the very same list, so the rows keep their identity.
  */
 export function filterProjectsTreeByQuery(projects: readonly ProjectsTreeProject[], query: string): readonly ProjectsTreeProject[] {
@@ -514,5 +587,6 @@ export function filterProjectsTreeByQuery(projects: readonly ProjectsTreeProject
     if (needle.length === 0) return projects;
     const holds = (text: string | null | undefined) => typeof text === 'string' && text.toLocaleLowerCase().includes(needle);
     return projects.filter((project) => holds(project.name) || holds(project.teamLabel)
-        || project.checkouts.some((checkout) => holds(checkout.machineName) || holds(checkout.label) || holds(checkout.path)));
+        || project.checkouts.some((checkout) => holds(checkout.machineName) || holds(checkout.label) || holds(checkout.path))
+        || (project.environments ?? []).some((environment) => holds(environment.title)));
 }

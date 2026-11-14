@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeProject } from './projectsTreeRows';
+import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowEnvironment, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeEnvironment, type ProjectsTreeProject } from './projectsTreeRows';
 
 const checkout = (refId: string, machineId: string, label: string, extra: Partial<ProjectsTreeCheckout> = {}): ProjectsTreeCheckout => ({
     refId, machineId, machineName: machineId === 'devbox' ? 'devbox' : machineId === 'mbp' ? 'MacBook Pro' : machineId,
@@ -212,6 +212,37 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         // A parent the person closed stays closed even while it holds the open checkout.
         expect(shape(buildProjectsTreeRows({ projects, openRefId: 'h1', expandedKeys: new Set(), collapsedKeys: new Set(['happier']) })))
             .toEqual(['happier (Acme) >']);
+    });
+
+    it('lists a Project\'s Environments under it, opening each Environment and rolling its trouble up (pfc-redesign dProject tree)', () => {
+        const environment = (environmentId: string, title: string, extra: Partial<ProjectsTreeEnvironment> = {}): ProjectsTreeEnvironment => ({
+            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, subtitle: 'fixture-a-docker-1111', attention: null, ...extra,
+        });
+        const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]),
+            environments: [environment('prod', 'Production'), environment('stg', 'Staging', { subtitle: 'Failed', attention: 'needs-you' })] };
+        // A one-checkout Project keeps its row and opens its checkout; its Environments make it a disclosure.
+        const collapsed = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set() });
+        expect(shape(collapsed)).toEqual(['billing-api >']);
+        expect(collapsed[0]).toMatchObject({ refId: 'b1', subtitle: 'MacBook Pro · main', attention: 'needs-you' });
+        const open = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']) });
+        expect(shape(open)).toEqual(['billing-api v', '  Production', '  Staging']);
+        expect(open.slice(1).map(row => [row.kind, row.glyph, row.subtitle, row.attention])).toEqual([
+            ['environment', 'environment', 'fixture-a-docker-1111', null], ['environment', 'environment', 'Failed', 'needs-you']]);
+        expect(projectsTreeRowOpenTarget(open[1]!)).toBeNull();
+        expect(projectsTreeRowEnvironment(open[1]!)).toEqual({ serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod' });
+        // The Environment on screen is selected and holds its Project open, as an open checkout does.
+        const onEnvironment = buildProjectsTreeRows({ projects: [billing], openRefId: null, openEnvironmentId: 'stg', expandedKeys: new Set() });
+        expect(shape(onEnvironment)).toEqual(['billing-api v', '  Production', '  Staging']);
+        expect(onEnvironment.map(row => row.selected)).toEqual([false, false, true]);
+        // Several checkouts: the Environments follow them, at the same level.
+        const many: ProjectsTreeProject = { ...project('happier', [checkout('h1', 'devbox', 'main'), checkout('h2', 'devbox', 'v0.3')]), environments: [environment('prod', 'Production')] };
+        expect(shape(buildProjectsTreeRows({ projects: [many], openRefId: 'h1', expandedKeys: new Set() })))
+            .toEqual(['happier (devbox) v', '  main', '  v0.3', '  Production']);
+        // The phone tree lists the same Environments after the checkouts.
+        const phone = buildProjectsPhoneTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']),
+            describe: { checkoutCount: String, machineCount: String, offlineCount: String } });
+        expect(shape(phone)).toEqual(['billing-api v', '  Production', '  Staging']);
+        expect(phone[0]).toMatchObject({ refId: 'b1', subtitle: 'MacBook Pro · main' });
     });
 });
 

@@ -27,12 +27,16 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+import { buildDeploymentEnvironmentHref } from './deployments/deploymentNavigation';
 import {
     applyProjectsTreeCheckoutFacts,
     buildProjectsTreeRows,
     projectsTreeCheckoutKey,
+    projectsTreeGlyphIcon,
+    projectsTreeRowEnvironment,
     projectsTreeRowOpenTarget,
     projectsTreeRowSubtitle,
+    type ProjectsTreeEnvironmentAddress,
     type ProjectsTreeProject,
     type ProjectsTreeRow,
 } from './projectsTreeRows';
@@ -110,14 +114,23 @@ export function useProjectsTreeKeyboard(rows: readonly ProjectsTreeRow[], handle
 }
 
 /**
- * Where a row's press (or Enter) lands: a leaf opens its exact checkout, a Project opens on its lead checkout,
- * and only a row with nothing to open (a machine) opens or closes in place. The one press owner for the column
- * and the phone list.
+ * Where a row's press (or Enter) lands: a leaf opens its exact checkout, a Project opens on its lead checkout, an
+ * Environment opens its Environment page, and only a row with nothing to open (a machine) opens or closes in place.
+ * The one press owner for the column and the phone list.
  */
-export function openProjectsTreeRow(row: ProjectsTreeRow, onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void, onToggle: (key: string) => void) {
+export function openProjectsTreeRow(row: ProjectsTreeRow, onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void, onToggle: (key: string) => void,
+    onOpenEnvironment?: ((address: ProjectsTreeEnvironmentAddress) => void) | null) {
     const target = projectsTreeRowOpenTarget(row);
+    const environment = projectsTreeRowEnvironment(row);
     if (target) onOpenRef(target.refId, target.workspaceAddress);
+    else if (environment) onOpenEnvironment?.(environment);
     else if (row.expandable) onToggle(row.key);
+}
+
+/** The link an Environment row stands for (web open-in-new-tab), the same address its press opens. */
+export function projectsTreeEnvironmentHref(row: ProjectsTreeRow): string | null {
+    const environment = projectsTreeRowEnvironment(row);
+    return environment ? buildDeploymentEnvironmentHref(environment) : null;
 }
 
 export type ProjectsTreeLiveCheckoutsInput = Readonly<{
@@ -125,6 +138,7 @@ export type ProjectsTreeLiveCheckoutsInput = Readonly<{
     /** The Projects the structural rows were built from, without checkout facts. */
     projects: readonly ProjectsTreeProject[];
     openRefId: string | null;
+    openEnvironmentId?: string | null;
     expandedKeys: ReadonlySet<string>;
     collapsedKeys?: ReadonlySet<string>;
 }>;
@@ -143,6 +157,8 @@ type ProjectsTreeProps = Readonly<{
     live?: ProjectsTreeLiveCheckoutsInput | null;
     onToggle: (key: string) => void;
     onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void;
+    /** An Environment row's press: its Environment page. */
+    onOpenEnvironment?: ((address: ProjectsTreeEnvironmentAddress) => void) | null;
     /** A row's own menu (New session here, Save as a source, Hide project). */
     renderRowMenu?: ((row: ProjectsTreeRow) => React.ReactNode) | null;
     hrefForRef?: ((refId: string, address?: WorkspaceAddressV1) => string | null) | null;
@@ -179,22 +195,23 @@ const projectsTreeItemKey = (item: ProjectsTreeItem) => item.key;
 function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: number) => void) {
     const { theme } = useUnistyles();
     const testID = props.testID ?? 'projects-tree';
-    const { onOpenRef, onToggle } = props;
+    const { onOpenRef, onToggle, onOpenEnvironment } = props;
     const keyboard = useProjectsTreeKeyboard(props.rows, {
         onToggle,
-        onOpenRow: (row) => openProjectsTreeRow(row, onOpenRef, onToggle),
+        onOpenRow: (row) => openProjectsTreeRow(row, onOpenRef, onToggle, onOpenEnvironment),
         ...(onRevealIndex ? { onRevealIndex } : {}),
     });
     const liveInput = props.live;
     const live = React.useMemo((): ProjectsTreeLiveCheckouts | null => liveInput ? {
         ...liveInput,
         projectsByKey: new Map(liveInput.projects.map((project) => [project.key, project] as const)),
-    } : null, [liveInput?.source, liveInput?.projects, liveInput?.openRefId, liveInput?.expandedKeys, liveInput?.collapsedKeys]);
-    const handlersRef = React.useRef({ onOpenRef, onToggle });
-    handlersRef.current = { onOpenRef, onToggle };
+    } : null, [liveInput?.source, liveInput?.projects, liveInput?.openRefId, liveInput?.openEnvironmentId, liveInput?.expandedKeys, liveInput?.collapsedKeys]);
+    const handlersRef = React.useRef({ onOpenRef, onToggle, onOpenEnvironment });
+    handlersRef.current = { onOpenRef, onToggle, onOpenEnvironment };
     // These callbacks run on user intent; changing a parent's closure does not change any row's presentation.
     const openRef = React.useCallback((refId: string, address?: WorkspaceAddressV1) => handlersRef.current.onOpenRef(refId, address), []);
     const toggle = React.useCallback((key: string) => handlersRef.current.onToggle(key), []);
+    const openEnvironment = React.useCallback((address: ProjectsTreeEnvironmentAddress) => handlersRef.current.onOpenEnvironment?.(address), []);
     const rowListProps = React.useMemo((): ProjectsTreeRowListProps => ({
         testID,
         getRowProps: keyboard.getRowPropsForActiveKey,
@@ -202,7 +219,8 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
         hrefForRef: props.hrefForRef,
         onOpenRef: openRef,
         onToggle: toggle,
-    }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle]);
+        onOpenEnvironment: openEnvironment,
+    }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle, openEnvironment]);
     const { saved, hidden } = props;
     const items = React.useMemo((): ProjectsTreeItem[] => {
         const next: ProjectsTreeItem[] = projectRuns(props.rows).map((run) => ({ kind: 'project', key: `project:${run[0]!.key}`, rows: run }));
@@ -366,6 +384,7 @@ type ProjectsTreeRowListProps = Readonly<{
     hrefForRef?: ((refId: string, address?: WorkspaceAddressV1) => string | null) | null;
     onOpenRef: (refId: string, address?: WorkspaceAddressV1) => void;
     onToggle: (key: string) => void;
+    onOpenEnvironment: (address: ProjectsTreeEnvironmentAddress) => void;
 }>;
 
 /**
@@ -389,19 +408,20 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                     <CollectionNavigationRow
                         key={row.key}
                         testID={`${props.testID}-row-${row.key}`}
-                        href={target ? props.hrefForRef?.(target.refId, target.workspaceAddress) ?? null : null}
+                        href={target ? props.hrefForRef?.(target.refId, target.workspaceAddress) ?? null : projectsTreeEnvironmentHref(row)}
                         title={row.title}
                         titleQualifier={row.titleQualifier}
                         subtitle={projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')) ?? undefined}
                         icon={(
                             <Icon
-                                name={row.glyph === 'project' ? 'folder' : row.glyph === 'machine' ? 'desktop' : 'git-branch'}
+                                name={projectsTreeGlyphIcon(row.glyph)}
                                 size={16}
                                 color={theme.colors.text.secondary}
                             />
                         )}
                         disclosure={row.expandable ? { expanded: row.expanded, onToggle: () => props.onToggle(row.key) } : null}
                         status={status}
+                        needsYouStatus={row.needsYouStatus}
                         count={row.count}
                         selected={row.selected}
                         dimmed={row.offline === true}
@@ -409,7 +429,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         treeItem={props.getRowProps(row, props.activeKey)}
                         accessibilityLabel={row.titleQualifier ? `${row.title}, ${row.titleQualifier}` : row.title}
                         rightElement={props.renderRowMenu?.(row) ?? null}
-                        onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle)}
+                        onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenEnvironment)}
                     />
                 );
             })}
@@ -448,10 +468,11 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
         ? buildProjectsTreeRows({
             projects: [applyProjectsTreeCheckoutFacts(project, (_checkout, index) => facts[index] ?? null)],
             openRefId: live.openRefId,
+            openEnvironmentId: live.openEnvironmentId,
             expandedKeys: live.expandedKeys,
             collapsedKeys: live.collapsedKeys,
         })
-        : props.rows, [project, facts, live.openRefId, live.expandedKeys, live.collapsedKeys, props.rows]);
+        : props.rows, [project, facts, live.openRefId, live.openEnvironmentId, live.expandedKeys, live.collapsedKeys, props.rows]);
     return <ProjectsTreeRowList rows={rows} activeKey={props.activeKey} {...props.rowList} />;
 }, (previous, next) => {
     if (previous.rowList !== next.rowList || previous.activeKey !== next.activeKey || previous.live.source !== next.live.source) return false;
@@ -463,6 +484,9 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     // Global selection/disclosure carriers are projected to this Project, just as facts are.
     const selectedRef = (openRefId: string | null) => project.checkouts.some(checkout => checkout.refId === openRefId) ? openRefId : null;
     if (selectedRef(previous.live.openRefId) !== selectedRef(next.live.openRefId)) return false;
+    const selectedEnvironment = (environmentId: string | null | undefined) => environmentId
+        && project.environments?.some(environment => environment.environmentId === environmentId) ? environmentId : null;
+    if (selectedEnvironment(previous.live.openEnvironmentId) !== selectedEnvironment(next.live.openEnvironmentId)) return false;
     const sameDisclosure = (rowKey: string) => previous.live.expandedKeys.has(rowKey) === next.live.expandedKeys.has(rowKey)
         && (previous.live.collapsedKeys?.has(rowKey) === true) === (next.live.collapsedKeys?.has(rowKey) === true);
     return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${checkout.machineId}`));

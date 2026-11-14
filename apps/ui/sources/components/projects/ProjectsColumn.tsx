@@ -25,6 +25,7 @@ import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
+import { useOpenProjectsTreeEnvironment, useProjectsTreeEnvironments, useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
 const NO_KEYS: ReadonlySet<string> = new Set();
@@ -107,17 +108,21 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     ), [model.groups.hiddenProjectGroups, model.groups.projectGroups]);
     // The title row's magnifier narrows the tree with the phone page's own filter (F4, owner 1538 #01).
     const [query, setQuery] = React.useState('');
-    const projects = React.useMemo(() => filterProjectsTreeByQuery(model.treeProjects, query), [model.treeProjects, query]);
+    // Each Project's Environments join its row (pfc-redesign dProject tree): the Project → Environment link.
+    const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
+    const openEnvironmentId = useProjectsTreeOpenEnvironmentId();
+    const openEnvironment = useOpenProjectsTreeEnvironment();
+    const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     // Structural rows only: a checkout's live facts are read by its Project's own tree section, so a fact
     // change never re-renders this column or the other rows.
     const rows = React.useMemo(
-        () => buildProjectsTreeRows({ projects, openRefId: openId, expandedKeys, collapsedKeys }),
-        [collapsedKeys, expandedKeys, openId, projects],
+        () => buildProjectsTreeRows({ projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys }),
+        [collapsedKeys, expandedKeys, openId, openEnvironmentId, projects],
     );
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);
     const live = React.useMemo(
-        () => ({ source: factsSource, projects, openRefId: openId, expandedKeys, collapsedKeys }),
-        [collapsedKeys, expandedKeys, factsSource, openId, projects],
+        () => ({ source: factsSource, projects, openRefId: openId, openEnvironmentId, expandedKeys, collapsedKeys }),
+        [collapsedKeys, expandedKeys, factsSource, openId, openEnvironmentId, projects],
     );
     const toggle = React.useCallback((key: string) => {
         const open = rows.find((row) => row.key === key)?.expanded === true;
@@ -239,6 +244,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         live={live}
                         onToggle={toggle}
                         onOpenRef={openRef}
+                        onOpenEnvironment={openEnvironment}
                         hrefForRef={hrefForRef}
                         renderRowMenu={renderRowMenu}
                         hidden={hidden}
