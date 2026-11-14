@@ -6,6 +6,7 @@ import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { promptMultipleChoice } from '@/terminal/prompts/promptMultipleChoice';
 import { bold, code, glyph, muted, severity } from '@/ui/format/styles';
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import { localRelayUpdateArgs } from './localRelayUpdateArgs';
 
 import {
   copyAuthExpiredForActiveProfile,
@@ -373,7 +374,7 @@ function dispatchFindingAction(
     case 'local_relay_lane_missing':
       return runCliCommand(['relay', 'host', 'install', '--channel', finding.targetReleaseChannel, '--yes']);
     case 'local_relay_version_stale':
-      return runCliCommand(['relay', 'host', 'install', '--channel', finding.entry.releaseChannel, '--yes']);
+      return runCliCommand(localRelayUpdateArgs(finding.entry));
     case 'background_service_not_running':
       // `--takeover` is always safe here — it's a no-op when no conflict
       // exists, and it prevents `service start` from printing "A manually
@@ -481,8 +482,9 @@ function retryHintFor(finding: RepairFinding, invoker: string): string {
     case 'background_service_crash_looping':
       return `see message above · inspect logs under ${code('~/.happier/logs/')}`;
     case 'local_relay_lane_missing':
+      return `see message above · retry: ${code(`${invoker} relay host install --channel ${finding.targetReleaseChannel}`)}`;
     case 'local_relay_version_stale':
-      return `see message above · retry: ${code(`${invoker} relay host install`)}`;
+      return `see message above · retry: ${code(`${invoker} ${localRelayUpdateArgs(finding.entry).join(' ')}`)}`;
     case 'cli_self_update_available':
       return `see message above · retry: ${code(`${invoker} self update`)}`;
     default:

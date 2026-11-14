@@ -620,6 +620,12 @@ through the default file logger, and requires its existing distinct running iden
 
 ### One CLI update transaction (plan R13 f)
 
+In development source, the post-update repair handoff also runs when the canonical doctor relay
+inventory finds an installed local relay, even if background services need no repair. The newly
+activated CLI owns the diagnosis: repair displays installed relay versions, checks the matching
+channel against the published server release, and asks before updating. Relay update commands
+preserve the installed channel and user/system scope; CLI activation itself does not update relays.
+
 `runManagedCliUpdate` (`packages/cli-common/src/firstPartyRuntime/runManagedCliUpdate.ts`) is the
 only way a managed first-party CLI is updated in place. `happier self update`, the desktop's
 bootstrap `cli.update.v1` and the daemon-hosted remote `cli.update.v1` all run it, always from the

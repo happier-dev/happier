@@ -144,6 +144,12 @@ PowerShell task action before restarting its service, using the native hidden la
 the service's existing startup preference and Desktop ownership. Custom command prefixes that
 cannot be preserved are kept with a repair warning.
 
+In current development source (not yet released), `self update` also opens guided repair when
+a Happier-managed local relay is installed, even when the background service needs no repair.
+Repair shows the installed relay version and offers an update when a newer relay release is
+available for the current channel. Relay updates require confirmation and keep the installed
+channel and user/system mode. The CLI and relay remain separate updates.
+
 Rerunning the installer is also a valid update path:
 
 ```bash
