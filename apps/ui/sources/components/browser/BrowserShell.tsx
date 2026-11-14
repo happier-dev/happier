@@ -40,11 +40,8 @@ import {
     useBrowserAnnotationController,
     type BrowserShellContextState,
 } from '@/components/browser/annotation/useBrowserAnnotationController';
-import {
-    selectBrowserDiagnosticsForView,
-    createBrowserDiagnosticsUiStore,
-    type BrowserDiagnosticsPanelProjection,
-} from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticsForView, createBrowserDiagnosticsUiStore } from '@/sync/domains/browser/diagnostics/store';
+import type { BrowserDiagnosticsPanelProjection } from '@/sync/domains/browser/diagnostics';
 import type { BrowserRecordingState } from '@/sync/domains/browser/recording';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';

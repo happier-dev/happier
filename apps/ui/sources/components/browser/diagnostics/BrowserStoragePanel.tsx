@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { Text } from '@/components/ui/text/Text';
 
-import { selectBrowserDiagnosticStorageRows, type BrowserDiagnosticStorageRow } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticStorageRows } from '@/sync/domains/browser/diagnostics/store';
+import type { BrowserDiagnosticStorageRow } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
 import {

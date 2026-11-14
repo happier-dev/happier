@@ -154,7 +154,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { DiscussionMessageAttachments, type DiscussionAttachmentReader } from '@/components/discussions/DiscussionMessageAttachments';
 import { DiscussionDeliveryNotice } from './DiscussionDeliveryNotice';
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
-import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels, type DiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
 import { DiscussionDetailsPanel } from './DiscussionDetailsPanel';
 import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './discussionComposerContextItems';

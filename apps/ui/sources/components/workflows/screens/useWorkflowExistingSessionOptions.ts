@@ -3,7 +3,7 @@ import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/
 import * as React from 'react';
 import { shallow } from 'zustand/shallow';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
-import { usePreferredLanguage } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import { isAutomationSessionCandidate, isAutomationSessionCandidateVisible } from '@/sync/domains/automations/isAutomationSessionCandidate';
 import { getStorage, useSetting } from '@/sync/domains/state/storage';

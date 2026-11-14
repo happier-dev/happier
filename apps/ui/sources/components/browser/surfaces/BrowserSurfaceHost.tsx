@@ -24,17 +24,9 @@ import { useBrowserDiagnosticsRuntime } from '@/components/browser/diagnostics/u
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { BrowserLaunchpadOpenTargetOptions } from '@/components/browser/launchpad/BrowserLaunchpad';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
-import {
-    applyBrowserControlEvent,
-    browserViewLifecycleEvent,
-    refreshBrowserNativeViewCaptureCapabilities,
-    type BrowserControlCommandDispatchResult,
-    type BrowserControlCommandEffect,
-    type BrowserControlState,
-    type BrowserControlViewState,
-    type BrowserViewLifecycleSignal,
-    type BrowserViewLifecycleTarget,
-} from '@/sync/domains/browser/control';
+import { applyBrowserControlEvent, refreshBrowserNativeViewCaptureCapabilities } from '@/sync/domains/browser/control/reducer';
+import { browserViewLifecycleEvent } from '@/sync/domains/browser/control/lifecycle';
+import type { BrowserControlCommandDispatchResult, BrowserControlCommandEffect, BrowserControlState, BrowserControlViewState, BrowserViewLifecycleSignal, BrowserViewLifecycleTarget } from '@/sync/domains/browser/control';
 import { registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { closeBrowserAnnotationView } from '@/sync/domains/browser/context/annotationDraft';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';

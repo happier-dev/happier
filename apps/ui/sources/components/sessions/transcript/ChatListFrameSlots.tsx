@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Animated, View } from 'react-native';
-import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { useTranscriptFindClearance } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { motionTokens } from '@/components/ui/motion/motionTokens';

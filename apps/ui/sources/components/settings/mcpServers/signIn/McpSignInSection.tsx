@@ -5,7 +5,7 @@ import { MCP_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/mcp/oauth/mcpOA
 
 import { CapabilityStatusChip } from '@/components/capabilities/status/CapabilityStatusChip';
 import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
-import { QRCode } from '@/components/qr';
+import { QRCode } from '@/components/qr/QRCode';
 import { ConnectedAccountOAuthForm } from '@/components/settings/connectedServices/account/ConnectedAccountOAuthForm';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

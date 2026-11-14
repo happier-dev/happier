@@ -4,7 +4,7 @@ import { NewSessionMachineSelectionContent } from './components/NewSessionMachin
 import { useServerScopedMachineOptions } from './hooks/machines/useServerScopedMachineOptions';
 import type { SessionServerStartDraftPresentation, SessionServerStartDraftTarget } from './serverStartDraftComposer';
 import { useLaunchSelectionMachines } from '@/sync/store/hooks';
-import { SELECTION_LIST_MODAL_MAX_HEIGHT } from '@/components/ui/selectionList';
+import { SELECTION_LIST_MODAL_MAX_HEIGHT } from '@/components/ui/selectionList/selectionListModalPresentation';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';

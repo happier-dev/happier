@@ -346,9 +346,7 @@ vi.mock('@/components/ui/empty/EmptyMessages', () => ({
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     SessionHeaderActionMenu: () => null,
 }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({
-    VoiceSurface: () => null,
-}));
+
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
 }));

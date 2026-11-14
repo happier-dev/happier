@@ -3,7 +3,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { QRCode } from '@/components/qr';
+import { QRCode } from '@/components/qr/QRCode';
 import { tryCreateQRMatrix } from '@/components/qr/qrMatrix';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';

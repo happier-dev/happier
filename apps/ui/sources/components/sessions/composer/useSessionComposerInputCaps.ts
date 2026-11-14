@@ -5,10 +5,8 @@ import {
   computeExistingSessionComposerInputMaxHeight,
   computeExistingSessionComposerPanelMaxHeight,
 } from '@/components/sessions/agentInput/inputMaxHeight';
-import {
-  useComposerAvailablePanelHeight,
-  useComposerKeyboardLayoutContext,
-} from '@/components/sessions/keyboardAvoidance';
+import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
+import { useComposerKeyboardLayout as useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';

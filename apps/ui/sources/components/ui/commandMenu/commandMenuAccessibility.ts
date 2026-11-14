@@ -1,7 +1,4 @@
-import {
-    resolveSelectionListListboxDomId,
-    resolveSelectionListOptionDomId,
-} from '@/components/ui/selectionList';
+import { resolveSelectionListListboxDomId, resolveSelectionListOptionDomId } from '@/components/ui/selectionList/resolveSelectionListOptionDomId';
 
 import type { CommandMenuItem } from './commandMenuTypes';
 

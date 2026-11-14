@@ -203,9 +203,7 @@ vi.mock('@/components/ui/empty/EmptyMessages', () => ({
 vi.mock('@/components/ui/forms/Deferred', () => ({
     Deferred: (props: any) => React.createElement(React.Fragment, null, props.children),
 }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({
-    VoiceSurface: () => null,
-}));
+
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
 }));
@@ -242,18 +240,11 @@ vi.mock(
 vi.mock('@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen', () => ({
     useWarmRepositoryDirectoryCacheOnSessionOpen: () => {},
 }));
-vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
-    useRegisterSessionPaneDriver: () => 'session:s1',
-}));
+
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/sync/domains/session/activeViewingSession', () => ({
-    setActiveViewingSessionId: () => {},
-    clearActiveViewingSessionId: () => {},
-    markSessionVisible: () => {},
-    markSessionHidden: () => {},
-}));
+
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({

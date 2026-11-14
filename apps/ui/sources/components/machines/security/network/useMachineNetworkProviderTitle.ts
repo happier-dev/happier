@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { usePreferredLanguage } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import {
   resolveMachineNetworkProviderTitle,
   type MachineNetworkFacts,

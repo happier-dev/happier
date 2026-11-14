@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { selectBrowserDiagnosticResourceRows, type BrowserDiagnosticResourceRow } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticResourceRows } from '@/sync/domains/browser/diagnostics/store';
+import type { BrowserDiagnosticResourceRow } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
 import {

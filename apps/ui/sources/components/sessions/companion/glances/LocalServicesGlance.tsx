@@ -18,7 +18,8 @@ import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame, type WidgetFrameBody, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { Typography } from '@/constants/Typography';
 import { selectLocalServiceInventoryPresentationRows } from '@/sync/domains/local/services/inventory/store';
-import { selectLocalServiceLaunchTargets, type LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
+import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
+import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { buildLocalServiceRows, selectLocalServiceRunningCount } from '@/sync/domains/local/services/serviceRow';
 import { t } from '@/text';
 

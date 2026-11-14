@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useOptionalModal } from '@/modal';
-import { useOnboardingShowcaseState } from '@/onboarding/showcase';
+import { useOnboardingShowcaseState } from '@/onboarding/showcase/useOnboardingShowcaseState';
 import { getPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 import { isReleaseNotesStoryCardsEnabled } from './featureGate';

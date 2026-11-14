@@ -14,7 +14,7 @@ import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/server
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { presentLocalServiceActionFailure, readLocalServiceActionFailureReason, readLocalServiceActionOutcome } from './localServiceActionOutcome';
-import { selectLocalServiceLaunchTargets, snapshotFromLocalServiceLauncherState } from '@/sync/domains/local/services/launch';
+import { selectLocalServiceLaunchTargets, snapshotFromLocalServiceLauncherState } from '@/sync/domains/local/services/launch/store';
 import { reconcileLocalServiceLauncherTargets } from '@/sync/domains/local/services/launch/store';
 
 import {

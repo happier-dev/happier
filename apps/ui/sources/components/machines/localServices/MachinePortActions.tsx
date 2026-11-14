@@ -9,7 +9,7 @@ import { useLocalServiceLiveFeeds } from '@/components/sessions/localServices/us
 import { useLocalServicePresentationFeatures, type LocalServiceCapabilityDisabledReasons } from '@/components/sessions/localServices/useLocalServicePublicPreviewFeature';
 import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
 import { selectLocalServiceInventoryPresentationRows } from '@/sync/domains/local/services/inventory/store';
-import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch';
+import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
 import { useLocalServicePreviewStateController } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { buildLocalServiceRows, selectLocalServiceRowForInventoryEntry, type ServiceRow } from '@/sync/domains/local/services/serviceRow';

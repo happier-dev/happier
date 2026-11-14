@@ -13,11 +13,8 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { KeyboardCommandHint } from '@/components/ui/keyboard/KeyHint';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { FileIcon } from '@/components/ui/media/FileIcon';
-import {
-  SelectionListDetailPaneContext,
-  type SelectionListOption,
-  type SelectionListSectionDescriptor,
-} from '@/components/ui/selectionList';
+import { SelectionListDetailPaneContext } from '@/components/ui/selectionList/SelectionListDetailPaneContext';
+import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {

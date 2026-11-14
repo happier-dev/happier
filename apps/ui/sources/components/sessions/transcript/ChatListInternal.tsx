@@ -143,7 +143,7 @@ import {
 import { waitForNextTranscriptVisualUpdate } from '@/components/sessions/transcript/pagination/waitForNextTranscriptVisualUpdate';
 import { TranscriptFirstPaintPlaceholder } from '@/components/sessions/transcript/TranscriptFirstPaintPlaceholder';
 import { JumpToBottomButton } from '@/components/sessions/transcript/scroll/JumpToBottomButton';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardFloatingInset';
 import { TranscriptNavigationRail } from '@/components/sessions/transcript/navigation/TranscriptNavigationRail';
 import { TranscriptNavigationReturnPill } from '@/components/sessions/transcript/navigation/TranscriptNavigationReturnPill';
 import {

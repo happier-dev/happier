@@ -1,11 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import {
-    selectBrowserDiagnosticRequests,
-    type BrowserDiagnosticEventProjection,
-    type BrowserDiagnosticRequestProjection,
-} from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticRequests } from '@/sync/domains/browser/diagnostics/store';
+import type { BrowserDiagnosticEventProjection, BrowserDiagnosticRequestProjection } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
 import {

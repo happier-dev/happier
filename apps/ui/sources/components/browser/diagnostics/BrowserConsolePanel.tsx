@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { selectBrowserDiagnosticEvents, type BrowserDiagnosticEventProjection, type BrowserViewDiagnosticsProjection } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticEvents } from '@/sync/domains/browser/diagnostics/store';
+import type { BrowserDiagnosticEventProjection, BrowserViewDiagnosticsProjection } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
 import {

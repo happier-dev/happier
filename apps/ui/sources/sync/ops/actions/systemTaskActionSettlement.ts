@@ -1,6 +1,6 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
-import { waitForSystemTaskResult } from '@/components/systemTasks';
+import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 
 type TaskStarted = Readonly<{ status: 'task_started'; taskId: string }>;

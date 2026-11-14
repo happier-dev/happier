@@ -2,10 +2,8 @@ import * as React from 'react';
 
 import { resolveLocalPreviewIframeSandbox } from '@/sync/domains/browser/adapters/targets/localPreview';
 
-import {
-    WEBVIEW_LOAD_FAILED_ERROR_CODE,
-    type BrowserViewLifecycleEmitter,
-} from '@/sync/domains/browser/control';
+import { WEBVIEW_LOAD_FAILED_ERROR_CODE } from '@/sync/domains/browser/control/lifecycle';
+import type { BrowserViewLifecycleEmitter } from '@/sync/domains/browser/control';
 
 import { BrowserViewFrame } from '../frame/BrowserViewFrame.web';
 import { DesktopWebViewEngine, type DesktopWebViewEngineBridge } from '../frame/engines/DesktopWebViewEngine';

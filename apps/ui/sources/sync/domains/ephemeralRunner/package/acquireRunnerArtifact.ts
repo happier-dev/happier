@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/release-runtime/releaseArtifactVerification';
 
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
-import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime';
+import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher';
 import {
     createRunnerArtifactAcquisitionSink,
     type RunnerArtifactAcquisitionSink,

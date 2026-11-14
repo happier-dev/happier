@@ -4,7 +4,7 @@ import { measureWindowBounds, type WindowBounds } from '@/components/ui/treeDrag
 import { RetainedPresentationGeometryRefreshContext, RetainedPresentationViewportContext } from '@/components/ui/presentation/retainedPresentationSlots';
 
 import { MarkdownCodeBlockWrapStateProvider } from '@/components/markdown/MarkdownCodeBlockWrapState';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardFloatingInset';
 import { JumpToBottomButton } from '@/components/sessions/transcript/scroll/JumpToBottomButton';
 
 import { resolveTranscriptListRenderer } from './renderer/resolveTranscriptListRenderer';

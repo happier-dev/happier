@@ -3,10 +3,8 @@ import type { BrowserControlViewState } from '@/sync/domains/browser/control/sta
 import type { BrowserSurfaceLifecycleState } from '../surfaces/browserSurfaceLifecycle';
 
 import { resolveUrlOrigin } from '@/sync/domains/browser/adapters/targets/localPreview';
-import {
-    WEBVIEW_LOAD_FAILED_ERROR_CODE,
-    type BrowserViewLifecycleEmitter,
-} from '@/sync/domains/browser/control';
+import { WEBVIEW_LOAD_FAILED_ERROR_CODE } from '@/sync/domains/browser/control/lifecycle';
+import type { BrowserViewLifecycleEmitter } from '@/sync/domains/browser/control';
 
 import { BrowserViewFrame } from '../frame/BrowserViewFrame.native';
 import type {

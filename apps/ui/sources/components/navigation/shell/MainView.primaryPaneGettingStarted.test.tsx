@@ -58,13 +58,7 @@ installNavigationShellCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
-    useVisibleSessionListViewData: () => sessionListState.data,
-    useHasHiddenInactiveSessions: () => false,
-    countVisibleSessionListSessions: (data: Array<{ type?: string }> | null) => (
-        data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0
-    ),
-}));
+
 
 vi.mock('@/components/sessions/shell/search/useSessionListViewFilterController', () => ({
     useSessionListViewFilterController: () => ({ sourceAvailable: false, displayFilters: { source: 'all' } }),
@@ -148,9 +142,7 @@ vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
     ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
 }));
 
-vi.mock('@/components/ui/navigation/TabBar', () => ({
-    TabBar: 'TabBar',
-}));
+
 
 vi.mock('@/components/navigation/shell/InboxView', () => ({
     InboxView: 'InboxView',

@@ -53,10 +53,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 let copyButtonsVisible = false;
 
-vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => copyButtonsVisible,
-    shouldShowMessageSelectButton: () => copyButtonsVisible,
-}));
+
 
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
     extractWorkspaceFileMentions: () => [],
@@ -82,9 +79,7 @@ vi.mock('@/components/sessions/attachments/messages/AttachmentsMessageRow', () =
     AttachmentsMessageRow: () => null,
 }));
 
-vi.mock('@/components/sessions/sessionMedia/SessionMediaInlineImages', () => ({
-    SessionMediaInlineImages: () => null,
-}));
+
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,

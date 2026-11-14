@@ -332,9 +332,7 @@ vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', async (importOr
 vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
   useOpenAttachedSessionTerminal: () => attachedTerminalState,
 }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({
-  VoiceSurface: () => null,
-}));
+
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
   AttachmentFilePicker: () => null,
 }));

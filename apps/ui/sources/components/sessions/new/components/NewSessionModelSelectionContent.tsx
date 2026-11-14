@@ -31,7 +31,7 @@ import {
     type SessionModelPickerValue,
 } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { Item } from '@/components/ui/lists/Item';
-import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
+import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList/resolvePopoverSelectionListHeightBehavior';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import {
     resolveCanonicalModelOptionId,

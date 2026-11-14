@@ -1,8 +1,11 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { ONBOARDING_SHOWCASE_MANIFEST } from '@/onboarding/showcase/manifest';
+import { clearShowcaseSeenVersion, setShowcaseSeenVersion } from '@/onboarding/showcase/storage';
 
 const authState = vi.hoisted(() => ({
     credentials: { token: 'token', secret: 'secret' } as unknown,
@@ -20,10 +23,6 @@ const modalState = vi.hoisted(() => ({
     activeCount: 0,
 }));
 
-const onboardingState = vi.hoisted(() => ({
-    hasUnread: false,
-}));
-
 vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -31,10 +30,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
         credentials: authState.credentials,
         isAuthenticated: Boolean(authState.credentials),
     }),
-}));
-
-vi.mock('@/onboarding/showcase', () => ({
-    useOnboardingShowcaseState: () => onboardingState,
 }));
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
@@ -72,7 +67,7 @@ describe('ReleaseNotesAutoShowMount', () => {
         authState.credentials = { token: 'token', secret: 'secret' };
         setupIntentState.pending = null;
         modalState.activeCount = 0;
-        onboardingState.hasUnread = false;
+        setShowcaseSeenVersion(ONBOARDING_SHOWCASE_MANIFEST.showcaseVersion);
         releaseNotesLauncherState.open.mockClear();
         vi.useFakeTimers();
     });
@@ -93,15 +88,14 @@ describe('ReleaseNotesAutoShowMount', () => {
     });
 
     it('waits until the first-open onboarding showcase has been resolved', async () => {
-        onboardingState.hasUnread = true;
+        clearShowcaseSeenVersion();
         const { ReleaseNotesAutoShowMount } = await import('./ReleaseNotesAutoShowMount');
-        const screen = await renderScreen(<ReleaseNotesAutoShowMount />);
+        await renderScreen(<ReleaseNotesAutoShowMount />);
         await vi.advanceTimersByTimeAsync(800);
 
         expect(releaseNotesLauncherState.open).not.toHaveBeenCalled();
 
-        onboardingState.hasUnread = false;
-        await screen.update(<ReleaseNotesAutoShowMount />);
+        await act(async () => setShowcaseSeenVersion(ONBOARDING_SHOWCASE_MANIFEST.showcaseVersion));
         await vi.advanceTimersByTimeAsync(800);
 
         expect(releaseNotesLauncherState.open).toHaveBeenCalledTimes(1);

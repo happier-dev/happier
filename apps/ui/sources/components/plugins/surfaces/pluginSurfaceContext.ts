@@ -22,7 +22,7 @@ import {
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
-import { usePreferredLanguage } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { PluginSurfaceTargetUndeclaredReason } from '@/sync/domains/plugins/ui/scope/resolveResourceScope';

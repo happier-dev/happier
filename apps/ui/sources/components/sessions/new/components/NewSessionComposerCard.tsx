@@ -14,10 +14,8 @@ import { AttachmentFilePicker } from '@/components/sessions/attachments/Attachme
 import { t } from '@/text';
 import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
-import {
-    resolveAvailablePanelHeight,
-    useComposerAvailablePanelHeight,
-} from '@/components/sessions/keyboardAvoidance';
+import { resolveAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/composerKeyboardGeometry';
+import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';

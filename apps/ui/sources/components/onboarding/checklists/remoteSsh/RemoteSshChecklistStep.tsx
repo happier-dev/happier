@@ -10,7 +10,7 @@ import { useRemoteSshBootstrapTask, type RemoteSshBootstrapFormState } from '@/c
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PlanChecklistItem } from '@/components/systemTasks/planChecklist';
-import { usePlanChecklistController } from '@/components/systemTasks/planChecklist';
+import { usePlanChecklistController } from '@/components/systemTasks/planChecklist/usePlanChecklistController';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';

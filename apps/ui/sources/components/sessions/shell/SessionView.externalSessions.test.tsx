@@ -452,12 +452,7 @@ vi.mock('@/components/ui/forms/Deferred', () => ({
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
   SessionHeaderActionMenu: () => null,
 }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({
-  VoiceSurface: (props: any) => {
-    voiceSurfacePropsSpy(props);
-    return null;
-  },
-}));
+
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
   AttachmentFilePicker: () => null,
 }));

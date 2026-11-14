@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Animated, View, type LayoutChangeEvent } from 'react-native';
 
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardFloatingInset';
 import { resolveOverlayMotionPreset, useOverlayMotionAnimation, useOverlayPresence } from '@/components/ui/overlays/motion/overlayMotion';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';

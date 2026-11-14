@@ -46,7 +46,7 @@ vi.mock('@/components/sessions/transcript/ChatList', () => ({ ChatList: () => nu
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({ EmptyMessages: () => null }));
 vi.mock('@/components/ui/forms/Deferred', () => ({ Deferred: ({ children }: React.PropsWithChildren) => children }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({ SessionHeaderActionMenu: () => null }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({ VoiceSurface: () => null }));
+
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({ AttachmentFilePicker: () => null }));
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
 vi.mock('@/components/sessions/agentInput', () => ({

@@ -55,7 +55,7 @@ vi.mock('@/components/sessions/transcript/ChatList', () => ({ ChatList: () => Re
 vi.mock('@/components/sessions/agentInput', () => ({ AgentInput: () => null }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({ SessionHeaderActionMenu: () => null }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({ AttachmentFilePicker: () => null }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({ VoiceSurface: () => null }));
+
 vi.mock('@/components/ui/forms/Deferred', () => ({ Deferred: (props: React.PropsWithChildren) => props.children }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({ EmptyMessages: () => React.createElement('EmptyMessages') }));
 vi.mock('@/components/sessions/pending/PendingMessagesDragReorderList', () => ({ PendingMessagesDragReorderList: () => React.createElement('PendingMessagesDragReorderList') }));

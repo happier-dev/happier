@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardFloatingInset';
 import { resolveTranscriptNavigationPaneJumpRequest } from '@/components/sessions/transcript/viewport/window/useTranscriptTargetWindowHostAdapter';
 import { useTranscriptNavigationCurrentAnchorId } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';

@@ -25,7 +25,7 @@ import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/s
 import {
     useSpotlightTarget,
 } from '@/components/onboarding/tour/stage/useSpotlightTarget';
-import { useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance';
+import { useComposerKeyboardLayout as useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { useReportComposerOverlayOpen } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
 import {

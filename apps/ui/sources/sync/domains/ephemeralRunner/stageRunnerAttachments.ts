@@ -3,7 +3,7 @@ import type { RunnerReviewedFileV1 } from '@happier-dev/protocol/ephemeralRunner
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
-import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime';
+import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher';
 import { admitRunnerAttachmentSource } from './runnerAttachmentSourceAdmission';
 import {
     createRunnerArtifactAcquisitionSink,

@@ -11,7 +11,7 @@ import { resolveArchiveSymlinkTargets } from '@happier-dev/release-runtime/archi
 
 import { openLocalUploadSourceReader, type LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import type { BulkTransferFileDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
-import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime';
+import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher';
 
 const FILE_TYPE = 0o170000;
 const REGULAR_FILE = 0o100000;

@@ -58,7 +58,7 @@ vi.mock('@/components/sessions/transcript/ChatList', () => ({ ChatList: () => nu
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({ EmptyMessages: () => null }));
 vi.mock('@/components/ui/forms/Deferred', () => ({ Deferred: (props: React.PropsWithChildren) => props.children }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({ SessionHeaderActionMenu: () => null }));
-vi.mock('@/components/voice/surface/VoiceSurface', () => ({ VoiceSurface: () => null }));
+
 vi.mock('@/voice/session/voiceSession', () => ({ useVoiceSessionSnapshot: () => ({ status: 'disconnected' }), voiceSessionManager: {} }));
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: (props: Readonly<Record<string, unknown>>) => React.createElement('AgentInput', props),

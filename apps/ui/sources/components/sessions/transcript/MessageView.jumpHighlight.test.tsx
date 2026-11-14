@@ -78,9 +78,7 @@ vi.mock('@/components/sessions/attachments/messages/AttachmentsMessageRow', () =
     AttachmentsMessageRow: () => null,
 }));
 
-vi.mock('@/components/sessions/sessionMedia/SessionMediaInlineImages', () => ({
-    SessionMediaInlineImages: () => null,
-}));
+
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');

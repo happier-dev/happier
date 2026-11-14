@@ -2,7 +2,7 @@ import { BrowserContextCapabilitiesSchema } from '@happier-dev/protocol/features
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
-import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control';
+import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control/reducer';
 import { attachActiveBrowserPageReference, createBrowserContextState } from '@/sync/domains/browser/context';
 
 import { DEMO_NOW_MS } from './constants';

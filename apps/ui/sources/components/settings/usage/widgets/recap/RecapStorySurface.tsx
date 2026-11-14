@@ -9,7 +9,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 
-import { StorySheetFrame } from '@/components/ui/storyDeck';
+import { StorySheetFrame } from '@/components/ui/storyDeck/StorySheetFrame';
 import { WizardStepDots } from '@/components/onboarding/ui/WizardStepDots';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';

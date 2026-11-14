@@ -10,10 +10,8 @@ import {
     type SessionPartKind,
 } from '@happier-dev/plugin-ui/advanced';
 
-import {
-    ComposerKeyboardProvider,
-    useComposerKeyboardLayout,
-} from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardProvider } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
+import { useComposerKeyboardLayout } from '@/components/sessions/keyboardAvoidance/useComposerKeyboardLayout';
 import { SessionViewLayout } from '@/components/sessions/shell/view/SessionViewLayout';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';

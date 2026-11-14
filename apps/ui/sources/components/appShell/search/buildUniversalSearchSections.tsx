@@ -26,7 +26,7 @@ import { QuickOpenFilePreview } from './QuickOpenFilePreview';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SelectionListOptionStateContext } from '@/components/ui/selectionList/SelectionListOptionStateContext';
-import { SelectionListDetailPaneContext } from '@/components/ui/selectionList';
+import { SelectionListDetailPaneContext } from '@/components/ui/selectionList/SelectionListDetailPaneContext';
 import { useCodeTextFile } from '@/components/projects/files/code/useCodeTextFile';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchSourceFocus } from './UniversalSearchRuntimeContext';

@@ -13,7 +13,7 @@ import { getLocalServiceInventoryState, subscribeLocalServiceInventoryStore } fr
 import { selectLocalServiceInventoryPresentationRows } from '@/sync/domains/local/services/inventory/store';
 import { getLocalServiceLauncherState, subscribeLocalServiceLauncherStore,
     type LocalServiceLauncherStoreKeyInput } from '@/sync/domains/local/services/launch/sharedStore';
-import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch';
+import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
 import { buildLocalServiceRows, selectLocalServiceRunningCount, type ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';
 import { readLocalServiceDiagnostics } from '@/sync/domains/local/services/presentation';
 import { resolveLocalServicesGlanceRows, type LocalServicesGlanceRow } from './glanceModels';

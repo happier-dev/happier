@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
-import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
+import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList/resolvePopoverSelectionListHeightBehavior';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import {
     normalizeDirectoryFavoritePaths,

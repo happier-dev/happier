@@ -31,7 +31,7 @@ import {
   type NewSessionMachinePickerInventory,
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePickerInventory';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
-import { SELECTION_LIST_LARGE_POPOVER_SIZE } from '@/components/ui/selectionList';
+import { SELECTION_LIST_LARGE_POPOVER_SIZE } from '@/components/ui/selectionList/_constants';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';

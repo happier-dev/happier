@@ -27,12 +27,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalServiceInventory } from '@/sync/domains/local/services/inventory/useLocalServiceInventory';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
-import {
-    createLocalServiceLauncherState,
-    selectLocalServiceLaunchTargets,
-    type LocalServiceLaunchTarget,
-    type LocalServiceLauncherState,
-} from '@/sync/domains/local/services/launch';
+import { createLocalServiceLauncherState, selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
+import type { LocalServiceLaunchTarget, LocalServiceLauncherState } from '@/sync/domains/local/services/launch';
 import { readLocalServiceDiagnostics } from '@/sync/domains/local/services/presentation';
 import {
     buildLocalServiceRows,
