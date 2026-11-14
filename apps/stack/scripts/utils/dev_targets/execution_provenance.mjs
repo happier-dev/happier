@@ -1,5 +1,7 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 export const EXECUTION_PROVENANCE_SCHEMA_VERSION = 1;
@@ -8,16 +10,16 @@ export const EXECUTION_PROVENANCE_FILENAME = 'provenance.jsonl';
 /** Successful completed native and JS executions share this recorded history.
  * Missing, unreadable or not-yet-completed observations supply no threshold. */
 export async function readExecutionDurationP99(stackBaseDir, commandClass) {
-  let history;
-  try { history = await readFile(join(stackBaseDir, 'dev-target-command-load-native', EXECUTION_PROVENANCE_FILENAME), 'utf8'); }
-  catch { return null; }
   const durations = [];
-  for (const line of history.split('\n')) {
-    let record;
-    try { record = JSON.parse(line); } catch { continue; }
-    if (record.phase === 'completed' && record.commandClass === commandClass && record.exitCode === 0
-      && record.signal == null && Number.isFinite(record.durationMs) && record.durationMs > 0) durations.push(record.durationMs);
-  }
+  try {
+    const history = createReadStream(join(stackBaseDir, 'dev-target-command-load-native', EXECUTION_PROVENANCE_FILENAME), { encoding: 'utf8' });
+    for await (const line of createInterface({ input: history, crlfDelay: Infinity })) {
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      if (record.phase === 'completed' && record.commandClass === commandClass && record.exitCode === 0
+        && record.signal == null && Number.isFinite(record.durationMs) && record.durationMs > 0) durations.push(record.durationMs);
+    }
+  } catch { return null; }
   durations.sort((left, right) => left - right);
   return durations[Math.ceil(durations.length * 0.99) - 1] ?? null;
 }

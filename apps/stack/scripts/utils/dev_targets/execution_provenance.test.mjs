@@ -1,5 +1,8 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
+import fsPromises from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -22,6 +25,30 @@ test('duration p99 uses successful completed records of the requested class with
   await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'targeted-validation', exitCode: 0, durationMs: 0 });
   assert.equal(await readExecutionDurationP99(root, 'targeted-validation'), 99);
   assert.equal(await readExecutionDurationP99(root, 'unknown-class'), null);
+});
+
+test('duration p99 remains available beyond the whole-file string boundary', async t => {
+  const { readExecutionDurationP99 } = await import('./execution_provenance.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-duration-stream-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const durationMs of [70, 700, 7]) {
+    await appendExecutionProvenance(root, { phase: 'completed', commandClass: 'targeted-validation', exitCode: 0, durationMs });
+  }
+  const path = join(root, 'dev-target-command-load-native', 'provenance.jsonl');
+  const readWholeFile = fsPromises.readFile;
+  // The real ~1.9m-record development history throws this platform error.
+  // Substitute only that filesystem boundary; streamed reads still use real bytes.
+  t.mock.method(fsPromises, 'readFile', async (input, ...args) => {
+    if (input === path) throw new RangeError('Invalid string length');
+    return await readWholeFile(input, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await readExecutionDurationP99(root, 'targeted-validation'), 700);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 test('execution provenance preserves existing observations past the former rotation cap without command arguments', async (t) => {
