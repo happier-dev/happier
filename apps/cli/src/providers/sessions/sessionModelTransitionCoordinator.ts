@@ -1338,6 +1338,23 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (applied.status !== 'applied' && applied.status !== 'deferred') {
       if (applied.status === 'requires_restart') armedSelection = proposal.selection;
+      let reason = applied.reason;
+      let failureCause = applied.failureCause;
+      if (applied.status === 'failed' && proposal.source === 'prompt'
+        && proposal.committedIntentUpdatedAt !== undefined
+        && armedSelection && sameSelection(armedSelection, proposal.selection)) {
+        try {
+          // This prompt consumed its refused choice. Restore the applied intent
+          // only while this proposal still owns the durable selection.
+          const restored = await params.publishIntent(activeTarget.selection, {
+            selection: proposal.selection, updatedAt: proposal.committedIntentUpdatedAt,
+          });
+          if (restored.accepted) armedSelection = null;
+        } catch (error) {
+          reason = 'intent_publication_failed';
+          failureCause = projectSessionRuntimeFailureCause(error, 'turn_start');
+        }
+      }
       try {
         await clearActiveFenceUnlessPendingSuccessor();
       } catch {
@@ -1372,8 +1389,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         applied.status === 'requires_restart' ? 'restart_required' : 'apply_failed',
         activeTarget.selection,
         proposal.selection,
-        applied.reason,
-        applied.failureCause,
+        reason,
+        failureCause,
       ));
       return;
     }

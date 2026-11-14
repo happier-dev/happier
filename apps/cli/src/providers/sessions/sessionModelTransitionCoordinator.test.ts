@@ -977,7 +977,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.events).not.toContain('send');
     await harness.coordinator.dispose();
   });
-  it('keeps a failed Send armed so a later metadata echo cannot silently retry the model', async () => {
+  it('keeps a failed immediate command armed so a metadata echo cannot retry it', async () => {
     const harness = createNativeHarness();
     const next = native('next');
     await harness.coordinator.submit(next, { source: 'command', applyTiming: 'next_prompt' });
@@ -986,6 +986,44 @@ describe('createSessionModelTransitionCoordinator', () => {
     await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => undefined)).status).toBe('completed'));
     expect(await harness.coordinator.submit(next, { source: 'metadata' })).toMatchObject({ ok: true, status: 'armed' });
     expect(harness.readCurrent()).toEqual(native('old'));
+    await harness.coordinator.dispose();
+  });
+  it('consumes a refused armed model so the next prompt can use the active target', async () => {
+    const harness = createNativeHarness();
+    const next = native('next');
+    await harness.coordinator.submit(next, { source: 'command', applyTiming: 'next_prompt' });
+    harness.applyRuntime.mockResolvedValueOnce({ status: 'failed', reason: 'acp_model_not_available' });
+    expect(await harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { harness.events.push('refused-send'); } });
+    } })).toMatchObject({ ok: false, status: 'apply_failed' });
+    await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => { harness.events.push('later-send'); })).status).toBe('completed'));
+    expect(harness.coordinator.readArmedSelection()).toBeNull();
+    expect(harness.readCurrent()).toEqual(native('old'));
+    expect(harness.publishIntent).toHaveBeenLastCalledWith(native('old'), {
+      selection: next, updatedAt: expect.any(Number),
+    });
+    expect(harness.events).not.toContain('refused-send');
+    expect(harness.events).toContain('later-send');
+    await harness.coordinator.dispose();
+  });
+  it.each(['superseded', 'unavailable'] as const)('settles a refused prompt when intent restoration is %s', async scenario => {
+    const harness = createNativeHarness();
+    const next = native('next');
+    await harness.coordinator.submit(next, { source: 'command', applyTiming: 'next_prompt' });
+    // The durable intent publisher is the Home transport boundary.
+    harness.publishIntent.mockResolvedValueOnce({ accepted: true, updatedAt: 7 });
+    if (scenario === 'superseded') harness.publishIntent.mockResolvedValueOnce({ accepted: false, updatedAt: 8 });
+    else harness.publishIntent.mockRejectedValueOnce(new Error('Home unavailable'));
+    harness.applyRuntime.mockResolvedValueOnce({ status: 'failed', reason: 'acp_model_not_available' });
+    const result = await harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { harness.events.push('refused-send'); } });
+    } });
+    expect(result).toMatchObject({ ok: false, status: 'apply_failed',
+      reason: scenario === 'superseded' ? 'acp_model_not_available' : 'intent_publication_failed' });
+    expect(harness.coordinator.readArmedSelection()).toEqual(next);
+    await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => undefined)).status).toBe('completed'));
+    expect(harness.publishIntent).toHaveBeenLastCalledWith(native('old'), { selection: next, updatedAt: 7 });
+    expect(harness.events).not.toContain('refused-send');
     await harness.coordinator.dispose();
   });
   it('reads applied X while Y is only pending, but refuses unknown runtime custody after effect starts', async () => {
