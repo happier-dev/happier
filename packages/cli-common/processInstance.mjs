@@ -42,7 +42,16 @@ export function readProcessInstanceFingerprintSync(pid, {
   }
 
   if (platform === 'win32') {
+    // This probe is synchronous and runs on the daemon's event loop, so its cost matters.
+    // The WMI/CIM query is the slow part (6-14 s observed on a managed Windows 11 laptop), while
+    // .NET's Process.StartTime reads the same kernel creation time directly (~1-2 s, mostly
+    // PowerShell startup). WMI reports CreationDate with microsecond precision, so truncating the
+    // .NET value to whole microseconds produces exactly the same "O"-formatted string, and existing
+    // fingerprints keep matching. A missing process (ArgumentException) exits 3 like the CIM path;
+    // any other .NET failure (for example access denied) falls back to the original CIM query.
     const script = [
+      `$t = $null; try { $t = [System.Diagnostics.Process]::GetProcessById(${normalizedPid}).StartTime.ToUniversalTime() } catch [System.ArgumentException] { exit 3 } catch { $t = $null }`,
+      'if ($null -ne $t) { [DateTime]::new($t.Ticks - ($t.Ticks % 10), [DateTimeKind]::Utc).ToString("O"); exit 0 }',
       `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${normalizedPid}" -ErrorAction Stop`,
       'if ($null -eq $p) { exit 3 }',
       '$p.CreationDate.ToUniversalTime().ToString("O")',
