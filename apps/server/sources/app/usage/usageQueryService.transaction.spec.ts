@@ -120,7 +120,7 @@ describe('Usage snapshot transaction lifetime', () => {
             if (held) await captured;
             return [event];
         });
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const payload = { queries: [{}], includeContributions: true };
             const json = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account' }, payload }).then(response => response);
@@ -171,7 +171,7 @@ describe('Usage snapshot transaction lifetime', () => {
             await held;
             return [event];
         });
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const original = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account' }, payload: baseline }).then(response => response);
             await started;
@@ -199,7 +199,7 @@ describe('Usage snapshot transaction lifetime', () => {
             return [event];
         });
         process.env.HAPPIER_FEATURE_ACCOUNT_PUBLIC_PROFILES__ENABLED = '1';
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const payload = { queries: [{ population: 'public_eligible_personal' }, {}] };
             const admitted = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account' }, payload }).then(response => response);
@@ -364,7 +364,7 @@ describe('Usage snapshot transaction lifetime', () => {
             else yieldsInTransaction++;
         };
         try {
-            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
                 const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                     headers: { 'x-test-user-id': 'account' }, payload: {
                         queries: [{ dateRange: { startMs: 0, endMs: 200 }, includeSeries: true }],
@@ -446,7 +446,7 @@ describe('Usage snapshot transaction lifetime', () => {
                 expect(result.totals.tokens.total).toBe(7);
                 expect(result.contributions).toHaveLength(1);
                 expect(result.priceCatalog).toBeDefined();
-            } else await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            } else await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
                 const response = await app.inject({ method: 'POST', url: surface === 'v1' ? '/v1/usage/query' : '/v2/usage/query',
                     headers: { 'x-test-user-id': 'account' }, payload: surface === 'v1' ? {} : query });
                 expect(response.statusCode, response.body).toBe(200);
@@ -539,7 +539,7 @@ describe('Usage snapshot transaction lifetime', () => {
 
     it('keeps an attached client failure visible through the real batch error handler', async () => {
         usageEventRawRead.mockRejectedValue(new Error('database read failed'));
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account' }, payload: { queries: [{}] } });
             expect(response.statusCode).toBe(500);
@@ -576,7 +576,7 @@ describe('Usage snapshot transaction lifetime', () => {
                 expectSnapshot(await queryUsageAnalytics('account', query), 20, 'settled-model');
                 return;
             }
-            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
                 for (const [tokens, modelId] of [[10, 'original-model'], [20, 'settled-model']] as const) {
                     readsInCapture = 0;
                     const response = await app.inject({ method: 'POST', url: entry,
@@ -597,7 +597,7 @@ describe('Usage snapshot transaction lifetime', () => {
     it('shares one coherent accounting statement per bounded page batch, deduplicates slices and delivers raw accounting on request', async () => {
         const current = { dateRange: { startMs: 0, endMs: 200 }, breakdowns: ['agent'], costMode: 'auto' };
         const other = { ...current, breakdowns: ['model'], costMode: 'api_equivalent' };
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account' }, payload: { queries: [current, other, current] } });
             expect(response.statusCode, response.body).toBe(200);
@@ -638,7 +638,7 @@ describe('Usage snapshot transaction lifetime', () => {
 
     it.each([true, false])('admits the public population only when its real capability is enabled (%s)', async enabled => {
         process.env.HAPPIER_FEATURE_ACCOUNT_PUBLIC_PROFILES__ENABLED = enabled ? '1' : '0';
-        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async (app: Parameters<typeof registerAccountUsageRoutes>[0]) => {
             const response = await app.inject({ method: 'POST', url: '/v2/usage/query',
                 headers: { 'x-test-user-id': 'account' }, payload: { population: 'public_eligible_personal' } });
             expect(response.statusCode, response.body).toBe(enabled ? 200 : 404);

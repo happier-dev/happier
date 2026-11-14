@@ -270,7 +270,8 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
     assertUsageReaderOpen(isReaderClosed);
     let sliceStartedAt = performance.now();
     // Body and evidence readers borrow one normalized copy of a captured event.
-    const admittedBodies = new Map<object, UsageAnalyticsSnapshot['rows'][number]>();
+    const admittedBodies = new Map<object, UsageAnalyticsSnapshot['rows'][number]
+        & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'>>();
     const inputs = new Map<UsageAnalyticsSnapshot['rows'], string[]>();
     for (const query of queries) {
         const key = getUsageAnalyticsQueryRequestKey(query);
