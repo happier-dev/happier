@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { createMinimalMonorepoFixture } from '../../testkit/core/minimal_monorepo_layout.mjs';

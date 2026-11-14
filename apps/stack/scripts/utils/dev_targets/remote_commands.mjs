@@ -54,60 +54,6 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   packageManagerCommands: Object.freeze(['npm', 'npx', 'pnpm', 'yarn']),
   compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
   compilerTestSuites: COMPILER_TEST_SUITES,
-  sourceConditionNativeTestPaths: Object.freeze([
-    'apps/stack/scripts/tailscale_placement.integration.test.mjs',
-    // Source-runtime producer fixtures replace OS watchers/compiler/SSH boundaries.
-    'apps/stack/scripts/utils/dev_targets/source_runtime_producer.test.mjs',
-    'apps/stack/scripts/build/source_runtime_producer.test.mjs',
-    'apps/stack/scripts/build/build_source_web_ui.test.mjs',
-    'apps/stack/scripts/runtime/shared/source_reload_refusal.test.mjs',
-    'apps/stack/scripts/stack/stack_reload_verification.test.mjs',
-    // Patch recovery exercises a scratch pnpm installation through source owners.
-    'apps/stack/scripts/utils/proc/dependency_refresh.patch_relock.test.mjs',
-    'apps/stack/scripts/utils/proc/dependency_refresh.remote.test.mjs',
-    'apps/stack/scripts/utils/proc/dependency_refresh.test.mjs',
-    'apps/stack/scripts/utils/proc/dependency_refresh.writer.test.mjs',
-    'apps/stack/scripts/utils/proc/workspace_package_manifests.test.mjs',
-    // Relay fixtures replace the native Tailscale/relay boundaries and load
-    // workspace sources; they do not consume Stack's published closure.
-    'apps/stack/scripts/iroh_relay.integration.test.mjs',
-    'apps/stack/scripts/utils/server/infra/iroh/listener.test.mjs',
-    // Compiler/publication tests use scratch outputs and source-owned helpers.
-    'scripts/workspaces/runTypeScriptCli.test.mjs',
-    'scripts/workspaces/deriveTypecheckProjects.test.mjs',
-    'scripts/workspaces/typecheckDiagnostics.test.mjs',
-    'scripts/workspaces/workspaceOutputScriptArgs.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
-    'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs',
-    // Real Metro HTTP negotiation loads installed dependencies and a local helper.
-    'apps/ui/scripts/metroNativeBundleResponse.test.mjs',
-    'apps/stack/scripts/utils/fs/workspaceBuildInputs.test.mjs',
-    // These exercise scratch publishers and the SDK's read-only source
-    // projection; package resolution still needs explicit source intent.
-    'packages/plugin-sdk/scripts/apiSurfaceCli.test.mjs',
-    'packages/plugin-sdk/scripts/apiSurface.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/worker_disk_budget.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/sync_service.test.mjs',
-    'apps/stack/scripts/utils/dev/expo_dev_crash_supervision.test.mjs',
-    'apps/stack/scripts/preferred_execution_launcher.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/service_placement.test.mjs',
-    'apps/stack/scripts/dev_targets_cmd.test.mjs',
-    'apps/stack/scripts/daemon_start_verification.integration.test.mjs',
-    'apps/stack/scripts/stack/stack_daemon_command.test.mjs',
-    'apps/stack/scripts/stack/stack_happier_passthrough_command.test.mjs',
-    'apps/stack/scripts/stack/retained_auth_scope.integration.test.mjs',
-    'apps/stack/scripts/stack_guided_login_inner_invocation.test.mjs',
-    'apps/stack/scripts/auth_login_guided_server_no_expo.test.mjs',
-    'apps/stack/scripts/stack/stack_daemon_runtime_provenance.test.mjs',
-    'apps/stack/scripts/stack_daemon_cmd.integration.test.mjs',
-    'apps/stack/scripts/utils/stack/daemonControlClient.test.mjs',
-    'apps/stack/scripts/run_script_with_stack_env.restart_port_reuse.test.mjs',
-    'apps/stack/scripts/utils/stack/runtime_state.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/supervisor.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/runtime_observer.test.mjs',
-    'apps/stack/scripts/utils/dev/daemon_watch_resilience.test.mjs',
-    'apps/stack/scripts/stack_info_runtime_snapshot.test.mjs',
-  ]),
   sourceTestScripts: Object.freeze(['vitest', 'vitest:local']),
   formatterCheckFlags: Object.freeze(['--check', '--list-different', '--help', '-h', '--version', '-V']),
   // These owners publish tracked files. Worker mirrors are one-way replicas;
@@ -290,34 +236,6 @@ const COMMAND_RULES = [
   ] }, set: { kind: 'source-test' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], stackScope: ['1'] }, set: { kind: 'runtime', componentOverride: 'apps/stack' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: ['apps/stack/scripts/dev_target_control.real.integration.test.mjs'] }, set: { requiredTools: 'mutagen' } },
-  // These tool owner suites import repository source and construct isolated
-  // dependency fixtures, not emitted workspace runtime closures.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: [
-    'apps/ui/scripts/runVitestShards.test.mjs',
-    'apps/ui/scripts/activitySurfacesValidationContract.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/remote_validation_preparation.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/mutagen_project.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/qa_browser.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/qa_browser_recovery.integration.test.mjs',
-    'apps/stack/scripts/utils/server/infra/iroh/placement.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/executor.test.mjs',
-    'apps/stack/scripts/utils/stack/stop_remote.test.mjs',
-    'apps/stack/scripts/utils/proc/ownership_killProcessGroupOwnedByStack.test.mjs',
-    'apps/stack/scripts/utils/proc/native_process_identity.test.mjs',
-    'apps/stack/scripts/utils/proc/workspace_build_admission.test.mjs',
-    'apps/stack/scripts/utils/proc/admission_broker.test.mjs',
-    'apps/stack/scripts/utils/proc/admission_client.test.mjs',
-    'apps/stack/scripts/utils/proc/service_memory.test.mjs',
-    'apps/stack/scripts/utils/test/test_process.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
-    'apps/stack/scripts/build/build_source_runtime.test.mjs',
-    'apps/stack/scripts/runtime/shared/pending_source_start.test.mjs',
-    'apps/stack/scripts/runtime/launch/resolveLaunchSpecs.test.mjs',
-  ] }, set: { kind: 'source-test' } },
-  // These lifecycle/transport fixtures use authored exports only when the
-  // caller explicitly selects the existing Happier source runtime contract.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], sourceCondition: ['1'], sourceConditionNativeTests: ['1'] }, set: { kind: 'source-test' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { ...validation, kind: 'source-test' } },
   // Both finite web entry points consume authored inputs and admit the same
@@ -717,7 +635,6 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     component: normalizeCommandPath(slashCwd), managerCwd, project, singleProject: projects.length === 1 ? '1' : '0', mixedProjects: projectScopes.size > 1 ? '1' : '0',
     nativeTestPaths: testPaths,
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
-    sourceConditionNativeTests: testPaths.length > 0 && testPaths.every(path => REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.includes(path)) ? '1' : '0',
     nativeCompilerSuite: testPaths.some(path => REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.includes(path)) ? '1' : '0',
     nativeComponent: testComponents.length && testComponents.every(component => component === testComponents[0]) ? testComponents[0] : '',
     stackScope: /^apps\/stack(?:\/|$)/u.test(posix.normalize(slashCwd))
@@ -877,9 +794,9 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
   if ((policy.kind === 'source-test' || facts.component === 'apps/cli') && policy.workerTool === 'vitest' && policy.generatorCheck === '0') {
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
   }
-  if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
-    && facts.nativeTestPaths.length && facts.nativeLoader === '0' && !env.NODE_OPTIONS) {
-    const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPaths);
+  if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1' && facts.nativeTestPaths.length) {
+    const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPaths, { sourceCondition: facts.sourceCondition === '1',
+      declaredOnly: facts.nativeLoader === '1' || Boolean(env.NODE_OPTIONS) });
     if (demand) Object.assign(policy, { kind: 'source-test',
       bootstrap: demand.requiresDependencyBootstrap ? '1' : '0',
       heavyClass: policy.heavyClass === 'validation'
@@ -1687,7 +1604,7 @@ native_resolve_command_policy_arguments() {
   policy_project=$native_project
   policy_singleProject=0
   [ "$native_project_count" -ne 1 ] || policy_singleProject=1
-  policy_nativeTestPath=; policy_nativeCompilerSuite=0; policy_sourceConditionNativeTests=1
+  policy_nativeTestPath=; policy_nativeCompilerSuite=0
   native_test_count=0; native_test_component=; native_test_component_mixed=0
   native_test_argument_index=0
   for native_arg in "$@"; do
@@ -1698,7 +1615,6 @@ native_resolve_command_policy_arguments() {
     case "$native_test_path" in "$repo_root"/*) native_test_path=\${native_test_path#"$repo_root"/} ;; *) native_normalize_path "$policy_component/$native_test_path"; native_test_path=$native_result ;; esac
     native_test_count=$((native_test_count + 1))
     policy_nativeTestPath=$native_test_path
-    case "$native_test_path" in ${REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.map(posixQuote).join('|')}) ;; *) policy_sourceConditionNativeTests=0 ;; esac
     native_parent=\${native_test_path%/*}
     [ "$native_parent" != "$native_test_path" ] || native_parent=.
     case "$native_test_path" in ${REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.map(posixQuote).join('|')}) policy_nativeCompilerSuite=1 ;; esac
@@ -1712,7 +1628,6 @@ native_resolve_command_policy_arguments() {
     elif [ "$native_test_component" != "$native_component" ]; then native_test_component_mixed=1; fi
   done
   [ "$native_test_count" -eq 1 ] || policy_nativeTestPath=
-  [ "$native_test_count" -gt 0 ] || policy_sourceConditionNativeTests=0
   [ "$native_test_component_mixed" -eq 0 ] || native_test_component=
   native_command_basename "\${1-}"; native_manager=$native_basename
   if [ "$native_manager" = corepack ]; then shift; native_command_basename "\${1-}"; native_manager=$native_basename; fi

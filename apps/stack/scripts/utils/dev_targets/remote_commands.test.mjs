@@ -1639,7 +1639,8 @@ test('Node source-test loaders do not count as requested test files in either di
   ]) {
     for (const files of [[file], [file, 'apps/stack/scripts/utils/dev_targets/remote_validation_preparation.test.mjs']]) {
       const args = ['node', '--conditions=happier-source', ...loader, '--test', ...files];
-      const expected = files.length === 1 ? 'source-test' : 'runtime';
+      // Both suites declare source preparation in-file, so the selection is source-test.
+      const expected = 'source-test';
       assert.equal(resolveRemoteCommandPolicy(args, { cwd: root }).kind, expected);
       if (process.platform !== 'win32') {
         const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
@@ -2014,6 +2015,30 @@ test('native test preparation follows reachable source imports rather than the p
   assert.equal(classify().kind, 'runtime', 'unobserved module loading cannot certify source-only consumption');
   await writeFile(leaf, 'import "./missing.mjs";');
   assert.equal(classify().kind, 'runtime', 'an incomplete source graph cannot suppress prerequisites');
+});
+
+test('stack tests without workspace imports request no package preparation, and in-file declarations replace hand-kept lists', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'stack-native-derived-' });
+  const repoRoot = fixture.root;
+  const scripts = fixture.path('apps/stack/scripts');
+  await mkdir(scripts, { recursive: true });
+  await writeFile(fixture.path('apps/stack/package.json'), JSON.stringify({ name: '@fixture/stack' }));
+  // A CommonJS source helper is still repository source, not an emitted package.
+  await writeFile(join(scripts, 'plain.test.mjs'), 'import "node:test"; import manifest from "./manifest.cjs"; void manifest;');
+  await writeFile(join(scripts, 'manifest.cjs'), 'module.exports = require("./shared.cjs");');
+  await writeFile(join(scripts, 'shared.cjs'), 'module.exports = { value: 1 };');
+  await writeFile(join(scripts, 'authored.test.mjs'), '// @happier-test-preparation source-condition\nimport "@happier-dev/protocol";');
+  const env = { ...process.env, NODE_OPTIONS: '' };
+  const classify = (...args) => resolveRemoteCommandPolicy(['node', ...args], { repoRoot, cwd: repoRoot, env });
+  const plain = classify('--test', 'apps/stack/scripts/plain.test.mjs');
+  const preparations = [plain.kind === 'runtime', plain.bootstrap === '1'].filter(Boolean).length;
+  assert.equal(preparations, 0, `no workspace preparation or dependency bootstrap (kind=${plain.kind}, bootstrap=${plain.bootstrap})`);
+  assert.equal(plain.heavyClass, 'native-source-test', 'a source-only stack test runs in the light class');
+  assert.equal(classify('--conditions=happier-source', '--test', 'apps/stack/scripts/authored.test.mjs').kind, 'source-test',
+    'the in-file source-condition declaration selects authored exports');
+  assert.equal(classify('--test', 'apps/stack/scripts/authored.test.mjs').kind, 'runtime',
+    'without the source condition the same file still prepares its emitted packages');
+  assert.equal(Object.hasOwn(commandPolicy.REMOTE_COMMAND_CLASSIFICATION, 'sourceConditionNativeTestPaths'), false, 'no hand-kept path list remains');
 });
 
 test('stack-only native selections share one import-derived preparation decision', async t => {
@@ -3899,7 +3924,9 @@ test('source-condition lifecycle fixtures admit authored exports without Stack p
   ]) {
     const args = ['node', '--conditions=happier-source', '--import', 'tsx', '--test', path];
     assert.equal(resolveRemoteValidationKind(args), 'source-test', path);
-    assert.equal(resolveRemoteValidationKind(args.filter(arg => arg !== '--conditions=happier-source')), 'runtime',
+    // Suites whose own first line declares unconditional `source` need no emitted code either way.
+    const unconditional = /^\/\/ @happier-test-preparation source\r?\n/.test(readFileSync(fileURLToPath(new URL(`../../../../../${path}`, import.meta.url)), 'utf8'));
+    assert.equal(resolveRemoteValidationKind(args.filter(arg => arg !== '--conditions=happier-source')), unconditional ? 'source-test' : 'runtime',
       'default Node exports still consume emitted workspace code');
     if (process.platform !== 'win32') {
       const root = fileURLToPath(new URL('../../../../../', import.meta.url));

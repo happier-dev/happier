@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chmod, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';

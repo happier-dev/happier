@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import { readSourceReloadRefusal, parseSourceReloadRefusalLine } from '../runtime/shared/source_reload_refusal.mjs';
 import { projectStackReloadVerification } from '../stack/reload_verdict.mjs';
 import assert from 'node:assert/strict';

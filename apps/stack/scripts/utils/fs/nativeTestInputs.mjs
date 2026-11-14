@@ -10,7 +10,7 @@ import { collectInternalWorkspaceDependencyNames } from '../../../../../scripts/
  * uses dynamic tooling. It retains dependencies and normal validation admission;
  * it does not establish a complete input inventory for source watchers.
  * Undeclared incomplete graphs retain workspace preparation. */
-export function readNativeTestPreparationDemand(repoDir, entryPath) {
+export function readNativeTestPreparationDemand(repoDir, entryPath, { sourceCondition = false, declaredOnly = false } = {}) {
   let root;
   try { root = realpathSync(repoDir); }
   catch { return null; }
@@ -28,12 +28,19 @@ export function readNativeTestPreparationDemand(repoDir, entryPath) {
     if (files.has(path)) continue;
     const local = relative(root, path);
     if (local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)
-      || local.split(sep).includes('dist') || !/\.mjs$/.test(path)) return null;
+      || local.split(sep).includes('dist') || !/\.(?:mjs|cjs|js|mts|cts|ts)$/.test(path)) return null;
     let source;
     try { source = readFileSync(path, 'utf8'); }
     catch { return null; }
-    if (entries.has(path) && /\.test\.mjs$/.test(path)
-      && /^\/\/ @happier-test-preparation source\r?\n/.test(source)) {
+    // The suite owns its preparation declaration. `source-condition` holds only
+    // when the run selects authored exports (--conditions=happier-source).
+    const declared = entries.has(path) && /\.test\.mjs$/.test(path)
+      ? /^\/\/ @happier-test-preparation (source|source-condition)\r?\n/.exec(source)?.[1] : undefined;
+    if (declared === 'source-condition' && !sourceCondition) return null;
+    // A loader or NODE_OPTIONS can change module loading, so only the suite's
+    // own declaration (never graph discovery) decides preparation then.
+    if (declaredOnly && !declared) return null;
+    if (declared) {
       requiresDependencyBootstrap = true;
       files.add(path);
       continue;

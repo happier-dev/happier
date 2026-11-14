@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { copyFile, readFile, writeFile } from 'node:fs/promises';

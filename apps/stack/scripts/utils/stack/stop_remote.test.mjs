@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, copyFile, mkdir, rm, writeFile } from 'node:fs/promises';

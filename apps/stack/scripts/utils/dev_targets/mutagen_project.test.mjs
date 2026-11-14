@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
