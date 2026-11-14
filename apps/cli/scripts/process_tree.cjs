@@ -1,4 +1,68 @@
-async function psList() { return (await import('ps-list')).default(); }
+const nodePath = require('node:path');
+const nodeFs = require('node:fs');
+const nodeChildProcess = require('node:child_process');
+
+// ps-list runs fastlist.exe on Windows from a path relative to its own module file. Inside the
+// Bun-compiled CLI that module lives in Bun's virtual filesystem (B:/~BUN/root/...), which Windows
+// cannot execute, so every enumeration fails. The CLI payload also ships a real copy of ps-list
+// under node_modules next to the executable; when ps-list fails on Windows, run that copy directly.
+const FASTLIST_BINARY_BY_ARCH = { x64: 'fastlist-0.3.0-x64.exe', ia32: 'fastlist-0.3.0-x86.exe' };
+const FASTLIST_MAX_BUFFER_BYTES = 10 * 1000 * 1000;
+
+function resolveWindowsFastlistPath({
+  execPath = process.execPath,
+  arch = process.arch,
+  existsSync = nodeFs.existsSync,
+  resolvePsListEntry = () => require.resolve('ps-list'),
+} = {}) {
+  const binary = FASTLIST_BINARY_BY_ARCH[arch];
+  if (!binary) return null;
+  const candidates = [nodePath.join(nodePath.dirname(execPath), 'node_modules', 'ps-list', 'vendor', binary)];
+  try {
+    candidates.push(nodePath.join(nodePath.dirname(resolvePsListEntry()), 'vendor', binary));
+  } catch {
+    // ps-list is not resolvable from here; the executable-relative candidate may still exist.
+  }
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+// Same output contract as ps-list's Windows implementation: "pid\tppid\tname" per line.
+function parseFastlistOutput(stdout) {
+  return String(stdout ?? '')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => line.split('\t'))
+    .map(([pid, ppid, name]) => ({ pid: Number.parseInt(pid, 10), ppid: Number.parseInt(ppid, 10), name }));
+}
+
+function listWindowsProcessesWithFastlist(binaryPath, execFile = nodeChildProcess.execFile) {
+  return new Promise((resolve, reject) => {
+    execFile(binaryPath, [], { maxBuffer: FASTLIST_MAX_BUFFER_BYTES, windowsHide: true }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(parseFastlistOutput(stdout));
+    });
+  });
+}
+
+function withWindowsFastlistFallback(enumerate, {
+  platform = process.platform,
+  resolveFastlistPath = resolveWindowsFastlistPath,
+  listWithFastlist = listWindowsProcessesWithFastlist,
+} = {}) {
+  return async () => {
+    try {
+      return await enumerate();
+    } catch (error) {
+      if (platform !== 'win32') throw error;
+      const fastlistPath = resolveFastlistPath();
+      if (!fastlistPath) throw error;
+      return await listWithFastlist(fastlistPath);
+    }
+  };
+}
+
+const psList = withWindowsFastlistFallback(async () => (await import('ps-list')).default());
 
 function isPidAliveBySignal(pid, onProbeFailure) {
   try {
@@ -188,4 +252,10 @@ async function killProcessTree(proc, opts, enumerate = psList) {
   return { rootObservedAlive };
 }
 
-module.exports = { isPidAliveBySignal, killProcessTree };
+module.exports = {
+  isPidAliveBySignal,
+  killProcessTree,
+  parseFastlistOutput,
+  resolveWindowsFastlistPath,
+  withWindowsFastlistFallback,
+};
