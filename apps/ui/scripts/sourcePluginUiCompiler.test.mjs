@@ -146,3 +146,95 @@ test('source publication into a package dist keeps the compiler\'s exact artifac
   const published = await readFile(join(root, 'dist/happier-plugin-ui/ui-artifacts.json'));
   assert.equal(published.toString('utf8'), compiled.toString('utf8'));
 });
+
+test('the Plugin UI compiler key ignores unrelated lockfile, install-marker and host manifest edits but follows the installed tools it imports', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-compiler-key-' });
+  const write = async (path, bytes) => {
+    await mkdir(dirname(fixture.path(path)), { recursive: true });
+    await writeFile(fixture.path(path), bytes);
+  };
+  await write('packages/plugin-sdk/package.json', JSON.stringify({ name: '@happier-dev/plugin-sdk' }));
+  await write('packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts.ts', 'export { tool } from "fixture-tool";');
+  await write('node_modules/fixture-tool/package.json', JSON.stringify({ name: 'fixture-tool', version: '1.0.0', main: 'index.js' }));
+  await write('node_modules/fixture-tool/index.js', 'exports.tool = "v1";');
+  await write('node_modules/esbuild/package.json', JSON.stringify({ name: 'esbuild', version: '0.0.1' }));
+  await write('node_modules/.happier-stack-dependencies-ready', JSON.stringify({ identity: 'install-1', inputs: [] }));
+  await write('pnpm-lock.yaml', 'lockfileVersion: 9.0\n');
+  await write('pnpm-workspace.yaml', 'packages: [apps/*, packages/*]\n');
+  for (const app of ['ui', 'cli', 'stack']) await write(`apps/${app}/package.json`, JSON.stringify({ name: `@fixture/${app}`, scripts: {} }));
+  await write('apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs', 'export const compiler = 1;');
+  const { readSourcePluginUiCompilerIdentity } = await import('./prepareSourcePluginUiArtifacts.mjs');
+  const key = async () => JSON.stringify((await readSourcePluginUiCompilerIdentity({ compilerRepo: fixture.root })).identity);
+  const baseline = await key();
+  // A dependency added for an unrelated app rewrites the lockfile, the install
+  // marker and host manifests; none of those bytes reach a Plugin UI bundle.
+  await write('pnpm-lock.yaml', 'lockfileVersion: 9.0\nimporters: { apps/server: { dependencies: { unrelated: 1.0.0 } } }\n');
+  await write('pnpm-workspace.yaml', 'packages: [apps/*, packages/*]\ncatalog: { unrelated: 1.0.0 }\n');
+  await write('node_modules/.happier-stack-dependencies-ready', JSON.stringify({ identity: 'install-2', inputs: [] }));
+  for (const app of ['ui', 'cli', 'stack']) await write(`apps/${app}/package.json`, JSON.stringify({ name: `@fixture/${app}`, scripts: { added: 'true' } }));
+  assert.equal(await key(), baseline, 'unrelated install and host manifest edits keep the compiler key');
+  await write('node_modules/fixture-tool/index.js', 'exports.tool = "v2";');
+  const toolChanged = await key();
+  assert.notEqual(toolChanged, baseline, 'installed bytes the compiler imports are part of the key');
+  await write('node_modules/esbuild/package.json', JSON.stringify({ name: 'esbuild', version: '0.0.2' }));
+  assert.notEqual(await key(), toolChanged, 'the esbuild version is part of the key');
+});
+
+test('an unrelated lockfile edit reuses every Plugin UI, while a changed bundled package recompiles only its importer', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-installed-key-' });
+  const repoRoot = fixture.path('repo');
+  const write = async (path, bytes) => {
+    await mkdir(dirname(join(repoRoot, path)), { recursive: true });
+    await writeFile(join(repoRoot, path), bytes);
+  };
+  await write('apps/ui/package.json', '{}');
+  await write('pnpm-lock.yaml', 'lockfileVersion: 9.0\n');
+  await write('pnpm-workspace.yaml', 'packages: [apps/*, packages/*, packages/plugins/*]\n');
+  await write('node_modules/fixture-lib/package.json', JSON.stringify({ name: 'fixture-lib', version: '1.0.0', main: 'index.js' }));
+  await write('node_modules/fixture-lib/index.js', 'exports.libValue = "lib-v1";');
+  for (const [directory, source] of [
+    ['alpha', 'import { libValue } from "fixture-lib"; export function activateAccount() { return libValue; }'],
+    ['beta', 'export function activateAccount() { return "beta-ready"; }'],
+  ]) {
+    await write(`packages/plugins/${directory}/package.json`, JSON.stringify({
+      name: `@happier-dev/plugins-${directory}`, version: '0.0.0', exports: {
+        './happier-plugin-ui/account-runtime': { 'happier-source': './src/account.ts' },
+      },
+    }));
+    await write(`packages/plugins/${directory}/src/account.ts`, source);
+    await write(`packages/plugins/${directory}/.happier-plugin/plugin.json`, JSON.stringify({
+      schemaVersion: 2, id: `happier.${directory}`, version: '0.0.0', displayName: directory,
+      runtime: { apiVersion: 1 }, contributes: { actions: [{
+        id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+        inputSchema: { type: 'object' }, outputSchema: { type: 'object' },
+        execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+      }] },
+    }));
+  }
+  const outcomes = [];
+  const error = console.error;
+  t.after(() => { console.error = error; });
+  console.error = (...args) => {
+    const match = /phase=plugin-ui-input-reuse .*compiled=(\d+) reused=(\d+)/u.exec(args.join(' '));
+    if (match) outcomes.push({ compiled: Number(match[1]), reused: Number(match[2]) });
+    else error(...args);
+  };
+  const { prepareSourceCliPluginUiArtifacts } = await import('../../cli/scripts/prepareSourcePluginUiArtifacts.mjs');
+  const workspaceNames = ['plugins-alpha', 'plugins-beta'];
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 2, reused: 0 });
+  await write('pnpm-lock.yaml', 'lockfileVersion: 9.0\nimporters: { apps/server: { dependencies: { unrelated: 1.0.0 } } }\n');
+  await write('pnpm-workspace.yaml', 'packages: [apps/*, packages/*, packages/plugins/*]\ncatalog: { unrelated: 1.0.0 }\n');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 0, reused: 2 }, 'an unrelated lockfile line recompiles nothing');
+  // The bundled package's installed bytes change without any authored edit.
+  await write('node_modules/fixture-lib/package.json', JSON.stringify({ name: 'fixture-lib', version: '1.0.1', main: 'index.js' }));
+  await write('node_modules/fixture-lib/index.js', 'exports.libValue = "lib-v2";');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 1, reused: 1 }, 'only the importer of the changed package recompiles');
+  const distDir = join(repoRoot, 'packages/plugins/alpha/dist/happier-plugin-ui');
+  const artifact = JSON.parse(await readFile(join(distDir, 'ui-artifacts.json'), 'utf8'));
+  const module = { exports: {} };
+  runInNewContext(await readFile(join(distDir, artifact.entries[0].entry), 'utf8'), { module, exports: module.exports });
+  assert.equal(module.exports.activateAccount(), 'lib-v2', 'a changed bundled package is never served from a stale bundle');
+});

@@ -7,6 +7,7 @@ import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scri
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_inputs.mjs';
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
@@ -33,18 +34,25 @@ export function resolveSourcePluginUiBuildInputPaths(repoDir) {
 export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, compiler = false, packages, includeDirectories = false,
   packageInputs = new Map(), resolveSourceImport, retainedInputs, inputOptions = [], inventory = false }) {
   packages ??= await readWorkspacePackages(repoDir);
-  const graphKey = `plugin-ui-graph:${compiler ? 'compiler' : pluginDirectory}:${inventory}`;
+  const graphKey = sourcePluginUiGraphKey({ compiler, pluginDirectory, inventory });
   let graph = packageInputs.get(graphKey);
   if (!graph) {
-    const unchanged = retainedInputs?.files && retainedInputs.identity === (await readSourcePluginUiBuildInputRecord({
-      repoDir, files: retainedInputs.files, packages, packageInputs, inputOptions,
-    })).identity;
-    graph = unchanged ? retainedInputs.files : readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport, inventory });
+    const unchanged = retainedInputs?.files && (inventory || Array.isArray(retainedInputs.installedImports))
+      && retainedInputs.identity === (await readSourcePluginUiBuildInputRecord({
+        repoDir, files: retainedInputs.files, installedImports: retainedInputs.installedImports, packages, packageInputs, inputOptions,
+      })).identity;
+    graph = unchanged ? { files: retainedInputs.files, installedImports: retainedInputs.installedImports ?? [] }
+      : readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport, inventory });
     packageInputs.set(graphKey, graph);
   }
-  const files = new Set((await graph).filter(path => !isWorkspaceBuildInputIgnoredPath(path)
+  const files = new Set((await graph).files.filter(path => !isWorkspaceBuildInputIgnoredPath(path)
     && !path.split('/').some(part => part === 'dist' || part === 'package-dist')
     && !isGeneratedPluginArtifactPath(path)));
+  // Compiler scripts under apps/ run in Node beside their host app; the host's
+  // manifest and the install's lockfile do not reach a bundle. The compile key
+  // takes bundled installed packages by content instead
+  // (readSourcePluginUiInstalledIdentity). Inventory observation keeps both.
+  const hostTooling = !inventory && compiler;
   if (compiler) for (const path of [
     'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs',
     'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs',
@@ -61,6 +69,7 @@ export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, 
   for (const path of [...files]) {
     let parent = posix.dirname(path);
     if (includeDirectories) files.add(parent);
+    if (hostTooling && path.startsWith('apps/')) continue;
     while (parent !== '.' && !packageRoots.has(parent)) parent = posix.dirname(parent);
     if (packageRoots.has(parent)) files.add(`${parent}/package.json`);
   }
@@ -83,16 +92,45 @@ export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, 
       files.add(relative(repoDir, join(root, path)).split(sep).join('/'));
     }
   }
-  for (const path of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
+  if (inventory) for (const path of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
     if (existsSync(join(repoDir, path))) files.add(path);
   }
   return [...files].sort();
 }
 
+function sourcePluginUiGraphKey({ compiler = false, pluginDirectory, inventory = false }) {
+  return `plugin-ui-graph:${compiler ? 'compiler' : pluginDirectory}:${inventory}`;
+}
+
+/** Installed packages the graph read by readSourcePluginUiBuildInputs (same
+ * `packageInputs`) leaves to the bundler, as [packageName, resolveFrom]. */
+export async function readSourcePluginUiInstalledImports({ compiler = false, pluginDirectory, inventory = false, packageInputs }) {
+  const graph = packageInputs.get(sourcePluginUiGraphKey({ compiler, pluginDirectory, inventory }));
+  if (!graph) throw new Error(`[plugin-ui] read build inputs before installed imports (${compiler ? 'compiler' : pluginDirectory})`);
+  return (await graph).installedImports;
+}
+
+/** The installed content those packages bundle, by the same closure owner that
+ * keys package dists: an unrelated lockfile line leaves it unchanged. Paths are
+ * checkout-relative (`node_modules/...` for installed files), so a snapshot that
+ * mounts the source checkout's node_modules keeps the same identity. */
+export function readSourcePluginUiInstalledIdentity({ repoDir, installedImports }) {
+  return readSourceRuntimeDependencyIdentity({
+    imports: installedImports.map(([name, resolveFrom]) => ({ path: name, resolveFrom: join(repoDir, resolveFrom) })),
+    identityPathFor: path => {
+      const normalized = path.split(sep).join('/');
+      const installed = normalized.indexOf('/node_modules/');
+      if (installed >= 0) return normalized.slice(installed + 1);
+      const local = relative(repoDir, path);
+      return local && !local.startsWith('..') && !isAbsolute(local) ? local.split(sep).join('/') : normalized;
+    },
+  });
+}
+
 /** Retain the compiler's consumed graph in its existing publication record.
  * Membership matters too: adding panel.ts can supersede panel/index.ts without
  * editing an old input. Enumerate only consumed owners, once per preparation. */
-export async function readSourcePluginUiBuildInputRecord({ repoDir, files, packages, packageInputs = new Map(), inputOptions = [] }) {
+export async function readSourcePluginUiBuildInputRecord({ repoDir, files, installedImports, packages, packageInputs = new Map(), inputOptions = [] }) {
   packages ??= await readWorkspacePackages(repoDir);
   const workspaceRoots = [...packages.values()].map(({ root }) => relative(repoDir, root).split(sep).join('/'))
     .sort((left, right) => right.length - left.length);
@@ -115,7 +153,8 @@ export async function readSourcePluginUiBuildInputRecord({ repoDir, files, packa
   }
   const workspaceMembership = [...packages].map(([name, { root }]) => [name, relative(repoDir, root).split(sep).join('/')])
     .sort(([left], [right]) => left.localeCompare(right));
-  return { files, identity: await readBuildInputIdentity({ sourceDir: repoDir, files, options: [inputOptions, workspaceMembership, membership] }) };
+  return { files, ...(installedImports ? { installedImports } : {}), identity: await readBuildInputIdentity({ sourceDir: repoDir, files,
+    options: [inputOptions, workspaceMembership, membership, ...(installedImports ? [installedImports] : [])] }) };
 }
 
 /** Finite source consumers and their repair watchers share membership. Code

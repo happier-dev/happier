@@ -1604,10 +1604,11 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
   });
   compiled.length = 0;
   manifestWrites.length = 0;
+  // An install refresh for an unrelated package rewrites the marker. Installed
+  // packages a plugin bundles key it by content instead (sourcePluginUiCompiler.test.mjs).
   dependencyMarker = { ...dependencyMarker, inputs: [{ ...dependencyMarker.inputs[0], digest: 'dependencies-v2' }] };
   await prepare();
-  assert.deepEqual(compiled, ['alpha', 'beta'], 'changed admitted dependency bytes must invalidate every plugin');
-  assert.equal(manifestWrites.length, 2, 'each dependency-invalidated compiler receives its manifest');
+  assert.deepEqual(compiled, [], 'an install marker change alone is not a plugin UI input');
   compiled.length = 0;
   assert.deepEqual(resolveBundledPluginUiArtifactsInputPaths(outputPath).slice(1), firstPaths);
   assert.deepEqual((await Promise.all(firstPaths.map(path => stat(path)))).map(value => value.mtimeMs), firstStats.map(value => value.mtimeMs),

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { isBuiltin } from 'node:module';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { packageNameOfSpecifier, resolveWorkspaceSource } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { sourcePluginUiBuildOptions } from '../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
 import { listBundledPluginUiArtifactExports } from './generateBundledPluginUiArtifacts.mjs';
@@ -7,6 +8,8 @@ import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '../../../packages/pr
 
 // Ask the source compiler's resolver for its file graph, rather than treating
 // every source file in an SDK dependency as an input of every plugin UI.
+// Installed packages stay external here; `installedImports` names each one with
+// the package.json it resolves from, so its installed content keys the bundle.
 export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport, inventory = false }) {
   const owner = packages.get(`@happier-dev/plugins-${pluginDirectory}`);
   const entries = compiler ? [
@@ -20,13 +23,14 @@ export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirecto
     ...listBundledPluginUiArtifactExports(owner.manifest).map(path =>
       resolveWorkspaceSource(packages, `${owner.manifest.name}${path.slice(1)}`)),
   ] : [];
-  if (entries.length === 0) return [];
+  if (entries.length === 0) return { files: [], installedImports: [] };
   const { build } = await import('esbuild');
   const options = await sourcePluginUiBuildOptions({ repoRoot: repoDir, packages, resolveSourceImport });
   const hostExternals = new Set(compiler || inventory ? [] : PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS);
   const inputs = new Set();
   const sideEffectFree = new Set();
   const annotationInputs = new Set();
+  const installedImports = new Set();
   const workspaceOwners = [...packages.values()].sort((a, b) => b.root.length - a.root.length);
   try {
     const result = await build({
@@ -55,6 +59,11 @@ export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirecto
           if (dependency && relative(repoDir, dependency.root).split(sep)[0] === 'apps') return { path, external: true };
           if (dependency) annotationInputs.add(resolve(dependency.root, 'package.json'));
           const source = options.resolveSourceImport(path);
+          if (!source && !dependency && kind !== 'entry-point' && !isBuiltin(path)) {
+            const importerOwner = workspaceOwners.find(owner => importer.startsWith(`${owner.root}${sep}`));
+            const resolveFrom = relative(repoDir, join(importerOwner?.root ?? repoDir, 'package.json')).split(sep).join('/');
+            installedImports.add(JSON.stringify([packageNameOfSpecifier(path), resolveFrom]));
+          }
           return source ? builder.resolve(source, { kind, resolveDir, importer }) : undefined;
         });
       } }],
@@ -97,6 +106,7 @@ export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirecto
     if (!Array.isArray(error.errors)) throw error;
   }
   for (const path of annotationInputs) inputs.add(path);
-  return [...inputs].map(path => relative(repoDir, resolve(repoDir, path)).split(sep).join('/'))
+  const files = [...inputs].map(path => relative(repoDir, resolve(repoDir, path)).split(sep).join('/'))
     .filter(path => !isAbsolute(path) && !path.startsWith('../') && !path.split('/').includes('node_modules'));
+  return { files, installedImports: [...installedImports].sort().map(entry => JSON.parse(entry)) };
 }

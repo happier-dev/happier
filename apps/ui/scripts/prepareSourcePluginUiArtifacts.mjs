@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,11 +8,32 @@ import { generateBundledPluginUiArtifacts, readBundledPluginUiArtifactsRetainedI
 import { createBundledPluginPublicationFailure } from '../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { readWorkspacePackages, SOURCE_CONDITION } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { sourcePluginUiBuildOptions, SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } from '../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
-import { readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
+import { readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readSourcePluginUiInstalledIdentity,
+  readSourcePluginUiInstalledImports } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../../stack/scripts/utils/fs/json.mjs';
-import { dependencyInputsIdentity, resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
+
+/** Everything shared by all plugins that can change a compiled Plugin UI: the
+ * compiler's sources, the installed packages they import (by content), and the
+ * esbuild version. Lockfile, install marker and host manifests are not inputs:
+ * an unrelated dependency edit must not recompile every plugin. */
+export async function readSourcePluginUiCompilerIdentity({ compilerRepo = fileURLToPath(new URL('../../../', import.meta.url)), retainedCompilerInputs } = {}) {
+  const compilerPackages = await readWorkspacePackages(compilerRepo);
+  const compilerPackageInputs = new Map();
+  const compilerFiles = await readSourcePluginUiBuildInputs({ repoDir: compilerRepo, compiler: true,
+    packages: compilerPackages, packageInputs: compilerPackageInputs, retainedInputs: retainedCompilerInputs });
+  const installedImports = await readSourcePluginUiInstalledImports({ compiler: true, packageInputs: compilerPackageInputs });
+  const compilerInputs = await readSourcePluginUiBuildInputRecord({ repoDir: compilerRepo, files: compilerFiles,
+    installedImports, packages: compilerPackages, packageInputs: compilerPackageInputs });
+  const compilerIdentity = await readBuildInputIdentity({ sourceDir: compilerRepo, files: compilerFiles });
+  // Read the installed manifest, not require's module cache: long-lived
+  // preparation processes outlive a dependency refresh.
+  const esbuildVersion = JSON.parse(await readFile(createRequire(join(compilerRepo, 'packages/plugin-sdk/package.json'))
+    .resolve('esbuild/package.json'), 'utf8')).version;
+  return { compilerInputs, identity: [compilerIdentity, esbuildVersion,
+    readSourcePluginUiInstalledIdentity({ repoDir: compilerRepo, installedImports })] };
+}
 
 /** Reuse the universal UI artifact compiler and inventory owner without publishing
  * package dist or compiler projections. Callers publish a consumer-owned inventory
@@ -32,22 +52,8 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     ...plugins.map(({ directory }) => join(repoRoot, 'packages/plugins', directory, 'dist/happier-plugin-ui'))])) {
     retainedRecords.set(root, await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD)));
   }
-  const compilerRepo = fileURLToPath(new URL('../../../', import.meta.url));
-  const compilerPackages = await readWorkspacePackages(compilerRepo);
-  const compilerPackageInputs = new Map();
   const retainedCompilerInputs = [...retainedRecords.values()].find(record => record?.compilerInputs)?.compilerInputs;
-  const compilerFiles = await readSourcePluginUiBuildInputs({ repoDir: compilerRepo, compiler: true,
-    packages: compilerPackages, packageInputs: compilerPackageInputs, retainedInputs: retainedCompilerInputs });
-  const compilerInputs = await readSourcePluginUiBuildInputRecord({ repoDir: compilerRepo, files: compilerFiles,
-    packages: compilerPackages, packageInputs: compilerPackageInputs });
-  const compilerIdentity = await readBuildInputIdentity({ sourceDir: compilerRepo, files: compilerFiles });
-  const esbuildVersion = createRequire(join(compilerRepo, 'packages/plugin-sdk/package.json'))('esbuild/package.json').version;
-  const dependencyMarker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(compilerRepo));
-  // Markers written before the semantic projection carry no `inputs`; their whole-record
-  // digest keeps the earlier reuse semantics until the next refresh rewrites the marker.
-  const dependencyIdentity = !dependencyMarker ? null : Array.isArray(dependencyMarker.inputs)
-    ? dependencyInputsIdentity(dependencyMarker.identity, dependencyMarker.inputs)
-    : createHash('sha256').update(JSON.stringify(dependencyMarker)).digest('hex');
+  const { compilerInputs, identity: compilerIdentity } = await readSourcePluginUiCompilerIdentity({ retainedCompilerInputs });
   const packages = await readWorkspacePackages(repoRoot);
   const buildOptions = await sourcePluginUiBuildOptions({ repoRoot, packages, resolveSourceImport,
     sourceImportConditions: conditions });
@@ -94,8 +100,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
         .find(record => record?.compilerInputs?.identity === compilerInputs.identity)?.sourceInputs;
       const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages, packageInputs,
         resolveSourceImport: buildOptions.resolveSourceImport, retainedInputs, inputOptions: conditions });
-      const sourceInputs = await readSourcePluginUiBuildInputRecord({ repoDir: repoRoot, files, packages, packageInputs, inputOptions: conditions });
-      const options = [manifest, compilerIdentity, esbuildVersion, dependencyIdentity, conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
+      const installedImports = await readSourcePluginUiInstalledImports({ pluginDirectory: directory, packageInputs });
+      const sourceInputs = await readSourcePluginUiBuildInputRecord({ repoDir: repoRoot, files, installedImports,
+        packages, packageInputs, inputOptions: conditions });
+      const options = [manifest, ...compilerIdentity, readSourcePluginUiInstalledIdentity({ repoDir: repoRoot, installedImports }), conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
       const inputFingerprint = await readBuildInputIdentity({ sourceDir: repoRoot, files, options });
       for (const root of candidates) {
         const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
