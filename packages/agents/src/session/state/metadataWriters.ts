@@ -33,6 +33,7 @@ import {
   readModelIntentUpdatedAtFromMetadata,
   writePermissionModeIntentToMetadata,
 } from './bindings/intent.js';
+import { MODEL_OVERRIDE_KEY, MODEL_SELECTION_INTENT_KEY } from './bindings/metadataKeys.js';
 import { writeRuntimeDescriptorSessionState } from './bindings/runtimeDescriptor.js';
 import { summaryTextBinding } from './bindings/summaryText.js';
 import { writeProviderSessionIdSessionState, type ProviderSessionIdMetadataKey } from './bindings/providerSessionId.js';
@@ -148,6 +149,16 @@ export function applyModelIntentSessionMetadata<TMetadata extends SessionMetadat
   }) as TMetadata;
 }
 
+/** The stored V1 intent (and its legacy projection) is exactly what writing `selection` would store. */
+function holdsExactModelIntent(metadata: SessionMetadata, selection: ProviderBoundModelRef, updatedAt: number): boolean {
+  const record = metadata as Readonly<Record<string, unknown>>;
+  if (updatedAt <= 0 || record.modelSelectionIntentV2 !== undefined) return false;
+  const { [MODEL_SELECTION_INTENT_KEY]: _intent, [MODEL_OVERRIDE_KEY]: _legacy, ...rest } = record;
+  const rewritten = writeModelIntentToMetadata(rest as SessionMetadata, { v: 1, selection, updatedAt }) as Readonly<Record<string, unknown>>;
+  return JSON.stringify(rewritten[MODEL_SELECTION_INTENT_KEY]) === JSON.stringify(record[MODEL_SELECTION_INTENT_KEY])
+    && JSON.stringify(rewritten[MODEL_OVERRIDE_KEY] ?? null) === JSON.stringify(record[MODEL_OVERRIDE_KEY] ?? null);
+}
+
 export function createModelIntentMetadataCasCandidate(input: Readonly<{
   selection: ProviderBoundModelRef;
   nowMs?: () => number;
@@ -164,6 +175,8 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
   const selection = ProviderBoundModelRefSchema.parse(input.selection);
   const nowMs = input.nowMs ?? Date.now;
   let updatedAt: number | null = null;
+  /** Set when the stored intent already held this selection: nothing was written. */
+  let heldUpdatedAt: number | null = null;
   let accepted = false;
   let refusal: 'conflict' | 'unsupported' | undefined;
   let reversal: Extract<SessionModelMutationReversalV1, { owner: 'inactive' }> | undefined;
@@ -171,6 +184,7 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
   return Object.freeze({
     update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata {
       accepted = false;
+      heldUpdatedAt = null;
       refusal = undefined;
       reversal = undefined;
       const canonicalBefore = SessionModelSelectionIntentV1Schema.safeParse(metadata.modelSelectionIntentV1);
@@ -213,6 +227,14 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
         }
       }
       const currentUpdatedAt = readModelIntentUpdatedAtFromMetadata(metadata);
+      // An ordinary write of the intent this Session already holds is no change: a prompt
+      // re-submits the Session's model every turn and must not mint a newer timestamp.
+      // Conditional/capture writes keep their explicit receipts.
+      if (!input.captureBefore && !input.expected && holdsExactModelIntent(metadata, selection, currentUpdatedAt)) {
+        accepted = true;
+        heldUpdatedAt = currentUpdatedAt;
+        return metadata;
+      }
       updatedAt ??= Math.max(
         nowMs(),
         currentUpdatedAt + 1,
@@ -239,7 +261,7 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
       }
       return next;
     },
-    readState: () => ({ accepted, updatedAt, ...(refusal ? { refusal } : {}), ...(reversal ? { reversal } : {}) }),
+    readState: () => ({ accepted, updatedAt: heldUpdatedAt ?? updatedAt, ...(refusal ? { refusal } : {}), ...(reversal ? { reversal } : {}) }),
   });
 }
 

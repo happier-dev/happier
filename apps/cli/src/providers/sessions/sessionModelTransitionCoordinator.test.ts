@@ -949,6 +949,49 @@ describe('createSessionModelTransitionCoordinator', () => {
     const harness = createHarness({ initial: native('old'), authorize: authorizer });
     return harness;
   }
+  it.each([[true, 'old'], [false, 'old'], [true, 'resolved-old'], [false, 'resolved-old']] as const)('publishes no active model facts for turns that keep the same model (startup confirmed: %s, runtime reports %s)', async (initialActiveTargetConfirmed, reported) => {
+    let observe!: (modelId?: string | null) => void;
+    const harness = createHarness({ initial: native('old'), initialActiveTargetConfirmed, readRuntimeModelId: () => reported,
+      subscribeRuntimeModelChanges: handler => { observe = handler; return () => undefined; } });
+    const settle = async () => { for (let tick = 0; tick < 20; tick++) await new Promise(resolve => setTimeout(resolve, 0)); };
+    // One turn: the prompt carries the Session's model, and the provider reports its model again.
+    const turn = async () => {
+      await harness.coordinator.submit(native('old'), { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch: async () => undefined });
+      } });
+      observe(reported);
+      await settle();
+    };
+    try {
+      await turn();
+      const actives = harness.publishActive.mock.calls.length;
+      await turn();
+      await turn();
+      expect({ actives: harness.publishActive.mock.calls.length - actives, applies: harness.applyRuntime.mock.calls.length })
+        .toEqual({ actives: 0, applies: 0 });
+    } finally { await harness.coordinator.dispose(); }
+  });
+
+  it('still publishes a readback whose runtime model changed after an unchanged one', async () => {
+    let observe!: (modelId?: string | null) => void;
+    let reported = 'resolved-old';
+    const harness = createHarness({ initial: native('old'), initialActiveTargetConfirmed: false, readRuntimeModelId: () => reported,
+      subscribeRuntimeModelChanges: handler => { observe = handler; return () => undefined; } });
+    const settle = async () => { for (let tick = 0; tick < 20; tick++) await new Promise(resolve => setTimeout(resolve, 0)); };
+    try {
+      observe(reported);
+      await settle();
+      observe(reported);
+      await settle();
+      const actives = harness.publishActive.mock.calls.length;
+      reported = 'resolved-new';
+      observe(reported);
+      await settle();
+      expect(harness.publishActive.mock.calls.slice(actives).map(([target, evidence]) => [target.selection.modelId, evidence]))
+        .toEqual([['resolved-new', 'runtime_readback']]);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it('arms a live model at the owner, ignores its metadata echo, and applies only at prompt custody', async () => {
     const harness = createNativeHarness();
     const next = native('next');

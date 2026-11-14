@@ -410,6 +410,24 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     ? { basis: params.initialActiveTarget }
     : null;
 
+  /**
+   * The runtime readback proof this owner last published, cleared by any other active-fact
+   * publication or revocation. A later readback of the same runtime model republishes nothing.
+   */
+  let publishedReadbackTarget: AuthorizedSessionModelTransitionTarget | null = null;
+  const publishActive = async (
+    target: AuthorizedSessionModelTransitionTarget,
+    evidence?: Parameters<typeof params.publishActive>[1],
+  ): Promise<void> => {
+    publishedReadbackTarget = null;
+    await (evidence === undefined ? params.publishActive(target) : params.publishActive(target, evidence));
+    if (evidence === 'runtime_readback') publishedReadbackTarget = target;
+  };
+  const revokeActiveSelectionProof = async (selection: ProviderBoundModelRef): Promise<void> => {
+    publishedReadbackTarget = null;
+    await params.revokeActiveSelectionProof(selection);
+  };
+
   const isCurrent = (): boolean =>
     !disposed
     && !publisherAuthorityUnavailable
@@ -540,7 +558,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     target: AuthorizedSessionModelTransitionTarget,
   ): Promise<void> => {
     const basis = awaitingRuntimeConfirmation?.basis ?? activeTarget;
-    await params.publishActive(target, null);
+    await publishActive(target, null);
     if (!isCurrent()) throw new Error('session_publisher_authority_lost');
     const authorization = await targetAuthorizationStillCurrent(target);
     if (!authorization.current) {
@@ -896,7 +914,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       );
     }
     try {
-      await params.publishActive(target, 'runtime_readback');
+      await publishActive(target, 'runtime_readback');
       if (!isCurrent()) {
         proposal.resolve(failure(
           'owner_unavailable',
@@ -1275,7 +1293,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
             observedAppliedTarget = null;
             awaitingRuntimeConfirmation = null;
             try {
-              await params.revokeActiveSelectionProof(activeTarget.selection);
+              await revokeActiveSelectionProof(activeTarget.selection);
               // Evidence from the retired runtime cannot prove a live apply or
               // keep later input behind reconciliation. It must reopen first.
               replacementLifetimeEnded = true;
@@ -1437,7 +1455,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       if (applied.status === 'deferred') {
         await publishConfiguredTarget(target);
       } else {
-        await params.publishActive(target);
+        await publishActive(target);
       }
       if (!isCurrent()) {
         proposal.resolve(failure(
@@ -1574,7 +1592,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     async (): Promise<void> => {
       if (!isCurrent()) return;
       try {
-        await params.revokeActiveSelectionProof(activeTarget.selection);
+        await revokeActiveSelectionProof(activeTarget.selection);
       } catch {
         // The exact input fence stays closed when proof revocation cannot be
         // published by the current owner.
@@ -1629,9 +1647,12 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         || !observationStillCurrent()) return;
       if (observedAppliedTarget && sameAuthorizedTarget(observedAppliedTarget, target)
         && samePublishedActiveFacts(observedAppliedTarget, target)) target = observedAppliedTarget;
+      // The same runtime model was already proven and published by this owner, and no other
+      // publication has replaced that proof since: the readback changes no active facts.
+      const alreadyPublished = publishedReadbackTarget === target;
       try {
-        await requireCurrentPublisherPermit(async () => {
-          if (observationStillCurrent()) await params.publishActive(target, 'runtime_readback');
+        if (!alreadyPublished) await requireCurrentPublisherPermit(async () => {
+          if (observationStillCurrent()) await publishActive(target, 'runtime_readback');
         });
         if (!(await targetAuthorizationStillCurrent(configuredTarget)).current
           || !(await targetAuthorizationStillCurrent(target)).current
@@ -1700,7 +1721,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (!isCurrent()) return;
     try {
-      await params.publishActive(target);
+      await publishActive(target);
       if (!isCurrent()) return;
       if (!(await targetAuthorizationStillCurrent(target)).current) {
         reconciliationRequired = true;

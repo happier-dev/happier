@@ -22,6 +22,16 @@ const teamRef = {
 };
 
 describe('createModelIntentMetadataCasCandidate', () => {
+  it('writes nothing when the durable intent already holds this exact selection, and still writes a changed one', () => {
+    // Each prompt re-submits the Session's model; an identical intent is not a change.
+    const stored = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 20 }).update({});
+    const repeat = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 30 });
+    expect(repeat.update(stored)).toBe(stored);
+    expect(repeat.readState()).toMatchObject({ accepted: true, updatedAt: 20 });
+    const changed = createModelIntentMetadataCasCandidate({ selection: { ...selection, modelId: 'other' }, nowMs: () => 31 });
+    expect(changed.update(stored)).toMatchObject({ modelSelectionIntentV1: { updatedAt: 31, selection: { ...selection, modelId: 'other' } } });
+    expect(changed.readState()).toMatchObject({ accepted: true, updatedAt: 31 });
+  });
   it('replaces a Team V2 intent with ordinary intent and preserves newer Team intent on retry', () => {
     const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 20 });
     const first = candidate.update({ modelSelectionIntentV2: { v: 2, updatedAt: 19, ref: teamRef } });
