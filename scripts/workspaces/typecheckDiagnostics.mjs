@@ -6,6 +6,7 @@ import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs'
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
+import { redactFailureDiagnostic } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 const execute = promisify(execFile);
 const portable = value => value.replaceAll('\\', '/');
@@ -239,12 +240,17 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
         const collected = collectDiagnostics([...producerResults.values(), ...group.results.values()], cwd, repoRoot);
         if (!collected) continue;
         const { diagnosticsByPath, globalDiagnostics } = collected;
+        const globalDiagnosticDetails = [...globalDiagnostics].map(line => {
+          const [, code, message] = /^error TS(\d+):\s*(.*)$/u.exec(line);
+          return { code: Number(code), message: redactFailureDiagnostic(message, process.env) };
+        });
+        const globals = { globalDiagnostics: globalDiagnosticDetails.length, globalDiagnosticDetails };
         const completion = [...producerResults.values()].some(result => result.status > 0)
           ? 'complete with producer diagnostics' : 'complete';
         const projects = [...group.projects].sort();
         const packagePath = portable(relative(repoRoot, group.root)) || '.';
         if (locationsOnly) {
-          reports.push({ package: packagePath, globalDiagnostics: globalDiagnostics.size,
+          reports.push({ package: packagePath, ...globals,
             locations: diagnosticLocations(diagnosticsByPath) });
           continue;
         }
@@ -268,9 +274,9 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
         const newInTouchedPaths = baseline ? compareTouchedTypecheckLocations({
           baseline: diagnosticLocations(previous.diagnosticsByPath), current: locations, paths: [...touched],
         }).added.length : 0;
-        await diagnosticStep('snapshot-write', () => writeJsonAtomic(group.path, { projects, diagnosticsByPath, globalDiagnostics: globalDiagnostics.size }));
+        await diagnosticStep('snapshot-write', () => writeJsonAtomic(group.path, { projects, diagnosticsByPath, ...globals }));
         reports.push({ package: packagePath, path: group.path, baseline, baselineSource, completion,
-          newInTouchedPaths: baseline ? newInTouchedPaths : null, total, globalDiagnostics: globalDiagnostics.size });
+          newInTouchedPaths: baseline ? newInTouchedPaths : null, total, ...globals });
       }
       return reports;
     },

@@ -75,3 +75,47 @@ test('incomplete package results show a bounded redacted stderr reason', async t
   assert.ok(stderr.length < 17000, 'failure output reuses the process diagnostic tail budget');
   assert.ok(!stdout.includes('added: 0'), 'missing evidence never becomes a zero delta');
 });
+
+test('global compiler diagnostics expose sanitized reasons and still refuse a touched delta', async t => {
+  const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const cwd = await mkdtemp(join(repoRoot, '.project/tmp/touched-global-probe-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const packagePath = relative(repoRoot, cwd).replaceAll('\\', '/');
+  await writeFile(join(cwd, 'package.json'), JSON.stringify({ name: basename(cwd), private: true,
+    scripts: { typecheck: 'node report.mjs' } }));
+  await writeFile(join(cwd, 'tsconfig.json'), '{"compilerOptions":{"noEmit":true}}');
+  await writeFile(join(cwd, 'touched.ts'), 'export {};');
+  const baseline = join(cwd, 'baseline.locs');
+  await writeFile(baseline, '');
+  // Exercise the real report producer; only the compiler subprocess is a fixture.
+  const owner = new URL('./typecheckDiagnostics.mjs', import.meta.url).href;
+  await writeFile(join(cwd, 'report.mjs'), `
+    import { createTypecheckDiagnosticRun } from ${JSON.stringify(owner)};
+    const project = { authoredArgs: ['--noEmit', '-p', 'tsconfig.json'] };
+    const run = await createTypecheckDiagnosticRun({ projects: [project], repoRoot: ${JSON.stringify(repoRoot)} });
+    run.record(project, { status: 2, stdout: 'error TS6305: Declaration output missing; Bearer ' + process.env.GLOBAL_PROBE_SECRET + '\\n  private continuation\\n' });
+    for (const report of await run.publish({ locationsOnly: true })) {
+      process.stdout.write('[typecheck-locations] ' + JSON.stringify(report) + '\\n');
+    }
+    process.exitCode = 2;
+  `);
+  const secret = randomUUID();
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./typecheckTouched.mjs', import.meta.url)),
+    '--baseline', baseline, packagePath, `${packagePath}/touched.ts`], {
+    cwd: repoRoot, env: { ...process.env, HAPPIER_TYPECHECK_DISPATCHED: '1', GLOBAL_PROBE_SECRET: secret },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const status = await new Promise((resolveResult, reject) => {
+    child.once('error', reject);
+    child.once('close', resolveResult);
+  });
+  assert.equal(status, 2);
+  assert.ok(stderr.includes('TS6305: Declaration output missing; Bearer <redacted>'), 'global diagnostic code and sanitized first line must be visible');
+  assert.ok(stderr.includes('1 global compiler diagnostics'));
+  assert.ok(!`${stdout}${stderr}`.includes(secret), 'global diagnostics must not disclose credentials');
+  assert.ok(!stderr.includes('private continuation'));
+  assert.ok(!stdout.includes('added: 0'), 'global diagnostics cannot establish a zero delta');
+});

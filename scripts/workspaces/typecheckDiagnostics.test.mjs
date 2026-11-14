@@ -99,7 +99,7 @@ test('explicit location collection uses complete compiler results without readin
   // Explicit collection must not scan Git's dirty inventory to attribute paths.
   await rm(join(f.root, '.git'), { recursive: true });
   assert.deepEqual(await run.publish({ locationsOnly: true }), [{ package: 'apps/sample',
-    globalDiagnostics: 0, locations: ['apps/sample/other.ts:1:TS2322'] }]);
+    globalDiagnostics: 0, globalDiagnosticDetails: [], locations: ['apps/sample/other.ts:1:TS2322'] }]);
   assert.equal(await readFile(initial[0].path, 'utf8'), before);
   const interrupted = await createTypecheckDiagnosticRun(f.options);
   interrupted.record(f.project, { stdout: compilerDiagnostic, stderr: '', status: null, signal: 'SIGTERM' });
@@ -165,7 +165,7 @@ for (const local of ['missing', 'malformed', 'different projects', 'matching']) 
     assert.equal(report.baselineSource, local === 'matching' ? 'local' : `reference ${referencePath}`);
     assert.equal(report.newInTouchedPaths, local === 'matching' ? 1 : 0);
     assert.equal(await readFile(reference, 'utf8'), JSON.stringify(snapshot), 'reference is read-only');
-    assert.deepEqual(JSON.parse(await readFile(localPath, 'utf8')), snapshot);
+    assert.deepEqual(JSON.parse(await readFile(localPath, 'utf8')), { ...snapshot, globalDiagnosticDetails: [] });
   });
 }
 
@@ -215,7 +215,10 @@ test('emitting source partitions retain authored diagnostic identities and the f
 
 test('global diagnostics remain visible; non-typecheck commands cannot replace a baseline', async t => {
   const f = await fixture(t);
-  assert.equal((await f.finish('error TS18003: No inputs were found.\n'))[0].globalDiagnostics, 1);
+  const [report] = await f.finish('error TS18003: No inputs were found.\n');
+  assert.equal(report.globalDiagnostics, 1);
+  assert.deepEqual(report.globalDiagnosticDetails, [{ code: 18003, message: 'No inputs were found.' }]);
+  assert.deepEqual(JSON.parse(await readFile(report.path, 'utf8')).globalDiagnosticDetails, report.globalDiagnosticDetails);
   for (const args of [['--watch', '--noEmit'], ['--version'], ['--noEmit', 'input.ts'], ['--noEmit', 'false', '-p', 'tsconfig.json']]) {
     const project = { project: 'tsconfig.json', authoredArgs: args };
     const run = await createTypecheckDiagnosticRun({ ...f.options, projects: [project] });

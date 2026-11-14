@@ -1529,7 +1529,8 @@ diagnostics. The full package verdict is reported separately. Missing or invalid
 baselines, global compiler diagnostics, and incomplete or failed launches return
 exit 2, never a zero delta. Incomplete results include a bounded, redacted tail
 of executor, package-manager and compiler-runner failure reasons from either
-stream; compiler diagnostic prose stays private.
+stream. Global diagnostics include their codes and sanitized first-line messages before
+the exit-2 refusal; per-file diagnostic prose stays private.
 Review unattributed additions before claiming a lane
 caused zero new diagnostics anywhere in its package. The ordinary runner's
 automatic dirty-path snapshot remains advisory; it is not this shared baseline.

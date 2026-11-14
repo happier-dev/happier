@@ -125,6 +125,11 @@ export async function runTouchedTypecheck({ repoRoot, packagePath, paths, baseli
   }
   const globalDiagnostics = reports.reduce((total, report) => total + report.globalDiagnostics, 0);
   if (globalDiagnostics) {
+    for (const report of reports) {
+      for (const diagnostic of report.globalDiagnosticDetails ?? []) {
+        process.stderr.write(`TS${diagnostic.code}: ${diagnostic.message.split(/\r?\n/u)[0]}\n`);
+      }
+    }
     process.stderr.write(`touched delta unavailable: ${globalDiagnostics} global compiler diagnostics\n`);
     return 2;
   }
