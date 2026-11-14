@@ -15,6 +15,7 @@ import { createAgentLaunchObserver } from '../../../../../../packages/plugin-sdk
 import type { AgentAcpRuntimeOptions, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentContribution } from '@happier-dev/plugin-sdk/agents';
+import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginAgentAcpNativeSessionMcpConfigV2 } from '@happier-dev/protocol';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import {
@@ -78,7 +79,7 @@ function writeVendorObserver(dir: string, executablePath: string) {
 /** The third-party Agent/process is the boundary. It discovers the actual MCP transport,
  * sends standard ACP permission requests, and dispatches only the selected allow_once.
  * This fixture characterizes the real leaf/composer; it is not a vendor admission probe. */
-function writeAgent(dir: string, toolWireFormat: 'canonical' | 'underscore' | 'gemini', tool: string, nativeConfig?: PluginAgentAcpNativeSessionMcpConfigV2, authMethodIds: readonly string[] = []) {
+function writeAgent(dir: string, toolWireFormat: 'canonical' | 'underscore' | 'gemini', tool: string, nativeConfig?: PluginAgentAcpNativeSessionMcpConfigV2, authMethodIds: readonly string[] = [], models?: JsonValue) {
   return writeAcpTestAgentScript({ dir, fileName: 'mcp-policy-agent.mjs', source: `
     import { createInterface } from 'node:readline';
     import { spawnSync } from 'node:child_process';
@@ -127,7 +128,7 @@ function writeAgent(dir: string, toolWireFormat: 'canonical' | 'underscore' | 'g
             if (!listed.tools.some(value => value.name === ${JSON.stringify(tool)})) throw new Error('Fixture tool was not delivered');
             clients.set(server.name, client);
           }
-          ok(message.id, { sessionId: 'mcp-policy-provider' });
+          ok(message.id, { sessionId: 'mcp-policy-provider', ...${JSON.stringify(models ? { models } : {})} });
         } else if (message.method === 'session/cancel') {
           if (activePrompt?.sessionId === message.params.sessionId) {
             activePrompt.cancelled = true;
@@ -200,6 +201,8 @@ export function createAcpMcpPolicyFixture(params: Readonly<{
   nativeConfig?: PluginAgentAcpNativeSessionMcpConfigV2;
   /** Auth methods advertised by the third-party boundary, not an auth-selector mock. */
   authMethods?: readonly string[];
+  /** Native model state advertised by the third-party process boundary. */
+  models?: JsonValue;
   vendor?: AcpMcpPolicyVendorBoundary;
   serverKeys?: readonly [string, string];
   toolNames?: readonly [string, ...string[]];
@@ -254,7 +257,7 @@ export function createAcpMcpPolicyFixture(params: Readonly<{
     } finally { subscription.dispose(); }
   };
   const read = () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
-    readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) });
+    readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: StrictJsonValueSchema.parse(JSON.parse(JSON.stringify(catalog))) } }) });
   const execute = createMcpServerActionExecuteV1({ readCatalog: read,
     mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null,
       writeCatalog: async candidate => {
@@ -385,7 +388,7 @@ export function createAcpMcpPolicyFixture(params: Readonly<{
         const auth = options.definition?.auth;
         const script = params.vendor ? writeVendorObserver(cwd, params.vendor.executablePath)
           : writeAgent(cwd, params.toolWireFormat ?? 'canonical', tool, params.nativeConfig,
-            auth && 'methodId' in auth ? [auth.methodId] : params.authMethods);
+            auth && 'methodId' in auth ? [auth.methodId] : params.authMethods, params.models);
         return { pluginId: params.pluginId, agentId: params.agent.id, signal,
           isCurrent: () => true, interactions: ui.interactions, modes: publications.services.modes, models: publications.services.models,
           media: { registerSourceRoot: async () => { throw new Error('No media in MCP fixture'); } },

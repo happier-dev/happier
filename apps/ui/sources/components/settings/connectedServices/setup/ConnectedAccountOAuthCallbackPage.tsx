@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import type { NavigationProp } from '@react-navigation/native';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -156,7 +157,7 @@ export function ConnectedAccountOAuthCallbackPage({
   invalidClientCopy?: Readonly<{ title: string; body: string }>;
 }> = {}) {
   const router = useRouter();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<{ Callback: Partial<Record<typeof RESPONSE_PARAMS[number], string>> }>>();
   const params = useLocalSearchParams();
   const auth = useAuth();
   const settingsScope = useAccountSettingsScope();

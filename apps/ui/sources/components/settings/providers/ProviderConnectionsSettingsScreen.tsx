@@ -545,13 +545,13 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
             {notice}
             {firstLoad ? <ProviderRailSkeleton /> : null}
             {noMatches ? <Item mode="info" title={t('settingsProviders.searchEmptyTitle')} /> : null}
-            <SettingAnchor setting={PROVIDERS_SETTINGS.settings.connections}>
-                {homeProviders.length > 0 ? (
+            {homeProviders.length > 0 ? (
+                <SettingAnchor setting={PROVIDERS_SETTINGS.settings.connections}>
                     <ItemGroup testID="settings-providers-page.providers" title={t('settingsProviders.configuredTitle')}>
                         {homeProviders.map(renderHomeConnectionRow)}
                     </ItemGroup>
-                ) : null}
-            </SettingAnchor>
+                </SettingAnchor>
+            ) : null}
             {homeHasGateways ? (
                 <ItemGroup
                     testID="settings-providers-page.gateways"

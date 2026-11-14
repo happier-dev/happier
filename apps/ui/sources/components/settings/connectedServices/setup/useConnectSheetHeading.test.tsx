@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import * as React from 'react';
 import { View } from 'react-native';
 import { expect, it, vi } from 'vitest';
@@ -12,9 +13,9 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 // Cover the selected modes from real bundled declarations, rather than copying placement expectations.
-const manifests = import.meta.glob('../../../../../../../packages/plugins/*/src/manifest.ts');
+const manifests = import.meta.glob<{ PLUGIN_MANIFEST?: unknown }>('../../../../../../../packages/plugins/*/src/manifest.ts');
 const modes = (await Promise.all(Object.values(manifests).map(async load => {
-    const module = await load() as { PLUGIN_MANIFEST?: unknown };
+    const module = await load();
     const parsed = PluginPortableReleaseManifestV1Schema.safeParse(module.PLUGIN_MANIFEST);
     if (!parsed.success) return [];
     return (parsed.data.contributes.connectedAccountDescriptors ?? []).flatMap(descriptor =>

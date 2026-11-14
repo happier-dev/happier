@@ -19,6 +19,7 @@ import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBa
 import type { ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
 import { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
@@ -132,7 +133,7 @@ packaged.declarations[packaged.declarations.length - 1] = {
 };
 const { PLUGIN_MANIFEST: CODER_MANIFEST } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
 const coder = { pluginId: CODER_MANIFEST.id, localId: 'coder-account' };
-const coderDescriptor = CODER_MANIFEST.contributes.connectedAccountDescriptors?.find(row => row.id === coder.localId);
+const coderDescriptor = PluginPortableReleaseManifestV1Schema.parse(CODER_MANIFEST).contributes.connectedAccountDescriptors?.find(row => row.id === coder.localId);
 if (!coderDescriptor?.authentication.account) throw new Error('Missing Coder Account authentication declaration');
 await prepareAuthenticationInventory(packaged, { manifest: CODER_MANIFEST, target: coderDescriptor.authentication.account,
     projectPath: 'packages/plugins/machine-coder', entryPath: 'packages/plugins/machine-coder/src/account.ts',

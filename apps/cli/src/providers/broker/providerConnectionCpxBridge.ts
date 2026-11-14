@@ -102,7 +102,7 @@ function upstreamUnavailable(cause?: unknown): ManagedServiceResponse {
     ok: false,
     status: 502,
     statusText: 'Upstream unavailable',
-    headers: Object.freeze(body ? { 'content-type': 'application/json' } : {}),
+    headers: Object.freeze<Record<string, string>>(body ? { 'content-type': 'application/json' } : {}),
     body: body ? new Response(JSON.stringify(body)).body : null,
   });
 }

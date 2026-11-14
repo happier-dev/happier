@@ -28,8 +28,6 @@ const CREDENTIAL_STYLE_TITLE_KEYS = {
 const PROBE_PARSER_TITLE_KEYS = {
     'openai-models': 'settingsProviders.authoring.probeParser.openaiModels',
     'anthropic-models': 'settingsProviders.authoring.protocol.anthropic.title',
-    'ollama-tags': 'settingsProviders.authoring.probeParser.ollamaTags',
-    'lmstudio-native-models': 'settingsProviders.authoring.probeParser.lmStudioNative',
 } as const satisfies Record<BundledProviderCatalogParserV1, string>;
 
 export const CustomProviderAdvancedFields = React.memo(function CustomProviderAdvancedFields(props: Readonly<{

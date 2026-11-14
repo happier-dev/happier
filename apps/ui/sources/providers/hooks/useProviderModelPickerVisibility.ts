@@ -32,10 +32,10 @@ export function useProviderModelPickerVisibility(connectionId: string | null, ow
     enabled?: boolean;
 }>): ProviderModelPickerVisibility | null {
     const serverId = owner?.serverId;
-    const selectVisibility = React.useCallback((snapshot: ProviderCatalogSnapshot | null) => (
-        connectionId && snapshot?.data?.connections.some(connection => connection.id === connectionId)
-            ? snapshot.data.modelPickerVisibilityByConnectionId?.[connectionId] ?? null : undefined
-    ), [connectionId]);
+    const selectVisibility = React.useCallback((snapshot: ProviderCatalogSnapshot | null) => {
+        const connection = snapshot?.data?.connections.find(connection => connection.id === connectionId);
+        return connection ? snapshot?.data?.modelPickerVisibilityByConnectionId?.[connection.id] ?? null : undefined;
+    }, [connectionId]);
     const visibilityOverride = useProviderCatalogForServer(serverId, selectVisibility,
         { enabled: owner?.enabled !== false && Boolean(connectionId && owner) });
     const [operation, setOperation] = React.useState<Readonly<{

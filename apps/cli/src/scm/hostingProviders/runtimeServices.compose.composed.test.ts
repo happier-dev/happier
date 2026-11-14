@@ -1,3 +1,4 @@
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -37,7 +38,7 @@ import {
 import { ScmPullRequestOpenComposeResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import {
   GITHUB_SCM_HOSTING_PROVIDER_ID,
-  PLUGIN_MANIFEST,
+  PLUGIN_MANIFEST as COLD_PLUGIN_MANIFEST,
   githubHostingProviderAdapter,
   githubPullRequestAdapter,
 } from '@happier-dev/plugins-scm-github';
@@ -46,6 +47,8 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import { createHostScmHostingProviderRuntimeServices } from './runtimeServices';
 import { createGitPullRequestReadOperations } from '../../../../../packages/plugins/scm-git/src/operations/pullRequestReadOperations';
 import { runWithRealGitScmRuntime } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+
+const PLUGIN_MANIFEST = PluginManifestV2Schema.parse(COLD_PLUGIN_MANIFEST);
 
 it('composes from one authorized hosting inventory observation through real Git and the host registry', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-compose-inventory-'));
@@ -123,7 +126,8 @@ it('preserves Team admission failures through the real native SCM entry after a 
         HAPPIER_SERVER_IDENTITY_ID: homeId,
     } });
     onTestFinished(home.close);
-    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(entry => entry.id === GITHUB_CONNECTED_ACCOUNT_ID)!;
+    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === GITHUB_CONNECTED_ACCOUNT_ID);
+    if (!descriptor) throw new Error('GitHub fixture is missing its connected Account descriptor');
     const selected = await createTeamDirectActionMaterialFixture({ manifest: PLUGIN_MANIFEST,
         actionId: GITHUB_HOSTING_OPERATION_ACTION_IDS_V1.listPullRequests, purposeId: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
         serviceId: descriptor.id, authenticationModeId: descriptor.authentication.defaultModeId, homeServerIdentityId: homeId });

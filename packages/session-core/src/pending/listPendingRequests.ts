@@ -381,8 +381,8 @@ export function listPendingTranscriptRequests(
 type PendingAgentStateRequestFacts = Readonly<{
     requests?: Readonly<Record<string, Pick<NonNullable<AgentState['requests']>[string],
         'tool' | 'kind' | 'source' | 'arguments' | 'createdAt' | 'turnId' | 'sidechainId'
-        | 'questionV1' | 'currentHandler' | 'permissionSuggestions' | 'mcpTool' | 'nativeChoices'>>> | null;
-    completedRequests?: AgentState['completedRequests'];
+        | 'questionV1' | 'currentHandler' | 'permissionSuggestions' | 'mcpTool'> & Readonly<{ nativeChoices?: NativePermissionChoicesV1 | null }>>> | null;
+    completedRequests?: Readonly<Record<string, unknown>> | null;
 }>;
 
 function listPendingAgentStateRequests(
