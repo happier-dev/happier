@@ -846,4 +846,26 @@ describe('RpcHandlerManager response wire-size guard', () => {
       warnSpy.mockRestore();
     }
   });
+
+  it('by default refuses a reply too large to upload before the relay heartbeat expires on the supported uplink', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = new RpcHandlerManager({
+        scopePrefix: 'machine-1',
+        encryptionKey: new Uint8Array(32).fill(41),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => {},
+      });
+      // An operator daemon lost its socket ("ping timeout") on 12–17 MB replies, well under the
+      // relay's packet limit: the pong queues behind the reply frame for the whole upload.
+      rpc.registerHandler('demo.heartbeatStarving', async () => ({ big: 'x'.repeat(13_500_000) }));
+
+      const response = await rpc.handleRequest({ method: 'machine-1:demo.heartbeatStarving', params: {} });
+
+      expect(response).toMatchObject({ errorCode: 'RPC_RESPONSE_TOO_LARGE' });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });

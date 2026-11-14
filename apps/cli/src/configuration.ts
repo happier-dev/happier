@@ -487,8 +487,9 @@ class Configuration {
       min: 1, default: 2_500_000,
     });
 
-    // Default: the relay's default socket packet limit minus reply framing. Raise it only
-    // together with the relay's HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE.
+    // Default: the largest reply packet the relay keeps the socket open for (its packet limit, or
+    // what the supported uplink uploads before the heartbeat deadline), minus reply framing.
+    // Raise it only on a faster uplink and within the relay's HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE.
     this.rpcResponseMaxBytes = resolveIntEnvWithBounds('HAPPIER_RPC_RESPONSE_MAX_BYTES', {
       min: 1, default: SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES,
     });

@@ -70,7 +70,7 @@ export interface RpcHandlerConfig {
     encryptionMode?: 'e2ee' | 'plain';
     /**
      * Largest reply payload in bytes; a larger reply is answered with RPC_RESPONSE_TOO_LARGE.
-     * Defaults to SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES (the relay's default socket packet limit).
+     * Defaults to SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES (the largest reply packet the relay keeps the socket open for).
      */
     responseMaxBytes?: number;
     logger?: (message: string, data?: any) => void;
