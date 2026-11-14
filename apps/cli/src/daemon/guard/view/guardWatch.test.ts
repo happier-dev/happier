@@ -215,6 +215,8 @@ describe('Guard requester view and parked watch', () => {
         } } });
         await os.put('/proc/zoneinfo', 'Node 0, zone Normal\n pages free 0\n min 10\n low 20\n high 30\n');
         await os.put('/proc/pressure/memory', 'some avg10=1.00 avg60=1.00 avg300=1.00 total=1\nfull avg10=1.00 avg60=1.00 avg300=1.00 total=1\n');
+        // The memory rule acts on a stall only with real scarcity (≤ 10 % of total available).
+        await os.put('/proc/meminfo', 'MemTotal: 100000 kB\nMemAvailable: 5000 kB\nMemFree: 1000 kB\nCached: 10000 kB\nSReclaimable: 1000 kB\nShmem: 1000 kB\nSlab: 2000 kB\nKernelStack: 100 kB\nPageTables: 100 kB\nSwapTotal: 10000 kB\nSwapFree: 8000 kB\n');
       },
       runMemory: () => {
         const controller = new AbortController(); const running = sessionState.run(controller.signal);

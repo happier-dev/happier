@@ -11,6 +11,18 @@ import { equalProcessStart } from '../processes/ownership/types';
 import type { ActivityLog } from './activityLog';
 import { guardTargetRef, planGuard, planIdleSessions, projectGuardLadderV1, type GuardCandidate, type GuardConnectionMinute, type GuardFacts, type GuardLadderPreview, type IdleSessionCandidate } from './guardPlanner';
 
+/**
+ * The memory rule acts only under real memory scarcity (owner ruling 2026-11-12, "only under memory pressure";
+ * orchestrator 2026-11-13). A kernel pressure signal alone is not scarcity: Linux PSI counts stall time and
+ * stays nonzero on a busy host with most memory free. Scarcity line: available ≤ 10 % of the Machine's own
+ * total, the default low-memory action line of earlyoom (`-m 10`), the userspace memory guard the Guard
+ * already reports beside itself (`otherMemoryGuards`). Both the kernel signal and this line must hold.
+ */
+export const GUARD_SCARCE_AVAILABLE_PERCENT = 10;
+export function isGuardMemoryScarce(memory: Readonly<{ totalBytes: number; availableBytes: number }>): boolean {
+  return memory.totalBytes > 0 && memory.availableBytes * 100 <= memory.totalBytes * GUARD_SCARCE_AVAILABLE_PERCENT;
+}
+
 export type GuardPolicyWorkPlan = Readonly<{ nextAt?: number; run?: () => Promise<void> }>;
 /** Root composition adapts the incumbent left-behind, terminal and ceiling owners. */
 export type GuardPolicyWork = Readonly<{
@@ -308,7 +320,8 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
               ? sample.memory : null;
             const pressureLevel = memory ? effectiveMachineMemoryPressureV1(memory) : 'not_reported';
             const holds = (level: string) => level === 'critical' || memoryPolicy.actAt === 'elevated' && level === 'elevated';
-            const pressureHigh = memory !== null && holds(pressureLevel);
+            // The kernel signal is sustained over minutes; scarcity is this minute's fact and is re-read at fire.
+            const pressureHigh = memory !== null && holds(pressureLevel) && isGuardMemoryScarce(memory);
             const pressureLow = memory !== null && pressureLevel !== 'not_reported' && !pressureHigh;
             const paused = memoryPolicy.pausedUntil !== null && memoryPolicy.pausedUntil > now();
             if (paused) nextAt = nextAt === undefined ? memoryPolicy.pausedUntil! : Math.min(nextAt, memoryPolicy.pausedUntil!);
@@ -407,7 +420,7 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                       || fireGuardPolicy.idleSessions.warnBeforeMs !== policy.idleSessions.warnBeforeMs
                       || stoppingWarning?.rule === 'idle_sessions'
                         && JSON.stringify(fireGuardPolicy.idleSessions) !== JSON.stringify(policy.idleSessions))
-                    || !fireMemory || !holds(effectiveMachineMemoryPressureV1(fireMemory))
+                    || !fireMemory || !holds(effectiveMachineMemoryPressureV1(fireMemory)) || !isGuardMemoryScarce(fireMemory)
                     || !isSustainedV1({ records: input.vitals.minutes(now() - firePolicy.sustainMs - 60000), now: now(),
                       sustainMs: firePolicy.sustainMs, holds: record => holds(record.lvl) }).sustained
                     || !fireCandidate || guardTargetRef(fireCandidate) !== guardTargetRef(candidate)

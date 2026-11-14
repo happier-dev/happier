@@ -534,11 +534,13 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
 
     it('starts the real episode, publishes its state, records only a measured effect, then releases parked observers on stop', async () => {
         const f = await setup();
+        // Still scarce after the freed 80 (≤ 10 % available), so the episode runs out of steps.
+        f.available(20);
         await vi.advanceTimersByTimeAsync(60000); await f.drain();
         expect(f.stops).toBe(1);
         expect(f.summary.getSummary()?.guard?.episode).toMatchObject({ state: 'verifying', step: 1 });
         expect(f.summary.getSummary()).not.toHaveProperty('lastAutomaticAction');
-        f.gone(); await f.drain(); f.available(180);
+        f.gone(); await f.drain(); f.available(100);
         await vi.advanceTimersByTimeAsync(60000); await f.drain();
         const activity = await f.guard.activityLog.list({ range: 'today' });
         expect(MachineGuardActivityListV1Schema.parse(activity)).toEqual(activity);

@@ -483,6 +483,8 @@ describe('memory guard episode on the incumbent minute sampler', () => {
   });
   it('waits for exact target absence, cooldown and a later minute before measuring freed memory; out-of-steps stays quiet', async () => {
     const fixture = await setup();
+    // Still scarce after the freed 80 (≤ 10 % available), so the episode runs out of steps.
+    fixture.setAvailable(20);
     try {
       fixture.setPolicy({ actAt: 'elevated' });
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
@@ -491,7 +493,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
       expect((await fixture.activity.list({ range: 'today' })).entries).toEqual([]);
       fixture.setPresent(false); await fixture.drain();
-      fixture.setAvailable(180);
+      fixture.setAvailable(100);
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
       const entries = (await fixture.activity.list({ range: 'today' })).entries;
       expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'closed_browser', freedBytes: 80, outcome: 'done',
@@ -679,11 +681,12 @@ describe('memory guard episode on the incumbent minute sampler', () => {
   });
   it('uses canonical native low-memory pressure for admission, critical receipts and observed recovery', async () => {
     const fixture = await setup('browser', true, true);
+    fixture.setAvailable(20);
     try {
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
       expect(fixture.stops).toBe(1);
       expect(fixture.runtime.readEpisode()).toMatchObject({ state: 'verifying' });
-      fixture.setPresent(false); fixture.setAvailable(180); await fixture.drain();
+      fixture.setPresent(false); fixture.setAvailable(100); await fixture.drain();
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
       expect((await fixture.activity.list({ range: 'today' })).entries).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'closed_browser', outcome: 'done', trigger: expect.objectContaining({ level: 'critical' }) })]));
@@ -726,6 +729,19 @@ describe('memory guard episode on the incumbent minute sampler', () => {
         expect.objectContaining({ kind: 'closed_browser', outcome: 'did_not_help', freedBytes: 0 })]);
       expect(fixture.runtime.readEpisode()).toBeUndefined();
       expect(fixture.stops).toBe(1);
+    } finally { await fixture.close(); }
+  });
+  it('acts only on real scarcity: a kernel stall with most memory available releases nothing, scarcity releases the idle Session', async () => {
+    const fixture = await setup('session');
+    try {
+      // The kernel reports a critical stall (e.g. Linux PSI) while 60 % of memory is available.
+      fixture.setAvailable(600);
+      for (let minute = 0; minute < 8; minute++) { await vi.advanceTimersByTimeAsync(60000); await fixture.drain(); }
+      expect({ stops: fixture.stops, notices: fixture.notices.length, episode: fixture.runtime.readEpisode() })
+        .toEqual({ stops: 0, notices: 0, episode: undefined });
+      fixture.setAvailable(50);
+      for (let minute = 0; minute < 8; minute++) { await vi.advanceTimersByTimeAsync(60000); await fixture.drain(); }
+      expect(fixture.stoppedIds).toEqual(['s']);
     } finally { await fixture.close(); }
   });
   it('publishes the Session warning, honors Keep running, and re-admits activity after an awaited stop marker', async () => {
