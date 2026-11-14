@@ -127,8 +127,8 @@ describe('provider binding host materialization', () => {
     { agentId: 'codex', descriptor: CODEX_STATE_SHARING, entryPath: 'archived_sessions' },
     { agentId: 'claude', descriptor: CLAUDE_STATE_SHARING, entryPath: 'projects' },
     { agentId: 'gemini', descriptor: GEMINI_STATE_SHARING, entryPath: '.gemini/tmp' },
-    { agentId: 'fx', descriptor: FX_STATE_SHARING, entryPath: '.fx/session-files' },
-  ])('retains the first $agentId $entryPath session files after disposing its launch home', async ({ agentId, descriptor, entryPath }) => {
+    { agentId: 'fx', descriptor: FX_STATE_SHARING, entryPath: '.fx/session-files', realDirectory: true },
+  ])('retains the first $agentId $entryPath session files after disposing its launch home', async ({ agentId, descriptor, entryPath, realDirectory }) => {
     const base = await mkdtemp(join(tmpdir(), 'happier-agent-cold-home-'));
     const source = join(base, 'native');
     const compose = () => composeProviderBindingMaterialization({
@@ -137,6 +137,7 @@ describe('provider binding host materialization', () => {
       nativeHome: { descriptor: { providerId: agentId, ...descriptor },
         sourceEnvironment: { [descriptor.nativeHome.environmentKey]: source }, homeDir: base },
       materializationBaseDir: join(base, 'materialized'),
+      sessionId: 'first-session',
     });
     try {
       const initial = await compose();
@@ -152,7 +153,7 @@ describe('provider binding host materialization', () => {
         expect(await readFile(join(resumed.launchMaterialization.rootPath,
           entryPath, 'workspace/native-id.jsonl'), 'utf8')).toBe('native-session');
         expect(await realpath(join(resumed.launchMaterialization.rootPath, entryPath)))
-          .toBe(await realpath(join(source, entryPath)));
+          .toBe(await realpath(join(realDirectory ? resumed.launchMaterialization.rootPath : source, entryPath)));
       } finally { resumed.cleanup?.(); }
     } finally { await rm(base, { recursive: true, force: true }); }
   });

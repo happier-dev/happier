@@ -168,7 +168,7 @@ export type ProviderSpawnAuthorizationAttempt =
       ProviderSpawnAuthorizationAttemptCommon<ExternalProviderSpawnAuthorization>
       & {
         deployment: ExternalProviderSpawnAuthorization['deployment'];
-        materializeAfterHooks: () => Promise<ProviderSpawnMaterializationResult>;
+        materializeAfterHooks: (sessionId?: string) => Promise<ProviderSpawnMaterializationResult>;
       }
     >
   | Readonly<
@@ -272,6 +272,7 @@ export function createProviderSpawnAuthorizationAttempt<
   const materialize = async (params: Readonly<{
     binding: AgentProviderBindingResolvedFacts;
     credential: AgentProviderBindingCredential;
+    sessionId?: string;
   }>): Promise<ProviderSpawnMaterializationResult> => {
     if (composed || redactionLease || cleaned || transferred) {
       throw new Error('Provider binding materialization attempt is single-use');
@@ -298,7 +299,9 @@ export function createProviderSpawnAuthorizationAttempt<
       composed = await composeProviderBindingMaterialization({
         materialization: rawMaterialization,
         materializationBaseDir: input.materializationBaseDir,
-        sessionId: input.scope?.kind === 'session' ? input.scope.sessionId : input.sessionId,
+        // A fresh daemon launch commits its Session after authorization. Use
+        // that identity at materialization, before the native child can write.
+        sessionId: input.scope?.kind === 'session' ? input.scope.sessionId : input.sessionId ?? params.sessionId,
         nativeHome: input.nativeHome,
       });
       redactionLease.add(composed.additionalRedactionValues);
@@ -373,7 +376,7 @@ export function createProviderSpawnAuthorizationAttempt<
       ...common,
       deployment: authorization.deployment,
       authorization,
-      materializeAfterHooks: async () => {
+      materializeAfterHooks: async (sessionId?: string) => {
       const current = await revalidate();
       if (!current.ok) return current;
       let resolvedCredential: ProviderCredentialPlaintextResultForSpawn;
@@ -398,7 +401,7 @@ export function createProviderSpawnAuthorizationAttempt<
             value: resolvedCredential.credential.value,
             ...(resolvedCredential.credential.additionalCredentials ? { additionalCredentials: resolvedCredential.credential.additionalCredentials } : {}),
           };
-        return materialize({ binding: authorization.binding, credential });
+        return materialize({ binding: authorization.binding, credential, sessionId });
       },
     });
   }

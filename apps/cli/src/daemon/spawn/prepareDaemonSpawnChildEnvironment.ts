@@ -1,3 +1,4 @@
+import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { restoreAcceptedSessionTeamCredentialModelIntent } from '@/agent/runtime/mergeSessionMetadataForStartup';
@@ -38,6 +39,7 @@ import {
     HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY,
     serializePersistedTakeoverAdmissionForEnv,
 } from './persistedTakeoverAdmission';
+import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
 
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
@@ -147,7 +149,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
                         materializeProviderBindingAfterHooks:
                             async () => {
                                 const materialized =
-                                    await materializeProviderBindingAfterHooks();
+                                    await materializeProviderBindingAfterHooks(input.options.existingSessionId);
                                 if (!materialized.ok) {
                                     return {
                                         ok: false as const,
@@ -222,6 +224,12 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         extraEnvForChild.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE = input.options.requesterSessionCredentialFile;
         extraEnvForChild.HAPPIER_SESSION_REQUESTER_SESSION_ID = input.options.existingSessionId;
     }
+    delete extraEnvForChild[SESSION_HOLDER_ADOPT_ENV_KEY];
+    if (input.options.adoptSessionHolder) {
+        extraEnvForChild[SESSION_HOLDER_ADOPT_ENV_KEY] = JSON.stringify(input.options.adoptSessionHolder);
+    }
+    // Inherited placement is never this spawn's: only the spawn's own launch step sets it (executeSpawnSessionRequest).
+    delete extraEnvForChild[SESSION_TARGET_PLACEMENT_ENV_KEY];
     delete extraEnvForChild[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
     if (input.options.pendingFirstInput) {
         extraEnvForChild[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY] =
@@ -271,6 +279,8 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         requesterSessionCredentialFile: _requesterSessionCredentialFile,
         requesterSessionBootstrap: _requesterSessionBootstrap,
         requesterSessionRuntimeContext: _requesterSessionRuntimeContext,
+        // Single-use: this launch consumes the held Agent; a later respawn gets its own token.
+        adoptSessionHolder: _adoptSessionHolder,
         modelSelection: _requestedModelSelection,
         providerBindingMetadataV1: _priorProviderBindingMetadataV1,
         providerBindingSecurityChangeConfirmationV1: _transientProviderBindingSecurityChangeConfirmationV1,

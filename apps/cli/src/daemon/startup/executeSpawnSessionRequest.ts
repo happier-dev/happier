@@ -970,7 +970,9 @@ export async function executeSpawnSessionRequest(
             if (
                 !normalizedExistingSessionId
                 && daemonLaunchRequiresCommittedSession(optionsWithProviderIsolation, {
-                    requiresSessionConsumer: Boolean(daemonProviderLaunch.managedPurpose),
+                    // Provider native state must belong to the canonical Session
+                    // from the first child, including an upstream-refused turn.
+                    requiresSessionConsumer: Boolean(daemonProviderLaunch.attempt || daemonProviderLaunch.managedPurpose),
                 })
             ) {
                 // A definite missing executable must not consume the creation

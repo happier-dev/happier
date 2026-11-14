@@ -1,5 +1,9 @@
 import { logger } from '@/ui/logger';
 import { rmSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FX_STATE_SHARING } from '../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
 import { createManagedRunLaunchFixture } from '../lifecycle/managedRunLaunch.testkit';
 import { materializeLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -129,6 +133,38 @@ const changedError = createProviderErrorV1('provider_authorization_changed', {
 
 
 describe('provider spawn authorization lifecycle', () => {
+  it('retains native journals when the Session is committed after Provider authorization', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-provider-late-session-'));
+    const createAttempt = (sessionId?: string) => createProviderSpawnAuthorizationAttempt({
+      initial: authorization(), sessionId,
+      resolveCredential: () => ({ ok: true, credential: { kind: 'apiKey', value: 'fixture-secret' } }),
+      materialize: async () => ({ v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: '.fx/settings.json', utf8: '{}' }] }),
+      materializationBaseDir: join(base, 'materialized'),
+      nativeHome: { descriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+        sourceEnvironment: { HOME: join(base, 'native') }, homeDir: base },
+    });
+    const initial = createAttempt();
+    const resumed = createAttempt('committed-session');
+    try {
+      const first = await initial.materializeAfterHooks('committed-session');
+      if (!first.ok) throw new Error(first.error.code);
+      const home = first.materialization.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value;
+      if (!home) throw new Error('Expected native HOME');
+      const journal = join(home, '.fx/sessions/v2/native-session');
+      await mkdir(journal, { recursive: true });
+      await writeFile(join(journal, 'log.jsonl'), 'failed upstream turn fixture');
+      initial.cleanupOnFailure();
+      expect(await readFile(join(journal, 'log.jsonl'), 'utf8')).toBe('failed upstream turn fixture');
+      const next = await resumed.materializeAfterHooks();
+      if (!next.ok) throw new Error(next.error.code);
+      expect(next.materialization.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value).toBe(home);
+      expect(await readFile(join(journal, 'log.jsonl'), 'utf8')).toBe('failed upstream turn fixture');
+    } finally {
+      initial.cleanupOnFailure(); resumed.cleanupOnFailure();
+      await rm(base, { recursive: true, force: true });
+    }
+  });
   it('does not latch a pre-adoption retained check and ignores desired Q after exact custody binds', () => {
     let desiredCurrent = true;
     let retainedPolicyCurrent = true;
