@@ -25,6 +25,7 @@ import {
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {
+    blockPendingQueueV2Delivery,
     discardPendingQueueV2Messages,
     listPendingQueueV2LocalIdsFromServer,
     materializeNextPendingQueueV2Message,
@@ -205,7 +206,18 @@ type ReconciledPendingInput =
     | Readonly<{ status: 'admitted'; message: PendingQueueMaterializedMessage }>
     | Readonly<{ status: 'rejected'; code?: SessionInputAdmissionRejectionCodeV1 }>
     | Readonly<{ status: 'held' }>
-    | Readonly<{ status: 'outcomeUnknown' }>;
+    | Readonly<{ status: 'outcomeUnknown' }>
+    // Stored content this Session key cannot open. Opening is deterministic, so
+    // only a different key can change the outcome.
+    | Readonly<{ status: 'undecryptable' }>;
+
+/** Same Session key by value: only a different key can open a row this one could not. */
+function isSameStoredContentKey(a: SessionStoredContentCryptoContext, b: SessionStoredContentCryptoContext): boolean {
+    if (a.mode !== b.mode) return false;
+    if (a.mode === 'plain' || b.mode === 'plain') return true;
+    return a.ctx.encryptionVariant === b.ctx.encryptionVariant
+        && Buffer.compare(Buffer.from(a.ctx.encryptionKey), Buffer.from(b.ctx.encryptionKey)) === 0;
+}
 
 function readPendingStoredPayload(
     message: PendingQueueMaterializedMessage,
@@ -277,8 +289,9 @@ async function reconcileProtectedPendingInput(params: Readonly<{
     readCurrentAutonomousCheckIn?: (origin?: DiscussionAddressV1) => Promise<Readonly<{ afterTurns: number | null }> | null>;
 }>): Promise<ReconciledPendingInput> {
     const localId = params.message.localId;
+    if (!localId || !params.message.content) return { status: 'outcomeUnknown' };
     const payload = readPendingStoredPayload(params.message, params.crypto);
-    if (!localId || !payload || !params.message.content) return { status: 'outcomeUnknown' };
+    if (!payload) return { status: 'undecryptable' };
     const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
         ? payload.meta as Record<string, unknown>
         : {};
@@ -603,6 +616,9 @@ export function createSessionClientInteractionApi(
     const serverUrl = deps.serverUrl ?? resolveServerHttpBaseUrl();
     const metadataWaitAbortController = new AbortController();
     let activeMetadataWaiters = 0;
+    // Rows this client's Session key cannot open. Retrying cannot succeed under
+    // the same key, so a row is classified once per key and not re-polled.
+    let undecryptablePending: { crypto: SessionStoredContentCryptoContext; localIds: Set<string> } | null = null;
     const pendingRpcResponses = new Set<Promise<void>>();
     let pendingQueueStateReconcileInFlight: Promise<boolean> | null = null;
     let lastPendingQueueStateReconcileAt = 0;
@@ -797,6 +813,34 @@ export function createSessionClientInteractionApi(
                     ? { readCurrentAutonomousCheckIn: deps.readCurrentAutonomousCheckIn } : {}),
                 ...(target ? { executionRun: true } : {}),
             }));
+            if (reconciled.status === 'undecryptable') {
+                const crypto = deps.getStoredContentCryptoContext();
+                if (!undecryptablePending || !isSameStoredContentKey(undecryptablePending.crypto, crypto)) undecryptablePending = { crypto, localIds: new Set() };
+                const localId = messageToReconcile.localId ?? '';
+                if (!undecryptablePending.localIds.has(localId)) {
+                    logger.warn('[pendingQueue] pending input is undecryptable with the Session key', {
+                        sessionId: deps.sessionId, localId, mode: crypto.mode });
+                    if (!target && localId) {
+                        // The existing blocked-delivery presentation tells the person this message
+                        // cannot be delivered and offers its row actions; the queue moves past it.
+                        try {
+                            const blocked = await runWithServerHttpBaseUrl(serverUrl, () => blockPendingQueueV2Delivery({
+                                token: deps.token, sessionId: deps.sessionId, localId, reason: 'invalid_prompt_text',
+                                signal: deps.signal ?? metadataWaitAbortController.signal }));
+                            if (blocked.pendingQueueState && deps.applyPendingQueueState(blocked.pendingQueueState)) {
+                                deps.onPendingQueueStateChanged();
+                            }
+                        } catch (error) {
+                            if (isAuthenticationError(error)) throw error;
+                            logger.infoFile('[pendingQueue] undecryptable input block failed', { sessionId: deps.sessionId,
+                                localId, error: serializeEphemeralSendError(error) });
+                            return { didMaterialize: false, result: { type: 'retryable_transport' } };
+                        }
+                    }
+                    undecryptablePending.localIds.add(localId);
+                }
+                return { didMaterialize: false, result: { type: 'no_pending' } };
+            }
             if (reconciled.status === 'outcomeUnknown') {
                 return {
                     didMaterialize: false,
@@ -1410,7 +1454,7 @@ export function createSessionClientInteractionApi(
             // Pending has already retired this exact original. A definite
             // withdrawal is neither a provider failure nor a new settlement.
             if (result.status === 'rejected' && result.code === 'session_input_cancelled') return 'withdrawn';
-            return result.status === 'legacy' ? 'rejected' : result.status;
+            return result.status === 'legacy' ? 'rejected' : result.status === 'undecryptable' ? 'outcomeUnknown' : result.status;
         },
 
         async popPendingMessage() {

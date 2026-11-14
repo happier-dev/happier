@@ -626,6 +626,57 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
+  it('classifies a pending row it cannot open as undecryptable once, warns, and stops retrying until the key changes', async () => {
+    const socket = createSocketStub();
+    const contractResult = {
+      mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'v1' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
+    const claim = {
+      ok: true, didMaterialize: true, localId: 'sealed-local', didWrite: false, pendingCount: 1, pendingVersion: 2,
+      message: {
+        id: null, seq: null, localId: 'sealed-local', messageRole: 'user',
+        // Sealed with another key: deterministic failure under this Session's key.
+        content: { t: 'encrypted', c: encodeBase64(encrypt(new Uint8Array(32).fill(7), 'legacy', { role: 'user' })) },
+        inputAdmissionReceipt: null, createdAt: 1_000, updatedAt: 1_000, providerAction: 'send',
+        deliveryState: { mode: 'provider', unresolved: true },
+      },
+    };
+    socketAckMock.mockResolvedValue(claim);
+    axiosPostMock.mockResolvedValue({ data: { ok: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 3 } });
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    let crypto = { mode: 'e2ee' as const, ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' as const } };
+    const deliver = vi.fn(() => true);
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      getStoredContentCryptoContext: () => crypto,
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+      deliverMaterializedUserMessageToAgentQueue: deliver,
+    } as any);
+
+    const results = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) results.push(await api.materializeNextPendingMessageSafely());
+    expect(results.filter(result => result.type === 'retryable_transport')).toHaveLength(0);
+    const undecryptableWarnings = () => warnSpy.mock.calls.filter(([message]) => message === '[pendingQueue] pending input is undecryptable with the Session key');
+    expect(undecryptableWarnings()).toHaveLength(1);
+    expect(undecryptableWarnings()[0]?.[1]).toEqual({ sessionId: 's1', localId: 'sealed-local', mode: 'e2ee' });
+    expect(deliver).not.toHaveBeenCalled();
+    // Surfaced through the existing blocked-delivery presentation, once: the queue moves past it.
+    expect(axiosPostMock.mock.calls.map(([url, body]) => [String(url).replace(/^.*\/v2\//, '/v2/'), body]))
+      .toEqual([['/v2/sessions/s1/pending/sealed-local/delivery/block', { reason: 'invalid_prompt_text' }]]);
+
+    // A different Session key is the only fact that can open the same row.
+    crypto = { mode: 'e2ee' as const, ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' as const } };
+    await api.materializeNextPendingMessageSafely();
+    expect(undecryptableWarnings()).toHaveLength(2);
+  });
+
   it('identifies the server-claim subphase before awaiting an unsettled materialization transport', async () => {
     const socket = createSocketStub();
     const transport = createDeferred<{
@@ -991,13 +1042,16 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       markPendingQueueMaterializedLocalId: (localId) => { custody.add(localId); },
     });
 
+    axiosPostMock.mockResolvedValue({ data: { ok: true } });
     const result = await api.materializeNextPendingMessageSafely();
     if (accepted) {
       expect(result).toMatchObject({ type: 'materialized', localId: 'pending-local' });
       expect(delivered).toEqual([{ ...payload, localId: 'pending-local', createdAt: 1_000 }]);
       expect(custody.has('pending-local')).toBe(true);
     } else {
-      expect(result).toEqual({ type: 'retryable_transport', retryAfterMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs });
+      // Opening is deterministic under one key: no timed retry; the row is surfaced as blocked.
+      expect(result).toEqual({ type: 'no_pending' });
+      expect(axiosPostMock).toHaveBeenCalledTimes(1);
       expect(delivered).toEqual([]);
       expect(projected).toEqual([]);
       expect(custody.size).toBe(0);
@@ -1021,7 +1075,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       expect(delivered).toEqual([{ ...payload, localId: 'pending-local', createdAt: 1_000 }]);
       expect(custody.has('pending-local')).toBe(true);
     }
-    expect(axiosPostMock).not.toHaveBeenCalled();
+    expect(axiosPostMock).toHaveBeenCalledTimes(accepted ? 0 : 1);
   });
 
   it.each(['wait', 'human-origin', 'legacy-prompt'] as const)('settles collaborator provenance and protected authority before projection or provider delivery (%s)', async kind => {
