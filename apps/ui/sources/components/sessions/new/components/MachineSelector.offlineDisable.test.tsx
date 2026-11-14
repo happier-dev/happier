@@ -59,7 +59,7 @@ describe('MachineSelector', () => {
         const screen = await renderMachineSelector(<MachineSelector machines={[...owned, ...shared]} selectedMachine={selected}
             presentation="dropdown" disableOfflineMachines={false} onSelect={vi.fn()} showCliGlyphs={false}
             showFavorites={false} showRecent={false} dropdownTestID="selected-trigger" />, true);
-        const triggerTexts = () => screen.findByTestId('selected-trigger').findAll(node => node.type === 'Text')
+        const triggerTexts = () => (screen.findByTestId('selected-trigger')?.findAll(node => String(node.type) === 'Text') ?? [])
             .flatMap(node => typeof node.props.children === 'string' ? [node.props.children] : []);
         expect(triggerTexts()).toContain(selected.id);
         expect(triggerTexts()).not.toContain(t('common.choose'));
@@ -76,10 +76,10 @@ describe('MachineSelector', () => {
     });
 
     it('keeps own and shared destinations named while Team defaults and New Session apply their availability', async () => {
-        const shared = (id: string, displayName: string | null, active: boolean, custodianId = id): Machine => ({ ...machine(id, active), isShared: true,
+        const shared = (id: string, displayName: string, active: boolean, custodianId = id): Machine => ({ ...machine(id, active), isShared: true,
             access: { custodian: { accountId: custodianId, displayName }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
         const machines = [shared('c', 'qa-c', false), shared('c-runner', 'qa-c', false, 'c'),
-            machine('owned', true), shared('unknown', null, true), shared('b', 'QA TH B', true)];
+            machine('owned', true), shared('unknown', '', true), shared('b', 'QA TH B', true)];
         const screen = await renderMachineSelector(<MachineSelector machines={machines} selectedMachine={null}
             presentation="dropdown" disableOfflineMachines={false} onSelect={vi.fn()} showCliGlyphs={false}
             showFavorites={false} showRecent={false} />);

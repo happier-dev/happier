@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, onTestFailed, onTestFinishe
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -55,7 +55,7 @@ describe('pending withdrawal persisted Ask continuation', () => {
                 const created = artifacts.list()[0];
                 if (!created) throw new Error('Missing persisted approval body');
                 const request = StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(created.id)!));
-                if (request.v !== 2) throw new Error('Expected current approval origin');
+                if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request)) throw new Error('Expected current approval origin');
                 recordedRequest = request;
             }
             return served;

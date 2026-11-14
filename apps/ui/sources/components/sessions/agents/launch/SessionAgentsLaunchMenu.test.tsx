@@ -26,7 +26,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
         props.open ? props.header : null,
         props.open && props.renderContent ? props.renderContent({ maxHeight: 500, maxWidth: 400, placement: 'bottom', presentation: 'anchored', requestClose: () => props.onOpenChange(false) }) : null,
         props.open ? typeof props.footer === 'function'
-            ? props.footer({ anchor: { kind: 'rect', rect: { left: 0, top: 0 } } })
+            ? props.footer({ anchor: { kind: 'rect', rect: { left: 0, top: 0, height: 0 } } })
             : props.footer : null),
 }));
 

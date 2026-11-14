@@ -3,9 +3,12 @@ import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit
 import { getMachineCapabilitiesCacheState, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
 import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { isMachineOnline as readMachinePresenceOnline } from '@/utils/sessions/machineUtils';
 import { useNewSessionCapabilitiesPrefetch } from './useNewSessionCapabilitiesPrefetch';
 import { act } from 'react-test-renderer';
+
+// The hook's reachability predicate is answered presence: an unanswered presence (null) is not online.
+const isMachineOnline = (machine: Parameters<typeof readMachinePresenceOnline>[0]) => readMachinePresenceOnline(machine) === true;
 
 // Exercise real scheduling/cache logic beneath the machine RPC transport boundary.
 const machineRpc = vi.hoisted(() => vi.fn());

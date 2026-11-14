@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { AgentInputExtraActionChip } from './agentInputContracts';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -643,7 +644,7 @@ describe('AgentInput (action menu popover props)', () => {
                 renderContent: () => React.createElement('View', { testID: 'account-chooser' }),
             },
             render: () => React.createElement('View', { testID: 'session-account-chip' }),
-        };
+        } satisfies AgentInputExtraActionChip;
         const props = { value: '', placeholder: 'Type', onChangeText: () => {}, onSend: () => {}, autocompleteKinds: [],
             autocompleteSuggestions: async () => [], agentType: 'codex' as any, onAgentClick: () => {},
             extraActionChips: [chip], onMachineClick: () => {}, machineName: 'Builder' };

@@ -103,8 +103,10 @@ describe('shared Team defaults through New Session', () => {
         expect(simple().permissionMode).toBe('read-only');
         expect(simple().modelMode).toBe('sonnet');
         if (override) await act(async () => {
-            simple().handlePermissionModeChange('default');
-            simple().setModelMode('default');
+            const { handlePermissionModeChange, setModelMode } = simple();
+            if (!handlePermissionModeChange || !setModelMode) throw new Error('Expected the simple launcher controls');
+            handlePermissionModeChange('default');
+            setModelMode('default');
         });
         expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
         expect(simple().modelMode).toBe(override ? 'default' : 'sonnet');

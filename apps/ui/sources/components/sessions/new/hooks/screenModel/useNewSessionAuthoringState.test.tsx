@@ -9,6 +9,7 @@ import { createNewSessionPromptStore } from './newSessionPromptStore';
 import { useNewSessionAuthoringState } from './useNewSessionAuthoringState';
 import { buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 describe('useNewSessionAuthoringState', () => {
     it('persists underlying model and placement intent while launch keeps managed defaults', async () => {
@@ -41,7 +42,7 @@ describe('useNewSessionAuthoringState', () => {
         try {
             expect(hook.getCurrent().buildCurrentPersistedDraft().modelSelection).toBeUndefined();
             expect(hook.getCurrent().buildCurrentPersistedDraft().teamCredentialBindings).toEqual([serviceBinding]);
-            const personal = { ...liveModel, ref: { ...liveModel.ref, providerConnectionId: 'personal', modelId: 'chosen' } };
+            const personal = { ...liveModel, ref: { ...liveModel.ref, providerConnectionId: ProviderConnectionIdSchema.parse('personal'), modelId: 'chosen' } };
             params = { ...params, modelSelectionForPersistence: { value: personal } };
             await hook.rerender();
             expect(hook.getCurrent().buildCurrentPersistedDraft().modelSelection).toEqual(personal);

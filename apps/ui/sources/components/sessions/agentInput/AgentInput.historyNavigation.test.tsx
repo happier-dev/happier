@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   historyIsBrowsing: vi.fn(),
   historyHasRetainedSession: vi.fn(),
   historyPause: vi.fn(),
+  historyHookArgs: [] as Array<Readonly<{ scope: string; sessionId: string | null }>>,
 
   suggestionMoveUp: vi.fn(),
   suggestionMoveDown: vi.fn(),
@@ -123,16 +124,19 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 }));
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
-  useUserMessageHistory: () => ({
-    moveUp: (...args: any[]) => mocks.historyMoveUp(...args),
-    moveDown: (...args: any[]) => mocks.historyMoveDown(...args),
-    reset: (...args: any[]) => mocks.historyReset(...args),
-    warmup: (...args: any[]) => mocks.historyWarmup(...args),
-    isBrowsing: (...args: any[]) => mocks.historyIsBrowsing(...args),
-    hasRetainedSession: (...args: any[]) => mocks.historyHasRetainedSession(...args),
-    readPosition: () => null,
-    pause: (...args: any[]) => mocks.historyPause(...args),
-  }),
+  useUserMessageHistory: (opts: Readonly<{ scope: string; sessionId: string | null }>) => {
+    mocks.historyHookArgs.push({ scope: opts.scope, sessionId: opts.sessionId });
+    return {
+      moveUp: (...args: any[]) => mocks.historyMoveUp(...args),
+      moveDown: (...args: any[]) => mocks.historyMoveDown(...args),
+      reset: (...args: any[]) => mocks.historyReset(...args),
+      warmup: (...args: any[]) => mocks.historyWarmup(...args),
+      isBrowsing: (...args: any[]) => mocks.historyIsBrowsing(...args),
+      hasRetainedSession: (...args: any[]) => mocks.historyHasRetainedSession(...args),
+      readPosition: () => null,
+      pause: (...args: any[]) => mocks.historyPause(...args),
+    };
+  },
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({

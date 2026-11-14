@@ -90,7 +90,7 @@ describe('NewSessionDraftComposerActions', () => {
         const startAnother = screen.findByTestId('new-session-draft-start-another');
         if (!startAnother) throw new Error('Expected Start another');
         expect(startAnother.props.accessibilityLabel).toBe('sessionDrafts.startAnother');
-        expect(screen.findAll((node) => node.type === 'Text' && node.props.children === 'sessionDrafts.startAnother')).toHaveLength(0);
+        expect(screen.findAll((node) => String(node.type) === 'Text' && node.props.children === 'sessionDrafts.startAnother')).toHaveLength(0);
         await pressTestInstanceAsync(startAnother);
         expect(onStartAnother).toHaveBeenCalledOnce();
         await screen.unmount();
@@ -113,7 +113,7 @@ describe('NewSessionDraftComposerActions', () => {
         const deleteAction = screen.findByTestId('new-session-draft-delete');
         if (!deleteAction) throw new Error('Expected the compact Delete draft action');
         expect(deleteAction.props.accessibilityLabel).toBe('sessionDrafts.delete.action');
-        expect(screen.findAll((node) => node.type === 'Text' && node.props.children === 'sessionDrafts.delete.action')).toHaveLength(0);
+        expect(screen.findAll((node) => String(node.type) === 'Text' && node.props.children === 'sessionDrafts.delete.action')).toHaveLength(0);
         await pressTestInstanceAsync(deleteAction);
         expect(onDelete).toHaveBeenCalledOnce();
         await screen.unmount();

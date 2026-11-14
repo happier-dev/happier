@@ -35,7 +35,7 @@ export function createMachineActionChip(params: Readonly<{
             ref={params.anchorRef}
             key="machine"
             testID="agent-input-machine-chip"
-            onPress={params.disabled ? undefined : params.onPress}
+            onPress={params.onPress}
             disabled={params.disabled === true}
             accessibilityRole="button"
             accessibilityLabel={label}

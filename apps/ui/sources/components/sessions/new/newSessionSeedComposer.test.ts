@@ -172,6 +172,7 @@ describe('seedAndOpenNewSession', () => {
     it('seeds the canonical managed-directory intent on the exact Machine without reviving a remembered folder', () => {
         writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: {
             input: '', selectedMachineId: 'machine-a', selectedPath: '/releases/not-an-agent-workspace',
+            selectedProfileId: null, selectedSecretId: null,
             agentType: 'claude', permissionMode: 'default', acpSessionModeId: null, updatedAt: 1,
         } });
         const result = seedAndOpenNewSession({ seed: { prompt: 'Investigate using read diagnostics',

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import type { AgentInputActionMenuAction } from '../actionMenuActions';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -55,9 +56,10 @@ it('keeps a + menu row picker pushed inside the phone menu when the pointer leav
     );
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const actions = React.useMemo(
-      () => [
+      (): readonly AgentInputActionMenuAction[] => [
         {
           id: 'goal',
+          section: 'controls',
           testID: 'goal-row',
           label: 'Goal',
           opensPicker: true,

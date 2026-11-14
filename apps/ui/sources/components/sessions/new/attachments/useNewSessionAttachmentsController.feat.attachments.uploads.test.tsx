@@ -638,11 +638,13 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await expect(afterCreated({
             sessionId: 'session-created',
             effectiveSpawnServerId: 'server-a',
+            sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'session-created' },
             launchAttempt,
         })).rejects.toThrow('first generic follow-up failed');
         await afterCreated({
             sessionId: 'session-created',
             effectiveSpawnServerId: 'server-a',
+            sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'session-created' },
             launchAttempt,
         });
         await act(async () => {
@@ -728,6 +730,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'session-ordinary',
                 effectiveSpawnServerId: 'server-a',
+                sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'session-ordinary' },
                 launchAttempt: createLaunchAttempt(),
             });
             onAfterCreatedSettled({ status: 'accepted', sessionId: 'session-ordinary' });
@@ -792,6 +795,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await expect(afterCreated({
             sessionId: 'session-1',
             effectiveSpawnServerId: 'server-a',
+            sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'session-1' },
             launchAttempt: createLaunchAttempt(),
         })).rejects.toThrow('follow-up failed');
         onAfterCreatedSettled({ status: 'rejected' });

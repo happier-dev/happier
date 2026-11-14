@@ -410,7 +410,7 @@ describe('getPendingMessageVisualState', () => {
 
 /**
  * Which rows state their own blocked reason (CALM-1110: one line of meta on the row's status line).
- * Only `blocked` does; a Session-owned block is said once by the Session, never on the row.
+ * `blocked` and a launch that did not start do; a Session-owned block is said once by the Session, never on the row.
  */
 describe('pendingMessageStatesBlockedReason', () => {
     const EXPECTED_BY_KIND = {
@@ -423,6 +423,10 @@ describe('pendingMessageStatesBlockedReason', () => {
         delivering: false,
         materializing: false,
         blocked: true,
+        starting: false,
+        launch_unresolved: false,
+        // Without a Session start-failure notice the row itself says the launch did not start.
+        launch_failed: true,
     } as const satisfies Record<PendingMessageVisualStateKind, boolean>;
 
     const REACHED_BY: Readonly<Record<PendingMessageVisualStateKind, () => PendingMessage>> = {
@@ -438,6 +442,10 @@ describe('pendingMessageStatesBlockedReason', () => {
             pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'terminal_composer_draft',
         }),
+        starting: () => pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'starting' } }),
+        launch_unresolved: () => pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'unresolved' } }),
+        launch_failed: () => pendingMessage({ source: 'local_outbound',
+            pendingLaunch: { state: 'failed', message: 'The model is not available.', draftId: 'draft-1' } }),
     };
 
     it('classifies every visual state a pending row can reach', () => {

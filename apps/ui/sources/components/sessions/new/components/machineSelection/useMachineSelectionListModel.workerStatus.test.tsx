@@ -425,7 +425,7 @@ describe('worker destination list demand', () => {
         // This is the public guest projection; B has Use only and cannot read native custody.
         const machine = { ...createMachineFixture({ id: 'guest', active: online, activeAt: online ? Date.now() : 0, isShared: true,
             managedMachineRef: { homeId: 'srv_worker_home', managedId: 'managed' },
-            access: { role: 'use', resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner' } } }),
+            access: { role: 'use', resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner', displayName: 'Owner' } } }),
             managedInputRuntime: { nativeReady: false, wakeState: wakeOnAcceptedMessage ? 'asleep' as const : null, state: 'asleep' as const, newSessionWake } };
         await seedAnsweredMachines([machine]);
         const hook = await renderHook(() => useMachineSelectionListModel<Machine>({

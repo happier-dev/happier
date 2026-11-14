@@ -11,8 +11,8 @@ export function createProjectAccountRowsFixture(scope: ServerAccountScope, overr
 }
 
 /** Home HTTP census for plain Accounts; the real row decoder and projection stay in the path. */
-export function createPlainProjectAccountRowListFixture(overrides: Pick<Partial<ProjectAccountRowsSnapshot>, 'workspaceRefs' | 'relationships' | 'organizations'> = {}): ProjectAccountRowListResponseV1 {
-    return ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [
+export function createPlainProjectAccountRowListFixture(overrides: Pick<Partial<ProjectAccountRowsSnapshot>, 'workspaceRefs' | 'relationships' | 'organizations'> = {}): Extract<ProjectAccountRowListResponseV1, { status: 'listed' }> {
+    const response = ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [
         ...(overrides.workspaceRefs ?? []).map(({ lastOpenedAtMs: _recency, ...ref }) => {
             const key = { kind: 'workspace-ref', serverId: ref.serverId, id: ref.id };
             return { key, revision: 0, content: { t: 'plain', v: { key, value: ProjectAccountWorkspaceRefV1Schema.parse(ref) } } };
@@ -21,6 +21,8 @@ export function createPlainProjectAccountRowListFixture(overrides: Pick<Partial<
             content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: overrides.relationships ?? [] } } } },
         ...(overrides.organizations ?? []).map(({ key, revision, value }) => ({ key, revision, content: { t: 'plain', v: { key, value } } })),
     ] });
+    if (response.status !== 'listed') throw new Error('Expected a listed project row census');
+    return response;
 }
 
 export function applyProjectAccountRowsFixture(store: { getState(): Pick<StorageState, 'profileScope' | 'activateProjectAccountRowsScope' | 'applyProjectAccountRowsForScope'> }, overrides: Partial<Omit<ProjectAccountRowsSnapshot, 'scope'>> = {}): void {

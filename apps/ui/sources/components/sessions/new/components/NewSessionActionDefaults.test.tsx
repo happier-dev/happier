@@ -99,7 +99,7 @@ describe('NewSessionActionDefaults', () => {
             targetServerId: 'server-b', selectedMachineId: 'machine-b', selectedPath: '/other',
             executionTarget: { kind: 'machine', target: { serverId: 'server-b', machineId: 'machine-b' } },
             checkoutCreationDraft: { kind: 'git_worktree', displayName: 'repair', baseRef: null, branchMode: 'new' } } });
-        writeNewSessionDraft({ scope, draftId, patch: { text: 'The task currently in the composer' } });
+        writeNewSessionDraft({ scope, draftId, patch: { text: 'The task currently in the composer' }, materializationIntent: 'userEdit' });
         const persisted = readNewSessionDraftFromRepository({ scope, draftId });
         if (!persisted) throw new Error('Expected the retained draft');
         // The model's current builder sees a control edit before its delayed autosave.

@@ -131,7 +131,7 @@ describe('BotFacePicker', () => {
     const shapes: (SessionBotFaceV1 | null)[] = [];
     const drawings: Set<unknown>[] = [];
     for (let step = 0; step < 8; step++) {
-      await press(picker, 'bot-face-surprise');
+      await press(picker.root, 'bot-face-surprise');
       await picker.update(panel());
       shapes.push(face);
       drawings.push(new Set(picker.findAllByType(BotFaceRasterView).map(node => node.props.image)));

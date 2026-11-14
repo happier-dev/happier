@@ -73,6 +73,18 @@ export function createReadyMachineAgentInventoryFixture(agents: readonly Readonl
 }
 
 /** Already-hydrated client row; pending/locked fixtures override its admitted availability. */
+/** Complete Machine metadata; tests override only the facts they exercise. */
+export function createMachineMetadataFixture(overrides: Partial<NonNullable<Machine['metadata']>> = {}): NonNullable<Machine['metadata']> {
+    return {
+        host: 'tester.local',
+        platform: 'darwin',
+        happyCliVersion: '0.0.0-test',
+        happyHomeDir: '/Users/tester/.happy-dev',
+        homeDir: '/Users/tester',
+        ...overrides,
+    };
+}
+
 export function createMachineFixture(overrides: Partial<Machine> = {}): Machine {
     const createdAt = overrides.createdAt ?? 1;
     const updatedAt = overrides.updatedAt ?? createdAt;
@@ -85,13 +97,7 @@ export function createMachineFixture(overrides: Partial<Machine> = {}): Machine 
         updatedAt,
         active: true,
         activeAt: updatedAt,
-        metadata: {
-            host: 'tester.local',
-            platform: 'darwin',
-            happyCliVersion: '0.0.0-test',
-            happyHomeDir: '/Users/tester/.happy-dev',
-            homeDir: '/Users/tester',
-        },
+        metadata: createMachineMetadataFixture(),
         metadataVersion: 1,
         daemonState: null,
         daemonStateVersion: 1,

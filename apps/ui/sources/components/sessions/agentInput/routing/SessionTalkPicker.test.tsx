@@ -148,7 +148,7 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
   it('offers the model recipe for an online layout-v1 owner Session', async () => {
     seedRelations();
     const source = createSessionFixture({ id: 'api', serverId, metadataLayoutVersion: 1,
-      metadata: { summary: { text: 'Idempotent retries', updatedAt: 1 } },
+      metadata: { path: '/repo', host: 'host', summary: { text: 'Idempotent retries', updatedAt: 1 } },
       ownerMetadataView: { machineId: 'macbook', path: '/repo', host: 'host' },
       manager: { sessionId: 'lead' },
     });

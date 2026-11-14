@@ -100,7 +100,7 @@ describe('AgentInputScrollableChipRow (native)', () => {
       scroll().props.onContentSizeChange(384, 32);
     });
 
-    const masked = screen.root.find((node) => node.type === 'MaskedView');
+    const masked = screen.root.find((node) => String(node.type) === 'MaskedView');
     const shape = renderMask(masked.props.maskElement as React.ReactElement,
     );
     const solid = shape.root.find(
@@ -126,7 +126,7 @@ describe('AgentInputScrollableChipRow (native)', () => {
         },
       });
     });
-    const scrolled = renderMask(screen.root.find((node) => node.type === 'MaskedView').props
+    const scrolled = renderMask(screen.root.find((node) => String(node.type) === 'MaskedView').props
         .maskElement as React.ReactElement,
     );
     const start = scrolled.root.find(

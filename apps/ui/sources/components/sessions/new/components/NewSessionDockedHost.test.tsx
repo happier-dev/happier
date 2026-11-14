@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 const boundary = vi.hoisted(() => ({
   width: 1440,
@@ -398,7 +399,8 @@ describe('web shell Docked composer', () => {
     expect(getStorage().getState().localSettings.newSessionDockedWidthPx).toBeNull();
     await act(async () => {
       const state = getStorage().getState();
-      state.applySettings({ ...state.settings, actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui', 'agent'] } } } }, state.settingsVersion + 1);
+      state.applySettings({ ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui', 'agent'] } } }) },
+        (state.settingsVersion ?? 0) + 1);
       await resizePanes(screen)[0]!.props.onCommitWidthPx(700);
       expect(await executor.execute('settings.set', { anchor: 'appearance.newSessionDockedWidth', value: 700 }, context)).toMatchObject({ ok: false });
     });

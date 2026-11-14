@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')).createSessionOpsSocketIoClientBoundary(importOriginal));
 
-import { createMachineFixture, createSessionFixture, renderHook, waitForTestEvent } from '@/dev/testkit';
+import { createMachineFixture, createMachineMetadataFixture, createSessionFixture, renderHook, waitForTestEvent } from '@/dev/testkit';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
@@ -131,7 +131,7 @@ describe('useNewSessionMachinePathState', () => {
         const props: HookParams = {
             machines: toMachines({ id: 'member-machine' }), recentMachinePaths: [],
             machineIdParam: undefined, pathParam: undefined,
-            managedDefaults: (() => {
+            managedDefaults: ((): HookParams['managedDefaults'] => {
                 const defaults = { placement: { kind: 'machine' as const, target: { serverId: 'server-a', machineId: 'admin-only-machine' } } };
                 return layer === 'home' ? { homeDefaults: defaults }
                     : layer === 'team' ? { teamDefaults: { team: defaults, groups: {} } }
@@ -150,8 +150,8 @@ describe('useNewSessionMachinePathState', () => {
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
         const serverId = resolveServerProfileScopeId(home);
         const machine = createMachineFixture({ id: `wake-folder-${wakeState}`, active: false, activeAt: 0, presenceProtocolVersion: 1,
-            isShared: true, access: { custodian: { accountId: 'owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
-            metadata: { platform: 'linux', homeDir: '/owner', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } },
+            isShared: true, access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            metadata: createMachineMetadataFixture({ platform: 'linux', homeDir: '/owner', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } }),
             managedInputRuntime: { nativeReady: false, wakeState, newSessionWake: { kind: 'available' } } });
         network.respond('machines.agentIsolation.status', { protection: 'member_separated', status: { kind: 'effective', platform: 'linux' } });
         network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: false, code: 'invalid_directory' });
@@ -395,7 +395,7 @@ describe('useNewSessionMachinePathState', () => {
         network.respond('machines.agentIsolation.status', status);
         network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: true, directory: '/member/workspace',
             directoryKind: 'path', directoryCreationRequired: false, checkout: null });
-        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id, pathParam: undefined });
         try {
             await waitForTestEvent(hook.subscribe, () => hook.getCurrent().ownIsolation,
                 value => value.status !== null || value.failed);
@@ -447,7 +447,7 @@ describe('useNewSessionMachinePathState', () => {
             metadata: { platform: 'darwin', homeDir: '/Users/lume', agentIsolation: { enabled: false } } });
         network.respond('machines.agentIsolation.status', { protection: 'unavailable',
             status: { kind: 'unavailable', code: 'unsupported_platform' } });
-        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id, pathParam: undefined });
         try {
             await waitForTestEvent(hook.subscribe, () => hook.getCurrent().ownIsolation,
                 value => value.status !== null || value.failed);
@@ -456,7 +456,7 @@ describe('useNewSessionMachinePathState', () => {
             expect(hook.getCurrent().machineHomeDir).toBe('/Users/lume');
             expect(network.requests.filter(request => request.method === 'machines.agentIsolation.status')).toHaveLength(1);
             await act(async () => hook.getCurrent().setSelectedPath('/Users/Shared/project'));
-            await hook.rerender({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+            await hook.rerender({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id, pathParam: undefined });
             expect(hook.getCurrent().selectedPath).toBe('/Users/Shared/project');
         } finally { await hook.unmount(); }
     });

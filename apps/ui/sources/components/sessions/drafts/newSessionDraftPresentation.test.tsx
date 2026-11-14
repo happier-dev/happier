@@ -50,7 +50,7 @@ describe('new Session draft Agent presentation', () => {
     // A named draft lists by its name (the same identity the dock and its Delete read), not as "Untitled draft".
     it('lists a named draft by its name before its prompt', () => {
         const named = draft(undefined, '');
-        const document = NewSessionDraftDocumentV2Schema.parse({ ...named.document, target: { kind: 'newSession', authoring: {
+        const document = NewSessionDraftDocumentV2Schema.parse({ ...NewSessionDraftDocumentV2Schema.parse(named.document), target: { kind: 'newSession', authoring: {
             sessionName: { mutationId: '00000000-0000-4000-8000-000000000021', value: 'Nightly build watcher' },
         } } });
         expect(buildNewSessionDraftRowPresentation({ ...named, document }).title).toBe('Nightly build watcher');

@@ -211,7 +211,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                 collapsedContentPopover: { title: 'MCP', renderContent: () => capturedLabel } };
         };
         let capabilitiesChip = makeMcpChip();
-        const initialParams: Parameters<typeof useNewSessionAgentInputPresentation>[0] = {
+        let initialParams: Parameters<typeof useNewSessionAgentInputPresentation>[0] = {
             theme: {
                 colors: {
                     state: {
@@ -322,8 +322,8 @@ describe('useNewSessionAgentInputPresentation', () => {
         expect(renderContent({ requestClose: vi.fn(), maxHeight: 300 })).toBe('Second account');
         expect(hook.getCurrent().agentInputExtraActionChips).not.toBe(firstChips);
         activeAt = 0;
-        initialParams.selectedMachine = { ...initialParams.selectedMachine!, active: false,
-            managedInputRuntime: { nativeReady: false, wakeState: 'asleep', newSessionWake: { kind: 'available' } } };
+        initialParams = { ...initialParams, selectedMachine: { ...initialParams.selectedMachine!, active: false,
+            managedInputRuntime: { nativeReady: false, wakeState: 'asleep', newSessionWake: { kind: 'available' } } } };
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus?.text).toBe('managedWake.startsOnSend');
         expect(hook.getCurrent().connectionStatus?.recovery).toBeUndefined();

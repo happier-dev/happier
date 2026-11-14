@@ -12,6 +12,7 @@ import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/m
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { NewSessionPathSelectionContentProps } from '../components/NewSessionPathSelectionContent';
 import { createDeferred, createMachineFixture, createPlainMachineRowFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { AcpCatalogRecordV1Schema, ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRecordV1Schema, ProfileRowsListResponseV1Schema,
     ProfileReferenceGuardReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordSchemaV1';
@@ -78,7 +79,7 @@ const authoringRoute = vi.hoisted(() => ({
 }));
 installNewSessionScreenModelCommonModuleMocks({ storage: async (importOriginal) => importOriginal(),
     text: async () => vi.importActual<typeof import('@/text')>('@/text'),
-    routerConfig: { pathname: '/new', params: () => ({ prompt: 'hello', ...authoringRoute }) } });
+    routerConfig: { pathname: '/new', params: () => ({ ...authoringRoute }) } });
 installDisconnectedServerSocketBoundary();
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
@@ -605,7 +606,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         mountedBridge = await loadSyncSingletonForTests();
         const accountId = `catalog-authoring-${input.name}`;
         const baseMachine = createMachineFixture({ id: 'credential-devbox', activeAt: Date.now() });
-        const machine = input.isolated ? { ...baseMachine, isShared: false, metadata: { ...baseMachine.metadata!,
+        const machine: Machine = input.isolated ? { ...baseMachine, isShared: false, metadata: { ...baseMachine.metadata!,
             platform: 'linux', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } } : baseMachine;
         const http = createHomeHubArtifactHttpBoundary(accountId, undefined, {
             machines: [createPlainMachineRowFixture({ id: machine.id, accountId, machine })],
@@ -793,7 +794,8 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         });
         publish('haiku');
         writeNewSessionDraftToRepository({ scope: fixture.scope, draftId: fixture.draftId, draft: {
-            input: 'hello', selectedMachineId: 'credential-devbox', selectedPath: '/repo',
+            input: 'hello', selectedMachineId: 'credential-devbox', selectedPath: '/repo', selectedProfileId: null, selectedSecretId: null,
+            agentType: 'claude', permissionMode: 'default', acpSessionModeId: null,
             targetServerId: fixture.scope.serverId, backendTarget: bundledTarget, primaryTeamId: teamId, updatedAt: 1,
         } });
         const settingsBefore = storage.getState().settings;
@@ -811,7 +813,11 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             await act(async () => { publish('sonnet'); });
             hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }));
             await vi.waitFor(() => expect(simple().modelMode).toBe('sonnet'));
-            await act(async () => { simple().setModelMode('opus'); });
+            await act(async () => {
+                const setModelMode = simple().setModelMode;
+                if (!setModelMode) throw new Error('Expected the simple launcher model control');
+                setModelMode('opus');
+            });
             expect(simple().modelMode).toBe('opus');
             await act(async () => { publish('haiku'); });
             expect(simple().modelMode).toBe('opus');

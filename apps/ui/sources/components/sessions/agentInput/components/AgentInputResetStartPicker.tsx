@@ -28,7 +28,7 @@ export default function AgentInputResetStartPicker(props: Props) {
                 : <SurfaceStateCard kind={model.error ? 'error' : 'unavailable'} layout="inline" size="line"
                     title={t('usage.board.plans.resetStartTitle')}
                     reason={t(model.error ? 'usage.board.page.readFailedReason' : 'usage.board.plans.resetStartNoReading')}
-                    {...(model.error ? { action: { label: t('common.retry'), onPress: model.refresh } } : {})} />}
+                    {...(model.error ? { action: { label: t('common.retry'), onPress: () => model.refresh() } } : {})} />}
     </View>;
 }
 

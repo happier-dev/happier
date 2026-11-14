@@ -62,7 +62,8 @@ describe('NewSessionWizard real AgentInput composition', () => {
         const { OrganizationPolicyManagedLine } = await import('@/components/organizationPolicy/OrganizationPolicyFieldNotice');
         const { Item } = await import('@/components/ui/lists/Item');
         const panelProps: NewSessionSimplePanelProps = {
-            popoverBoundaryRef: { current: null }, headerHeight: 44, safeAreaTop: 0, safeAreaBottom: 0,
+            // Same unmounted-boundary convention as the screen model's producer (`useRef<View>(null!)`).
+            popoverBoundaryRef: { current: null! }, headerHeight: 44, safeAreaTop: 0, safeAreaBottom: 0,
             newSessionTopPadding: 0, newSessionSidePadding: 0, newSessionBottomPadding: 0, containerStyle: {},
             promptStore: createNewSessionPromptStore(''), setSessionPrompt: () => {}, handleCreateSession: () => {},
             canCreate: true, isCreating: false, emptyAutocompleteKinds: [], emptyAutocompleteSuggestions: async () => [],

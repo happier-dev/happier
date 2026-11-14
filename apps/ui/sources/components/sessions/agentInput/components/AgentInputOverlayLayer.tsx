@@ -20,6 +20,7 @@ import type { SelectionListStep } from '@/components/ui/selectionList';
 import { DROPDOWN_MENU_MAX_WIDTH_PX } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { AgentInputActionMenuSubmenuContext } from '../selection/agentInputActionMenuSubmenu';
 import { useAgentInputActionMenuSubmenu } from './useAgentInputActionMenuSubmenu';
+import type { AgentInputActionMenuAction } from '../actionMenuActions';
 
 type SimpleOption = Readonly<{
     id: string;
@@ -161,7 +162,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     /** Close the picker open beside the + menu and keep the menu open. */
     onActionMenuSubmenuReturn: () => void;
     onActionMenuRequestClose: () => void;
-    actionMenuActions: React.ComponentProps<typeof AgentInputActionMenuPopoverContent>['actionMenuActions'];
+    actionMenuActions: ReadonlyArray<AgentInputActionMenuAction>;
     onCustomizeComposer?: () => void;
     maxWidthCap: number;
 

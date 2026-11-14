@@ -22,6 +22,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -121,8 +122,10 @@ describe('submitSessionDraft', () => {
             // The external Home has admitted the effect before the caller retires;
             // its successful receipt remains true when the response arrives.
             cancellation.abort();
+            const sent = request.envelope.v === 1 ? request.envelope.input : undefined;
+            const localId = isJsonObject(sent) ? sent.localId : undefined;
             return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
-                execution: { ok: true, result: SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId: request.envelope.input.localId }) } } };
+                execution: { ok: true, result: SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId }) } } };
         } });
         expect(await submitSessionDraft({ sessionTarget: scope, signal: cancellation.signal })).toMatchObject({ ok: true });
         expect(cancellation.signal.aborted).toBe(true);

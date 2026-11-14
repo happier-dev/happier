@@ -103,11 +103,11 @@ describe('useNewSessionScreenSimplePanelProps destination naming', () => {
 
     // QA-RERUN-1113 R2-4: the composer names a Machine as its Home's list does, suffix included for same-named peers.
     it('tells the selected Machine apart from a same-named peer, as the Machine list does', async () => {
-        const { createMachineFixture } = await import('@/dev/testkit');
+        const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit');
         const { getStorage } = await import('@/sync/domains/state/storage');
         const { resolveMachineDisplayNames } = await import('@/utils/sessions/machineDisplayNames');
-        const first = createMachineFixture({ id: '2e0f09b5-0000', metadata: { displayName: 'NLDW6-3-11-20', host: 'nldw6' } });
-        const second = createMachineFixture({ id: '87520e99-0000', metadata: { displayName: 'NLDW6-3-11-20', host: 'nldw6' } });
+        const first = createMachineFixture({ id: '2e0f09b5-0000', metadata: createMachineMetadataFixture({ displayName: 'NLDW6-3-11-20', host: 'nldw6' }) });
+        const second = createMachineFixture({ id: '87520e99-0000', metadata: createMachineMetadataFixture({ displayName: 'NLDW6-3-11-20', host: 'nldw6' }) });
         getStorage().setState((state) => ({ ...state, machineListByServerId: { ...state.machineListByServerId, 'home-a': [first, second] },
             machineListStatusByServerId: { ...state.machineListStatusByServerId, 'home-a': 'idle' } }));
         const listed = resolveMachineDisplayNames([first, second]).get(first.id);

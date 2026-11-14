@@ -21,7 +21,7 @@ import { applyMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happie
 import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1, SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { resolveReachV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import { SessionCapabilitiesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -133,8 +133,8 @@ it('keeps the native catalog failure visible after retirement and remounts a cat
             return { ok: true }; },
         mcpServerAction: createMcpServerActionExecuteV1({
             readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
-                readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
-            mutate: async mutation => { if (refuseSave) return { status: 'conflict' };
+                readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+            mutate: async mutation => { if (refuseSave) return { status: 'conflict', revision: 1 };
                 catalog = applyMcpServerCatalogMutationV1(catalog, mutation); return { status: 'updated', revision: 2, cursor: 2 }; },
             machine: async () => { throw new Error('Catalog consent never starts a process'); },
         }),

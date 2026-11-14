@@ -1858,6 +1858,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
           const { openExternalActionRequestV2, prepareExternalActionResponseV2 } = await import('@happier-dev/protocol/actions/externalActionEncryption');
           const { Encryption } = await import('@/sync/encryption/encryption');
           const request = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(String(init?.body)));
+          if (!request.target) throw new Error('Expected a targeted projects.inspect request');
           const writer = await Encryption.create(new Uint8Array(32).fill(17));
           const material = { type: 'dataKey' as const, machineKey: writer.getContentPrivateKey() };
           const binding = { serverIdentityId: context.homeConnectionDescriptor!.homeServerIdentityId,
@@ -1896,7 +1897,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
             if (patch.mode !== 'owner') throw new Error('Expected owner metadata write');
             created = { ...created, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
               metadataVersion: created.metadataVersion + 1, agentState: patch.agentState.ciphertext,
-              agentStateVersion: created.agentStateVersion + 1,
+              agentStateVersion: (created.agentStateVersion ?? 0) + 1,
               ...(patch.displayProjectionV1 ? { displayProjectionV1: patch.displayProjectionV1 } : {}) };
             return Response.json({ success: true, metadataLayoutVersion: 1,
               sharedMetadata: { version: created.metadataVersion }, agentState: { version: created.agentStateVersion } });
@@ -1992,7 +1993,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         })),
         rpcMethods: context.machineRpcSpy.mock.calls.map(call => call[1]),
         machineCapabilities: Object.fromEntries(Object.entries(storage.getState().machineListByServerId).map(([serverId, machines]) =>
-          [serverId, machines.map(machine => ({ id: machine.id, capabilities: machine.operationProtocolCapabilities }))])),
+          [serverId, (machines ?? []).map(machine => ({ id: machine.id, capabilities: machine.operationProtocolCapabilities }))])),
         scopedRpc: await Promise.all(rpcObservation.mock.results.map(async result => {
           try { await result.value; return { ok: true }; }
           catch (error) { return error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { type: typeof error }; }

@@ -230,7 +230,7 @@ describe('useSessionRecipientState', () => {
         let changeRecipientWhileAdmitting = false;
         const sent: unknown[] = [];
         const ops = createScmDiffSummaryResultOperations({ sessionId: 'session-a', shouldContinue: () => true,
-            composerDraft: { scope: getActiveScope() },
+            composerDraft: activeAccountLifetime,
             rpc: async (_method, input) => {
                 sent.push(input);
                 if (!admitted) return { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 5 };

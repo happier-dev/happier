@@ -34,6 +34,7 @@ const { resetSessionDraftValueCachesForTests } = await import('@/dev/testkit/ses
 const { writeExistingSessionDraft, getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { readSessionAttachmentDrafts, clearSessionAttachmentDrafts, sessionAttachmentDraftKey, resolveSessionAttachmentDraftScope } = await import('../attachments/sessionAttachmentDraftStore');
 const { useAttachmentDraftManager } = await import('../attachments/useAttachmentDraftManager');
+const { resolveAttachmentSourceName } = await import('../attachments/attachmentDraftPresentation');
 const { readComposerPresentationSnapshot, registerSessionComposerPresentationTarget } = await import('../presentation/sessionComposerPresentationTargets');
 const { createExistingSessionComposerDocumentOwner } = await import('./existingSessionComposerDocumentOwner');
 const { projectComposerDocumentSnapshot } = await import('./composerSnapshotProjection');
@@ -350,11 +351,14 @@ describe('appendToSessionDraft', () => {
         let videoTime = 0;
         const browser = await installBrowserRuntimeForTests({ url: 'https://recording-delivery.test/' });
         const createElement = browser.document.createElement.bind(browser.document);
-        const elements = vi.spyOn(browser.document, 'createElement').mockImplementation((tag: string) => {
+        const elements = vi.spyOn(browser.document, 'createElement').mockImplementation((...args: unknown[]) => {
+            const tag = String(args[0]);
             const element = createElement(tag);
             if (tag === 'canvas') {
                 const canvas = element as HTMLCanvasElement;
-                vi.spyOn(canvas, 'getContext').mockReturnValue({ drawImage() {} } as unknown as CanvasRenderingContext2D);
+                // Canvas is a platform boundary: the capture path reads only `drawImage` from its 2D context.
+                const context2d = { drawImage() {} } as unknown as CanvasRenderingContext2D;
+                vi.spyOn(canvas, 'getContext').mockImplementation(((contextId: string) => contextId === '2d' ? context2d : null) as HTMLCanvasElement['getContext']);
                 vi.spyOn(canvas, 'toDataURL').mockReturnValue('data:image/png;base64,AQID');
             }
             if (tag !== 'video') return element;
@@ -536,8 +540,8 @@ describe('appendToSessionDraft', () => {
                 expect(await executor.execute('screenCapture.addToDraft', { captureRef, session }, { surface: 'ui' }))
                     .toMatchObject({ ok: true, result: { captureRef, imageNumber } });
             }
-            expect(readSessionAttachmentDrafts(attachmentScope).map(draft => draft.source.name)).toEqual(['window-1.png', 'window-2.png']);
-            expect(readSessionAttachmentDrafts(otherScope).map(draft => draft.source.name)).toEqual(['window-3.png']);
+            expect(readSessionAttachmentDrafts(attachmentScope).map(draft => resolveAttachmentSourceName(draft.source))).toEqual(['window-1.png', 'window-2.png']);
+            expect(readSessionAttachmentDrafts(otherScope).map(draft => resolveAttachmentSourceName(draft.source))).toEqual(['window-3.png']);
         } finally { clearSessionAttachmentDrafts(otherScope); }
     });
 

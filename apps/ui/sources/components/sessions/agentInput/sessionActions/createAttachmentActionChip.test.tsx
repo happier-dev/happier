@@ -54,7 +54,7 @@ describe('createAttachmentActionChip', () => {
             const onPasteImage = vi.fn();
             const chip = createAttachmentActionChip({ onPickFile, onPickImage, onPasteImage,
                 imageInputDisabledReason: 'Agent cannot read images' });
-            const section = chip.collapsedOptionsPopover?.rootStep.sections[0];
+            const section = chip.collapsedOptionsPopover?.rootStep?.sections[0];
             if (section?.kind !== 'static') throw new Error('Expected attachment options');
             const images = section.options.filter(option => option.id !== 'add-file');
             expect(images).toHaveLength(2);

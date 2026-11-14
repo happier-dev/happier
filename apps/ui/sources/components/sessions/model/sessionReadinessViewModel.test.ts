@@ -49,7 +49,7 @@ it('keeps unknown inventory distinct from unsupported and offline, without clear
 
 it('preserves inventory lifecycle readiness and suppresses duplicate native sign-in repair while its terminal is open', () => {
     const job = { jobId: 'install', intent: 'install', startedAtMs: 1, steps: [], logLine: null, outcome: null } as const;
-    for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: null, message: null }] as const) {
+    for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: 'download', message: 'Download failed' }] as const) {
         const installing = projectMachineAgent({ agentId: facts.agentId, title: facts.title, facts,
             checking: false, stale: false, connectedServices: [], job: { ...job, outcome } });
         expect(buildSessionReadinessViewModel({ ...input, agent: installing }))

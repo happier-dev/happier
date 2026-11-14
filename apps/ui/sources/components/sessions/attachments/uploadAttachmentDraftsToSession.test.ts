@@ -44,7 +44,7 @@ describe('uploadAttachmentDraftsToSession', () => {
         sessionAttachmentsUploadFileSpy.mockResolvedValueOnce({ success: true, path: 'folder', sizeBytes: 1, sha256: 'a'.repeat(64) })
             .mockResolvedValueOnce({ success: true, path: 'folder-retry', sizeBytes: 1, sha256: 'a'.repeat(64), attachmentHandle });
         const draft = { id: 'folder-draft', status: 'pending' as const,
-            source: { kind: 'folder' as const, name: 'project', entries: [{ relativePath: 'note.txt',
+            source: { kind: 'folder' as const, name: 'project', mimeType: 'inode/directory' as const, entries: [{ relativePath: 'note.txt',
                 source: { kind: 'memory' as const, name: 'note.txt', bytes: new Uint8Array([1]) } }] } };
         const args = { sessionId: 's1', drafts: [draft], config: { uploadLocation: 'workspace' as const,
             workspaceRelativeDir: '.happier/attachments', vcsIgnoreStrategy: 'none' as const,

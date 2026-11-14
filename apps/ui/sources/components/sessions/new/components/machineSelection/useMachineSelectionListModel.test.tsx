@@ -214,7 +214,8 @@ describe('useMachineSelectionListModel', () => {
         const rendered = await renderHook(({ groups }) => useMachineSelectionListModel({ ...base, groups }),
             { initialProps: { groups: coldGroups as typeof settledGroups } });
         const section = (id: string) => rendered.getCurrent().rootStep.sections.find(section => section.id === id);
-        for (const id of ['server:server-a', 'server:server-b']) expect.soft(section(id)?.count).toBeUndefined();
+        const sectionCount = (id: string) => { const found = section(id); return found?.kind === 'static' ? found.count : undefined; };
+        for (const id of ['server:server-a', 'server:server-b']) expect.soft(sectionCount(id)).toBeUndefined();
         const poolSubtitle = () => {
             const pools = section('server:server-a:machine-pools');
             return pools?.kind === 'static' ? pools.options[0]?.subtitle : undefined;
@@ -223,7 +224,7 @@ describe('useMachineSelectionListModel', () => {
         expect.soft(poolSubtitle()).not.toContain('machine.removedMachine');
         expect(poolSubtitle()).not.toContain('member-a');
         await rendered.rerender({ groups: settledGroups });
-        for (const id of ['server:server-a', 'server:server-b']) expect(section(id)?.count).toBe(1);
+        for (const id of ['server:server-a', 'server:server-b']) expect(sectionCount(id)).toBe(1);
         expect(poolSubtitle()).toContain('member-a');
         expect(poolSubtitle()).toContain('machinePools.availabilityKnown');
         await rendered.unmount();
@@ -279,7 +280,7 @@ describe('useMachineSelectionListModel', () => {
             expect(search.map(section => ({ id: section.id, options: section.options.map(option => option.id) })))
                 .toEqual([{ id: 'all', options: ['offline:all', 'offline-0'] },
                     { id: 'shared:alice', options: ['offline:shared:alice', 'shared-offline-0'] }]);
-            await act(async () => rendered.findByTestId('new-session-machine-list:machine-root:option:offline:shared:alice').props.onPress());
+            await act(async () => rendered.findByTestId('new-session-machine-list:machine-root:option:offline:shared:alice')?.props.onPress());
             expect(options().map(option => option.id)).toEqual(['offline:all', 'offline:shared:alice', ...shared.map(machine => machine.id)]);
         } finally { await rendered.unmount(); }
     });
@@ -463,7 +464,8 @@ describe('useMachineSelectionListModel', () => {
         const before = new Map(optionsOf(rendered.getCurrent()));
         const [changed, ...unchanged] = fixture.machines;
         const renamed = { ...changed!, metadata: { ...changed!.metadata!, displayName: 'Renamed' } };
-        groups = fixture.groups.map(group => ({ ...group, machines: group.machines.map(machine => machine.id === renamed.id ? renamed : machine) }));
+        groups = fixture.groups.map(group => ({ ...group, machines: group.machines.map(machine => machine.id === renamed.id
+            ? { ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } } : machine) }));
         await act(async () => { await rendered.rerender(); });
         const after = new Map(optionsOf(rendered.getCurrent()));
         expect(after.size).toBe(before.size);

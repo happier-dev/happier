@@ -123,6 +123,8 @@ describe('pending transcript local delivery custody', () => {
     it.each([false, true])('presents queued host onboarding without exposing its model prompt or hiding person input (display facts: %s)', async displayFacts => {
         const onboarding = buildSessionHostOnboardingInputV1({ templateName: 'Garden', templateVersion: '1.2.3',
             authorDisplayName: 'Ana', firstTask: 'Review my change' });
+        const onboardingText = onboarding.initialInput.text;
+        if (onboardingText === undefined) throw new Error('Expected host onboarding text input');
         const meta = {
             ...(displayFacts ? onboarding.meta : {}),
             happierProvenanceV1: onboarding.inputAdmission.provenance,
@@ -130,8 +132,8 @@ describe('pending transcript local delivery custody', () => {
                 permission: { admittedPermissionCeiling: 'read-only' } },
         };
         const host: PendingMessage = { id: 'onboarding', localId: 'onboarding', createdAt: 1, updatedAt: 1,
-            source: 'server_pending', pendingDeliveryStatus: 'server_queued', text: onboarding.initialInput.text,
-            rawRecord: { role: 'user', content: { type: 'text', text: onboarding.initialInput.text }, meta } };
+            source: 'server_pending', pendingDeliveryStatus: 'server_queued', text: onboardingText,
+            rawRecord: { role: 'user', content: { type: 'text', text: onboardingText }, meta } };
         // Identical words and non-authoritative display facts must never hide a person's actual input.
         const person: PendingMessage = { ...host, id: 'person', localId: 'person', createdAt: 2,
             rawRecord: { ...host.rawRecord, meta: { ...onboarding.meta,
@@ -148,10 +150,10 @@ describe('pending transcript local delivery custody', () => {
             .flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
         expect(hostText).not.toContain('host-owned onboarding kickoff');
         expect(hostText).toContain(displayFacts ? 'Ana' : 'Happier');
-        expect(hostRow?.props.accessibilityLabel).not.toContain(onboarding.initialInput.text);
+        expect(hostRow?.props.accessibilityLabel).not.toContain(onboardingText);
         expect(hostRow?.props.accessibilityLabel).toContain(displayFacts ? 'Ana' : 'Happier');
-        expect(personRow?.props.accessibilityLabel).toBe(onboarding.initialInput.text);
-        expect(host.text).toBe(onboarding.initialInput.text);
+        expect(personRow?.props.accessibilityLabel).toBe(onboardingText);
+        expect(host.text).toBe(onboardingText);
         expect(actionRequests).toEqual([]);
     });
     it('makes counted Follow notices read-only through the real body reorder binding and presenter', async () => {

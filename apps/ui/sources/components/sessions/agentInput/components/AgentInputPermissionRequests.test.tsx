@@ -113,7 +113,7 @@ describe('AgentInputPermissionRequests', () => {
             onScroll: () => {},
             fadeVisibility: { top: false, bottom: false },
         } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>);
-        const shownIds = () => screen.findAll((node) => node.type === 'PermissionPromptCard').map((node) => node.props.request.id);
+        const shownIds = () => screen.findAll((node) => String(node.type) === 'PermissionPromptCard').map((node) => node.props.request.id);
 
         // The Session's open requests change under the tray while it stays mounted.
         let setIds: (ids: readonly string[]) => void = () => {};

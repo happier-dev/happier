@@ -257,7 +257,7 @@ describe('recipient template page', () => {
         expect(screen.findByType(NewBotDraftFace).props.face).toEqual({ seed: draftId });
         const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
         const { withNewBotDraftFaceSeed } = await import('@/components/sessions/bots/newBotDraft');
-        const copyProps: React.ComponentProps<typeof BotTemplateCopyForm> = screen.findByType(BotTemplateCopyForm).props;
+        const copyProps: React.ComponentProps<typeof BotTemplateCopyForm> = screen.findByType<typeof BotTemplateCopyForm>(BotTemplateCopyForm).props;
         const copyScope = copyProps.execution.binding?.scope;
         if (!copyScope) throw new Error('Missing template copy Account scope');
         const draft = readNewSessionDraftFromRepository({ scope: copyScope, draftId });

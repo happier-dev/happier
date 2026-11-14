@@ -57,9 +57,11 @@ describe('ScopedAuthoringComposer', () => {
             scope={{ kind: 'machine', machineId: null, serverId: runtime.serverId }}
             document={{ text: 'Review', references: [], attachments: [] }} attachmentsEnabled
             placeholder="Describe the step" additionalSuggestions={() => [result]} />);
-        const resolve = screen.findByType<typeof AgentInput>(AgentInput).props.autocompleteSuggestions;
-        if (!resolve) throw new Error('Expected the real composer suggestion entry point');
-        await expect(resolve('@', new AbortController().signal)).resolves.toContainEqual(result);
+        const source = screen.findByType<typeof AgentInput>(AgentInput).props.autocompleteSuggestions;
+        if (!source) throw new Error('Expected the real composer suggestion entry point');
+        // Loaded after the socket boundary is installed (the module reaches the runtime transport).
+        const { resolveActiveSuggestionsHandler } = await import('@/components/autocomplete/useActiveSuggestions');
+        await expect(resolveActiveSuggestionsHandler(source, '@')('@', new AbortController().signal, () => {})).resolves.toContainEqual(result);
     });
     it('keeps duplicate-token ranges and staged content when its portable projection echoes back', async () => {
         const custody = (await import(
