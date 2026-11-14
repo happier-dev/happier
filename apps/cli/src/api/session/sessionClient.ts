@@ -253,6 +253,8 @@ import type {
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { createCredentialAccountEncryptionCurrentness, readAccountEncryptionCurrentnessForRead,
+    type CredentialAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import {
     fetchSessionByIdCompat,
     fetchSessionTurnsProjection,
@@ -517,7 +519,14 @@ export type ApiSessionClientOptions = Readonly<{
     runtimePrincipalAccountId?: string;
     actionsSettingsProvider?: import('@/settings/actionsSettingsProvider').RuntimeActionSettingsProvider;
     transport: SessionClientTransport;
+    /** Writes and seals: the fresh witness carrying the Account cursor. */
     getAccountEncryptionCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
+    /**
+     * Read-only snapshot syncs: the held observation witness (see
+     * `readAccountEncryptionCurrentnessForRead`). An injected
+     * `getAccountEncryptionCurrentness` serves both usages when this is absent.
+     */
+    readAccountEncryptionCurrentnessForRead?: () => Promise<AccountEncryptionCurrentnessResponse>;
     getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
     getBrowserDaemonControlRoutes?: (() => BrowserDaemonControlRoutes | null) | null;
     getBrowserDaemonContextRoutes?: (() => BrowserContextRoutes | null) | null;
@@ -581,6 +590,9 @@ export class ApiSessionClient extends EventEmitter {
     private readonly readInjectedOwnerCredentials: (() => Promise<StoredCredentials | null>) | null;
     private mcpRequestAuth: import('@/mcp/runtime/mcpRequestAuth').McpRequestAuthPort | undefined;
     private readonly getAccountEncryptionCurrentness: () => Promise<AccountEncryptionCurrentnessResponse>;
+    private readonly readAccountEncryptionCurrentnessForRead: () => Promise<AccountEncryptionCurrentnessResponse>;
+    /** Owner Account currentness held on this client's Account update socket (read-only reuse). */
+    private heldAccountEncryptionCurrentness: CredentialAccountEncryptionCurrentness | null = null;
     private agentState: AgentState | null;
     private agentStateRequestStore: AgentStateRequestStore | null = null;
     private questionAnswerDeliveryRegistered = false;
@@ -1177,6 +1189,10 @@ export class ApiSessionClient extends EventEmitter {
             this.readDiscussionAutonomousCheckIn = options.readDiscussionAutonomousCheckIn;
             this.getAccountEncryptionCurrentness = options.getAccountEncryptionCurrentness
                 ?? (async () => await this.runSessionRequest(async () => fetchAccountEncryptionCurrentness({ token: this.token })));
+            this.readAccountEncryptionCurrentnessForRead = options.readAccountEncryptionCurrentnessForRead
+                ?? options.getAccountEncryptionCurrentness
+                ?? (async () => await this.runSessionRequest(async () => readAccountEncryptionCurrentnessForRead({
+                    token: this.token, held: this.heldAccountEncryptionCurrentness })));
             this.storedContentCrypto = session.encryptionMode === 'plain'
                 ? { mode: 'plain', ctx: null }
                 : {
@@ -2099,6 +2115,7 @@ export class ApiSessionClient extends EventEmitter {
             onSessionFollowInvalidated: options.onSessionFollowInvalidated,
         });
         this.userSocket = userSocket;
+        this.holdAccountEncryptionCurrentness(userSocket, options.transport.serverUrl);
         this.sessionConnectionSupervisor = sessionConnectionSupervisor;
         this.readServerFeaturesSnapshot = options.getServerFeaturesSnapshot ?? getServerFeaturesSnapshot;
         void this.sessionConnectionSupervisor.start();
@@ -2118,6 +2135,18 @@ export class ApiSessionClient extends EventEmitter {
         if (options.onSessionFollowInvalidated && options.installSessionFollowWakeReceiver) {
             this.disposeSessionFollowWakeReceiver = options.installSessionFollowWakeReceiver();
         }
+    }
+
+    /** The Account socket already pushes identity changes; snapshot reads share its one fresh read. */
+    private holdAccountEncryptionCurrentness(userSocket: AccountUpdatesSocket | null, serverBaseUrl: string): void {
+        const accountId = readAccountIdFromToken(this.token);
+        if (!userSocket || !accountId) return;
+        const held = createCredentialAccountEncryptionCurrentness({ accountId, serverBaseUrl, readToken: () => this.token });
+        userSocket.on('connect', () => held.connected({ refresh: false }));
+        userSocket.on('disconnect', () => held.disconnected());
+        userSocket.on('update', (data: Update) => { held.update(data); });
+        if (userSocket.connected) held.connected({ refresh: false });
+        this.heldAccountEncryptionCurrentness = held;
     }
 
     private handleUserScopedUpdate(
@@ -2501,7 +2530,7 @@ export class ApiSessionClient extends EventEmitter {
                 token: this.token, sessionId, reason: 'waitForMetadataUpdate',
             }));
             if (!rawSession || rawSession.id !== sessionId || rawSession.effectiveAccess?.level !== 'owner') return null;
-            const accountEncryptionCurrentness = await this.runSessionRequest(() => this.getAccountEncryptionCurrentness());
+            const accountEncryptionCurrentness = await this.runSessionRequest(() => this.readAccountEncryptionCurrentnessForRead());
             const { value: { metadata } } = readSessionMetadataTupleWriterSnapshot({
                 credentials, rawSession, accountEncryptionCurrentness,
             });
@@ -2528,8 +2557,9 @@ export class ApiSessionClient extends EventEmitter {
                 const credentials = this.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
                     ? await this.readCurrentOwnerCredentials()
                     : this.ownerCredentials;
+                // Read-only snapshot: the held witness opens stored content; writes re-read fresh.
                 const accountEncryptionCurrentness = this.hasOwnerMetadataAuthority()
-                    ? await this.runSessionRequest(() => this.getAccountEncryptionCurrentness())
+                    ? await this.runSessionRequest(() => this.readAccountEncryptionCurrentnessForRead())
                     : null;
                 return await this.runSessionRequest(async () => syncSessionSnapshotFromServer({
                     token: this.token,
@@ -4946,6 +4976,7 @@ export class ApiSessionClient extends EventEmitter {
         this.presenceStopped = true;
         if (this.presenceTimer !== null) clearTimeout(this.presenceTimer);
         this.presenceTimer = null;
+        this.heldAccountEncryptionCurrentness?.dispose();
         const closingSocket = this.socket;
         this.prepareForClose();
         try {

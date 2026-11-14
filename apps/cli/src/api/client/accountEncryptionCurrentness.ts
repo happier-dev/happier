@@ -48,8 +48,9 @@ type AccountEncryptionCurrentnessRead = Readonly<{
 }>;
 
 export async function fetchAccountEncryptionCurrentness(params: AccountEncryptionCurrentnessRead): Promise<AccountEncryptionCurrentnessResponse> {
-  // Exact witnesses include the Account-wide cursor. Identity observations
-  // cannot supply it: a claim advances that cursor before its socket wake.
+  // Writes and seals: exact witnesses include the Account-wide cursor. Identity
+  // observations cannot supply it: a claim advances that cursor before its
+  // socket wake. Read-only consumers use `readAccountEncryptionCurrentnessForRead`.
   return await fetchAccountEncryptionCurrentnessFromServer(params);
 }
 

@@ -1,7 +1,7 @@
 import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, sameAccountEncryptionIdentity,
     waitForAccountEncryptionObservation, type AccountE2eeCustody, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-import { readAccountE2eeCustodyForToken } from '@/persistence';
+import { readAccountE2eeCustodyForToken, type AccountE2eeCustodyHolder } from '@/persistence';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY, type ManagedConnectionSupervisor, type ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 import { fetchAccountEncryptionCurrentnessFromServer, AccountEncryptionCurrentnessUnavailableError } from './accountEncryptionCurrentness';
@@ -114,6 +114,60 @@ export function readObservedAccountEncryptionCurrentnessWitness(scope: Readonly<
 }>): Promise<AccountEncryptionCurrentnessResponse> | null {
     const observed = admittedObservation(scope);
     return observed ? readAdmittedObservation(observed, scope, () => observed.readWitness(scope.signal)) : null;
+}
+
+/**
+ * The currentness state for one Account credential on an Account update
+ * transport. This computer's custody for the bearer is read from creation
+ * (fail closed until then) and again beside every fresh HTTP read; the
+ * transport feeds `connected`/`disconnected`/`update` (pushed identity changes).
+ */
+export function createCredentialAccountEncryptionCurrentness(input: Readonly<{
+    accountId: string; serverBaseUrl: string; readToken: () => string;
+}>) {
+    let accountE2eeCustody: AccountE2eeCustody = 'active';
+    const readCustody = () => readAccountE2eeCustodyForToken(input.readToken()).then(custody => { accountE2eeCustody = custody; });
+    void readCustody();
+    return createAccountEncryptionCurrentnessObservation({
+        accountId: input.accountId,
+        accountE2eeCustody: () => accountE2eeCustody,
+        readFresh: async signal => (await Promise.all([readCustody(),
+            fetchAccountEncryptionCurrentnessFromServer({ token: input.readToken(), serverBaseUrl: input.serverBaseUrl, signal })]))[1],
+        unavailable: () => new AccountEncryptionCurrentnessUnavailableError(),
+    });
+}
+export type CredentialAccountEncryptionCurrentness = ReturnType<typeof createCredentialAccountEncryptionCurrentness>;
+
+/**
+ * The Account encryption currentness read rule (one owner, two usages):
+ *
+ * - `read`: read-only consumers that open content the Home already stored
+ *   (Session snapshot syncs and other display reads) reuse the held
+ *   observation witness when this exact credential and Home hold one, and read
+ *   fresh only when none is held. The held witness preserves the security
+ *   contract these reads need: every fresh read and every pushed update is
+ *   admitted against this device's custody (a Home-reported E2EE→plain
+ *   downgrade is refused), a pushed identity change (mode or key fingerprint)
+ *   invalidates it before any later read, and disconnects retire it. A read
+ *   therefore never opens content under a mode or key the Home has retired.
+ * - Writes and seals keep `fetchAccountEncryptionCurrentness`: their exact
+ *   witness must carry the Account-wide cursor, which an observation cannot
+ *   supply (a claim advances that cursor before its socket wake).
+ */
+export async function readAccountEncryptionCurrentnessForRead(params: Readonly<{
+    token: string; credentials?: AccountE2eeCustodyHolder; serverBaseUrl?: string; signal?: AbortSignal;
+    /** The caller's own connected Account update transport state for this exact credential. */
+    held?: CredentialAccountEncryptionCurrentness | null;
+}>): Promise<AccountEncryptionCurrentnessResponse> {
+    const { held, ...read } = params;
+    const serverBaseUrl = read.serverBaseUrl ?? resolveServerHttpBaseUrl();
+    const observed = readObservedAccountEncryptionCurrentnessWitness({ token: read.token, serverBaseUrl,
+        ...(read.signal ? { signal: read.signal } : {}) });
+    if (observed) return await observed;
+    // A disconnected transport holds no fact; its first read after (re)connect
+    // is the one fresh read that every later read shares.
+    if (held?.getDiagnosticState().connected) return await held.readWitness(read.signal);
+    return await fetchAccountEncryptionCurrentnessFromServer({ ...read, serverBaseUrl });
 }
 
 export function sameRequesterAccountEncryptionCurrentness(a: AccountEncryptionIdentity, b: AccountEncryptionIdentity): boolean {
@@ -256,18 +310,8 @@ function createObservation(scope: Scope): SharedObservation {
     let hasConnected = false;
     let disposed = false;
     let unsupported = false;
-    // This computer's custody for the observed bearer: read from creation
-    // (fail closed until then) and again beside every fresh HTTP read.
-    let accountE2eeCustody: AccountE2eeCustody = 'active';
-    const readCustody = () => readAccountE2eeCustodyForToken(activeToken).then(custody => { accountE2eeCustody = custody; });
-    void readCustody();
-    const currentness = createAccountEncryptionCurrentnessObservation({
-        accountId: scope.accountId,
-        accountE2eeCustody: () => accountE2eeCustody,
-        readFresh: async signal => (await Promise.all([readCustody(),
-            fetchAccountEncryptionCurrentnessFromServer({ token: activeToken, serverBaseUrl: scope.serverBaseUrl, signal })]))[1],
-        unavailable: () => new AccountEncryptionCurrentnessUnavailableError(),
-    });
+    const currentness = createCredentialAccountEncryptionCurrentness({ accountId: scope.accountId,
+        serverBaseUrl: scope.serverBaseUrl, readToken: () => activeToken });
     let supervisor: ManagedConnectionSupervisor | undefined;
     const settingsListeners = new Set<(event: RequesterAccountSettingsObservation) => void>();
     let settingsEvent: RequesterAccountSettingsObservation | null = null;

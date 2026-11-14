@@ -1579,7 +1579,6 @@ export class ApiClient {
       metadataAuthority: sessionOptions.metadataAuthority
         ?? { kind: 'owner', credentials: this.credential, readCurrentCredentials: readStoredCredentials },
       ...(sessionOptions.actionsSettingsProvider ? { actionsSettingsProvider: sessionOptions.actionsSettingsProvider } : {}),
-      getAccountEncryptionCurrentness: async () => await this.getAccountEncryptionCurrentness(),
       getAccountEncryptionMode: async () => await this.getAccountEncryptionMode({ usage: 'identity', throwOnTransportError: true }),
       getBrowserDaemonControlRoutes: this.getBrowserDaemonControlRoutes,
       getBrowserDaemonContextRoutes: this.getBrowserDaemonContextRoutes,
