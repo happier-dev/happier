@@ -454,6 +454,53 @@ describe('useSessionListRenderableWithServerScope row projection', () => {
         }
     });
 
+    it('keeps the projected renderable when a turn bumps only document versions alongside fresh progress (P03 Q16)', async () => {
+        // A running Session's agent-state/metadata documents re-version every turn phase while the row's
+        // projected content (versions zeroed) stays the same: the row must not redraw for them.
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-05-30T12:00:00.000Z'));
+        const previousState = storage.getState();
+        const sessionId = 'session-list-row-projection-version-bump';
+        const serverId = 'server-a';
+        const firstRenderable = buildActiveRenderable({ id: sessionId });
+        const publish = (renderable: SessionListRenderableSession) => storage.setState((state) => ({
+            ...state,
+            isDataReady: true,
+            sessionListRowsByServerId: {
+                ...state.sessionListRowsByServerId,
+                [serverId]: { ...(state.sessionListRowsByServerId[serverId] ?? {}), [sessionId]: renderable },
+            },
+            ordinarySessionListMembershipByServerId: { ...state.ordinarySessionListMembershipByServerId, [serverId]: [sessionId] },
+        }));
+        try {
+            publish(firstRenderable);
+            const hook = await renderHook(
+                () => useSessionListRenderableWithServerScope(serverId, sessionId),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+            const projections = new Set([hook.getCurrent()]);
+            let current = firstRenderable;
+            for (let step = 1; step <= 3; step += 1) {
+                current = {
+                    ...current,
+                    seq: current.seq + 1,
+                    updatedAt: current.updatedAt + 1_000,
+                    meaningfulActivityAt: (current.meaningfulActivityAt ?? current.updatedAt) + 1_000,
+                    agentStateVersion: current.agentStateVersion + 1,
+                    metadataVersion: current.metadataVersion + 1,
+                    metadata: { ...current.metadata! },
+                };
+                await act(async () => { publish(current); });
+                projections.add(hook.getCurrent());
+            }
+            expect(projections.size).toBe(1);
+            await hook.unmount();
+        } finally {
+            standardCleanup();
+            storage.setState(previousState);
+        }
+    });
+
     it('refreshes the projected renderable when the previous active heartbeat is near stale', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-05-30T12:00:00.000Z'));

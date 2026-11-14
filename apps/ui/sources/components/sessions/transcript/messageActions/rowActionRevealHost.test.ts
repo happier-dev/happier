@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@/dev/testkit';
 
 type MediaChangeListener = () => void;
@@ -58,6 +58,54 @@ describe('transcript primary pointer', () => {
         } finally {
             await hook.unmount();
             restoreWindow();
+        }
+    });
+});
+
+describe('transcript row hover intent', () => {
+    // The hook installs one document-level watch on first use; this suite owns the stub document it watches.
+    const document = new EventTarget();
+    async function loadHost() {
+        vi.stubGlobal('document', document);
+        const { useRowActionHoverHost } = await import('./rowActionRevealHost');
+        document.dispatchEvent(new Event('pointermove'));
+        return { document, useRowActionHoverHost };
+    }
+    afterAll(() => vi.unstubAllGlobals());
+
+    it('hovers a stationary surface on pointer enter', async () => {
+        const { document, useRowActionHoverHost } = await loadHost();
+        const hook = await renderHook(useRowActionHoverHost);
+        try {
+            document.dispatchEvent(new Event('pointermove'));
+            await act(async () => { hook.getCurrent().hoverProps.onPointerEnter(); });
+            expect(hook.getCurrent().isHovered).toBe(true);
+            await act(async () => { hook.getCurrent().hoverProps.onPointerLeave(); });
+            expect(hook.getCurrent().isHovered).toBe(false);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
+    it('does not hover rows that scroll under a resting pointer, and hovers on the first real move', async () => {
+        // Chromium, per wheel step: wheel → pointerenter on the row now under the pointer → scroll, and no
+        // pointermove (P03 Q17). Each such enter used to reveal the row and list its plugin Actions.
+        const { document, useRowActionHoverHost } = await loadHost();
+        const hook = await renderHook(useRowActionHoverHost);
+        try {
+            let hovered = 0;
+            for (let row = 0; row < 10; row += 1) {
+                document.dispatchEvent(new Event('wheel'));
+                await act(async () => { hook.getCurrent().hoverProps.onPointerEnter(); });
+                if (hook.getCurrent().isHovered) hovered += 1;
+                document.dispatchEvent(new Event('scroll'));
+                await act(async () => { hook.getCurrent().hoverProps.onPointerLeave(); });
+            }
+            expect(hovered).toBe(0);
+            await act(async () => { hook.getCurrent().hoverProps.onPointerEnter(); hook.getCurrent().hoverProps.onPointerMove(); });
+            expect(hook.getCurrent().isHovered).toBe(true);
+        } finally {
+            await hook.unmount();
         }
     });
 });

@@ -102,6 +102,7 @@ import type {
 } from '../domains/settings/settings';
 import { projectCurrentSecretBindingsByProfileId, type CurrentSecretBindingsByProfileId } from '../domains/settings/secretBindings';
 import {
+  areSessionListRenderablesEqual,
   deriveSessionListRenderableHasUnreadMessagesFromSession,
   isSessionListRenderableWarmCacheProgressOnlyChange,
   resolveSessionListReadableSeq,
@@ -718,11 +719,17 @@ function hasSameRelativeProgressLabels(
 function shouldReusePreviousProgressProjection(input: Readonly<{
   previous: SessionListRenderableSession;
   next: SessionListRenderableSession;
+  /** The projections of `previous` and `next`: the row compares what it renders, not the dropped clocks. */
+  previousProjected: SessionListRenderableSession;
+  nextProjected: SessionListRenderableSession;
   nowMs: number;
 }>): boolean {
   const { previous, next, nowMs } = input;
   if (previous === next) return false;
-  if (!isSessionListRenderableWarmCacheProgressOnlyChange(previous, next)) return false;
+  // A turn re-versions the Session's documents without changing what the row shows; those versions and
+  // clocks are zeroed in the projection, so equal projections are not a change.
+  if (areSessionListRenderablesEqual(input.previousProjected, input.nextProjected)) return true;
+  if (!isSessionListRenderableWarmCacheProgressOnlyChange(input.previousProjected, input.nextProjected)) return false;
   if (!canReuseActiveHeartbeatAdvance({ previous, next, nowMs })) return false;
 
   const previousTimestamp = resolveProgressTimestamp(previous);
@@ -761,16 +768,19 @@ function createSessionListRowRenderableProjector() {
       return cached;
     }
 
+    const projected = buildProjectedSessionListRowRenderable(renderable);
     if (previousProjection && shouldReusePreviousProgressProjection({
       previous: previousProjection.source,
       next: renderable,
+      previousProjected: previousProjection.projected,
+      nextProjected: projected,
       nowMs: Date.now(),
     })) {
       sessionListRowRenderableProjectionCache.set(renderable, previousProjection.projected);
+      // Keep the source this projection was taken from: progress timing compares against it.
       return previousProjection.projected;
     }
 
-    const projected = buildProjectedSessionListRowRenderable(renderable);
     sessionListRowRenderableProjectionCache.set(renderable, projected);
     previousProjection = { source: renderable, projected };
     return projected;

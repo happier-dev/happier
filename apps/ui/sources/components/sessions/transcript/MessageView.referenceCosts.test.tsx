@@ -129,17 +129,15 @@ describe('transcript inline reference arrival costs', () => {
         const readActions = () => screen.tree.root.findByType(CommittedMessageActions).props as React.ComponentProps<typeof CommittedMessageActions>;
         const initial = readActions();
         await revealTranscriptMessageActions(screen, message.id);
-        const selectButton = screen.findByTestId(`transcript-message-select:${message.id}`);
-        expect(selectButton?.props.onHoverIn).toBe(initial.onActionHoverIn);
-        expect(selectButton?.props.onHoverOut).toBe(initial.onActionHoverOut);
-        expect(initial.onActionHoverIn).toBeTypeOf('function');
+        // The row's hover host (`hoverProps`) replaced per-button hover callbacks.
+        expect(initial.hoverProps?.onPointerEnter).toBeTypeOf('function');
         const target = new EventTarget();
         const installs = vi.spyOn(target, 'addEventListener');
         const targetRef = { current: target };
         expect(useWebHover).toBeTypeOf('function');
         const hover = await renderHook((actions: typeof initial) => {
             useWebHover(targetRef, {
-                onHoverStart: actions.onActionHoverIn, onHoverEnd: actions.onActionHoverOut,
+                onHoverStart: actions.hoverProps?.onPointerEnter, onHoverEnd: actions.hoverProps?.onPointerLeave,
             });
             return true;
         }, { initialProps: initial });
@@ -166,7 +164,7 @@ describe('transcript inline reference arrival costs', () => {
         expect(installs.mock.calls.filter(([event]) => event === enterEvent)).toHaveLength(0);
         await act(async () => { target.dispatchEvent(new Event(enterEvent!)); });
         expect(readActions().showActions).toBe(true);
-        await act(async () => { readActions().onActionHoverOut?.(); readActions().onActionsFocus(); });
+        await act(async () => { readActions().hoverProps?.onPointerLeave(); readActions().onActionsFocus(); });
         expect(readActions().showActions).toBe(true);
         await act(async () => readActions().onActionsBlur());
         expect(readActions().showActions).toBe(false);

@@ -80,9 +80,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
     const trackHoverState = hoverEnabled || (Platform.OS === 'web' && (Boolean(props.onPress) || hasRevealSlot));
     // The hover host is the whole header, not the row's pressable: the reveal slots sit beside the
     // pressable, so a pressable-only host hid the open action again as the pointer crossed toward it.
-    const { isHovered, hoverProps } = useRowActionHoverHost();
-    const handleHoverIn = hoverProps.onPointerEnter;
-    const handleHoverOut = hoverProps.onPointerLeave;
+    const { isHovered, hoverIn: handleHoverIn, hoverOut: handleHoverOut, hoverProps } = useRowActionHoverHost();
     const handleOpenPress = React.useCallback((event?: { stopPropagation?: () => void }) => {
         event?.stopPropagation?.();
         props.onOpen?.();
@@ -110,8 +108,9 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
         <View
             testID={TOOL_TIMELINE_ROW_HOVER_HOST_TEST_ID}
             style={styles.container}
-            onPointerEnter={trackHoverState ? handleHoverIn : undefined}
-            onPointerLeave={trackHoverState ? handleHoverOut : undefined}
+            onPointerEnter={trackHoverState ? hoverProps.onPointerEnter : undefined}
+            onPointerMove={trackHoverState ? hoverProps.onPointerMove : undefined}
+            onPointerLeave={trackHoverState ? hoverProps.onPointerLeave : undefined}
         >
             <Pressable
                 testID={props.testID}
