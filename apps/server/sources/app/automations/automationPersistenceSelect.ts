@@ -32,7 +32,7 @@ export const automationTriggerSelect = {
 
 /**
  * The list-specific trigger read: everything the current list/detail DTO
- * needs, without the private definition envelope. Status
+ * needs, including the private definition envelope used to validate the display carrier. Status
  * summaries are batch-loaded by the status projection owner, so no trigger
  * select loads the unused status relation.
  */
@@ -42,7 +42,7 @@ export const automationTriggerListItemSelect = {
     eventPluginId: true, eventLocalId: true, sourceSelectorId: true, sourceContractVersion: true,
     observationTransport: true, webhookEndpointId: true, observationStartsAt: true,
     watcherMachineId: true, watcherMachineInstallationId: true, watcherPluginId: true,
-    watcherMaterializationId: true,
+    watcherMaterializationId: true, definitionEnvelope: true,
     sessionLifecycleEventsJson: true, sessionLifecyclePolicyKind: true,
     sessionLifecycleMatchCount: true, remainingOccurrences: true,
     sourceSessionId: true, sourceTurnId: true,
@@ -72,8 +72,8 @@ export const automationListItemSelect = {
 
 /**
  * The list-specific Automation definition read. Identical to the canonical
- * definition read except that each trigger omits its private definition
- * envelope, which no list consumer projects.
+ * definition read with the list trigger projection, including the private
+ * definition envelope required by the mode-aware display-carrier reader.
  */
 export const automationDefinitionListItemSelect = {
     ...automationListItemSelect,

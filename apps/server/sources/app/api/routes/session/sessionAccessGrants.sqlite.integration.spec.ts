@@ -180,7 +180,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         const { owner, recipient: guest, team } = await fixture();
         const membership = await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: guest.id } },
             data: { role: 'guest', sessionAccessStartsAt: null } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Guests', nameKey: 'guests' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Guests' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: membership.id, sessionAccessStartsAt: null } });
         await withAuthenticatedTestApp(sessionRoutes, async app => {

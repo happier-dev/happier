@@ -8,6 +8,7 @@ import { prepareSavedSecretResourceRecipientEnvelopesV1 } from "@happier-dev/pro
 
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { auth } from "@/app/auth/auth";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createArtifact } from "@/app/artifacts/artifactWriteService";
 import { createProjectSourceInTx } from "@/app/projects/sources/projectSourceService";
 import { addTeamGroupMemberForActorInTx, createTeamGroupForActorInTx } from "@/app/teams/groups/groupService";
@@ -664,16 +665,20 @@ describe("auth (API tokens)", () => {
 
     it("copies only explicit server-verified evidence into the PAT row and fails malformed snapshots closed", async () => {
         const account = await db.account.create({
-            data: { publicKey: "api-token-evidence" },
+            data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() },
             select: { id: true },
         });
         const evidence = [{ kind: "home_method" as const, methodId: "key_challenge" }];
+        const tokenId = crypto.randomUUID();
         const minted = await auth.createApiToken({
             accountId: account.id,
-            tokenId: crypto.randomUUID(),
-            label: await preparePlainAccountApiTokenLabel(account.id, "Qualified automation"),
+            tokenId,
+            label: await prepareE2eeAccountApiTokenLabel(account.id, tokenId, "Qualified automation"),
             authenticationEvidence: evidence,
         });
+
+        expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { encryptionMode: true } }))
+            .toEqual({ encryptionMode: 'e2ee' });
 
         await expect(auth.verifyToken(minted.token)).resolves.toMatchObject({
             userId: account.id,
@@ -705,10 +710,11 @@ describe("auth (API tokens)", () => {
         });
         expect((await auth.verifyToken(minted.token))?.authenticationEvidence).toBeUndefined();
 
+        const overBoundTokenId = crypto.randomUUID();
         await expect(auth.createApiToken({
             accountId: account.id,
-            tokenId: crypto.randomUUID(),
-            label: await preparePlainAccountApiTokenLabel(account.id, "Over-bound automation"),
+            tokenId: overBoundTokenId,
+            label: await prepareE2eeAccountApiTokenLabel(account.id, overBoundTokenId, "Over-bound automation"),
             authenticationEvidence: Array.from({ length: 33 }, (_, index) => ({
                 kind: "home_method" as const,
                 methodId: `method-${index}`,

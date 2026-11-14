@@ -39,7 +39,7 @@ describe("Account erasure resource census cost", () => {
                 accountId: `erase-cost-${i % 100}`, metadata: "{}" })) });
             await db.team.createMany({ data: Array.from({ length: size / 10 }, (_, i) => ({ id: `erase-team-${i}`, name: `Unrelated ${i}` })) });
             await db.teamGroup.createMany({ data: Array.from({ length: size / 10 }, (_, i) => ({ id: `erase-group-${i}`,
-                teamId: `erase-team-${i}`, name: "Group", nameKey: "group" })) });
+                teamId: `erase-team-${i}`, name: "Group" })) });
             await db.discussion.createMany({ data: Array.from({ length: size }, (_, i) => ({ id: `erase-discussion-${i}`,
                 ownerAccountId: `erase-cost-${i % 100}`, encryptionMode: "plain", dataEncryptionKey: new Uint8Array([0]),
                 creationLocalId: `erase-discussion-${i}`, creationEqualityEvidenceV1: {}, titleContent: {}, lastMessageAt: new Date() })) });

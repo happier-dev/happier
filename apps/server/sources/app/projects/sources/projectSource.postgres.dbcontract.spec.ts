@@ -42,7 +42,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Captured Source page' } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await db.projectSource.create({ data: { name: 'Group Source', createdByAccountId: owner.id,

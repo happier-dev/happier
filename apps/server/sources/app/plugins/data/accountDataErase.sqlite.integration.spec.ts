@@ -459,7 +459,7 @@ describe("plugin Account data erasure", () => {
         const session = await db.session.create({ data: { accountId: ownerId, tag: crypto.randomUUID(), metadata: '{}' } });
         const team = await db.team.create({ data: { name: 'Admin-authored Session grant' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: ownerId, role: 'owner' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Authored', nameKey: 'authored' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Authored' } });
         const effectiveAt = new Date();
         await db.sessionGrant.createMany({ data: [
             { principalKind: 'account', sessionId: session.id, accountId: adminId, accessLevel: 'admin', createdByAccountId: ownerId },

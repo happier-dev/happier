@@ -19,6 +19,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
 import { auth } from '@/app/auth/auth';
+import { plainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { verifyExternalActionDomainExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { db } from '@/storage/db';
@@ -73,7 +74,7 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
         actorAccountId: machine.accountId, machineId: machine.id, principal: { kind: 'account', accountId: account.id }, level: 'admin',
     }))).toMatchObject({ kind: 'saved' });
     const grantedActionIds = options?.allowedActionIds ?? (allowedActionId ? [allowedActionId] : undefined);
-    const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Discussion test',
+    const pat = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: plainPrivateLabel('Discussion test'),
         ...(grantedActionIds ? { grant: { ...API_TOKEN_FULL_GRANT_V1,
             actions: { families: [], ids: [...grantedActionIds] }, targets: { sessions: [...allowedSessionIds], machines: [machine.id] } } } : {}),
         authenticationEvidence: [{ kind: 'home_method', methodId: 'email_password' }] });

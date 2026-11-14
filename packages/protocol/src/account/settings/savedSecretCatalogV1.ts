@@ -13,6 +13,7 @@ import { AccountDisplayProfileV1BaseSchema, readAccountNameFromLegacyProfileV1 }
 import { AccountRecipientEnvelopeUnavailableReasonSchema } from '../encryptionMode.js';
 import { ContentPublicKeyFingerprintSchema } from '../../machines/identity/contentPublicKeyFingerprint.js';
 import { ACCOUNT_CONTENT_PUBLIC_KEY_BYTES_V1 } from '../../crypto/accountContentKeyBindingFormatV1.js';
+import { TeamGroupNameProjectionV1Schema } from '../../teams/groupLabel.js';
 
 export const SavedSecretResourceEncryptionModeV1Schema = lazyZodSchema(() => z.enum(['plain', 'e2ee']));
 export type SavedSecretResourceEncryptionModeV1 = z.infer<typeof SavedSecretResourceEncryptionModeV1Schema>;
@@ -42,7 +43,7 @@ export const SavedSecretCatalogAccessSourceV1Schema = lazyZodSchema(() => z.disc
     teamId: z.string().check(z.minLength(1)),
     teamName: z.string().check(z.minLength(1)),
     groupId: z.string().check(z.minLength(1)),
-    name: z.string().check(z.minLength(1)),
+    name: TeamGroupNameProjectionV1Schema,
   }),
 ]));
 export type SavedSecretCatalogAccessSourceV1 = z.infer<typeof SavedSecretCatalogAccessSourceV1Schema>;
@@ -55,7 +56,7 @@ export const SavedSecretCatalogAudienceV1Schema = lazyZodSchema(() => z.strictOb
     teamId: z.string().check(z.minLength(1)),
     teamName: z.string().check(z.minLength(1)),
     groupId: z.string().check(z.minLength(1)),
-    name: z.string().check(z.minLength(1)),
+    name: TeamGroupNameProjectionV1Schema,
   })),
 }));
 export type SavedSecretCatalogAudienceV1 = z.infer<typeof SavedSecretCatalogAudienceV1Schema>;

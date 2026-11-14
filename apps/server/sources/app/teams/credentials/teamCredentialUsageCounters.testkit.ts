@@ -212,7 +212,7 @@ export function defineTeamCredentialUsageCounterContract(options: Readonly<{ con
     it('refreshes an existing turn when its first immutable Group attribution is admitted', async () => {
         const f = await fixture();
         const membership = await db.teamMembership.create({ data: { teamId: f.team.id, accountId: f.member.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: f.team.id, name: 'Budget group', nameKey: 'budget-group' } });
+        const group = await db.teamGroup.create({ data: { teamId: f.team.id, name: 'Budget group' } });
         await db.teamGroupMembership.create({ data: { teamId: f.team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const limit = await db.teamCredentialUsageLimit.create({ data: {
             resourceId: f.resource.id, subjectKind: 'team_group', subjectId: group.id,

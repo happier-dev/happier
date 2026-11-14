@@ -18,7 +18,7 @@ describe('grant policy facts / Prisma / SQL equivalence', () => {
         await db.teamMembership.createMany({ data: [...[teamGuest, groupGuest, directGuest, suspended].map(actor => ({
             teamId: team.id, accountId: actor.id, role: 'guest' as const,
         })), { teamId: team.id, accountId: member.id, role: 'member' } ] });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit group', nameKey: 'explicit-group' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit group' } });
         for (const actor of [groupGuest, suspended]) {
             const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: team.id, accountId: actor.id } } });
             await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });

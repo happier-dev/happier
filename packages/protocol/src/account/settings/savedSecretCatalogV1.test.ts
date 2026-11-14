@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '../../crypto/privateLabelV1.js';
 
 import {
   projectSavedSecretCatalogCollisionStateV1,
@@ -102,17 +103,21 @@ describe('saved secret catalog reference contract', () => {
       username: 'maya',
       avatarUrl: null,
     };
+    const groupName = { kind: 'available' as const, label: projectPrivateLabelForRecipientV1({
+      stored: sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'team_group', field: 'name', id: 'group-1' }, value: 'Developers' }),
+      recipientAccountId: 'owner',
+    }) };
     const recipient = SavedSecretCatalogEntryV1Schema.parse({
       ref: 'happier:shared-secret:v1:resource_1', source: 'shared_resource',
       relationship: 'recipient', name: 'Token', kind: 'token',
       encryptionMode: 'e2ee', owner: account,
-      accessSources: [{ kind: 'group', teamId: 'team-1', teamName: 'Acme', groupId: 'group-1', name: 'Developers' }],
+      accessSources: [{ kind: 'group', teamId: 'team-1', teamName: 'Acme', groupId: 'group-1', name: groupName }],
       audience: null, revision: 2, materialStatus: 'ready',
       capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
     });
     expect(recipient.owner.accountId).toBe('owner');
     expect(recipient.accessSources).toEqual([
-      { kind: 'group', teamId: 'team-1', teamName: 'Acme', groupId: 'group-1', name: 'Developers' },
+      { kind: 'group', teamId: 'team-1', teamName: 'Acme', groupId: 'group-1', name: groupName },
     ]);
     expect(recipient.audience).toBeNull();
 

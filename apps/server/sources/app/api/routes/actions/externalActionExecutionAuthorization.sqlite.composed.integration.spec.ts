@@ -1,4 +1,4 @@
-import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from "fastify";
 import axios from 'axios';
@@ -1725,7 +1725,7 @@ describe("external Action execution authorization", () => {
         const pat = await auth.createApiToken({
             accountId: account.id,
             tokenId: crypto.randomUUID(),
-            label: input.qualifiedPat ? "qualified" : "ordinary",
+            label: plainPrivateLabel(input.qualifiedPat ? "qualified" : "ordinary"),
             ...(input.qualifiedPat
                 ? {
                     authenticationEvidence: [{ kind: "home_method" as const, methodId: "email_password" }],

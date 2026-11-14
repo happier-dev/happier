@@ -91,7 +91,7 @@ describe('Collection sharing database contract', () => {
             { teamId: team.id, accountId: owner.id, role: 'owner' },
             ...[teamGuest, groupGuest, directGuest, keyless].map(actor => ({ teamId: team.id, accountId: actor.id, role: 'guest' as const })),
         ] });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit collection guests', nameKey: 'explicit-guests' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit collection guests' } });
         const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: team.id, accountId: groupGuest.id } } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
         const authentication = createPresentUserSessionAccessAuthentication();

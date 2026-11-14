@@ -40,7 +40,7 @@ describe('Task resource HTTP authority (native database)', () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
-        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Invited guests', nameKey: randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Invited guests' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: guestMembership.id } });
         const taskId = randomUUID();
         const row = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`,

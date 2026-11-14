@@ -3825,7 +3825,7 @@ describe('Team credential Provider broker admission', () => {
             });
         } else {
             const group = await db.teamGroup.create({ data: {
-                teamId: fixture.team.id, name: 'Broker group', nameKey: 'broker-group',
+                teamId: fixture.team.id, name: 'Broker group',
             } });
             await db.teamGroupMembership.create({ data: {
                 teamId: fixture.team.id, teamGroupId: group.id,
@@ -3864,7 +3864,7 @@ describe('Team credential Provider broker admission', () => {
                 where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true },
             });
             const group = withdrawal === 'Team archive' ? null : await db.teamGroup.create({ data: {
-                teamId: fixture.team.id, name: `Group ${withdrawal}`, nameKey: `group-${withdrawal}`,
+                teamId: fixture.team.id, name: `Group ${withdrawal}`,
             } });
             if (group) {
                 await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: created.id } });

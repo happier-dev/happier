@@ -72,7 +72,6 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
             id: groupTeam.groupId,
             teamId: groupTeam.id,
             name: groupTeam.groupId,
-            nameKey: groupTeam.groupId,
         })),
     });
     await db.teamGroupMembership.createMany({
