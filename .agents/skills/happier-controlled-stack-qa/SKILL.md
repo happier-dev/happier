@@ -147,7 +147,7 @@ The shared preset retains the server's data host and the daemon's fixed Machine.
 
 ## Select the UI provider
 
-Source QA defaults to an existing shared web export when its captured inputs, build options and requested capture boundary match on the serving host. Without a matching publication, it reports why and falls back to borrowed dev Expo. Default selection never builds a new export. New QA stacks record their checkout's repository producer; retained stacks can set it below. Use the reported consumer UI URL: its `server` and Account/stack URLs are runtime parameters, never bundle inputs, so borrowers share the producer's bundle per platform.
+Source QA defaults to the existing shared web export of the stack's revision (+ overlay) with matching build options on the serving host. Without a matching publication, it reports why and falls back to borrowed dev Expo. Default selection never builds a new export. New QA stacks record their checkout's repository producer; retained stacks can set it below. Use the reported consumer UI URL: its `server` and Account/stack URLs are runtime parameters, never bundle inputs, so borrowers share the producer's bundle per platform.
 
 `--ui=export` explicitly requests a finite producer-owned web export; `--ui=borrowed` explicitly selects live dev Expo. Unchanged captured inputs/options reuse the validated export through the existing source-bundle publication owner; each stack retains its own serving path. Executable app-local configuration remains private because its inputs are not captured. `--no-ui` requests a headless source worker.
 
@@ -194,12 +194,16 @@ Require each requested role's nonempty selected identity to equal its loaded ide
 
 ## Cross the reload boundary deliberately
 
-Moving source edits do not change emitted QA code. To load newer code, deliberately rebuild and restart only the remembered stack:
+Moving source edits do not change emitted QA code. QA runs a committed revision plus only the files your stack declares as its overlay; other lanes' uncommitted edits never enter it. To load newer code, deliberately restart only the remembered stack on the revision you need:
 
 ```bash
-node ./apps/stack/scripts/repo_local.mjs stack start <qa-stack> --background --runtime=source --restart --no-browser
+node ./apps/stack/scripts/repo_local.mjs stack start <qa-stack> --background --runtime=source --restart --no-browser                 # latest built revision
+node ./apps/stack/scripts/repo_local.mjs stack start <qa-stack> --background --runtime=source --restart --no-browser --rev=HEAD      # your commit
+node ./apps/stack/scripts/repo_local.mjs stack start <qa-stack> --background --runtime=source --restart --no-browser --overlay=<your uncommitted paths>
 node ./apps/stack/scripts/repo_local.mjs stack info <qa-stack> --json
 ```
+
+Uncommitted fixes must be declared with `--overlay` (or `HAPPIER_STACK_SOURCE_OVERLAY` in the stack env), including any other lane's uncommitted file they depend on. Check the printed `rev` before attributing QA evidence to a fix.
 
 Re-inspect status and require per-role selected == loaded before attributing new QA evidence to this restart. Record start-to-ready and reload-to-ready timings separately. UI-only with borrowed Expo requires a deliberate browser reload, not a server/daemon bundle or native web build.
 

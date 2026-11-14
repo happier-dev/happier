@@ -194,21 +194,32 @@ the serving process has started; an old `Web Bundled` log line cannot satisfy
 this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
 verified without restarting its producer.
 
-The repository dev coordinator prepares rolling server and daemon products on
-source changes. For fast adoption of a completed prebuild, add
-`--source-after=<ISO timestamp of the fix>` to the source reload command:
+QA source stacks run a committed revision plus only the files the Stack declares
+as its own uncommitted overlay. Other lanes' edits in the shared checkout never
+enter a QA build. The repository dev coordinator builds the newest HEAD whenever
+HEAD or the installed dependencies change. A plain reload selects the latest
+revision that producer built, so it adopts a finished product with no build:
 
 ```bash
-hstack stack start exp1 --runtime=source --restart --verify --source-after=2026-11-09T12:00:00.000Z
+hstack stack start exp1 --runtime=source --restart --verify                 # latest built revision
+hstack stack start exp1 --runtime=source --restart --verify --rev=HEAD      # exactly HEAD (built once if needed)
+hstack stack start exp1 --runtime=source --restart --verify --overlay=apps/cli/src/foo.ts,packages/protocol/src/bar
 ```
 
-A plain QA reload adopts the newest compatible capture whose producer run and
-post-capture load sentinel passed, without waiting for the producer build lease.
-An explicit fix time requires a capture at or after that fix; a boundary beyond
-the last green capture requests fresh producer work. If no retained capture has
-a completed producer run and a passing post-capture sentinel, preparation reports
-unavailable; restore the sentinel evidence or request fresh work with an explicit
-`--source-after`. Preparation still
+`--rev` takes any commit. `--overlay` (or `hstack stack env set
+HAPPIER_STACK_SOURCE_OVERLAY=<paths>`) takes repository-relative files or
+directories; they are layered on HEAD (or `--rev`), and only those paths keep
+their checkout bytes. Declare every uncommitted file your change depends on,
+including another lane's. An overlay build is keyed by the revision plus the
+overlay's digest: other Stacks with the same overlay reuse it, and it never
+becomes the latest built revision. The reload log names the selected revision,
+and PREPARED prints `rev <component>=<sha>[+overlay:<digest>]` next to the
+capture time and input identity.
+
+An unbuilt revision is built once by the repository producer under its existing
+lock; the consumer never compiles. If a completed capture's consumed bytes equal
+the revision's, it is adopted instead. `--source-after=<ISO timestamp>` remains
+accepted as an additional capture-time boundary. Preparation still
 checks the replacement and the existing restart owner performs cutover. Startup
 and verification still run after fast adoption.
 Before cutover, daemon replacement admission requires its bundled-plugin
@@ -220,13 +231,13 @@ show `Machine registered` without `registration unavailable`, and its loaded
 Agent catalog count to be at least the incumbent's. A failed check reports
 `NOT_READY` with the reason after cutover. Bundled plugin publication refusals name each failing plugin and diagnostic code, omitting diagnostic messages and paths. The lead re-adopts the previous green
 capture; this does not provide automatic rollback or overlapping handover.
-Ordinary remote source starts also forward the controller sentinel verdicts to
-the worker reload preparation; they do not require worker-local sentinel history.
-These facts are invocation arguments, never retained Stack environment.
+Execution hosts have no Git metadata: the controller ships a description of the
+selected revision to each host's reload worker, which deletes it after use.
 
-App-only screen edits are served by borrowed Expo/Metro; refresh the app or
-browser to replay them. A full reload still applies its runtime capture boundary,
-even when the edited screen is outside the server and daemon inputs.
+App-only screen edits are served by borrowed Expo/Metro, which reads the live
+checkout; refresh the app or browser to replay them. A QA verdict on a revision
+uses that revision's shared web export (`--ui=export` builds it once; every Stack
+on the same revision and overlay adopts it).
 
 Every verdict includes elapsed milliseconds. `NOT_READY` identifies the failing
 check and its evidence; `READY` includes the component identities. Verification
@@ -630,12 +641,13 @@ These are informational observations and do not gate or restart a stack.
 An own-database stack with no configured consumers has no such section.
 
 In 0.3 development, successful source reload preparation prints one `PREPARED`
-line with UTC `sourceTime` values and captured `inputIdentity` values for the prepared server, daemon and exported UI
-on that host. This confirms replacement preparation and selection; retirement and
+line with UTC `sourceTime` values, each component's `rev` (`<sha>[+overlay:<digest>]`, or
+`checkout` for a capture without a revision) and captured `inputIdentity` values for the prepared
+server, daemon and exported UI on that host. This confirms replacement preparation and selection; retirement and
 runtime startup can still be pending. Use `stack info` to confirm healthy running
 components and matching selected/loaded identities before replaying work.
 The existing `source-runtime/reload.json` record retains those per-component
-values as `sourceTimes` and `sourceCaptures`. `stack info` shows the reload result and the currently
+values as `sourceTimes` and `sourceCaptures` (including `revision` and `overlayDigest`). `stack info` shows the reload result and the currently
 loaded components' times; JSON includes each available time under
 `runtime.sourceRuntimeIdentities.<component>.sourceTime`. Split runtimes keep
 their own times. The capture time is recorded when the authored input copy finishes,

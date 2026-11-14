@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
 import { EventEmitter, on } from 'node:events';
@@ -64,8 +65,9 @@ const TARGET_SYNC_READY = Symbol('TARGET_SYNC_READY');
  * still serving. The existing executor/control pipe owns each preparation
  * worker; only the existing restart owner may subsequently retire services.
  */
-export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId, loadSentinelPasses },
-  { runProcess = runDevTargetControlProcess, executorDependencies = {} } = {}) {
+export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId, loadSentinelPasses,
+  sourceRevisionDescriptorPath },
+  { runProcess = runDevTargetControlProcess, executorDependencies = {}, transferFile = transferRuntimeFile } = {}) {
   env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra',
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: placement.authority.producerStackName
       ?? basename(placement.authority.producerStackBaseDir) };
@@ -96,6 +98,14 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
       const hostArgs = args.filter(arg => arg !== '--restart' && arg !== '--reuse-source-runtime');
       if (!plan.services.server) hostArgs.push('--no-server', '--no-ui');
       if (!plan.services.daemon) hostArgs.push('--no-daemon');
+      if (sourceRevisionDescriptorPath) {
+        // Mirrors carry no Git metadata: ship the controller's revision description.
+        // The host's reload worker deletes it once its preparation has consumed it.
+        const remotePath = `${paths.stackBaseDir}/source-revision-${randomUUID()}.json.gz`;
+        await transferFile({ target: plan.target, direction: 'upload', localPath: sourceRevisionDescriptorPath, remotePath,
+          signal: cancellation.signal });
+        hostArgs.push(`--source-revision=${remotePath}`);
+      }
       let prepared;
       const ready = new Promise(resolve => { prepared = resolve; });
       const worker = { sourceCaptures: {}, sourceTimes: {

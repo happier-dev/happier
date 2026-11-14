@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { access, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -11,6 +11,7 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { installSourceAdmissionFixture } from '../testkit/core/source_runtime_fixture.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { buildSourceRuntimeBundle, captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs, setBundleReadOnly } from './build_source_runtime.mjs';
+import { resolveSourceRevision } from './source_revision.mjs';
 
 test('source capture includes new undeclared workspace imports and excludes unrelated and ignored sources', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-untracked-import-', registerCleanup: false });
@@ -204,5 +205,59 @@ test('daemon source capture derives complete manifests through an alias while th
   for (const locator of locators) {
     const manifest = JSON.parse(await readFile(join(output, 'apps/cli', locator.manifestRelativePath), 'utf8'));
     assert.equal(manifest.id, locator.pluginId);
+  }
+});
+
+test('revision capture takes committed bytes plus only the declared overlay, never other checkout edits', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-capture-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  await gitIn('init', '--quiet');
+  await writeFile(join(repoDir, '.gitignore'), 'generated/\n');
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  for (const [directory, name, dependencies] of [
+    ['apps/cli', '@happier-dev/cli', { '@happier-dev/protocol': 'workspace:*' }],
+    ['apps/server', '@happier-dev/server', { '@happier-dev/protocol': 'workspace:*' }],
+    ['packages/protocol', '@happier-dev/protocol', {}],
+  ]) {
+    await mkdir(join(repoDir, directory, 'src'), { recursive: true });
+    await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module', dependencies }));
+  }
+  await mkdir(join(repoDir, 'apps/server/sources'));
+  const committed = {
+    'apps/cli/src/index.ts': 'export { version } from "../../../packages/protocol/src/shared";',
+    'apps/server/sources/main.light.ts': 'export { version } from "../../../packages/protocol/src/shared";',
+    'packages/protocol/src/shared.ts': 'export const version = "committed";',
+    'packages/protocol/src/kept.ts': 'export const kept = "committed";',
+  };
+  for (const [path, text] of Object.entries(committed)) await writeFile(join(repoDir, path), text);
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'rev');
+  // Another lane's half edits in the shared checkout: a modified, an untracked and a deleted source.
+  await writeFile(join(repoDir, 'packages/protocol/src/shared.ts'), 'export const version = "other-lane";');
+  await writeFile(join(repoDir, 'packages/protocol/src/other-lane.ts'), 'export const other = "other-lane";');
+  await rm(join(repoDir, 'packages/protocol/src/kept.ts'));
+  // This Stack's own declared edit, and an ignored generated output.
+  const overlayPath = 'apps/server/sources/main.light.ts';
+  const overlayText = 'export const version = "my-overlay";';
+  await writeFile(join(repoDir, overlayPath), overlayText);
+  await mkdir(join(repoDir, 'packages/protocol/src/generated'));
+  await writeFile(join(repoDir, 'packages/protocol/src/generated/out.ts'), 'export const generated = true;');
+  const revision = await resolveSourceRevision({ repoDir, overlay: [overlayPath], outputDir: fixture.path('revisions') });
+  const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), revision });
+  const expected = { ...committed, [overlayPath]: overlayText, 'packages/protocol/src/other-lane.ts': null,
+    'packages/protocol/src/generated/out.ts': 'export const generated = true;' };
+  for (const component of ['server', 'daemon']) {
+    const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: fixture.path(component), sharedSourceInputs: shared });
+    const leaks = [];
+    for (const [path, text] of Object.entries(expected)) {
+      if (path === (component === 'daemon' ? overlayPath : 'apps/cli/src/index.ts')) continue;
+      const actual = await readFile(join(captured.repoDir, path), 'utf8').catch(() => null);
+      if (actual !== text || captured.files.includes(path) !== (text !== null)) leaks.push(path);
+    }
+    assert.deepEqual(leaks, [], `${component}: capture must equal the revision plus the declared overlay`);
+    assert.equal(captured.revision?.revision, revision.revision);
+    assert.equal(captured.revision?.overlayDigest, revision.overlayDigest);
   }
 });

@@ -30,7 +30,17 @@ function normalizeSourceCapture(value) {
   if (!value || typeof value !== 'object' || typeof value.inputIdentity !== 'string'
     || !/^[a-f0-9]{64}$/.test(value.inputIdentity) || typeof value.capturedAt !== 'string'
     || !Number.isFinite(Date.parse(value.capturedAt))) return null;
-  return { inputIdentity: value.inputIdentity, capturedAt: new Date(value.capturedAt).toISOString() };
+  const revision = typeof value.revision === 'string' && /^[a-f0-9]{40,64}$/.test(value.revision) ? value.revision : null;
+  const overlayDigest = revision && typeof value.overlayDigest === 'string' && /^[a-f0-9]{64}$/.test(value.overlayDigest)
+    ? value.overlayDigest : null;
+  return { inputIdentity: value.inputIdentity, capturedAt: new Date(value.capturedAt).toISOString(),
+    ...(revision ? { revision, overlayDigest } : {}) };
+}
+
+/** `rev=<sha>` or `rev=<sha>+overlay:<digest prefix>`; captures of a dirty checkout have no revision. */
+function formatSourceRevision(capture) {
+  if (!capture?.revision) return 'checkout';
+  return `${capture.revision.slice(0, 12)}${capture.overlayDigest ? `+overlay:${capture.overlayDigest.slice(0, 12)}` : ''}`;
 }
 
 /** Capture metadata belongs to the exact immutable product, never its file mtime. */
@@ -58,9 +68,11 @@ export async function readSourceRuntimeSourceTime(input) {
 export function formatSourceRuntimeSourceTimes(sourceTimes, sourceCaptures = {}) {
   const entries = Object.entries(sourceTimes ?? {});
   if (!entries.length) return '';
-  const identities = Object.entries(sourceCaptures).map(([component, capture]) =>
-    `${component}=${normalizeSourceCapture(capture)?.inputIdentity ?? 'unknown'}`);
+  const captures = Object.entries(sourceCaptures).map(([component, capture]) => [component, normalizeSourceCapture(capture)]);
+  const identities = captures.map(([component, capture]) => `${component}=${capture?.inputIdentity ?? 'unknown'}`);
+  const revisions = captures.map(([component, capture]) => `${component}=${capture ? formatSourceRevision(capture) : 'unknown'}`);
   return `sourceTime ${entries.map(([component, time]) => `${component}=${time ?? 'unknown'}`).join(' ')}`
+    + (revisions.length ? ` rev ${revisions.join(' ')}` : '')
     + (identities.length ? ` inputIdentity ${identities.join(' ')}` : '');
 }
 

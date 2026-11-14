@@ -1839,17 +1839,22 @@ test(`remote source preparation carries ${reportsTimes ? 'separate source times'
   const requestStartedAt = Date.parse('2026-10-29T12:00:00.000Z');
   const request = resolveSourceRuntimeReloadArguments({ args: ['--ui=export', `--source-after=${new Date(requestStartedAt).toISOString()}`], requestStartedAt });
   const loadSentinelPasses = [{ startedAt: '2026-10-29T12:04:00.000Z', endedAt: '2026-10-29T12:05:00.000Z' }];
+  const uploads = [];
   const prepared = await prepareStackDevTargetSourceReload({ stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), repoDir,
     placement: { authority: { producerStackBaseDir }, config: { targets }, targetPlans: targets.map(target =>
       ({ target, services: { server: target.name === 'server', daemon: target.name === 'daemon', expo: false } })) },
     args: request.args, env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'source-times', loadSentinelPasses,
+    sourceRevisionDescriptorPath: join(root, 'revision.json.gz'),
     onLog: line => diagnostics.push(line),
-  }, { runProcess: async () => syncReady, executorDependencies: {
+  }, { runProcess: async () => syncReady, transferFile: async upload => { uploads.push(upload); }, executorDependencies: {
     runCaptureResult: async () => ({ ok: true, out: syncReady.out, err: '', exitCode: 0 }),
     spawnProcess: input => {
       const component = input.args.includes('server-ssh') ? 'server' : 'daemon';
       assert.ok(input.args.at(-1).includes('loadSentinelPasses'), 'remote worker receives the controller sentinel facts');
       assert.ok(input.args.at(-1).includes(loadSentinelPasses[0].endedAt), 'remote worker receives the completed pass unchanged');
+      const shipped = uploads.find(upload => upload.target.name === component);
+      assert.ok(shipped && input.args.at(-1).includes(`--source-revision=${shipped.remotePath}`),
+        `${component} host receives the controller's revision description (mirrors have no Git metadata)`);
       assert.ok(input.args.at(-1).includes(`--source-after=${new Date(requestStartedAt).toISOString()}`),
         `${component} host must receive the same controller capture boundary`);
       const sourceTimes = component === 'server' ? { server: times.server, ui: times.ui } : { daemon: times.daemon };

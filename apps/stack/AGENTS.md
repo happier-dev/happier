@@ -47,27 +47,33 @@ hstack wt status
 
 A stack READY lists each participating daemon's loaded source; stale participants are refreshed or reported, never silently included.
 
-In 0.3 development, QA source stacks adopt the repository producer's completed
-server, daemon, SDK and Plugin UI products on their actual execution host. They
-never compile a replacement in the consumer stack. `buildSourceRuntimeBundle`
-owns runtime production and reuse; `resolveRuntimeBuildAuthority` owns producer
-identity. The existing dev reload coordinator keeps the producer current on
-eligible execution hosts, with nl3 first. A plain QA source reload adopts the
-newest compatible capture whose producer run and post-capture load sentinel
-passed, without taking the producer build lease. Publication stays serialized by
-its existing lock. `--source-after=<ISO timestamp>` requires a capture at or after
-that fix time; beyond the last green capture it requests fresh producer work.
-The coordinator forwards this explicit boundary unchanged to every execution host
-and any explicit UI export. `--allow-older-source` remains accepted and still
-honors an explicit `--source-after` value. General source starts
-and other non-reload adoption keep their newest-completed default. Check the
-printed capture time and input identity before attributing a loaded fix. A
-producer failure retains the incumbent and reports the reason and recovery
-action; it never falls back to a consumer compiler. QA defaults to a completed shared web export whose source inputs, options and
-capture boundary match on the serving host. Without one it reports the reason
-and falls back to borrowed Expo; default selection never builds. `--ui=export`
-explicitly requests a finite producer-owned web export. Registered
-built-runtime publication remains a separate supported contract.
+In 0.3 development, QA source stacks run one committed revision plus only the
+paths the Stack declares as its own uncommitted overlay (owner, 2026-11-14;
+supersedes "QA runs on the current live source"). Other lanes' uncommitted edits
+never enter a QA capture. They adopt the repository producer's completed server,
+daemon, SDK and Plugin UI products on their actual execution host and never
+compile a replacement in the consumer stack. `buildSourceRuntimeBundle` owns
+runtime production and reuse; `resolveRuntimeBuildAuthority` owns producer
+identity; `apps/stack/scripts/build/source_revision.mjs` owns what a revision
+(+ overlay) means. A reload selects `--rev=<sha|HEAD>`; by default it takes the
+latest revision this controller's producer built, so it adopts without building.
+`--overlay=<paths>` (or the Stack env `HAPPIER_STACK_SOURCE_OVERLAY`) layers this
+Stack's declared files on HEAD (or on `--rev`); that build is keyed by revision
+plus overlay digest and never becomes the latest built revision. The rolling
+producer follows HEAD: commits and dependency refreshes trigger it, other lanes'
+edits do not, and its coordinator coalesces to the newest HEAD. Mirrors have no
+Git metadata, so the controller ships a revision description to each execution
+host. An unbuilt revision is built once by the producer under its existing lock,
+and a capture whose consumed bytes equal the revision's is adopted instead.
+`--source-after=<ISO timestamp>` remains accepted as an extra capture-time
+boundary. The reload log names the selected revision and PREPARED prints each
+component's `rev`; check it before attributing a loaded fix. A producer failure retains the incumbent and reports the reason and
+recovery action; it never falls back to a consumer compiler. QA defaults to the
+completed shared web export of the Stack's revision (+ overlay) on the serving
+host. Without one it reports the reason and falls back to borrowed Expo; default
+selection never builds. `--ui=export` explicitly requests a finite producer-owned
+export of that revision. Registered built-runtime publication remains a separate
+supported contract.
 
 Do not create a dedicated stack merely because testing or QA involves stack services. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `.agents/skills/happier-controlled-stack-qa`; that skill owns creation, session-wide reuse of one remembered stack, runtime selection, reload boundaries, borrowed Expo, and teardown. Additional or replacement stacks require an explicit human request.
 

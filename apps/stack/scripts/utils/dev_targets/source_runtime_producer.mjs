@@ -1,8 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build_authority.mjs';
 import { emitSourceReloadRefusal, formatSourceReloadRefusal, parseSourceReloadRefusalLine } from '../../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceRuntimeSourceTimes } from '../../runtime/shared/source_bundle_record.mjs';
-import { resolveSourceComponentWatchPaths } from '../dev/devReloadCoordinator.mjs';
+import { resolveDependencyRefreshMarkerPath } from '../proc/dependency_refresh.mjs';
+import { resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
+import { transferRuntimeFile } from './runtime_artifact_transfer.mjs';
 import { getRootDir } from '../paths/paths.mjs';
 import { redactFailureDiagnostic } from '../proc/proc.mjs';
 import { runDevTargetCommand } from './executor.mjs';
@@ -23,15 +30,23 @@ function unavailableTarget({ target, producerStackName, reason, cause, refusal }
 /** Use the existing source mirror/transport; the execution host's producer
  * owns compilation, matching and publication in its existing source-bundles. */
 export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, producerStackBaseDir,
-  producerStackName, components, sourceCapturedAfter, env = process.env, signal, logger = console }, executorDependencies) {
+  producerStackName, components, sourceCapturedAfter, sourceRevisionDescriptorPath, env = process.env, signal, logger = console },
+  executorDependencies, { transferFile = transferRuntimeFile } = {}) {
   const paths = resolveRemoteStackStatePaths(target, { stackName: producerStackName, runtimeMode: 'source-snapshot' });
   let result;
   let refusal;
+  let sourceRevision;
   try {
+    if (sourceRevisionDescriptorPath) {
+      // The mirror has no Git metadata; the worker deletes this description after use.
+      const descriptorPath = `${dirname(paths.stackBaseDir)}/source-revision-${randomUUID()}.json.gz`;
+      await transferFile({ target, direction: 'upload', localPath: sourceRevisionDescriptorPath, remotePath: descriptorPath, signal });
+      sourceRevision = { descriptorPath };
+    }
     result = await runDevTargetCommand({ target, stackBaseDir: producerStackBaseDir, sourceDir: repoDir,
       commandArgs: ['node', '--conditions=happier-source', '--import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs',
         `./${workerPath}`, '--worker', JSON.stringify({ repoDir: target.repoDir, stackBaseDir: paths.stackBaseDir,
-          components, sourceCapturedAfter })],
+          components, sourceCapturedAfter, sourceRevision })],
       environment: { HAPPIER_STACK_REPO_DIR: target.repoDir, HAPPIER_STACK_STACK: producerStackName,
         HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: producerStackName,
         HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
@@ -57,40 +72,48 @@ export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, pr
  * hosts are actual execution hosts; configured targets outside its eligible
  * service plans remain on-demand rather than speculative cold producers. */
 export async function createSourceRuntimeProducerReload({ repoDir, stackBaseDir, stackName, servicePlans,
-  localComponents, remoteComponents, env = process.env, signal, logger = console }, executorDependencies) {
+  localComponents, remoteComponents, env = process.env, signal, logger = console }, executorDependencies, transport) {
   const authority = resolveRuntimeBuildAuthority({ rootDir: getRootDir(import.meta.url), consumerStackName: stackName,
     env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir }, createRepoIdentityIfMissing: false });
   if (authority.producerStackName !== stackName) return null;
   const targets = servicePlans.filter(plan => plan.commands || plan.services.server || plan.services.daemon)
     .map(plan => plan.target).sort((left, right) => Number(right.name === 'nl3') - Number(left.name === 'nl3'));
-  const components = [...new Set([...localComponents, ...remoteComponents].map(value => value.component))];
-  const descriptors = await Promise.all(components.map(async component => ({
-    id: `source-producer:${component}`, target: 'source-runtime',
-    paths: await resolveSourceComponentWatchPaths({ repoDir, target: component }),
-  })));
+  // QA runs committed revisions (owner 2026-11-14): the producer follows HEAD and
+  // installed dependencies, never other lanes' uncommitted edits. The existing
+  // reload coordinator coalesces bursts, so it builds only the newest HEAD.
+  const headLog = execFileSync('git', ['-C', repoDir, 'rev-parse', '--path-format=absolute', '--git-path', 'logs/HEAD'],
+    { encoding: 'utf8' }).trim();
+  const descriptors = [{ id: 'source-producer:revision', target: 'source-runtime',
+    paths: [headLog, resolveDependencyRefreshMarkerPath(repoDir)] }];
   return {
     descriptors,
     executor: {
       target: 'source-runtime',
       async build() {
-        const sourceCapturedAfter = Date.now();
-        const requests = targets.map(target => ({ target: target.name, prepare: () => prepareSourceRuntimeProducerOnTarget({
-          target, repoDir, producerStackBaseDir: authority.producerStackBaseDir, producerStackName: authority.producerStackName,
-          components: remoteComponents, sourceCapturedAfter, env, signal, logger }, executorDependencies) }));
-        if (localComponents.length) requests.push({ target: 'local', prepare: async () => {
-          const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
-          return await prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components: localComponents, env, signal,
-            sourceCapturedAfter, logger });
-        } });
-        // Hosts are independent; an unavailable optional target cannot hold the
-        // local last-green runtime or prevent another host's publication.
-        await Promise.all(requests.map(async request => {
-          try { await request.prepare(); }
-          catch (error) {
-            if (signal?.aborted) throw error;
-            logger.error(`[source-producer:${request.target}]${formatSourceReloadRefusal(error, env)} ${redactFailureDiagnostic(error.message, env)}`);
-          }
-        }));
+        const revision = await resolveSourceRevisionIdentity({ repoDir });
+        logger.error(`[source-producer] revision ${revision.revision}`);
+        const descriptorDir = targets.length ? await mkdtemp(join(tmpdir(), 'hstack-source-revision-')) : null;
+        try {
+          const sourceRevisionDescriptorPath = descriptorDir
+            ? await writeSourceRevisionDescriptor({ repoDir, identity: revision, outputDir: descriptorDir }) : undefined;
+          const requests = targets.map(target => ({ target: target.name, prepare: () => prepareSourceRuntimeProducerOnTarget({
+            target, repoDir, producerStackBaseDir: authority.producerStackBaseDir, producerStackName: authority.producerStackName,
+            components: remoteComponents, sourceRevisionDescriptorPath, env, signal, logger }, executorDependencies, transport) }));
+          if (localComponents.length) requests.push({ target: 'local', prepare: async () => {
+            const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
+            return await prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components: localComponents, env, signal,
+              sourceRevision: { rev: revision.revision }, logger });
+          } });
+          // Hosts are independent; an unavailable optional target cannot hold the
+          // local runtime or prevent another host's publication.
+          await Promise.all(requests.map(async request => {
+            try { await request.prepare(); }
+            catch (error) {
+              if (signal?.aborted) throw error;
+              logger.error(`[source-producer:${request.target}]${formatSourceReloadRefusal(error, env)} ${redactFailureDiagnostic(error.message, env)}`);
+            }
+          }));
+        } finally { if (descriptorDir) await rm(descriptorDir, { recursive: true, force: true }); }
       },
     },
   };
@@ -99,7 +122,10 @@ export async function createSourceRuntimeProducerReload({ repoDir, stackBaseDir,
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--worker') {
   try {
     const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
-    const prepared = await prepareSourceRuntimeProducer({ ...JSON.parse(process.argv[3]), env: process.env });
+    const request = JSON.parse(process.argv[3]);
+    let prepared;
+    try { prepared = await prepareSourceRuntimeProducer({ ...request, env: process.env }); }
+    finally { if (request.sourceRevision?.descriptorPath) await rm(request.sourceRevision.descriptorPath, { force: true }); }
     const sourceCaptures = Object.fromEntries(Object.entries(prepared).map(([component, built]) => [component, built.sourceCapture]));
     emitSourceRuntimeSourceTimes(Object.fromEntries(Object.entries(sourceCaptures).map(([component, capture]) => [component, capture?.capturedAt])), sourceCaptures);
   } catch (error) {

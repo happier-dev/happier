@@ -36,6 +36,7 @@ import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_au
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
+import { applySourceRevision, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -49,26 +50,39 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
 /** Both roles derive from one authored-input capture, including their imports
  * and manifests. Capturing only Protocol would mix it with later SDK/host bytes.
  * Installed third-party tools retain their existing dependency-publication owner. */
-export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env }) {
+export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision }) {
   repoDir = resolve(repoDir);
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
   return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async () => {
     let filesByComponent = {};
+    let ownerDirsByComponent = {};
     const capture = await captureBuildInputFiles({ sourceDir: repoDir, captureDir: outputDir,
       readPaths: async () => {
         signal?.throwIfAborted();
-        filesByComponent = Object.fromEntries(await Promise.all(['server', 'daemon'].map(async component => [
-          component,
-          (await readSourceComponentBuildInputs({ repoDir, component })).files,
-        ])));
+        const inputs = Object.fromEntries(await Promise.all(['server', 'daemon'].map(async component => [
+          component, await readSourceComponentBuildInputs({ repoDir, component })])));
+        filesByComponent = Object.fromEntries(Object.entries(inputs).map(([component, { files }]) => [component, files]));
+        ownerDirsByComponent = Object.fromEntries(Object.entries(inputs).map(([component, { workspaceDirs }]) => [component, workspaceDirs]));
         return [...new Set(Object.values(filesByComponent).flat())];
       } });
     const captured = new Set(capture.files);
     filesByComponent = Object.fromEntries(Object.entries(filesByComponent)
       .map(([component, files]) => [component, files.filter(path => captured.has(path))]));
-    await writeFile(join(outputDir, SHARED_SOURCE_INPUT_MANIFEST), JSON.stringify({ filesByComponent, capturedAt: capture.capturedAt }));
-    return { repoDir: realpathSync(outputDir) };
+    let revisionIdentity;
+    if (revision) {
+      // One revision application for both roles keeps their shared bytes identical.
+      const descriptor = await readSourceRevisionDescriptor(revision.descriptorPath);
+      const files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
+        ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor });
+      filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => [component,
+        files.filter(path => componentFiles.includes(path) || (!captured.has(path)
+          && ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))))]));
+      revisionIdentity = sourceRevisionIdentity(descriptor);
+    }
+    await writeFile(join(outputDir, SHARED_SOURCE_INPUT_MANIFEST), JSON.stringify({ filesByComponent, capturedAt: capture.capturedAt,
+      ...(revisionIdentity ? { revision: revisionIdentity } : {}) }));
+    return { repoDir: realpathSync(outputDir), ...(revisionIdentity ? { revision: revisionIdentity } : {}) };
   });
 }
 
@@ -82,7 +96,7 @@ async function readSharedSourceInputManifest(sharedSourceInputs) {
   return manifest;
 }
 
-export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs }) {
+export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision }) {
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
@@ -95,6 +109,11 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
       return sharedManifest ? sharedManifest.filesByComponent[component]
         : (await readSourceComponentBuildInputs({ repoDir, component })).files;
     } });
+  // A shared capture already holds the revision's bytes; a direct capture applies it here.
+  const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
+  if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
+    ownerDirs: workspaceDirs, descriptor });
+  const revisionIdentity = sharedManifest?.revision ?? (descriptor ? sourceRevisionIdentity(descriptor) : undefined);
   await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: outputDir, workspaceDirs });
   if (component === 'expo') {
     const uiManifest = JSON.parse(await readFile(join(outputDir, 'apps/ui/package.json'), 'utf8'));
@@ -129,7 +148,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   // generator's direct-entry guard against its /private/var module URL.
   const capturedRepoDir = realpathSync(outputDir);
   return { repoDir: capturedRepoDir, uiProjectDir: join(capturedRepoDir, 'apps/ui'), files: capture.files,
-    capturedAt: sharedManifest?.capturedAt ?? capture.capturedAt,
+    capturedAt: sharedManifest?.capturedAt ?? capture.capturedAt, ...(revisionIdentity ? { revision: revisionIdentity } : {}),
     inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
 }
 
@@ -164,6 +183,56 @@ function sourceRuntimeCandidateKey({ repoDir, component, serverComponent, dbProv
   // cannot select this pointer: unconsumed source edits intentionally reuse the
   // captured graph. Its exact completion identity is verified below instead.
   return createHash('sha256').update(JSON.stringify([repoDir, component, serverComponent, dbProvider])).digest('hex');
+}
+
+/** Exact revision (+overlay) locator: the selection key of a revision build. */
+function sourceRuntimeRevisionCandidateKey({ repoDir, component, serverComponent, dbProvider, revisionKey }) {
+  return `rev-${createHash('sha256').update(JSON.stringify([repoDir, component, serverComponent, dbProvider, revisionKey])).digest('hex')}`;
+}
+
+function sameSourceRevision(capture, revision) {
+  return capture?.revision === revision.revision && (capture.overlayDigest ?? null) === (revision.overlayDigest ?? null);
+}
+
+/** The controller resolves `--rev`/`--overlay` (default: the latest built HEAD)
+ * from its Git checkout; an execution host receives the controller's
+ * descriptor. A mirror without either keeps the checkout capture. */
+async function resolveProducerRevision({ repoDir, sourceRevision, env }) {
+  if (sourceRevision?.descriptorPath) {
+    const descriptor = await readSourceRevisionDescriptor(sourceRevision.descriptorPath);
+    return { ...sourceRevisionIdentity(descriptor), overlay: descriptor.overlay,
+      descriptorPath: sourceRevision.descriptorPath, latest: sourceRevision.latest === true };
+  }
+  if (!existsSync(join(repoDir, '.git'))) return null;
+  const overlay = parseSourceOverlayPaths(sourceRevision?.overlay ?? env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
+  const identity = await resolveSourceRevisionIdentity({ repoDir, rev: sourceRevision?.rev ?? 'HEAD', overlay });
+  return { ...identity, descriptorPath: null, latest: !sourceRevision?.rev && !overlay.length };
+}
+
+/** The revision of this host's most recently captured, still retained, non-overlay
+ * daemon revision build: the default a reload selects, so it adopts a finished build
+ * instead of waiting for HEAD. Revision locators are read directly so a checkout
+ * capture published as the current candidate cannot hide them. */
+export async function readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) {
+  const bundleRoot = join(dirname(resolve(stackBaseDir)), 'source-bundles');
+  let names;
+  try { names = await readdir(bundleRoot); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const repo = resolve(repoDir);
+  let latest = null;
+  for (const name of names) {
+    const match = /^candidate-(rev-[a-f0-9]{64})\.json$/.exec(name);
+    if (!match) continue;
+    const candidate = await readOptionalJson(join(bundleRoot, name));
+    if (!/^(?:bundle|runtime)-[^\\/\0]+$/.test(candidate?.outputName ?? '')) continue;
+    const record = await readOptionalJson(join(bundleRoot, candidate.outputName, 'source-bundle.json'));
+    const capture = record?.sourceCapture;
+    if (record?.inputIdentity !== candidate.inputIdentity || !record.cliDir || !capture?.revision || capture.overlayDigest) continue;
+    if (match[1] !== sourceRuntimeRevisionCandidateKey({ repoDir: repo, component: 'daemon', serverComponent: 'happier-server-light',
+      dbProvider: undefined, revisionKey: capture.revision })) continue;
+    if (!latest || Date.parse(capture.capturedAt) > Date.parse(latest.capturedAt)) latest = capture;
+  }
+  return latest?.revision ?? null;
 }
 
 function sourceRuntimeCaptureCandidateKey(fingerprint) {
@@ -450,7 +519,9 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     const component = record.component ?? (record.cliDir ? 'daemon' : 'server');
     // Interrupted retirement remains ordinary cleanup input, never a reusable
     // product or a replacement for the newest completed fallback.
-    if (!entry.name.startsWith('.retired-') && (!newestBuilt.has(component) || createdMs > newestBuilt.get(component).createdMs)) {
+    // An overlay build is retained by its declaring Stack's selection, never as the newest fallback.
+    if (!entry.name.startsWith('.retired-') && !record.sourceCapture?.overlayDigest
+      && (!newestBuilt.has(component) || createdMs > newestBuilt.get(component).createdMs)) {
       newestBuilt.set(component, {directory, createdMs});
     }
     if (fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, fingerprint), {staleAfterMs:Infinity})) continue;
@@ -749,13 +820,17 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
 
 async function readCompletedProducerComponents({ repoDir, stackBaseDir, components, env, signal,
   sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints,
-  requireLastGreen = false, loadSentinelPasses }) {
+  requireLastGreen = false, loadSentinelPasses, revision, sharedSourceInputs, select = true }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
+  // A revision selects the exact revision build, or (by default) the latest
+  // built revision; content-equal captures go through captureFingerprints.
+  const exactRevision = revision && !revision.latest && !captureFingerprints;
   const keys = components.map((component, index) => captureFingerprints
     ? sourceRuntimeCaptureCandidateKey(captureFingerprints[index])
-    : sourceRuntimeCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component }));
+    : exactRevision ? sourceRuntimeRevisionCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component, revisionKey: revision.key })
+      : sourceRuntimeCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component }));
   const candidateSets = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-read' }, async () => {
-    if (requireLastGreen) {
+    if (requireLastGreen && !revision) {
       const groups = await readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses });
       return groups.filter(group => keys.every(key => group.candidates.has(key)))
         .map(group => keys.map(key => group.candidates.get(key)));
@@ -773,9 +848,14 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
       const record = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-record' },
         () => readOptionalJson(join(outputDir, 'source-bundle.json')));
       if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) break;
+      // Revision builds never adopt a dirty-checkout capture; the latest built
+      // revision is never an overlay build.
+      if (revision && !captureFingerprints && (exactRevision ? !sameSourceRevision(record.sourceCapture, revision)
+        : !record.sourceCapture?.revision || record.sourceCapture.overlayDigest)) break;
       const reusable = await readReusableSourceBundle({ outputDir, record, repoDir, env, serverComponent: 'happier-server-light',
         // Every component, single or paired (Systemic ruling 2026-11-13 12:43Z).
-        ...descriptor, newestCompleted: !requireCurrentSource, sourceCapturedAfter });
+        ...descriptor, sharedSourceInputs, sourceCapturedAfter,
+        newestCompleted: revision && !captureFingerprints ? true : !requireCurrentSource });
       if (!reusable) break;
       await probePreparedSourceRuntimeBundle({ built: reusable.built, component: descriptor.component, repoDir, env, signal });
       prepared[descriptor.component] = reusable.built;
@@ -787,12 +867,17 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
     // Publication custody validates completion and pins the chosen product;
     // probes stay outside this short publication section.
     await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-adoption' }, async () => {
-      if (captureFingerprints) for (const [index, descriptor] of components.entries()) await publishSourceBundleCandidate({ bundleRoot,
-        outputDir: resolve(prepared[descriptor.component].runtimeDir, '../..'), record: records[descriptor.component],
-        candidateKey: sourceRuntimeCandidateKey({ repoDir, ...descriptor }),
-        producerCompletedAt: candidates[index].producerCompletedAt,
-        producerCandidateKey: candidates[index].producerCandidateKey });
-      for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
+      if (captureFingerprints) for (const [index, descriptor] of components.entries()) {
+        const outputDir = resolve(prepared[descriptor.component].runtimeDir, '../..');
+        // A content-equal capture also serves this revision from now on.
+        if (revision) await publishSourceBundleCandidate({ bundleRoot, outputDir, record: records[descriptor.component],
+          candidateKey: sourceRuntimeRevisionCandidateKey({ repoDir, ...descriptor, revisionKey: revision.key }) });
+        if (!revision?.overlayDigest && !records[descriptor.component].sourceCapture?.overlayDigest) await publishSourceBundleCandidate({ bundleRoot, outputDir, record: records[descriptor.component],
+          candidateKey: sourceRuntimeCandidateKey({ repoDir, ...descriptor }),
+          producerCompletedAt: candidates[index].producerCompletedAt,
+          producerCandidateKey: candidates[index].producerCandidateKey });
+      }
+      if (select) for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
         stackBaseDir, component, built, signal, reuseSelected, pendingRequestId: pending?.requestId });
     });
     return prepared;
@@ -815,7 +900,8 @@ async function withSourceRuntimeWorkerResult(run) {
 /** QA adopts completed products. Only this repository producer request enters
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
-  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, logger = console, stderrStream = process.stderr }) {
+  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, sourceRevision,
+  logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -824,13 +910,21 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     ...(component.component === 'daemon' ? { serverComponent: 'happier-server-light', dbProvider: undefined } : {}) }));
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const requireCurrentSource = context.consumerStackName === context.producerStackName;
+  let revision;
+  // The producer's own source-dev Stack keeps its live-checkout runtime; a revision it
+  // builds for QA consumers is published to the store, never selected into that Stack.
+  const select = () => !(requireCurrentSource && revision);
   const adopt = () => readCompletedProducerComponents({ repoDir, stackBaseDir, components, env: context.env,
-    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses });
+    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses, revision, select: select() });
   const report = prepared => {
-    for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
+    for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} rev=${built.sourceCapture?.revision ?? 'checkout'}${built.sourceCapture?.overlayDigest ? `+overlay:${built.sourceCapture.overlayDigest}` : ''} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return prepared;
   };
   try {
+    // QA consumers run a committed revision (+ declared overlay). The producer's own
+    // development Stack keeps following its live checkout unless a revision is requested.
+    revision = sourceRevision || !requireCurrentSource ? await resolveProducerRevision({ repoDir, sourceRevision, env: context.env }) : null;
+    if (!revision && !requireCurrentSource) logger.error('[source-bundle] capture source=checkout: no revision descriptor reached this host; other lanes\' uncommitted edits can enter this capture');
     const completed = await adopt();
     if (components.some(component => component.component === 'server')) {
       // The server host has already projected its shared database environment.
@@ -839,7 +933,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
       await assertSharedDatabaseMigrationsApplied({ serverDir: join(repoDir, 'apps/server'), env });
     }
     if (completed) return report(completed);
-    if (requireLastGreen) throw sourceRuntimeCaptureUnavailable();
+    if (requireLastGreen && !revision) throw sourceRuntimeCaptureUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
     const response = await withSingleTrailingBuildPass({ run: async () => {
       const response = await withSourceRuntimeWorkerResult(async resultPath => {
@@ -847,7 +941,8 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
           launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)), command: process.execPath,
           args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
             stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
-            producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, resultPath })] }),
+            producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource,
+            revision: revision && { ...revision, latest: false }, select: select(), resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
           cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
@@ -874,56 +969,86 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, select = true, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
-  const completed = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource, pending: { requestId: pendingRequestId } });
+  const lookup = { repoDir, stackBaseDir: consumerStackBaseDir, components, env, signal, sourceCapturedAfter, reuseSelected,
+    revision, select, pending: { requestId: pendingRequestId } };
+  const completed = await readCompletedProducerComponents({ ...lookup, requireCurrentSource });
   if (completed) return completed;
-  const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, env })));
-  const historical = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource: true, captureFingerprints: fingerprints, pending: { requestId: pendingRequestId } });
-  if (historical) return historical;
+  // A checkout capture keys its locks before capture. A revision capture is
+  // its own identity: capture first, then match content-equal builds by it.
+  const checkoutFingerprints = revision ? null
+    : await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, env })));
+  if (checkoutFingerprints) {
+    const historical = await readCompletedProducerComponents({ ...lookup, requireCurrentSource: true, captureFingerprints: checkoutFingerprints });
+    if (historical) return historical;
+  }
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  const locks = [...new Set(fingerprints)].sort().map(fingerprint => sourceBundleBuildLockPath(bundleRoot, fingerprint));
-  const prepare = async index => {
-    if (index < locks.length) return await withWorkspaceBundleLock(() => prepare(index + 1), {
-      lockPath: locks[index], timeoutMs: Infinity, staleAfterMs: Infinity, env, signal, errorLabel: 'source-bundle build lock' });
+  const withBuildLocks = async (fingerprints, build) => {
+    const locks = [...new Set(fingerprints)].sort().map(fingerprint => sourceBundleBuildLockPath(bundleRoot, fingerprint));
+    const lock = async index => index < locks.length ? await withWorkspaceBundleLock(() => lock(index + 1), {
+      lockPath: locks[index], timeoutMs: Infinity, staleAfterMs: Infinity, env, signal, errorLabel: 'source-bundle build lock' }) : await build();
+    return await lock(0);
+  };
+  const buildComponents = async (fingerprints, sharedSourceInputs) => {
+    const prepared = {};
+    for (const [index, descriptor] of components.entries()) prepared[descriptor.component] = await prepareSharedSourceRuntimeBundle({
+      repoDir, stackBaseDir, ...descriptor, fingerprint: fingerprints[index], sharedSourceInputs, env, signal,
+    });
+    if (sourceCapturedAfter != null && Object.values(prepared).some(built => !(Date.parse(built.sourceCapture?.capturedAt) >= sourceCapturedAfter))) {
+      throw sourceRuntimeCaptureUnavailable({
+        message: 'Producer capture predates the requested sourceCapturedAfter boundary',
+        nextAction: 'Request a fresh capture with a valid --source-after=<ISO timestamp> boundary',
+      });
+    }
+    await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-completion' }, async () => {
+      const producerCompletedAt = new Date().toISOString();
+      for (const descriptor of components) {
+        const built = prepared[descriptor.component];
+        const outputDir = resolve(built.runtimeDir, '../..');
+        const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
+        if (revision) await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+          candidateKey: sourceRuntimeRevisionCandidateKey({ repoDir, ...descriptor, revisionKey: revision.key }) });
+        // An overlay build serves only its declaring Stack and identical overlays.
+        if (revision?.overlayDigest) continue;
+        const producerCandidateKey = sourceRuntimeCandidateKey({ repoDir, ...descriptor });
+        await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+          candidateKey: producerCandidateKey, producerCompletedAt, producerCandidateKey });
+      }
+      if (select) for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
+        stackBaseDir: consumerStackBaseDir, component, built, signal, reuseSelected, pendingRequestId });
+    });
+    return prepared;
+  };
+  const prepare = async () => {
     const sourceRoot = join(stackBaseDir, 'source-runtime');
     await mkdir(sourceRoot, { recursive: true });
     let captureDir;
+    let descriptorDir;
     try {
-      const sharedSourceInputs = components.length > 1
-        ? await captureSourceRuntimeSharedInputs({ repoDir, outputDir: captureDir = await mkdtemp(join(sourceRoot, 'shared-inputs-')), env, signal }) : undefined;
-      const prepared = {};
-      for (const [index, descriptor] of components.entries()) prepared[descriptor.component] = await prepareSharedSourceRuntimeBundle({
-        repoDir, stackBaseDir, ...descriptor, fingerprint: fingerprints[index], sharedSourceInputs, env, signal,
+      if (!revision) return await withBuildLocks(checkoutFingerprints, async () => {
+        const sharedSourceInputs = components.length > 1
+          ? await captureSourceRuntimeSharedInputs({ repoDir, outputDir: captureDir = await mkdtemp(join(sourceRoot, 'shared-inputs-')), env, signal }) : undefined;
+        return await buildComponents(checkoutFingerprints, sharedSourceInputs);
       });
-      if (sourceCapturedAfter != null && Object.values(prepared).some(built => !(Date.parse(built.sourceCapture?.capturedAt) >= sourceCapturedAfter))) {
-        throw sourceRuntimeCaptureUnavailable({
-          message: 'Producer capture predates the requested sourceCapturedAfter boundary',
-          nextAction: 'Request a fresh capture with a valid --source-after=<ISO timestamp> boundary',
-        });
-      }
-      await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-completion' }, async () => {
-        const producerCompletedAt = new Date().toISOString();
-        for (const descriptor of components) {
-          const built = prepared[descriptor.component];
-          const outputDir = resolve(built.runtimeDir, '../..');
-          const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
-          const producerCandidateKey = sourceRuntimeCandidateKey({ repoDir, ...descriptor });
-          await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
-            candidateKey: producerCandidateKey, producerCompletedAt, producerCandidateKey });
-
-        }
-        for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
-          stackBaseDir: consumerStackBaseDir, component, built, signal, reuseSelected, pendingRequestId });
-      });
-      return prepared;
-    } finally { if (captureDir) removeOwnedDirectorySync(captureDir); }
+      // The controller describes its revision only once a capture needs it.
+      const descriptorPath = revision.descriptorPath ?? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
+        outputDir: descriptorDir = await mkdtemp(join(sourceRoot, 'revision-')) });
+      const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, env, signal,
+        outputDir: captureDir = await mkdtemp(join(sourceRoot, 'shared-inputs-')), revision: { descriptorPath } });
+      const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, sharedSourceInputs, env })));
+      // Digest adoption (94ce557e60c) against the revision's bytes, never the checkout's.
+      const historical = await readCompletedProducerComponents({ ...lookup, requireCurrentSource: true, captureFingerprints: fingerprints, sharedSourceInputs });
+      if (historical) return historical;
+      return await withBuildLocks(fingerprints, () => buildComponents(fingerprints, sharedSourceInputs));
+    } finally {
+      if (captureDir) removeOwnedDirectorySync(captureDir);
+      if (descriptorDir) removeOwnedDirectorySync(descriptorDir);
+    }
   };
-  return await withSourceCaptureRetry({ repoDir, env, signal }, () => prepare(0));
+  return await withSourceCaptureRetry({ repoDir, env, signal }, prepare);
 }
 
 /** Build from the execution host's installed source. Stack consumers adopt the
@@ -1180,7 +1305,8 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   const sourceRepoDir = repoDir;
   const guestPayloadTargets = component === 'daemon' ? readSourceGuestPayloadTargets(env) : null;
   const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: join(outputDir, 'workspace'), signal, sharedSourceInputs });
-  const sourceCapture = { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt };
+  const sourceCapture = { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt,
+    ...(captured.revision ? { revision: captured.revision.revision, overlayDigest: captured.revision.overlayDigest } : {}) };
   repoDir = captured.repoDir;
   const projectDir = join(repoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   const runtimeDir = join(outputDir, 'apps', component === 'daemon' ? 'cli' : 'server');

@@ -1,11 +1,13 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
 
-import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter } from '../../build/build_source_runtime.mjs';
+import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
+import { parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
@@ -34,7 +36,24 @@ export function resolveSourceRuntimeReloadArguments({ args }) {
   if (sourceCapturedAfter != null) args = [...(args ?? []), `--source-after=${new Date(sourceCapturedAfter).toISOString()}`];
   const forwardedPasses = kv.get('--source-load-sentinel-passes');
   const loadSentinelPasses = forwardedPasses == null ? undefined : JSON.parse(forwardedPasses);
-  return { args, flags, kv, sourceCapturedAfter, loadSentinelPasses };
+  // QA runs one committed revision plus this Stack's declared overlay (owner 2026-11-14).
+  // An execution host receives the controller's description instead (`--source-revision`).
+  const revisionDescriptorPath = kv.get('--source-revision') || undefined;
+  const rev = kv.get('--rev') || undefined;
+  const overlayValue = kv.get('--overlay');
+  return { args, flags, kv, sourceCapturedAfter, loadSentinelPasses, revisionDescriptorPath, rev,
+    overlay: overlayValue == null ? undefined : parseSourceOverlayPaths(overlayValue) };
+}
+
+/** `--rev` (default: the latest revision this controller's producer built, else HEAD)
+ * plus `--overlay` / the Stack's `HAPPIER_STACK_SOURCE_OVERLAY`. An overlay layers on HEAD
+ * unless `--rev` names another revision. Every host then prepares this exact revision. */
+async function resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env }) {
+  // Without Git metadata there is no revision to select; the producer logs its checkout capture.
+  if (!existsSync(join(repoDir, '.git'))) return null;
+  const overlay = request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
+  const rev = request.rev ?? (overlay.length ? 'HEAD' : await readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) ?? 'HEAD');
+  return await resolveSourceRevisionIdentity({ repoDir, rev, overlay });
 }
 
 /** Called by the existing restart owner before any incumbent retirement. */
@@ -42,7 +61,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
   activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId, loadSentinelPasses }) {
   const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
-  if (sourceCapturedAfter == null) loadSentinelPasses ??= request.loadSentinelPasses ?? await readLoadSentinelPasses(repoDir);
+  let revisionDir;
+  // Last-green gating remains only for a host that received no revision (checkout capture).
+  if (sourceCapturedAfter == null && !request.revisionDescriptorPath) loadSentinelPasses ??= request.loadSentinelPasses ?? await readLoadSentinelPasses(repoDir);
   args = request.args;
   const uiMode = resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: stackName, producerStackName: env.HAPPIER_STACK_EXPO_SOURCE_STACK });
@@ -83,7 +104,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     // waiting for an edit. This record carries logs and terminal outcomes.
     await writeJsonAtomic(statusPath, { logPath });
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
-    await log(`[reload] source capture boundary: ${sourceCapturedAfter == null ? 'newest last-green compatible capture' : new Date(sourceCapturedAfter).toISOString()}; fast adoption: --source-after=<ISO fix time> can reuse a completed rolling prebuild`);
+    const revision = request.revisionDescriptorPath ? null
+      : await resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env });
+    const sourceRevision = request.revisionDescriptorPath ? { descriptorPath: request.revisionDescriptorPath }
+      : revision ? { rev: revision.revision, overlay: Object.keys(revision.overlay) } : undefined;
+    if (revision) await log(`[reload] source revision ${revision.revision}${revision.overlayDigest ? ` + overlay ${revision.overlayDigest} (${Object.keys(revision.overlay).length} declared files)` : ''}; select another with --rev=<sha>, layer this Stack's uncommitted files with --overlay=<paths>`);
+    if (sourceCapturedAfter != null) await log(`[reload] source capture boundary: ${new Date(sourceCapturedAfter).toISOString()}`);
     if (placement?.target && !connection.startServer) {
       throw new Error('[reload] remote server placement cannot be activated with an external-server source start; incumbent retained');
     }
@@ -106,8 +132,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       ];
       const remotePreparation = (async () => {
         if (placement?.target || placement?.daemonTarget) {
+          // Hosts without Git metadata receive one description of the revision.
+          const sourceRevisionDescriptorPath = revision ? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
+            outputDir: revisionDir = await mkdtemp(join(sourceRoot, 'revision-')),
+            components: ['server', 'daemon', ...(uiMode === 'export' ? ['expo'] : [])] }) : undefined;
           remote = await (await import('../../utils/dev_targets/supervisor.mjs')).prepareStackDevTargetSourceReload({
-            stackName, stackBaseDir, repoDir, placement, args, serverRequested: connection.startServer,
+            stackName, stackBaseDir, repoDir, placement, args, serverRequested: connection.startServer, sourceRevisionDescriptorPath,
             env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
               HAPPIER_SERVER_URL: connection.startServer
                 ? (await resolveStackServerEndpoint({ env, stackName })).internalServerUrl : connection.internalServerUrl },
@@ -119,7 +149,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       })();
       const localPreparation = localComponents.length ? prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
         components: localComponents, pending, env: serverEnv, signal: pending.signal,
-        sourceCapturedAfter, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
+        sourceCapturedAfter, sourceRevision, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
         logger, stderrStream }) : Promise.resolve({});
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
@@ -127,9 +157,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const [{ server, daemon }] = await Promise.all(preparations);
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
+      // The web export follows the server's revision, so this Stack serves one revision.
       const ui = components.server ? (await prepareSourceQaWebUi({ mode: uiMode, repoDir, baseDir: sourceRoot,
-        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter,
-        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses })).built : null;
+        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter, sourceRevision,
+        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
+        revision: request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
+          : revision })).built : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
       let admitted;
@@ -177,6 +210,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       .catch(diagnostic => console.error('[reload] failure log publication failed:', diagnostic));
     throw error;
   } finally {
+    if (revisionDir) await rm(revisionDir, { recursive: true, force: true });
+    if (onHost && request.revisionDescriptorPath) await rm(request.revisionDescriptorPath, { force: true });
     diagnosticInput.end();
     await diagnosticsClosed;
     await logWrites;

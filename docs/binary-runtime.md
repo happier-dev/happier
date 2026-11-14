@@ -1605,26 +1605,46 @@ The shared source-input inventory captures each consumed workspace package's
 authored `files` entries, including README/API documentation and resource directories.
 The strict workspace copier consumes those captured bytes; generated `dist` remains
 the current source-emission owner's output, never a checkout capture input.
-In 0.3 development, QA source stacks adopt the repository producer's completed
-compatible captures on their actual execution host. A plain QA source reload
-adopts the newest capture whose producer run and post-capture load sentinel
-passed, without taking the producer build lease. Publication remains serialized
-by its existing lock. The consumer never compiles its own replacement.
+In 0.3 development, QA source stacks run one committed revision plus only the
+paths the Stack declares as its uncommitted overlay (owner, 2026-11-14). They
+adopt the repository producer's completed captures of that revision on their
+actual execution host, without taking the producer build lease. Publication
+remains serialized by its existing lock. The consumer never compiles its own
+replacement.
+
+`apps/stack/scripts/build/source_revision.mjs` owns the revision contract. On
+the controller it resolves `--rev` (default: the latest revision the local
+producer built, else HEAD) and the overlay (`--overlay`, else the Stack env
+`HAPPIER_STACK_SOURCE_OVERLAY`). Execution-host mirrors carry no Git metadata,
+so the controller writes a finite revision description (revision tree listing,
+HEAD blobs for changed paths the capture can contain, untracked authored paths,
+overlay digests), and each host's worker deletes it after use. Every host keeps
+its existing capture (installed dependencies and ignored generated outputs
+unchanged) and then applies the description: tracked paths must equal the
+revision's blob and are restored from it; a difference with no shipped blob is
+mirror lag and fails as capture drift into the existing trailing pass;
+untracked authored paths are dropped; overlay paths must equal their declared
+digest. `sourceCapture` records `revision` and `overlayDigest`.
+
+Selection is by revision. The exact revision (+overlay) has its own candidate
+locator; otherwise the producer captures the revision first and adopts any
+completed capture whose consumed-input digests equal the revision's bytes (the
+94ce557e60c digest adoption, now against the revision instead of the checkout).
+Only then does it build, once, under the existing producer and fingerprint
+locks. A non-overlay build also becomes the producer's current candidate (the
+"latest built revision"); an overlay build never does, and retention keeps it
+only while its Stack references it. The producer's own development Stack keeps
+following its live checkout unless a revision is requested.
 
 On the server host, producer preparation checks the consumer's shared-database
 migration catalog against the source ledger before requesting build admission.
 A missing migration refuses with `ESHAREDDBMIGRATIONSMISSING` without queuing
 compiler work. Completed captures still adopt without build admission.
 
-Use `--source-after=<ISO timestamp of the fix>` when a reload must include a
-particular fix. The coordinator forwards that boundary unchanged to every
-execution host and any explicit UI export. A compatible completed capture at or
-after the fix can be reused; a boundary beyond the last green capture requests
-fresh producer work.
+`--source-after=<ISO timestamp>` remains accepted as an additional capture-time
+boundary, forwarded unchanged to every execution host and any explicit UI
+export.
 
-When no retained compatible capture has both completion facts, plain QA reload
-reports unavailable before compiler admission. Restore the canonical sentinel
-evidence or use an explicit fix boundary to request fresh producer work.
 Daemon replacement admission also requires the canonical bundled-plugin
 publication failures to be empty or unchanged from the incumbent. Missing,
 malformed or changed replacement failure evidence refuses preparation before
@@ -1642,18 +1662,20 @@ capture; this does not provide automatic rollback or overlapping handover.
 `--allow-older-source` remains accepted; an explicit `--source-after` still
 applies when both flags are present. A producer capture older than the required
 boundary is refused; a timestamp in the future requires retrying after that time.
-General source starts, web builds and daemon start/restart keep newest-completed
-adoption as their default and accept `--source-after` when a later capture is
-required. The underlying producer API keeps the same default; its caller supplies
-the optional `sourceCapturedAfter` boundary.
-Preparation prints the adopted capture time and input identity. The repository
+General source starts on the controller default to the latest built revision.
+A source start on an execution host that received no revision description
+(remote starts outside a reload) still captures its mirror and logs
+`capture source=checkout`; that path is not yet revision-bound.
+Preparation prints the adopted revision, capture time and input identity. The repository
 producer is resolved by `resolveRuntimeBuildAuthority`; its local product is not
 a portable locator for a daemon or server placed on nl3.
 
-The existing dev reload coordinator triggers rolling preparation on source
-changes and at initial refresh, using the existing executor for eligible remote
-execution hosts, nl3 first. Builds run one at a time per host and source changes
-coalesce through that coordinator. No additional periodic timer is used. SDK
+The existing dev reload coordinator triggers rolling preparation when HEAD
+moves (the Git HEAD reflog) or installed dependencies are republished, and at
+initial refresh, using the existing executor for eligible remote execution
+hosts, nl3 first. It builds the current HEAD only: runs are one at a time per
+host and triggers coalesce through that coordinator, so a burst of commits
+builds the newest one. Other lanes' uncommitted edits do not trigger it. No additional periodic timer is used. SDK
 emission and Plugin UI artifacts remain inside the daemon producer's captured
 closure. `buildSourceRuntimeBundle` remains the compiler/cache decision owner;
 consumer selected and pending records retain adoption, independently of producer

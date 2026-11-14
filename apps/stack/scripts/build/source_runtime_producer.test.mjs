@@ -553,3 +553,75 @@ test('shared database preflight refuses missing migrations before producer build
     syncBuiltinESMExports();
   }
 });
+
+test('QA stacks run the committed revision plus only their declared overlay, building each revision once', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
+  const gitIn = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  gitIn('init', '--quiet');
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules/\n');
+  gitIn('add', '-A');
+  gitIn('commit', '--quiet', '-m', 'one');
+  const head = gitIn('rev-parse', 'HEAD').toString().trim();
+  const compiles = async () => (await readFile(compilers, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).length;
+  // Another lane's half edit in the shared checkout.
+  await writeFile(entry, 'export const value = "other-lane";');
+  const options = { repoDir, component: 'daemon', env, waitForSourceChanges: false };
+  const first = await native.build({ ...options, stackBaseDir: stacks[0] });
+  assert.equal((await import(pathToFileURL(first.entrypoint))).value, 1, 'other lanes’ uncommitted bytes never enter a QA build');
+  assert.equal(first.sourceCapture.revision, head);
+  assert.equal(await compiles(), 1);
+  const second = await native.build({ ...options, stackBaseDir: stacks[1], sourceRevision: { rev: head } });
+  assert.equal(second.entrypoint, first.entrypoint, 'an already built revision is adopted');
+  assert.equal(await compiles(), 1, 'adopting a built revision compiles nothing');
+  // This Stack declares its own uncommitted file: only it is layered on the revision.
+  const overlay = { overlay: ['apps/cli/src/index.ts'] };
+  const layered = await native.build({ ...options, stackBaseDir: stacks[0], sourceRevision: overlay });
+  assert.equal((await import(pathToFileURL(layered.entrypoint))).value, 'other-lane');
+  assert.equal(layered.sourceCapture.revision, head);
+  assert.match(layered.sourceCapture.overlayDigest, /^[a-f0-9]{64}$/);
+  assert.equal(await compiles(), 2);
+  assert.equal((await native.build({ ...options, stackBaseDir: stacks[1], sourceRevision: overlay })).entrypoint, layered.entrypoint);
+  assert.equal(await compiles(), 2, 'the same revision and overlay build once');
+  const latest = await native.build({ ...options, stackBaseDir: stacks[1] });
+  assert.equal(latest.entrypoint, first.entrypoint, 'an overlay build never becomes the latest built revision');
+  assert.equal(await compiles(), 2);
+  // The producer's own source-dev Stack stays on the live checkout (Systemic 08:48Z boundary).
+  const producerStack = join(dirname(stacks[0]), 'repo-producer');
+  await writeFile(entry, 'export const value = "live-edit";');
+  const live = await native.build({ ...options, stackBaseDir: producerStack });
+  assert.equal((await import(pathToFileURL(live.entrypoint))).value, 'live-edit');
+  assert.equal(live.sourceCapture.revision, undefined, 'a source-dev Stack never takes the revision path');
+  const selection = await readFile(join(producerStack, 'source-runtime/selected-daemon.json'), 'utf8');
+  const rolling = await native.build({ ...options, stackBaseDir: producerStack, sourceRevision: { rev: head } });
+  assert.equal(rolling.entrypoint, first.entrypoint, 'the rolling producer adopts the built revision for consumers');
+  assert.equal(await readFile(join(producerStack, 'source-runtime/selected-daemon.json'), 'utf8'), selection,
+    'a revision built for consumers is never selected into the source-dev Stack');
+});
+
+test('a plain reload adopts the latest built revision after HEAD moves; --rev=HEAD builds the new commit once', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
+  const gitIn = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  gitIn('init', '--quiet');
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules/\n');
+  gitIn('add', '-A');
+  gitIn('commit', '--quiet', '-m', 'one');
+  const first = gitIn('rev-parse', 'HEAD').toString().trim();
+  const compiles = async () => (await readFile(compilers, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).length;
+  await native.build({ repoDir, component: 'daemon', env, stackBaseDir: stacks[1], sourceRevision: { rev: first } });
+  await writeFile(entry, 'export const value = 2;');
+  gitIn('commit', '--quiet', '-am', 'two');
+  const second = gitIn('rev-parse', 'HEAD').toString().trim();
+  const reload = async args => {
+    let capture;
+    await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], onHost: true,
+      args: ['--no-ui', '--no-server', ...args], env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://127.0.0.1:45454' },
+      onPrepared({ sourceCaptures }) { capture = sourceCaptures.daemon; } });
+    return capture;
+  };
+  assert.equal((await reload([])).revision, first, 'the default is the latest built revision');
+  assert.equal(await compiles(), 1, 'a plain reload after HEAD moved compiles nothing');
+  assert.equal((await reload(['--rev=HEAD'])).revision, second);
+  assert.equal(await compiles(), 2);
+  assert.equal((await reload([])).revision, second, 'the new build is now the latest built revision');
+  assert.equal(await compiles(), 2);
+});

@@ -5,7 +5,8 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { startDevReloadCoordinator } from '../dev/devReloadCoordinator.mjs';
 import { resolveRemoteCommandPolicy, renderNativeCommandPolicy } from './remote_commands.mjs';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { prepareSourceRuntimeProducerOnTarget, createSourceRuntimeProducerReload } from './source_runtime_producer.mjs';
 
@@ -59,25 +60,33 @@ test('remote producer dispatch carries the controller authority and requested ho
 test('rolling production reaches commands-only hosts while an unavailable peer cannot suppress another host', async t => {
   const fixture = await createTempFixture(t, { prefix: 'source-producer-targets-' });
   await fs.writeFile(fixture.path('package.json'), JSON.stringify({ workspaces: [] }));
+  const gitIn = (...args) => execFileSync('git', ['-C', fixture.root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  gitIn('init', '--quiet');
+  gitIn('add', '-A');
+  gitIn('commit', '--quiet', '-m', 'rev');
   const services = { server: false, daemon: false, expo: false };
   const targets = ['windows', 'nl3', 'mac-disabled'].map(name => ({ name, platform: 'posix', ssh: name,
     repoDir: `/srv/${name}`, cliHomeDir: `/state/${name}` }));
-  const requests = [], failures = [];
+  const requests = [], failures = [], uploads = [];
   const producer = await createSourceRuntimeProducerReload({ repoDir: fixture.root, stackBaseDir: fixture.path('repo-source-fixture'),
     stackName: 'repo-source-fixture', servicePlans: targets.map(target => ({ target, services,
       commands: target.name !== 'mac-disabled' })),
     localComponents: [],
     remoteComponents: [{ component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite' }, { component: 'daemon' }],
     env: { PATH: process.env.PATH, HAPPIER_STACK_STORAGE_DIR: fixture.root, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-source-fixture' },
-    logger: { log() {}, error(message) { failures.push(message); } },
+    logger: { log() {}, error(message) { if (message.includes('unavailable')) failures.push(message); } },
   }, {
     runCaptureResult: ({ command, args }) => captureDevTargetSyncFixture(command, args),
     spawnProcess: input => {
       requests.push(input);
       return { completion: Promise.resolve({ code: input.args.includes('windows') ? 255 : 0, signal: null }) };
     },
-  });
+  }, { transferFile: async upload => { uploads.push(upload); } });
+  assert.deepEqual(producer.descriptors.map(descriptor => descriptor.paths[0]), [join(fixture.root, '.git/logs/HEAD')],
+    'the producer follows HEAD, not other lanes\' checkout edits');
   await producer.executor.build();
+  assert.equal(uploads.length, 2, 'each eligible host receives the controller\'s revision description');
+  assert.ok(requests.every(request => request.args.some(arg => arg.includes('"descriptorPath"'))));
   assert.equal(requests.length, 2, 'eligible command hosts each receive one request; disabled mac receives none');
   assert.ok(requests.some(request => request.args.includes('nl3')), 'commands-only nl3 is prepared without a runtime service');
   assert.ok(requests.every(request => !request.args.includes('mac-disabled')));

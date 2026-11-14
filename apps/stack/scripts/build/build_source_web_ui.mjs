@@ -31,6 +31,7 @@ import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
+import { resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 /** Default QA adopts a matching publication; only explicit export requests
  * admit producer work. Consumers keep the selected result through publication. */
@@ -38,18 +39,19 @@ export async function prepareSourceQaWebUi({ mode, ...options }) {
   if (mode === 'disabled' || mode === 'borrowed') return { mode, built: null };
   const built = await exportSourceWebUi({ ...options, reuseOnly: mode === 'auto' });
   if (built) return { mode: 'export', built };
-  console.error('[source-ui] borrowed Expo fallback: no completed shared export matches the source inputs, options and capture boundary');
+  console.error(`[source-ui] borrowed Expo fallback: no completed shared export matches ${options.revision ? `revision ${sourceRevisionKey(options.revision)} and these options` : 'the source inputs, options and capture boundary'}`);
   return { mode: 'borrowed', built: null };
 }
 
 /** Stack starts reuse completed account-free exports through source publication.
  * Explicit outputDir callers keep their private finite producer boundary. */
 export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBaseDir, pending,
-  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, loadSentinelPasses, reuseOnly = false }) {
+  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, loadSentinelPasses, reuseOnly = false,
+  sourceRevision, revision }) {
   if (stackBaseDir && !pending?.requestId) throw new Error('[source-ui] shared export requires its pending Stack start');
   if (stackBaseDir) {
     let built = await exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId: pending.requestId,
-      env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly });
+      env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly, sourceRevision, revision });
     if (!built) return null;
     if (replaceUiDir) built = await pending.publishPreparation(() =>
       replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal }));
@@ -138,6 +140,11 @@ function sourceWebCandidateKey({ repoDir, buildOptions }) {
   return `web-${createHash('sha256').update(JSON.stringify([repoDir, buildOptions])).digest('hex')}`;
 }
 
+/** The export of one revision (+overlay): every Stack on that revision adopts it. */
+function sourceWebRevisionCandidateKey({ repoDir, buildOptions, revisionKey }) {
+  return `web-rev-${createHash('sha256').update(JSON.stringify([repoDir, buildOptions, revisionKey])).digest('hex')}`;
+}
+
 async function prepareSourceWebComponent({ repoDir, env, signal, prepare, preparation, stackBaseDir }) {
   return await prepareSourceComponent({ repoDir, target: 'expo', env, signal, preparation, stackBaseDir, prepare: () => withSingleTrailingBuildPass({ run: async () => {
     try {
@@ -168,15 +175,18 @@ async function webOutputDigests(directory, prefix = '') {
   return Object.fromEntries(Object.entries(digests).sort(([left], [right]) => left.localeCompare(right)));
 }
 
-async function readReusableSourceWebUi({ repoDir, outputDir, record, buildOptions, env, inputIdentity, requireCurrentSource, sourceCapturedAfter }) {
+async function readReusableSourceWebUi({ repoDir, outputDir, record, buildOptions, env, inputIdentity, requireCurrentSource, sourceCapturedAfter, revision }) {
   const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
   if (record.component !== 'web' || record.buildOptions !== buildOptions
     || (inputIdentity && record.inputIdentity !== inputIdentity)
     || record.uiDir !== join(outputDir, 'web') || !record.outputDigests) return null;
   if (sourceCapturedAfter !== undefined && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)) return null;
+  // A revision export matches by revision, never by the moving checkout.
+  if (revision && (record.sourceCapture?.revision !== revision.revision
+    || (record.sourceCapture.overlayDigest ?? null) !== (revision.overlayDigest ?? null))) return null;
   // Only the repository producer's refresh compares authored inputs. QA
   // consumers adopt completed captures while the shared checkout keeps moving.
-  if (requireCurrentSource && !inputIdentity && record.inputIdentity !== await sourceWebInputIdentity({ repoDir })) return null;
+  if (!revision && requireCurrentSource && !inputIdentity && record.inputIdentity !== await sourceWebInputIdentity({ repoDir })) return null;
   if (!buildInputDependencyIdentityMatches(record.dependencyPublication, dependencyPublication)) return null;
   try {
     await assertWebArtifactPayload({ payloadDir: record.uiDir, entrypoint: 'index.html' });
@@ -194,24 +204,25 @@ async function pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal }) {
 }
 
 async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, inputIdentity, buildOptions, env, signal,
-  sourceCapturedAfter, requireCurrentSource = false, requireLastGreen = false, loadSentinelPasses }) {
+  sourceCapturedAfter, requireCurrentSource = false, requireLastGreen = false, loadSentinelPasses, revision }) {
   const adopt = publishedCandidate => adoptReusableSourceBundle({ bundleRoot, component: 'web', env, signal, publishedCandidate,
-    candidateKey: inputIdentity ? sourceWebBuildFingerprint({ inputIdentity, buildOptions }) : sourceWebCandidateKey({ repoDir, buildOptions }),
+    candidateKey: revision ? sourceWebRevisionCandidateKey({ repoDir, buildOptions, revisionKey: sourceRevisionKey(revision) })
+      : inputIdentity ? sourceWebBuildFingerprint({ inputIdentity, buildOptions }) : sourceWebCandidateKey({ repoDir, buildOptions }),
     verify: async ({ record, outputDir }) => {
       const reusable = await readReusableSourceWebUi({ repoDir, record, outputDir, buildOptions, env,
-        inputIdentity, requireCurrentSource, sourceCapturedAfter });
+        inputIdentity, requireCurrentSource, sourceCapturedAfter, revision });
       if (!reusable) return null;
       await assertBuildInputDependencies({ sourceDir: repoDir, env, state: reusable.built.dependencyPublication });
       return reusable;
     },
     publish: async ({ built, outputDir, record }) => {
-      if (inputIdentity) await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+      if (inputIdentity && !revision) await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
         candidateKey: sourceWebCandidateKey({ repoDir, buildOptions }) });
       if (requestId) await pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal });
       return built;
     },
   });
-  if (!requireLastGreen) return await adopt();
+  if (!requireLastGreen || revision) return await adopt();
   const key = sourceWebCandidateKey({ repoDir, buildOptions });
   const groups = await readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses });
   for (const group of groups) {
@@ -223,7 +234,8 @@ async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, req
   return null;
 }
 
-async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly }) {
+async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly,
+  sourceRevision, revision }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
@@ -233,8 +245,8 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   const requireCurrentSource = reuseOnly || context.consumerStackName === context.producerStackName;
   const adopt = async () => {
     const built = await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
-      env: context.env, signal, sourceCapturedAfter, requireCurrentSource, requireLastGreen, loadSentinelPasses });
-    if (built) console.error(`[source-ui] adopted producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
+      env: context.env, signal, sourceCapturedAfter, requireCurrentSource, requireLastGreen, loadSentinelPasses, revision });
+    if (built) console.error(`[source-ui] adopted producer=${context.producerStackName} rev=${built.sourceCapture?.revision ?? 'checkout'} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return built;
   };
   await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
@@ -242,10 +254,10 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   if (cached) return cached;
   if (reuseOnly) return null;
   try {
-    if (requireLastGreen) throw sourceRuntimeCaptureUnavailable();
+    if (requireLastGreen && !revision) throw sourceRuntimeCaptureUnavailable();
     const inputs = { repoDir, baseDir: join(context.producerStackBaseDir, 'source-runtime'),
       stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, requestId,
-      buildOptions, sourceCapturedAfter, requireCurrentSource };
+      buildOptions, sourceCapturedAfter, requireCurrentSource, sourceRevision, revision };
     const result = await runWorkspaceBuildAdmission({ repoDir,
       launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)),
       command: process.execPath, args: [fileURLToPath(import.meta.url), JSON.stringify({ ...inputs, shared: true })],
@@ -275,24 +287,38 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
 }
 
 async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consumerStackBaseDir = stackBaseDir, requestId,
-  buildOptions, sourceCapturedAfter, requireCurrentSource, env, signal }) {
+  buildOptions, sourceCapturedAfter, requireCurrentSource, sourceRevision, revision, env, signal }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   const inputs = { repoDir, bundleRoot, stackBaseDir: consumerStackBaseDir, requestId,
-    buildOptions, sourceCapturedAfter, requireCurrentSource, env, signal };
+    buildOptions, sourceCapturedAfter, requireCurrentSource, revision, env, signal };
   const current = await adoptReusableSourceWebUi(inputs);
   if (current) return current;
-  const inputIdentity = await sourceWebInputIdentity({ repoDir });
-  const cached = await adoptReusableSourceWebUi({ ...inputs, inputIdentity });
-  if (cached) return cached;
-  const fingerprint = sourceWebBuildFingerprint({ inputIdentity, buildOptions });
+  // A revision export is keyed by its revision; a checkout export by its moving inputs.
+  const inputIdentity = revision ? null : await sourceWebInputIdentity({ repoDir });
+  if (!revision) {
+    const cached = await adoptReusableSourceWebUi({ ...inputs, inputIdentity });
+    if (cached) return cached;
+  }
+  const fingerprint = revision
+    ? createHash('sha256').update(sourceRevisionKey(revision)).update(buildOptions).digest('hex')
+    : sourceWebBuildFingerprint({ inputIdentity, buildOptions });
   return await withWorkspaceBundleLock(async () => {
     await mkdir(bundleRoot, { recursive: true });
     // Already-loaded runtime retainers enumerate bundle-* without knowing web
     // serving references. Keep web allocations out of that runtime namespace;
     // the shared publication owner still governs both products' custody.
     const outputDir = await mkdtemp(join(bundleRoot, `web-${fingerprint}-`));
+    let descriptorDir;
     try {
-      const { built, captured } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal });
+      const descriptorPath = !revision ? undefined : sourceRevision?.descriptorPath ?? await writeSourceRevisionDescriptor({ repoDir,
+        identity: await resolveSourceRevisionIdentity({ repoDir, rev: sourceRevision?.rev ?? revision.revision, overlay: sourceRevision?.overlay ?? [] }),
+        outputDir: descriptorDir = await mkdtemp(join(await mkdir(baseDir, { recursive: true }).then(() => baseDir), 'revision-')), components: ['expo'] });
+      const { built, captured } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal,
+        revision: descriptorPath && { descriptorPath } });
+      if (revision && (captured.revision?.revision !== revision.revision
+        || (captured.revision.overlayDigest ?? null) !== (revision.overlayDigest ?? null))) {
+        throw new Error(`[source-ui] export capture revision ${captured.revision?.key} differs from the Stack's ${sourceRevisionKey(revision)}`);
+      }
       if (sourceCapturedAfter !== undefined && !(Date.parse(captured.capturedAt) >= sourceCapturedAfter)) {
         throw sourceRuntimeCaptureUnavailable({
           message: 'producer capture predates the requested sourceCapturedAfter boundary',
@@ -309,7 +335,9 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
         const producerCandidateKey = sourceWebCandidateKey({ repoDir, buildOptions });
         await publishSourceBundleCandidate({ bundleRoot, outputDir, record, producerCompletedAt, producerCandidateKey,
           candidateKey: sourceWebBuildFingerprint({ inputIdentity: captured.inputIdentity, buildOptions }) });
-        await publishSourceBundleCandidate({ bundleRoot, outputDir, record, producerCompletedAt, producerCandidateKey,
+        if (revision) await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+          candidateKey: sourceWebRevisionCandidateKey({ repoDir, buildOptions, revisionKey: sourceRevisionKey(revision) }) });
+        if (!revision?.overlayDigest) await publishSourceBundleCandidate({ bundleRoot, outputDir, record, producerCompletedAt, producerCandidateKey,
           candidateKey: producerCandidateKey });
         if (requestId) await pinSourceWebUi({ stackBaseDir: consumerStackBaseDir, requestId, outputDir, signal });
         return built;
@@ -320,7 +348,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
         removeOwnedDirectorySync(outputDir);
       }
       throw error;
-    }
+    } finally { if (descriptorDir) removeOwnedDirectorySync(descriptorDir); }
   }, { lockPath: sourceBundleBuildLockPath(bundleRoot, fingerprint), timeoutMs: Infinity,
     staleAfterMs: Infinity, env, signal, errorLabel: 'source-web build lock' });
 }
@@ -339,23 +367,24 @@ async function exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal,
   return built;
 }
 
-async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl }) {
+async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl, revision }) {
   return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, (env, publication) =>
-    withSourceWebUiInputs({ repoDir, baseDir, env, signal }, async ({ captured, inventoryPath, uiProjectDir }) => {
+    withSourceWebUiInputs({ repoDir, baseDir, env, signal, revision }, async ({ captured, inventoryPath, uiProjectDir }) => {
     const built = await exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir,
       inventoryPath, uiProjectDir, env, signal, runImpl }).catch(error => {
         removeOwnedDirectorySync(resolve(outputDir, 'web'));
         throw error;
       });
     return { built: { ...built, dependencyPublication: publication.state,
-      sourceCapture: { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt } }, captured };
+      sourceCapture: { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt,
+        ...(captured.revision ? { revision: captured.revision.revision, overlayDigest: captured.revision.overlayDigest } : {}) } }, captured };
   }));
 }
 
 /** Consume a fresh capture at one context-owned Metro root. Dependency custody
  * belongs to the containing finite producer; capture custody lasts until the
  * consumer has finished reading, while validated compiler candidates remain. */
-export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.env, signal,
+export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.env, signal, revision,
   stdoutStream = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url) ? process.stderr : process.stdout }, consume) {
   // Router embeds the captured project root in transforms. Keep that root and
   // the existing compiler's retained inventory stable for this export context,
@@ -367,7 +396,7 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
     removeOwnedDirectorySync(workspace);
     let captured;
     try {
-      captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal });
+      captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal, revision });
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
         outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });
       return await consume({ captured, inventoryPath: join(contextDir, 'inputs/inventory.js'), uiProjectDir: captured.uiProjectDir });
