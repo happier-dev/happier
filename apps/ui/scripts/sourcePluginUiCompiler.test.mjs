@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import '../../../packages/cli-common/registerSourceRuntime.mjs';
 import assert from 'node:assert/strict';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -112,6 +112,52 @@ test('a relocated copy of a prepared checkout reuses unchanged Plugin UI bundles
   runInNewContext(await readFile(join(relocated, 'packages/plugins/beta/dist/happier-plugin-ui', artifact.entries[0].entry), 'utf8'),
     { module, exports: module.exports });
   assert.equal(module.exports.activateAccount(), 'beta-edited');
+});
+
+test('an unchanged source Plugin UI rerun reuses every bundle and rewrites no published file', async t => {
+  // Package dists and the source staging are build inputs for package
+  // admission, Metro and reload captures: a reused graph must keep its bytes,
+  // inodes and mtimes.
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-unchanged-rerun-' });
+  const repoRoot = fixture.path('repo');
+  const root = join(repoRoot, 'packages/plugins/alpha');
+  const write = async (path, bytes) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, bytes);
+  };
+  await write(join(repoRoot, 'apps/ui/package.json'), '{}');
+  await write(join(root, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-alpha', version: '0.0.0', exports: {
+      './happier-plugin-ui/account-runtime': { 'happier-source': './src/account.ts' },
+    },
+  }));
+  await write(join(root, 'src/account.ts'), 'export function activateAccount() { return "alpha-ready"; }');
+  await write(join(root, '.happier-plugin/plugin.json'), JSON.stringify({
+    schemaVersion: 2, id: 'happier.alpha', version: '0.0.0', displayName: 'alpha',
+    runtime: { apiVersion: 1 }, contributes: { actions: [{
+      id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+      inputSchema: { type: 'object' }, outputSchema: { type: 'object' },
+      execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+    }] },
+  }));
+  const census = async () => {
+    const out = new Map();
+    for (const dir of [join(root, 'dist/happier-plugin-ui'), join(repoRoot, '.project/tmp/source-cli-plugin-ui')]) {
+      for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const path = join(entry.parentPath, entry.name);
+        const info = await stat(path, { bigint: true });
+        out.set(path.slice(repoRoot.length + 1), `${info.ino}:${info.mtimeNs}`);
+      }
+    }
+    return out;
+  };
+  const { prepareSourceCliPluginUiArtifacts } = await import('../../cli/scripts/prepareSourcePluginUiArtifacts.mjs');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: ['plugins-alpha'] });
+  const before = await census();
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: ['plugins-alpha'] });
+  const after = await census();
+  assert.deepEqual([...after.keys()].filter(path => after.get(path) !== before.get(path)), []);
 });
 
 test('source publication into a package dist keeps the compiler\'s exact artifact manifest bytes', async t => {

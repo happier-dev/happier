@@ -281,9 +281,11 @@ function assertArtifactPath(artifactsRoot, relativePath, packageName) {
 async function materializeArtifactGraph(destination, files, reuseContent) {
   const outputs = files.map(file => ({ ...file, path: assertArtifactPath(destination, file.relativePath, destination) }));
   for (const file of outputs) {
+    // A reused graph republishes nothing: identical bytes keep their inode and
+    // mtime for package admission, Metro and reload captures.
+    const existing = await readFile(file.path).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+    if (existing?.equals(file.bytes)) continue;
     if (reuseContent) {
-      const existing = await readFile(file.path).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
-      if (existing?.equals(file.bytes)) continue;
       let missingRoot;
       for (let directory = dirname(file.path);; directory = dirname(directory)) {
         const info = await lstat(directory).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
