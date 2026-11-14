@@ -38,6 +38,10 @@ const PRESENTATIONS = Object.freeze({
         titleKey: 'session.pendingMessages.admissionRejected.modelNotGranted',
         descriptionKey: 'settingsProviders.errors.actions.chooseModel',
     },
+    model_selection_required: {
+        titleKey: 'newSession.selectModelTitle',
+        descriptionKey: 'newSession.selectModelDescription',
+    },
     permission_mode_not_granted: {
         titleKey: 'session.pendingMessages.admissionRejected.permissionModeNotGranted',
         descriptionKey: 'settingsProviders.errors.actions.reviewAccountGrant',

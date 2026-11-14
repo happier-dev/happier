@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createCompactSessionListRowFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -137,11 +139,13 @@ const sessionState = vi.hoisted(() => ({
 const featureEnabledState = vi.hoisted(() => ({
     reviewComments: false,
 }));
-// The in-session Agent picker's armed intent, injected as a PRECONDITION. The
-// picker's own arming logic has its own owner test; what these tests exercise is
-// what `SessionView` does with an arm that already exists — specifically whether
-// the send destination is resolved before anything starts an Agent.
+// Observe the real picker without replacing eligibility or draft custody.
+// Lifecycle cases can seed an arm; the compact journey drives the controls.
 const observedAgentPicker = vi.hoisted(() => ({ current: null as ReturnType<typeof import('@/components/sessions/agentPicker/useInSessionAgentPickerControls').useInSessionAgentPickerControls> | null }));
+const compactContinuationSurface = vi.hoisted(() => ({ realInput: false,
+    component: null as typeof import('@/components/sessions/agentInput').AgentInput | null }));
+const COMPACT_CONTINUATION_CASE = 'compact web Continue with shows the Claude typed refusal and an explicit Pi model produces a reply';
+let restoreCompactWebBoundary: (() => void) | undefined;
 const clearArmedContinuationSpy = vi.hoisted(() => vi.fn());
 const clearPersistedArmedContinuationSubmissionSpy = vi.hoisted(() => vi.fn());
 const recordArmedContinuationSubmissionSpy = vi.hoisted(() => vi.fn());
@@ -172,6 +176,7 @@ const settingsSnapshot = vi.hoisted(() => ({ experiments: true, featureToggles: 
 let armedLocalId = '';
 const attachmentAgentInventory = createReadyMachineAgentInventoryFixture([
     { agentId: 'codex', title: 'Codex' }, { agentId: 'claude', title: 'Claude Code' },
+    { agentId: 'pi', title: 'Pi' }, { agentId: 'muse', title: 'Muse' },
 ]);
 
 const pendingFireAndForget: Promise<unknown>[] = [];
@@ -523,7 +528,12 @@ vi.mock('@/components/sessions/agentPicker/useInSessionAgentPickerControls', asy
 });
 
 vi.mock('@/components/sessions/agentInput', () => ({
-    AgentInput: (props: any) => React.createElement('AgentInput', props),
+    AgentInput: (props: React.ComponentProps<typeof import('@/components/sessions/agentInput').AgentInput>) => {
+        if (!compactContinuationSurface.realInput) return React.createElement('AgentInput', props);
+        const Component = compactContinuationSurface.component;
+        if (!Component) throw new Error('The compact AgentInput boundary has not loaded');
+        return React.createElement(Component, props);
+    },
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
@@ -556,9 +566,9 @@ vi.mock('react-native', async () => {
                 get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
             },
             Platform: {
-                OS: 'ios',
+                get OS() { return compactContinuationSurface.realInput ? 'web' : 'ios'; },
                 select: (spec: Record<string, unknown>) =>
-                    spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+                    spec?.[compactContinuationSurface.realInput ? 'web' : 'ios'] ?? spec?.default,
             },
         });
     });
@@ -676,9 +686,14 @@ async function renderScreen(element: Parameters<typeof renderTestkitScreen>[0]) 
         serverId: sessionState.session.serverId });
     const screen = await renderTestkitScreen(element, { wrapper: SessionAccountBoundary });
     // Native lifecycle probing and authenticated feature discovery are real
-    // asynchronous owners. Await their public composer admission signal.
-    await vi.waitFor(() => expect(findTestInstanceByTypeWithProps(screen.tree, 'AgentInput', {})?.props.onAttachmentsAdded)
-        .toBeTypeOf('function'));
+    // asynchronous owners. The compact flow needs the visible composer; its
+    // Agent need not support the attachment intake used by the other cases.
+    if (compactContinuationSurface.realInput) {
+        await vi.waitFor(() => expect(screen.findByTestId('session-composer-input')).not.toBeNull());
+    } else {
+        await vi.waitFor(() => expect(findTestInstanceByTypeWithProps(screen.tree, 'AgentInput', {})?.props.onAttachmentsAdded)
+            .toBeTypeOf('function'));
+    }
     const persistedArm = readSessionDraftValue(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.agentContinuation');
     if (persistedArm && persistedArm.intent.sourceAgentId === readSessionOwnerMetadataView(sessionState.session)?.flavor) {
         await vi.waitFor(() => expect(observedAgentPicker.current?.armedContinuationLocalId).toEqual(expect.any(String)));
@@ -753,7 +768,16 @@ function SessionAccountBoundary({ children }: React.PropsWithChildren) {
 }
 
 describe('SessionView (attachments.uploads resumable send)', () => {
-    beforeEach(() => {
+    beforeEach(async ({ task }) => {
+        compactContinuationSurface.realInput = task.name === COMPACT_CONTINUATION_CASE;
+        if (compactContinuationSurface.realInput) {
+            const restoreGlobals = withPopoverWebGlobals();
+            const browserStorage = installLocalStorageMock();
+            restoreCompactWebBoundary = () => { browserStorage.restore(); restoreGlobals(); };
+            // Import after the shell boundary is installed, only for the real
+            // controls journey; importing inside its own mock creates a cycle.
+            compactContinuationSurface.component ??= (await vi.importActual<typeof import('@/components/sessions/agentInput')>('@/components/sessions/agentInput')).AgentInput;
+        }
         // Previous cases can migrate the metadata tuple or publish a running
         // target. Start each independent contract from its own current Session,
         // not a mixture of that prior owner view and new legacy metadata.
@@ -1021,8 +1045,13 @@ describe('SessionView (attachments.uploads resumable send)', () => {
     });
 
     afterEach(async () => {
-        await accountConnection?.dispose();
-        accountConnection = undefined;
+        try {
+            await accountConnection?.dispose();
+        } finally {
+            accountConnection = undefined;
+            restoreCompactWebBoundary?.();
+            restoreCompactWebBoundary = undefined;
+        }
     });
 
     it('keeps attachment custody visible and refuses send during a transfer outage, then recovers', async () => {
@@ -4275,6 +4304,142 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await vi.waitFor(() => expect(observedAgentPicker.current?.armedContinuationLocalId).toEqual(expect.any(String)));
             armedLocalId = observedAgentPicker.current!.armedContinuationLocalId!;
         };
+
+        it(COMPACT_CONTINUATION_CASE, async () => {
+            const { Dimensions, Platform } = await import('react-native');
+            expect(Platform.OS).toBe('web');
+            expect(Dimensions.get('window')).toMatchObject({ width: 390, height: 844 });
+            const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            const purposeSnapshot = getConnectedAccountCatalogValue(TEST_SERVER_ACCOUNT_SCOPE, 'purposes');
+            expect(purposeSnapshot, JSON.stringify(purposeSnapshot)).toMatchObject({ status: 'ready', stale: false });
+            const errorDetail = { kind: 'launch_error' as const, code: 'agent_signed_out', message: 'Sign in',
+                failureCause: { requestId: 'compact-refusal', phase: 'authentication' as const, failureReason: 'authentication_required' as const } };
+            const reply = 'Pi continued this Session';
+            for (const target of ['claude', 'pi'] as const) {
+                clearSessionDraftValuesForSession(TEST_SERVER_ACCOUNT_SCOPE, 's1');
+                sessionState.session = createSessionFixture({ ...sessionState.session, active: true,
+                    metadata: { ...sessionState.session.metadata, flavor: 'muse' } });
+                serverTurnMessages = [];
+                runSessionAgentTransitionSpy.mockImplementationOnce(async ({ request }) => {
+                    if (target === 'claude') {
+                        // The owner admits input before starting the target. A
+                        // target_start_failed result therefore retains it in
+                        // the server queue while displaying the typed refusal.
+                        serverPendingRows.set(request.input.localId, pendingWireRow({
+                            id: `pending-${request.input.localId}`, localId: request.input.localId,
+                            createdAt: 1, updatedAt: 1, source: 'server_pending', messageRole: 'user',
+                            pendingDeliveryStatus: 'server_queued', pendingRequestedAction: { v: 1, kind: 'enqueue' },
+                            pendingOutboxScope: TEST_SERVER_ACCOUNT_SCOPE, text: request.input.text,
+                            rawRecord: RawRecordSchema.parse({ role: 'user', content: { type: 'text', text: request.input.text }, meta: request.input.meta }),
+                        }));
+                        serverPendingVersion += 1;
+                        return { type: 'partially_applied', localId: request.input.localId,
+                            applied: 'current_view_committed', code: 'target_start_failed', errorDetail };
+                    }
+                    serverTurnMessages = [
+                        SessionMessageV1Schema.parse({ id: 'pi-user', seq: 1, localId: request.input.localId,
+                            createdAt: 1, updatedAt: 1, content: { t: 'plain', v: { role: 'user',
+                                content: { type: 'text', text: request.input.text }, meta: request.input.meta } } }),
+                        SessionMessageV1Schema.parse({ id: 'pi-reply', seq: 2, localId: null, createdAt: 2, updatedAt: 2,
+                            content: { t: 'plain', v: { role: 'agent', content: { type: 'output', data: {
+                                type: 'assistant', uuid: 'pi-turn', message: { role: 'assistant', content: [{ type: 'text', text: reply }] },
+                            } } } } }),
+                    ];
+                    sessionState.session = createSessionFixture({ ...sessionState.session, seq: 2,
+                        metadata: { ...sessionState.session.metadata, flavor: request.selection.agentId } });
+                    return { type: 'accepted', localId: request.input.localId };
+                });
+                const screen = await renderScreen(<AppPaneProvider><SessionView id="s1" /></AppPaneProvider>);
+                try {
+                    await screen.pressByTestIdAsync('agent-input-agent-chip');
+                    const optionId = `agent-input-chip-picker.top-selector-option:agent:happier.agent.${target}/${target}`;
+                    await vi.waitFor(() => expect(screen.findByTestId(optionId)?.props.disabled, target).toBe(false));
+                    await screen.pressByTestIdAsync(optionId);
+                    await vi.waitFor(() => expect(observedAgentPicker.current?.armedContinuation?.selection.agentId).toBe(target));
+                    if (target === 'pi') {
+                        // A prior successful native catalog is a supported picker
+                        // precondition. Keep model parsing, selection and exact-choice
+                        // inspection real while the daemon transport remains external.
+                        const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
+                        const { resolveNewSessionModelCapabilityProbeContext, resolveNewSessionOperationalBackendTarget } = await import('@/components/sessions/new/modules/newSessionCapabilityProbeContext');
+                        const { resolveBackendTargetKeyV2 } = await import('@/agents/backendCatalog/backendTargetKeyV2');
+                        const { buildDynamicModelProbeCacheKey } = await import('@/sync/domains/models/dynamicModelProbeCacheKey');
+                        const { writeDynamicModelProbeCacheSuccess } = await import('@/sync/domains/models/dynamicModelProbeCache');
+                        await vi.waitFor(() => expect(screen.findAllByType(NewSessionEngineOptionDetail)).toHaveLength(1));
+                        const detail = screen.findAllByType(NewSessionEngineOptionDetail)[0]!.props;
+                        const modelId = 'meta/muse-spark-1.2-contributor';
+                        await act(async () => {
+                            for (const selectedModelId of ['default', modelId]) {
+                                const context = resolveNewSessionModelCapabilityProbeContext({
+                                    backendTarget: detail.backendTarget, runtimeCarrierAgentId: detail.runtimeCarrierAgentId,
+                                    modelId: selectedModelId, settings: originalStorageModule.storage.getState().settings,
+                                    machineId: 'm1', accountScope: TEST_SERVER_ACCOUNT_SCOPE, connectedServices: null,
+                                });
+                                const key = buildDynamicModelProbeCacheKey({ machineId: 'm1', serverId: 'srv_session_view',
+                                    targetKey: resolveBackendTargetKeyV2(resolveNewSessionOperationalBackendTarget(detail)),
+                                    providerConnectionId: null, cwd: detail.cwd,
+                                    extraKeySuffixParts: context?.cacheKeySuffixParts });
+                                if (!key) throw new Error('Expected Pi native catalog address');
+                                writeDynamicModelProbeCacheSuccess(key, { supportsFreeform: true, source: 'dynamic',
+                                    availableModels: [{ id: modelId, name: 'Muse Spark', capabilities: { structuredOutput: 'unknown' } }] });
+                            }
+                        });
+                        const modelOptionId = `model-picker-overlay-option:${JSON.stringify([`agent:happier.agent.pi/pi`, null, modelId])}`;
+                        await vi.waitFor(() => expect(screen.findByTestId(modelOptionId)).not.toBeNull());
+                        await screen.pressByTestIdAsync(modelOptionId);
+                        await vi.waitFor(() => expect(observedAgentPicker.current?.armedContinuation?.selection)
+                            .toMatchObject({ agentId: 'pi', modelId }));
+                        if (!screen.findByTestId('agent-input-chip-picker.top-selector')) {
+                            await screen.pressByTestIdAsync('agent-input-agent-chip');
+                        }
+                        const { AgentInputChipPickerTopSelector } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerTopSelector');
+                        await vi.waitFor(() => expect(screen.findAllByType(AgentInputChipPickerTopSelector)
+                            .map(selector => selector.props.selectedOptionId)).toContain('agent:happier.agent.pi/pi'));
+                    }
+                    await act(async () => { screen.changeTextByTestId('session-composer-input', `Continue through ${target}`); });
+                    expect(readSessionShellDraftTextForTest('s1')).toBe(`Continue through ${target}`);
+                    pendingFireAndForget.length = 0;
+                    await screen.pressByTestIdAsync('session-composer-send');
+                    await act(async () => { await Promise.all([...pendingFireAndForget]); });
+                    expect(runSessionAgentTransitionSpy).toHaveBeenCalledTimes(target === 'claude' ? 1 : 2);
+                    expect(runSessionAgentTransitionSpy.mock.calls.at(-1)?.[0].request.selection.agentId).toBe(target);
+                    expect(runSessionAgentTransitionSpy.mock.calls.at(-1)?.[0].request.input.text).toBe(`Continue through ${target}`);
+                    const { t } = await import('@/text');
+                    expect(screen.getTextContent()).not.toContain(t('session.agentContinuation.transition.unknown'));
+                    if (target === 'claude') {
+                        const { resolveSessionSpawnNewResultFailureMessage } = await import('@/sync/ops/actions/sessionSpawnFailurePresentation');
+                        expect(screen.getTextContent()).toContain(resolveSessionSpawnNewResultFailureMessage({ type: 'error',
+                            code: 'spawn_failed', retryable: false, launchError: errorDetail }));
+                        expect(screen.getTextContent()).toContain('agent_signed_out');
+                        expect(readSessionShellDraftTextForTest('s1') ?? '').toBe('');
+                        expect(serverPendingRows.size).toBe(1);
+                        expect([...serverPendingRows.values()][0]).toMatchObject({
+                            localId: runSessionAgentTransitionSpy.mock.calls.at(-1)?.[0].request.input.localId,
+                            content: { t: 'plain', v: { content: { type: 'text', text: 'Continue through claude' } } },
+                        });
+                        expect(serverTurnMessages).toEqual([]);
+                    } else {
+                        expect(runSessionAgentTransitionSpy.mock.calls.at(-1)?.[0].request.selection.modelId)
+                            .toBe('meta/muse-spark-1.2-contributor');
+                        await act(async () => {
+                            await realSyncRuntime.ensureSessionVisibleForMessageRoute('s1', { serverId: TEST_SERVER_ACCOUNT_SCOPE.serverId, forceRefresh: true });
+                            await realSyncRuntime.refreshSessionMessages('s1');
+                        });
+                        const messages = originalStorageModule.storage.getState().sessionMessages.s1;
+                        expect(Object.values(messages?.messagesById ?? {})).toEqual(expect.arrayContaining([
+                            expect.objectContaining({ kind: 'user-text', text: 'Continue through pi' }),
+                            expect.objectContaining({ kind: 'agent-text', text: reply }),
+                        ]));
+                        expect(readSessionOwnerMetadataView(originalStorageModule.storage.getState().sessions.s1)?.flavor).toBe('pi');
+                        expect(readSessionShellDraftTextForTest('s1') ?? '').toBe('');
+                    }
+                    expect(sendMessageSpy).not.toHaveBeenCalled();
+                } finally {
+                    await screen.unmount();
+                    pendingFireAndForget.length = 0;
+                }
+            }
+        });
 
         it('shows the typed launch refusal after Continue with through the admitted Action', async () => {
             const errorDetail = { kind: 'launch_error' as const, code: 'agent_signed_out', message: 'Sign in',

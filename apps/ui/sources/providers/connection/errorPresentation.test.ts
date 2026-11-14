@@ -67,6 +67,13 @@ describe('provider error presentation', () => {
         expect(presentProviderError('provider_credential_transport_unavailable').titleKey)
             .toBe('settingsProviders.errors.credentialUnsupportedTitle');
     });
+    it('asks for a model when the launch owner requires an explicit choice', () => {
+        expect(presentProviderError(createProviderErrorV1('model_selection_required'))).toMatchObject({
+            titleKey: 'newSession.selectModelTitle', descriptionKey: 'newSession.selectModelDescription',
+            action: 'choose_model', severity: 'warning',
+        });
+    });
+
     it.each([
         ['model_not_granted', 'session.pendingMessages.admissionRejected.modelNotGranted', 'settingsProviders.errors.actions.chooseModel', 'choose_model'],
         ['permission_mode_not_granted', 'session.pendingMessages.admissionRejected.permissionModeNotGranted', 'settingsProviders.errors.actions.reviewAccountGrant', 'review_account_grant'],
