@@ -1,3 +1,5 @@
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -280,6 +282,7 @@ function reviewStartFanout(
                 ok: false,
                 errorCode: 'review_engine_unavailable',
                 error: 'review_engine_unavailable',
+                details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
             })),
     };
 }
@@ -1145,6 +1148,20 @@ describe('the registered formal Review transition', () => {
      * refusal: runs may already exist, so the caller must reach its
      * non-repeatable outcome-unknown path rather than be offered a retry.
      */
+    it.each([false, true])('retains canonical unknown-start causes without offering a fresh start (partial=%s)', async partial => {
+        const results = await fanoutStarts({ keys: ['engine-a', 'engine-b'], startOne: async key => {
+            if (partial && key === 'engine-a') return { runId: 'run-a', callId: 'call-a', sidechainId: 'sidechain-a' };
+            return { ok: false, errorCode: 'provider_unreachable', error: 'provider_unreachable',
+                details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } } };
+        } });
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler(formalReviewInput(), createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            reviewStartResult: { intent: 'review', sessionId: 'session-a', results }, events: [],
+        }))).rejects.toMatchObject({ code: 'action_outcome_unknown', details: { results },
+            diagnostics: expect.arrayContaining([{ code: 'provider_unreachable', severity: 'error' }]) });
+    });
+
     it('never converts an unreadable fan-out answer into a retryable refusal', async () => {
         const events: string[] = [];
         const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
@@ -109,7 +110,12 @@ catalog = createReviewCatalog(), notifications: string[] = []): Promise<Readonly
   const focusedLabels: string[] = [];
   const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
     try { return { ok: true, result: await executeAction(typeof action === 'string' ? action : action.localId, input) as import('@happier-dev/plugin-sdk').JsonValue }; }
-    catch { return { ok: false, errorCode: 'timeout', error: 'outcome unknown' }; }
+    catch (error) {
+      return isPluginError(error)
+        ? { ok: false, errorCode: error.code, error: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }) }
+        : { ok: false, errorCode: 'timeout', error: 'outcome unknown' };
+    }
   });
   const surface = defineUiSurface(function ReviewChooserProbe(): React.ReactElement {
     const invokingAction = usePluginUiFocusTarget();
@@ -436,27 +442,48 @@ describe('the mounted selected-PR review chooser', () => {
     expect(calls.at(-1)).toBe('session.open');
   });
 
-  it('never repeats an ambiguously settled review write and offers only the safe Session open', async () => {
+  it.each([false, true])('never repeats a canonical unknown review start and offers only Session open (partial=%s)', async partial => {
     const calls: string[] = [];
-    const { fixture, focusedLabels, controls } = await mountChooser(async (action) => {
+    const { fixture, focusedLabels, controls } = await mountChooser(async (action, input) => {
       calls.push(action);
       if (action === 'review.engines.list') {
         return {
           sessionId: 'session-review',
-          items: [{ engineId: 'codex', label: 'Codex', enabled: true, capabilities: { structuredNarration: true } }],
+          items: ['codex', ...(partial ? ['claude'] : [])].map(engineId => ({ engineId, label: engineId === 'codex' ? 'Codex' : 'Claude', enabled: true, capabilities: { structuredNarration: true } })),
         };
       }
       if (action === TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1) {
-        throw new Error('outcome unknown');
+        const handler = createTriageStartPullRequestReviewActionHandler();
+        const context = {
+          services: {
+            targetedContributions: { observeForSelf: () => ({
+              readCurrent: async () => ({ contributions: [{
+                contributor: { pluginId: PENDING.review.entryRef.source.pluginId, contributionId: PENDING.review.entryRef.source.localId, immutableGenerationId: 'generation-1' },
+                protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 },
+                descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge', kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
+                operations: { listInstances: {}, scan: {}, get: {}, verifyReviewWorkspace: {} }, surfaces: { detail: {} },
+              }] }), dispose() {},
+            }) },
+            actions: {
+              executeAdmittedTargetedOperation: async () => ({ kind: 'verified', pullRequest: { number: 17 } }),
+              execute: async () => ({ results: await fanoutStarts({ keys: partial ? ['codex', 'claude'] : ['codex'], startOne: async key =>
+                partial && key === 'codex' ? { runId: 'run-a', callId: 'call-a', sidechainId: 'sidechain-a' } : { runId: 'possibly-created' } }) }),
+            },
+          },
+        } as unknown as PluginInvocationContext;
+        return await handler(TriageStartPullRequestReviewInputV1Schema.parse(input), context);
       }
       if (action === 'session.open') return null;
       throw new Error(`Unexpected action ${action}`);
     });
 
     await fixture.press(await fixture.getByRole('checkbox', { name: 'Codex' }));
+    if (partial) await fixture.press(await fixture.getByRole('checkbox', { name: 'Claude' }));
+    await fixture.press(await fixture.getByRole('switch', { name: 'Also write a walkthrough' }));
     await controls.press('Start review');
     await settle();
     expect(focusedLabels.at(-1)).toBe('Open session');
+    await expect(fixture.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
     await expect(fixture.queryByRole('button', { name: 'Cancel' })).resolves.toBeUndefined();
 
     await fixture.press(await fixture.getByRole('button', { name: 'Open session' }));

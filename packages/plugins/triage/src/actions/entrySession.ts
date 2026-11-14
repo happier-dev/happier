@@ -1,12 +1,13 @@
+import { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, } from '@happier-dev/plugin-sdk';
+import { PluginError, selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
     projectTriagePrepareReviewWorkspaceInputV1,
     type TriagePrepareReviewWorkspaceInputV1,
     type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport, pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
@@ -451,8 +452,8 @@ async function readCurrentVerifyReviewWorkspaceOperation(
  * value reported a review as started when none was, so the split is read here
  * and carried, keyed exactly as the caller asked.
  *
- * `null` means the answer could not be attributed to the requested engines at
- * all. That is deliberately not a refusal: runs may already exist, so the caller
+ * `null` means an engine has an unknown start effect or the answer cannot be
+ * attributed to the requested engines. Runs may already exist, so the caller
  * must reach its non-repeatable outcome-unknown path instead of a retry.
  */
 function readReviewStartOutcomes(
@@ -466,8 +467,9 @@ function readReviewStartOutcomes(
     const failed: string[] = [];
     for (const item of results) {
         if (typeof item !== 'object' || item === null) return null;
-        const { key, ok } = item as Readonly<{ key?: unknown; ok?: unknown }>;
+        const { key, ok, details } = item as Readonly<{ key?: unknown; ok?: unknown; details?: unknown }>;
         if (typeof key !== 'string' || typeof ok !== 'boolean') return null;
+        if (!ok && readExecutionRunStartRunCreation(details) !== 'noRunCreated') return null;
         (ok ? started : failed).push(key);
     }
     const answered = new Set([...started, ...failed]);
@@ -624,7 +626,16 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             // loudly reaches the caller's existing outcome-unknown state, which
             // offers only the idempotent Session open — never a blind second
             // review start.
-            throw new Error('triage:review:startOutcomeUnattributable');
+            const answer = projectNativeJsonValueForTransport(fanout);
+            const items = typeof answer === 'object' && answer !== null && !Array.isArray(answer)
+                && Array.isArray(answer.results) ? answer.results : [];
+            throw new PluginError({
+                code: 'action_outcome_unknown',
+                details: answer,
+                diagnostics: items.flatMap(item => typeof item === 'object' && item !== null
+                    && !Array.isArray(item) && item.ok === false && typeof item.errorCode === 'string'
+                    ? [{ code: item.errorCode, severity: 'error' as const }] : []),
+            });
         }
         if (outcomes.started.length === 0) {
             return { v: 1, status: 'refused', reason: 'noEngineStarted' };
