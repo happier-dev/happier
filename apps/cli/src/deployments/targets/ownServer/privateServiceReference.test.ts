@@ -26,6 +26,10 @@ it('verifies B against its applied declarations without reading a later saved En
                 installationId: 'installation-c', exports: handle.appliedServiceExports ?? [],
                 row: lease.registry.projectManagedServices.machineServiceRows.read(handle), signal: new AbortController().signal };
             expect(await resolvePrivateServiceExportAdmissionForHost(applied)).toEqual(admission);
+            // An exposed target is observable but cannot supply a host forward destination.
+            await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, row: { ...applied.row,
+                configuration: { ports: [{ target: 5432, published: null, bindAddress: null, protocol: 'tcp' }] },
+            } })).rejects.toMatchObject({ code: 'reference_unavailable' });
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, exports: [] }))
                 .rejects.toMatchObject({ code: 'reference_unavailable' });
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, installationId: 'replacement' }))

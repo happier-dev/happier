@@ -37,6 +37,24 @@ function roster(ownerAccountId: string) {
 }
 
 describe('useDiscussionParticipantProfiles', () => {
+    it('resolves receipt actor ids without a Discussion and uses the shared withheld-name fallback', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://receipt-people.test', accountId: 'viewer' }],
+            route: request => request.path === '/v1/user/profiles' ? Response.json({ users: requestedPeople(request)
+                .filter(id => id !== 'withheld').map(id => ({ id, name: 'Ana', firstName: '', lastName: null,
+                    username: '', avatar: null, bio: null, status: 'none', publicKey: null })) }) : undefined });
+        try {
+            const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
+            const hook = await renderHook(() => usePeople({ scope, roster: null,
+                accountIds: ['actor', 'withheld', 'actor'], enabled: true }));
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(resolveAccountActorPresentation(hook.getCurrent().accounts.get('actor')!, scope).name).toBe('Ana');
+            expect(resolveAccountActorPresentation(hook.getCurrent().accounts.get('withheld')!, scope).name)
+                .toBe(t('message.accountActorFormerMember'));
+            expect(home.requests.filter(request => request.path === '/v1/user/profiles').map(requestedPeople))
+                .toEqual([['actor', 'withheld']]);
+            await hook.unmount();
+        } finally { await home.dispose(); }
+    });
     it('lets the explicit roster relationship override a retained summary profile and removes the former avatar', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://discussion-former-people.test', accountId: 'viewer' }],
             route: () => undefined });

@@ -290,7 +290,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (!opened.ok) { coverage = 'partial'; continue; }
                 const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
                 items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure,
-                    machineIds: [...facts.machineIds] });
+                    machineIds: [...facts.machineIds], steps: [...facts.steps] });
             }
             return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
         }),

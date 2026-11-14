@@ -90,7 +90,7 @@ export type DeploymentReceiptFactsV1 = Readonly<{
  * The title names what was deployed; the recorded failure stays a typed fact for the client's own words. */
 export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: DeploymentReceiptDetailV1):
     Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null; failure: DeploymentReceiptFailureV1 | null;
-        machineIds: readonly string[] }> {
+        machineIds: readonly string[]; steps: readonly (DeploymentStepV1 & Readonly<{ machineId?: string }>)[] }> {
     const source = content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null;
     const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, content.commitSubject]
         .filter(Boolean).join(' · ') || null;
@@ -98,7 +98,9 @@ export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: 
     const machineIds = [...new Set([...content.machines,
         ...(content.buildMachineId ? [content.buildMachineId] : []),
         ...(execution ? [execution.controller.machineId, ...(execution.builder ? [execution.builder.machineId] : [])] : [])])];
-    return { source, historyTitle, failure: content.failure ?? null, machineIds };
+    return { source, historyTitle, failure: content.failure ?? null, machineIds,
+        steps: [...content.steps, ...content.machineResults.flatMap(member =>
+            member.steps.map(step => ({ ...step, machineId: member.machineId })))] };
 }
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */

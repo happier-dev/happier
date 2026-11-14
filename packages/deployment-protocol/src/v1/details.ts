@@ -40,6 +40,8 @@ export const DeploymentReceiptHistoryV1Schema = z.strictObject({
     ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
         /** Historical execution placement from this receipt's opened content, never today's target link. */
         machineIds: z.optional(z.array(DeploymentIdentifierV1Schema)),
+        /** Opened receipt progress, including member steps; timing remains the execution owner's fact. */
+        steps: z.optional(z.array(z.extend(DeploymentStepV1Schema, { machineId: z.optional(DeploymentIdentifierV1Schema) }))),
         source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
         failure: z.optional(z.nullable(DeploymentReceiptFailureV1Schema)) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),

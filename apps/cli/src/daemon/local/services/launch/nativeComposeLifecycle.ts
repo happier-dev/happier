@@ -50,7 +50,7 @@ import { readDeploymentSourceIdentityForHost } from '@/deployments/targets/ownSe
 import { admitNativeResticCommand, type NativeResticCommandInput } from './nativeResticCommand';
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
-import { readNativeComposePublishedPorts } from './nativeComposePorts';
+import { readNativeComposePorts } from './nativeComposePorts';
 import { projectNativeComposeConfigurationDetails } from './nativeComposeConfigurationDetails';
 import { createNativeComposeProgressOutput } from './nativeComposeProgress';
 import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
@@ -691,7 +691,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                         ? Math.max(...engineRows.map(row => row.healthSince!)) : undefined;
                     const memoryBytes = engineRows && runtimeFacts.accounting?.startedAtMs === startedAtMs
                         ? runtimeFacts.accounting?.memoryBytes : undefined;
-                    const ports = engineRows && readNativeComposePublishedPorts(engineRows.map(row => row.ports),
+                    const ports = engineRows && readNativeComposePorts(engineRows.map(row => row.ports),
                         value => launch?.secretRedactionLease?.redact(value) ?? value);
                     runtimeFacts = { configuration: engineRows && configuration
                         ? ports ? { ...configuration, ports } : null : runtimeFacts.configuration,

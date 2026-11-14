@@ -109,6 +109,21 @@ hidden badge demand performs no reads. The destination catalog names this signal
 read status and recovery from the shared Account controller. A missing count is
 unknown, including a peer that returns only the earlier boolean projection.
 
+The UI History transport opens the visible receipt page through the Account's
+mode-aware Artifact reader in a batch. `projectDeploymentReceiptHistoryEntryV1`
+exposes controller and Machine member `steps`, preserving their labels, states
+and recorded timing; member steps carry `machineId`. This is a client read
+projection, with no added receipt storage or per-row operation read. Actor names
+use `useDiscussionParticipantProfiles` with `accountIds` and no roster, then
+`resolveAccountActorPresentation`; unknown actors use the same Account owner's
+fallback. Names are never copied into receipt metadata.
+
+`useDeploymentBackupFacts` optionally reads native backup inventory for requested
+source IDs and exposes `restorePoints` as a ready count or unavailable. Receipt
+history never establishes how many snapshots remain after pruning or deletion.
+The existing explicit reload refreshes the count; hidden demand adds no reads,
+and a changed Account lifetime cannot retain the previous Account's facts.
+
 Account-wide Domains and data-service pages use `deployments.domains.page` and
 `deployments.data.page`. Each demanded page includes its Environment headers and
 caller-authorized Artifact content in one response. The PostgreSQL reader captures

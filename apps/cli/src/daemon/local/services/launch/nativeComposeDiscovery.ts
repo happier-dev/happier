@@ -1,7 +1,7 @@
 import { readNativeComposeLogTargetForHost, type NativeComposeActivatedServiceFacts } from './nativeComposeLifecycle';
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { isNativeDefinitionRecord as record } from '@/workspaces/projectSetup/nativePackageScripts';
-import { readNativeComposePublishedPorts } from './nativeComposePorts';
+import { readNativeComposePorts } from './nativeComposePorts';
 
 type ColdTarget = NonNullable<ReturnType<typeof readNativeComposeLogTargetForHost>> & Readonly<{
     configuration: NativeComposeActivatedServiceFacts['configuration'] | undefined;
@@ -15,7 +15,7 @@ function readColdConfiguration(rows: readonly unknown[], target: NonNullable<Ret
         && typeof row.Id === 'string' && target.containerIds.includes(row.Id));
     const first = selected[0];
     if (!first || selected.length !== target.containerIds.length || !record(first.Config) || !record(first.HostConfig)) return undefined;
-    const ports = readNativeComposePublishedPorts(selected.map(row => record(row.NetworkSettings) ? row.NetworkSettings.Ports : undefined), value => value);
+    const ports = readNativeComposePorts(selected.map(row => record(row.NetworkSettings) ? row.NetworkSettings.Ports : undefined), value => value);
     if (!ports) return undefined;
     const host = first.HostConfig;
     const policy = record(host.RestartPolicy) ? host.RestartPolicy : undefined;

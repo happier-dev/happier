@@ -370,6 +370,7 @@ describe('Machine Services exact demand cost', () => {
             ports: [
                 { target: 5432, published: '15432', bindAddress: '10.20.0.7', protocol: 'tcp' },
                 { target: '8080', published: 18080, bindAddress: '127.0.0.1', protocol: 'udp' },
+                { target: 5433, published: null, bindAddress: null, protocol: 'tcp' },
             ],
             mounts: [{ type: 'bind', source: '/private/data', target: '/data', readOnly: true }],
         }, observedAt: 41, freshness: 'current', accounting: { startedAtMs: 1700000000000 }, healthSince: 1700000001000 };
@@ -437,6 +438,7 @@ describe('Machine Services exact demand cost', () => {
                 { serviceId: 'instance/web' }, { serviceId: 'instance/worker' },
             ] });
             expect(await preflight([5432])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(await preflight([5433])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
             expect(await preflight([])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
             expect(samples, 'advisory preflight never acquires native accounting').toBe(0);
             expect(inspections).toBe(nativeAtRest);

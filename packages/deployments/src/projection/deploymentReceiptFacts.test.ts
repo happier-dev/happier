@@ -4,6 +4,21 @@ import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-p
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
+    it.each(['running', 'failed'] as const)('carries controller and %s member step timing through the parsed history read', async state => {
+        const { DeploymentReceiptHistoryV1Schema } = await import('@happier-dev/deployment-protocol/v1');
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.content.steps = [{ id: 'prepare', label: 'Prepare', state: 'succeeded', startedAtMs: 100, settledAtMs: 200, durationMs: 100 }];
+        receipt.content.machineResults = [{ machineId: 'machine-a', installationId: 'installation-a',
+            steps: [{ id: 'activate', label: 'Activate', state, startedAtMs: 200 }],
+            activation: 'pending', health: 'unknown' }];
+        const facts = projectDeploymentReceiptHistoryEntryV1(receipt);
+        const page = DeploymentReceiptHistoryV1Schema.parse({ ok: true, nextCursor: null,
+            items: [{ ...receipt.deployment, steps: facts.steps }] });
+        expect(page.items[0]?.steps).toEqual([
+            { id: 'prepare', label: 'Prepare', state: 'succeeded', startedAtMs: 100, settledAtMs: 200, durationMs: 100 },
+            { id: 'activate', label: 'Activate', state, startedAtMs: 200, machineId: 'machine-a' },
+        ]);
+    });
     it('projects historical Machines from opened receipt content without consulting current placement', () => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.machines = ['former-runtime'];

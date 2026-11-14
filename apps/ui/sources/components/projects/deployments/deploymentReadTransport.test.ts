@@ -442,7 +442,8 @@ describe('deployment scoped read transport', () => {
         expect(homes.requests.slice(beforeWrongPage).filter(request => request.path === '/v1/artifacts/read')).toEqual([]);
         homes.answer(serverId, root, { body: { ok: true, items: [environmentHeader], currentDeployments: [receiptHeader], nextCursor: null } });
         expect(await transport.listHistory(scope, environmentHeader.id, {}, options)).toMatchObject({ ok: true,
-            value: { items: [{ ...receiptHeader, title: 'aaaaaaa' }, { ...otherReceipt, title: 'aaaaaaa' }] } });
+            value: { items: [{ ...receiptHeader, title: 'aaaaaaa', steps: receiptDetail.content.steps },
+                { ...otherReceipt, title: 'aaaaaaa', steps: receiptDetail.content.steps }] } });
         const collectionReads = homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(artifactRequests);
         expect(collectionReads).toHaveLength(3);
         expect(collectionReads.map(request => request.input)).toEqual(expect.arrayContaining([

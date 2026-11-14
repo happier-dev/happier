@@ -10725,7 +10725,9 @@ and `freshness` (`current` or `unavailable`), with optional native `accounting`
 and `healthSince` facts used by the row projection. Configuration uses the same strict,
 redacted service schema as deployment review, preserving every reported port's
 `target`, `published`, `bindAddress` and `protocol`, plus its existing mount and
-resource facts. Unavailable observations retain their last admitted facts and
+resource facts. Exposed ports without host bindings retain their target/protocol
+with `published: null` and `bindAddress: null`; URL and preflight consumers require
+an actual host publication. Unavailable observations retain their last admitted facts and
 timestamp; missing captures do not invent them. Lists carry only the configuration's port projection; detail retains the full
 redacted structure for every Compose service, including services without a
 healthcheck. Detail accounting uses the same explicit native reader as the list.

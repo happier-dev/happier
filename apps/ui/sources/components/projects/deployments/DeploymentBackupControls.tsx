@@ -19,7 +19,6 @@ import { readDeploymentActionError, useDeploymentChangePress } from './deploymen
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
-import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -162,57 +161,7 @@ export function DeploymentBackupControls(props: Readonly<{
 
 type Retention = DeploymentBackupConfigurationV1['retention'];
 
-type MissedSchedule = Readonly<{ triggerId: string; dueAt: number; lastRunAt: number | null }>;
-/** Facts read once per presentation; the Action owners derive them (history receipts, scheduler cursor), we only show them. */
-export type DeploymentBackupFacts =
-  | Readonly<{ status: 'loading' }>
-  | Readonly<{ status: 'ready'; history: DeploymentBackupHistoryResultV1 | null; missed: readonly MissedSchedule[] }>
-  | Readonly<{ status: 'unavailable' }>;
-const LOADING_FACTS: DeploymentBackupFacts = Object.freeze({ status: 'loading' });
-const NO_MISSED: readonly MissedSchedule[] = Object.freeze([]);
-
-/**
- * Exact capture history and stable Environment schedules, read through their Action owners when the surface is presented
- * and again on `reload` (after its own Back up now). No timer, no poll.
- * Shared by Settings › Backups and the Database page.
- */
-export function useDeploymentBackupFacts(
-  actions: ReturnType<typeof createDeploymentActions> | null,
-  input: Parameters<ReturnType<typeof createDeploymentActions>['backupHistory']>[0] | null,
-  presented: boolean,
-) {
-  const [facts, setFacts] = React.useState<DeploymentBackupFacts>(LOADING_FACTS);
-  const [generation, setGeneration] = React.useState(0);
-  const key = input ? JSON.stringify(input) : null;
-  React.useEffect(() => {
-    if (!actions || !input || !presented) return;
-    let live = true;
-    void Promise.allSettled([actions.backupHistory(input), actions.missedBackupSchedules({ environmentId: input.environmentId })]).then(([history, missed]) => {
-      if (!live) return;
-      if (history.status === 'rejected' && missed.status === 'rejected') { setFacts({ status: 'unavailable' }); return; }
-      setFacts({ status: 'ready', history: history.status === 'fulfilled' ? history.value : null,
-        missed: missed.status === 'fulfilled' ? missed.value : NO_MISSED });
-    });
-    return () => { live = false; };
-    // The serialized operands are the read's identity; the parsed object is rebuilt on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, key, presented, generation]);
-  const reload = React.useCallback(() => setGeneration((value) => value + 1), []);
-  return { facts: input ? facts : null, reload };
-}
-
-/** What the facts say needs the person: an overdue unstarted run first, then a latest backup that failed. */
-export function deploymentBackupAttention(facts: DeploymentBackupFacts | null) {
-  const ready = facts?.status === 'ready' ? facts : null;
-  const missed = ready?.missed[0] ?? null;
-  const latestBackup = ready?.history?.history.entries.find((entry) => entry.action === 'backup') ?? null;
-  return {
-    missed,
-    failed: latestBackup?.state === 'failed' ? latestBackup : null,
-    lastGood: ready?.history?.lastSuccessfulBackup ?? null,
-    entries: ready?.history?.history.entries ?? [],
-  };
-}
+export { useDeploymentBackupFacts, deploymentBackupAttention, type DeploymentBackupFacts } from './useDeploymentBackupFacts';
 type ActionsFactory = ReturnType<typeof createDeploymentActions>;
 
 /** The exact capture target the finite backup Actions address, or null before anything runs on a Machine. */

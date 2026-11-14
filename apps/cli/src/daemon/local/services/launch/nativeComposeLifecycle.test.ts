@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { MachineServiceAccountingV1Schema } from '@happier-dev/protocol';
 import { MachineServiceNativeRuntimeFactsV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
+import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { openDockerEngineEvents } from './dockerEngineObservation';
@@ -33,7 +34,10 @@ describe('Compose exact native resource lifetime', () => {
             Config: { Labels: row.Config.Labels, Entrypoint: null, Cmd: null, Env: [], Healthcheck: { Test: ['NONE'] } },
             HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {}, Networks: { host: {} } } };
         const capture = createNativeComposeLifecycle({ args, engineId: 'configuration-test',
-            environment: { composeService: 'worker', containerIds: [row.Id, hostRow.Id] }, io: {
+            environment: { composeService: 'worker', containerIds: [row.Id, hostRow.Id], facts: {
+                configuration: projectNativeComposeReview({ services: { worker: {} } }, '/release', value => value).services[0]!,
+                containerImages: [],
+            } }, io: {
                 async events() { return { async dispose() {} }; }, async run(request) {
                     requests.push([...request.args]);
                     return { exitCode: 0, stdout: JSON.stringify([row, hostRow]) };
@@ -44,6 +48,7 @@ describe('Compose exact native resource lifetime', () => {
         const subscription = await capture.lifecycle.observe!(() => {});
         try {
             const facts = MachineServiceNativeRuntimeFactsV1Schema.parse(capture.lifecycle.runtimeFacts!());
+            expect(facts.configuration?.ports).toContainEqual({ target: 3000, published: null, bindAddress: null, protocol: 'tcp' });
             expect(facts).toMatchObject({ configurationDetails: [{ nativeResourceId: row.Id,
                 image: 'registry.example/worker:stable', imageDigest: row.Image,
                 command: ['/entrypoint', 'serve', expect.not.stringContaining('private-password')],
@@ -967,6 +972,8 @@ describe('Compose exact native resource lifetime', () => {
         await expect(h.control.lifecycle.prepareStart?.()).rejects.toThrow('native_service_stop_unconfirmed');
         h.setRows([container('a', 'exited')]);
         await h.control.lifecycle.prepareStart?.();
+        h.setRows([container('b', 'running', { '8080/tcp': null })]);
+        expect(await h.control.lifecycle.inspect()).toMatchObject({ phase: 'running', endpoint: null });
         h.setRows([container('b', 'running', { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '32000' }] })]);
         expect(await h.control.lifecycle.inspect()).toMatchObject({ phase: 'running', endpoint: 'http://127.0.0.1:32000', readiness: 'not_reported' });
         h.setRows([container('b', 'running', { '8080/tcp': [{ HostIp: '::1', HostPort: '32000' }] })]);
