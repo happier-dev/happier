@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { evaluatePortableCommonJs } from '../../test-support/evaluatePortableCommonJs.js';
 import { pathToFileURL } from 'node:url';
 import * as React from 'react';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../cli-common/sourceRuntimeEntries.mjs';
@@ -75,6 +75,7 @@ describe('bundled Plugin UI artifact graph', () => {
             }
             return specifier === 'react' ? React : hostUi;
         };
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
         try {
             const projectRoot = join(repositoryRoot, 'packages/plugins', plugin);
             const authored = await import(pathToFileURL(join(projectRoot, 'src/manifest.ts')).href);
@@ -85,6 +86,7 @@ describe('bundled Plugin UI artifact graph', () => {
             const publication = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath, {
                 outputDir, exportConditions: ['happier-source'], resolveSourceImport,
             });
+            expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('[bundled_host_module]'), expect.anything());
             const executableEntries = publication.manifest.entries.filter(entry => entry.tier === 'reactNative');
             expect(executableEntries.map(entry => entry.artifactId).sort()).toEqual(declarations.map(entry => entry.artifactId).sort());
             for (const declaration of declarations) {
@@ -118,6 +120,7 @@ describe('bundled Plugin UI artifact graph', () => {
                 }
             }
         } finally {
+            warning.mockRestore();
             await rm(scratch, { recursive: true, force: true });
         }
     }, 120_000);

@@ -12,11 +12,13 @@ import * as Collections from '@happier-dev/plugin-sdk/collections';
 import * as ConnectedAccounts from '@happier-dev/plugin-sdk/connected-accounts';
 import * as Contributions from '@happier-dev/plugin-sdk/contributions';
 import * as Errors from '@happier-dev/plugin-sdk/errors';
+import * as Events from '@happier-dev/plugin-sdk/events';
 import * as Manifest from '@happier-dev/plugin-sdk/manifest';
 import * as MachineProvisioners from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as Protocol from '@happier-dev/plugin-sdk/protocol';
 import * as Reviews from '@happier-dev/plugin-sdk/reviews';
 import * as Scm from '@happier-dev/plugin-sdk/scm';
+import * as ScmHosting from '@happier-dev/plugin-sdk/scm/hosting';
 import * as Sessions from '@happier-dev/plugin-sdk/sessions';
 import * as Storage from '@happier-dev/plugin-sdk/storage';
 import * as Ui from '@happier-dev/plugin-sdk/ui';
@@ -47,11 +49,13 @@ const hostNamespaces = {
     '@happier-dev/plugin-sdk/connected-accounts': ConnectedAccounts,
     '@happier-dev/plugin-sdk/contributions': Contributions,
     '@happier-dev/plugin-sdk/errors': Errors,
+    '@happier-dev/plugin-sdk/events': Events,
     '@happier-dev/plugin-sdk/manifest': Manifest,
     '@happier-dev/plugin-sdk/machine-provisioners': MachineProvisioners,
     '@happier-dev/plugin-sdk/protocol': Protocol,
     '@happier-dev/plugin-sdk/reviews': Reviews,
     '@happier-dev/plugin-sdk/scm': Scm,
+    '@happier-dev/plugin-sdk/scm/hosting': ScmHosting,
     '@happier-dev/plugin-sdk/sessions': Sessions,
     '@happier-dev/plugin-sdk/storage': Storage,
     '@happier-dev/plugin-sdk/ui': Ui,
