@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   MachineServiceAdoptResultV1Schema,
@@ -35,7 +35,7 @@ export type MachineServiceAdoption =
   | Readonly<{ kind: 'applying'; review: Review; approval: ActionApprovalContinuation | null }>
   | Readonly<{ kind: 'adopted'; review: Review; environmentId: string }>
   | Readonly<{ kind: 'partial'; review: Review; errorCode: string; environmentId: string | null }>
-  | Readonly<{ kind: 'failed'; step: 'review' | 'apply'; code: string; review: Review | null }>;
+  | Readonly<{ kind: 'failed'; step: 'review' | 'apply'; code: string; review: Review | null; failure?: ActionExecuteFailure }>;
 
 const defaultExecute = createFrontDoorActionExecute();
 
@@ -93,7 +93,7 @@ export function useMachineServiceAdoption(input: Readonly<{
       return;
     }
     setState({ kind: 'failed', step: 'review', review: kept,
-      code: result.ok ? 'action_invalid_output' : result.errorCode });
+      code: result.ok ? 'action_invalid_output' : result.errorCode, ...(!result.ok ? { failure: result } : {}) });
   }, [generation, inFlight, invoke, machineId, requestKey, serverId, serviceId]);
 
   const send = React.useCallback(async (actionInput: ApplyInput, reviewed: Review) => {
@@ -102,7 +102,7 @@ export function useMachineServiceAdoption(input: Readonly<{
     const result = await invoke(actionInput, approval => setState({ kind: 'applying', review: reviewed, approval }));
     if (!result) return;
     if (!result.ok) {
-      setState({ kind: 'failed', step: 'apply', code: result.errorCode, review: reviewed });
+      setState({ kind: 'failed', step: 'apply', code: result.errorCode, review: reviewed, failure: result });
       return;
     }
     const parsed = MachineServiceAdoptResultV1Schema.safeParse(result.result);

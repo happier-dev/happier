@@ -147,7 +147,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
     // installed Agents come from their own catalog projections and remain
     // usable while that independent row is loading or unavailable.
     const catalog = {
-        backends: params.acpCatalogSnapshot?.status === 'ready'
+        backends: params.acpCatalogSnapshot?.status === 'ready' || params.acpCatalogSnapshot?.status === 'partial'
             ? params.acpCatalogSnapshot.record.definitions
             : params.retainedAcpCatalogRecord?.definitions ?? [],
     };

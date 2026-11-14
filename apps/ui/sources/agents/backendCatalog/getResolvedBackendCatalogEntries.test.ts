@@ -14,6 +14,7 @@ import { AcpBackendDefinitionV1Schema, type AcpCatalogSettingsV1 } from '@happie
 import { isProfileCompatibleWithBackendTarget } from '@/sync/domains/profiles/profileCompatibility';
 import { getResolvedAgentCatalogEntries, resolveAgentCatalogProjection } from './agentCatalogProjection';
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { openAcpCatalogContentV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 type BackendCatalogParams = Parameters<typeof readBackendCatalog>[0] & { acpCatalogSettingsV1?: AcpCatalogSettingsV1 };
 // Existing definition vectors are fixture inputs, not Account Settings authority.
@@ -45,6 +46,24 @@ function configuredAgentTargetKey(definitionId: string) {
 }
 
 describe('getResolvedBackendCatalogEntries', () => {
+    it('shows admitted ACP definitions when a malformed sibling makes the cold catalog partial', () => {
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'valid-review', name: 'valid-review', title: 'Review',
+            launch: { kind: 'command', command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
+        const opened = openAcpCatalogContentV1({ mode: 'plain', material: null,
+            content: { t: 'plain', v: { v: 1, definitions: [definition, { id: 'broken-sibling' }] } } });
+        expect(opened.status).toBe('partial');
+        if (opened.status !== 'partial') throw new Error('Expected incomplete catalog inventory');
+        const acpCatalogSnapshot = { ...opened, revision: 1 };
+        const params = { enabledAgentIds: [], acpCatalogSnapshot };
+        expect(getResolvedBackendCatalogEntries(params).map(entry => entry.backendTargetKey))
+            .toEqual([configuredAgentTargetKey(definition.id)]);
+        expect(getResolvedAgentCatalogEntries(params).filter(entry => entry.identity.localId === 'custom-acp')
+            .map(entry => entry.backendTargetKey))
+            .toEqual([configuredAgentTargetKey(definition.id)]);
+        const retainedAcpCatalogRecord = { v: 1 as const, definitions: [{ ...definition, id: 'stale-review' }] };
+        expect(getResolvedBackendCatalogEntries({ ...params, retainedAcpCatalogRecord }).map(entry => entry.backendTargetKey))
+            .toEqual([configuredAgentTargetKey(definition.id)]);
+    });
     it('preserves the projected plugin Agent id while resolving configured targets to their declared Agent', () => {
         expect(resolveBackendTargetOperationalAgentId({
             backendTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },

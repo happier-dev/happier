@@ -30,6 +30,7 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -92,6 +93,10 @@ function AdoptionBody(props: Props & Partial<Pick<CustomModalInjectedProps, 'set
   const router = useRouter();
   const { adoption, service, onClose } = props;
   const { state } = adoption;
+  // Adoption exposes typed reference facts, keeping transport error prose out of its reason.
+  const failurePresentation = state.kind === 'failed' && state.failure
+    ? presentActionExecutionFailure({ ...state.failure, error: undefined }) : null;
+  const failureDiagnostic = failurePresentation?.technicalDetails.map(detail => detail.value).join(' · ');
   const currentReview: Review | null = 'review' in state ? state.review : null;
   const [environmentName, setEnvironmentName] = React.useState(service.name);
   const [production, setProduction] = React.useState(false);
@@ -187,7 +192,7 @@ function AdoptionBody(props: Props & Partial<Pick<CustomModalInjectedProps, 'set
     state.kind === 'failed' ? (
       <SurfaceStateCard testID="machine-service-adopt.read-failed" kind="error" size="line"
         title={t('machineServices.adopt.readFailed', { service: service.name })}
-        reason={failureReason(state.code, service.name, props.machineName)} diagnosticCode={state.code}
+        reason={failureReason(state.code, service.name, props.machineName, failurePresentation?.reason)} diagnosticCode={failureDiagnostic || state.code}
         action={{ label: t('machineServices.adopt.readAgain'), onPress: () => { void adoption.review([]); } }} />
     ) : (
       <SurfaceStateCard testID="machine-service-adopt.reading" kind="loading" size="line"
@@ -309,7 +314,7 @@ function AdoptionBody(props: Props & Partial<Pick<CustomModalInjectedProps, 'set
       {state.kind === 'failed' && state.step === 'apply' ? (
         <SurfaceStateCard testID="machine-service-adopt.failed" kind="error" size="line"
           title={t('machineServices.adopt.failedTitle', { service: service.name })}
-          reason={failureReason(state.code, service.name, props.machineName)} diagnosticCode={state.code}
+          reason={failureReason(state.code, service.name, props.machineName, failurePresentation?.reason)} diagnosticCode={failureDiagnostic || state.code}
           {...(state.code === 'approval_stale' ? { action: { label: t('machineServices.adopt.readAgain'),
             onPress: () => { void adoption.review(state.review?.profiles ?? []); } } } : {})} />
       ) : null}
@@ -319,13 +324,13 @@ function AdoptionBody(props: Props & Partial<Pick<CustomModalInjectedProps, 'set
   );
 }
 
-function failureReason(code: string, service: string, machine: string): string {
+function failureReason(code: string, service: string, machine: string, fallback?: string): string {
   switch (code) {
     case 'approval_stale': return t('machineServices.adopt.reason.changed', { service });
     case 'secret_binding_required': return t('machineServices.adopt.reason.variables');
     case 'unsupported_action':
     case 'service_admission_unavailable': return t('machineServices.adopt.reason.unsupported', { machine });
-    default: return t('machineServices.adopt.reason.other', { service });
+    default: return fallback ?? t('machineServices.adopt.reason.other', { service });
   }
 }
 

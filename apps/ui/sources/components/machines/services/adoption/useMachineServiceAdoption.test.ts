@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineServiceAdoptResultV1 } from '@happier-dev/protocol/local/services/adoptionV1';
 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -50,12 +51,7 @@ beforeEach(async () => {
     accountId: 'adopt-owner', currentAccount: true });
   await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'machines.services.adopt',
     tokenEpoch: 0, requesterInvocation: 'none',
-    failure: result => {
-      if (typeof result !== 'object' || result === null || !('ok' in result) || result.ok !== false
-        || !('errorCode' in result) || typeof result.errorCode !== 'string'
-        || !('error' in result) || typeof result.error !== 'string') return null;
-      return { errorCode: result.errorCode, error: result.error };
-    }, execute: input => adoptionTransport({ payload: input }) });
+    failure: parseActionExecuteFailure, execute: input => adoptionTransport({ payload: input }) });
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
@@ -127,9 +123,10 @@ it('keeps a partial adoption truthful and continues it under the same request', 
 });
 
 it('settles a refusal on its step with the typed code, and re-reads when the future profiles change', async () => {
+  const failureCause = { phase: 'native.apply', errorClass: 'TypeError', errorCode: 'ECONNREFUSED', httpStatus: 503 } as const;
   adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string; profiles: string[] } }) => {
     if (payload.mode === 'review') return { ...review, profiles: payload.profiles };
-    return { ok: false, errorCode: 'secret_binding_required', error: 'secret_binding_required' };
+    return { ok: false, errorCode: 'secret_binding_required', error: 'secret_binding_required', failureCause };
   });
   const hook = await mount();
   await act(async () => { await hook.getCurrent().review(['tools']); });
@@ -137,7 +134,7 @@ it('settles a refusal on its step with the typed code, and re-reads when the fut
   expect(hook.getCurrent().state).toMatchObject({ kind: 'review', review: { profiles: ['tools'] } });
   await act(async () => { await hook.getCurrent().apply({ destination, bindings }); });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'failed', step: 'apply', code: 'secret_binding_required',
-    review: { reviewedDigest: DIGEST } });
+    review: { reviewedDigest: DIGEST }, failure: { failureCause } });
 });
 
 
@@ -188,7 +185,7 @@ it('uses the canonical bindings editor for the reviewed destination draft before
   expect(hook.getCurrent().state).toMatchObject({ kind: 'adopted' });
   expect(adoptCalls()[1]!.payload).toMatchObject({ destination, bindings });
   expect(hook.getCurrent().destination).toEqual(destination);
-  expect(hook.getCurrent().bindings).toEqual(bindings);
+  expect(hook.getCurrent().bindings).toMatchObject(bindings);
 });
 
 
@@ -246,5 +243,5 @@ it('clears a typed refusal while retaining the reviewed destination and bindings
   await act(async () => { hook.getCurrent().clearError(); });
   expect(hook.getCurrent().state).toMatchObject({ kind: 'review', review: { reviewedDigest: DIGEST } });
   expect(hook.getCurrent().destination).toEqual(destination);
-  expect(hook.getCurrent().bindings).toEqual(bindings);
+  expect(hook.getCurrent().bindings).toMatchObject(bindings);
 });

@@ -8,9 +8,12 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-// Only the Machine RPC transport is substituted: the sheet, its hook, the Action front door and executor stay real.
+// Transport boundaries are substituted; the sheet, its hook, the Action front door and executor stay real.
 const machineTransport = vi.hoisted(() => ({ rpc: vi.fn() }));
+const adoptionTransport = vi.fn();
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
   const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
   return createServerScopedMachineRpcBoundaryMock(machineTransport.rpc);
@@ -42,13 +45,27 @@ const row = (overrides: Record<string, unknown> = {}) => MachineServiceRowV1Sche
 beforeEach(async () => {
   await homes.reset();
   machineTransport.rpc.mockReset();
+  adoptionTransport.mockReset();
   serverId = await homes.addHome({ name: 'Adopt', serverUrl: 'https://adopt-sheet.test', serverIdentityId: 'srv_adopt_sheet',
     accountId: 'adopt-owner', currentAccount: true });
+  await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'machines.services.adopt',
+    tokenEpoch: 0, requesterInvocation: 'none', failure: parseActionExecuteFailure,
+    execute: input => adoptionTransport({ payload: input }) });
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
-const adoptCalls = () => machineTransport.rpc.mock.calls.map(([call]) => call as { method: string; payload: Record<string, unknown> })
-  .filter(call => call.method === RPC_METHODS.MACHINES_SERVICE_ADOPT);
+const adoptCalls = () => adoptionTransport.mock.calls.map(([call]) => call as { payload: Record<string, unknown> });
+
+it('keeps the producer cause visible when the review Action fails', async () => {
+  adoptionTransport.mockResolvedValue({ ok: false, errorCode: 'action_failed', error: 'Private provider diagnostic',
+    failureCause: { phase: 'native.review', errorClass: 'TypeError', errorCode: 'ECONNREFUSED', httpStatus: 503 } });
+  const screen = await renderScreen(<MachineServiceAdoptionReview serverId={serverId} machineId={machineId}
+    machineName="shop-prod" service={row()} onClose={() => {}} execute={createFrontDoorActionExecute()} />);
+  await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-adopt.read-failed')).not.toBeNull());
+  await screen.pressByTestIdAsync('machine-service-adopt.read-failed-details-toggle');
+  expect(screen.getTextContent()).toContain('ECONNREFUSED');
+  expect(screen.getTextContent()).not.toContain('Private provider diagnostic');
+});
 
 it('offers adoption only for a watched Compose project at a known generation', () => {
   expect(canAdoptMachineService(row())).toBe(true);
@@ -59,7 +76,7 @@ it('offers adoption only for a watched Compose project at a known generation', (
 });
 
 it('says what changes and what does not, and adopts once every captured variable is bound', async () => {
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) =>
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) =>
     payload.mode === 'review' ? review : { kind: 'adopted', environmentId: 'env-1', revision: 2, targetLinkId: 'link-1' });
   const onClose = vi.fn();
   const screen = await renderScreen(<MachineServiceAdoptionReview serverId={serverId} machineId={machineId}
@@ -91,7 +108,7 @@ it('says what changes and what does not, and adopts once every captured variable
 
 it('keeps a partial adoption in its own words and continues it with Try again', async () => {
   let applies = 0;
-  machineTransport.rpc.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
+  adoptionTransport.mockImplementation(async ({ payload }: { payload: { mode: string } }) => {
     if (payload.mode === 'review') return { ...review, variables: [] };
     applies++;
     return applies === 1

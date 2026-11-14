@@ -391,7 +391,7 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
         mergedBackendProjectionById: params.mergedBackendProjectionById,
         mergedProviderProjectionById: params.mergedProviderProjectionById,
     }).map((agentId) => resolveAgentCatalogProjection(agentId, params));
-    if (params.acpCatalogSnapshot?.status === 'ready') {
+    if (params.acpCatalogSnapshot?.status === 'ready' || params.acpCatalogSnapshot?.status === 'partial') {
         entries.push(...params.acpCatalogSnapshot.record.definitions.map(definition =>
             resolveConfiguredAcpAgentCatalogProjection(definition, params)));
     }
