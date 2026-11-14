@@ -1,3 +1,4 @@
+import { BotTemplateInstantiateInputV1Schema, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
 import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { randomUUID } from 'node:crypto';
@@ -1833,6 +1834,30 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller, context.surface ?? 'cli');
+      if (originalCliCaller && actionId === 'template.instantiate' && executionPlacement === 'account') {
+        const parsed = BotTemplateInstantiateInputV1Schema.safeParse(admittedInput);
+        if (!parsed.success) return { context,
+          invocation: createOneShotPatInvocation(async () => actionFailure('invalid_parameters')) };
+        const selected = resolveExternalActionMachineTarget({ actionId, rawInput: parsed.data,
+          target: context.externalActionTarget ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
+          ownerMachineId: parsed.data.creation.executionTarget.machineId, context });
+        if (selected.kind === 'rejected') return { context,
+          invocation: createOneShotPatInvocation(async () => selected.execution) };
+        const requestId = context.actionRequestId ?? randomUUID();
+        const requesterContext = { ...context, actionRequestId: requestId };
+        return { context: requesterContext, invocation: createOneShotPatInvocation(() => dispatchOriginalAccountAction({
+          actionId, input: parsed.data, requestId, target: { kind: 'machine', machineId: parsed.data.creation.executionTarget.machineId },
+          credentials, serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId ?? params.serverIdentityId,
+          authority: context.authority, ...(context.signal ? { signal: context.signal } : {}),
+          // The shared Account dispatcher admits the root; the ordinary executor
+          // owns its local policy, source read, review and composed children.
+          executeOnRequester: {
+            input: { ...readRecord(spec.projectObservationInput?.(parsed.data) ?? parsed.data),
+              creation: projectBotTemplateInstantiationRequesterInputV1(parsed.data).creation },
+            run: async () => (await resolveExecutor(credentials)).execute(actionId, parsed.data, requesterContext),
+          },
+        })) };
+      }
       if (originalCliCaller && actionId === 'machines.managed.acquire' && executionPlacement === 'account') {
         const invocation = readExternalActionRequesterInvocation({ ...context, surface: 'cli',
           authority: context.authority ?? 'account_automation' });

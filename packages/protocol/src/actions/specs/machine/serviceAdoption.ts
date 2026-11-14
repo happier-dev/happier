@@ -15,7 +15,7 @@ function createMachineServiceAdoptionActionSpecs() {
   description: 'Review a watched Compose project and create its Environment without changing the running project.',
   safety: 'danger', sideEffectClass: 'write', approval: { result: 'required' }, approvalScope: 'machine',
   approvalPolicy: { uiConfirmation: 'direct' }, executionPlacement: 'machine', placements: [],
-  originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
+  originalExecution: { terminalRoot: 'host', daemonIngressSurfaces: ['cli', 'ui'] },
   operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
   operationReentry: snapshot => MachineServiceAdoptResultV1Schema.safeParse(snapshot.result).data?.kind === 'partial' ? 'reinvoke' : 'replay',
   toolExposure: { agent: 'discoverable_only' },

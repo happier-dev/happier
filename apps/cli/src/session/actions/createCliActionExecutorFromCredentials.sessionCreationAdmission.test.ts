@@ -1,8 +1,13 @@
+// Transform the Account host graph during collection; the test clock measures execution.
+import '@/plugins/runtime/accountExecutionRuntime';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { SessionSpawnNewInputV2Schema, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
@@ -91,7 +96,10 @@ describe('paired terminal Action admission', () => {
         });
     });
 
-    it.each(['execute', 'prepare'] as const)('admits template %s locally before reading its source without requiring any daemon', async method => {
+    it.each([
+        { method: 'execute', admitted: false }, { method: 'prepare', admitted: false },
+        { method: 'execute', admitted: true }, { method: 'prepare', admitted: true },
+    ] as const)('admits template $method locally before reading its source without requiring any daemon (admitted=$admitted)', async ({ method, admitted }) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-template-requester-admission-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -99,7 +107,12 @@ describe('paired terminal Action admission', () => {
                 expectedVersion: '1.0.0', creation: { creationKey: 'private-template-creation-key', environmentVariables: { PRIVATE_TOKEN: 'private-template-env-secret' },
                     executionTarget: { serverId: 'srv_home', machineId: 'asleep-machine' }, directory: { kind: 'managed' as const },
                     agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } };
+            const sourceReads: string[] = [];
             vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (String(url).includes('/v1/artifacts/')) {
+                    sourceReads.push(String(url));
+                    return { status: 404, data: { error: 'not_found' } };
+                }
                 expect(String(url)).toBe('https://home.test/v1/account/encryption');
                 return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             });
@@ -112,6 +125,12 @@ describe('paired terminal Action admission', () => {
                     expectedVersion: input.expectedVersion, creation: { executionTarget: input.creation.executionTarget } },
                     target: { kind: 'machine', machineId: 'asleep-machine' } } });
                 expect(request.installationProof).toBeUndefined();
+                if (admitted) return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({
+                    v: 1, token: 'home-admission-proof', binding: { accountId: 'owner', custodianAccountId: 'owner',
+                        authentication: { kind: 'account', tokenEpoch: 4 }, serverIdentityId: 'srv_home',
+                        machineId: 'asleep-machine', installationId: 'asleep-installation', actionId: 'template.instantiate',
+                        requestId: request.envelope.requestId, target: request.envelope.target, accountEncryptionMode: 'plain',
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } }) };
                 const refusal = projectExternalActionHttpError('credential_scope_denied', request.envelope.requestId);
                 return { status: refusal.statusCode, data: refusal.payload };
             });
@@ -127,9 +146,15 @@ describe('paired terminal Action admission', () => {
                     const prepared = await executor.prepare('template.instantiate', input, context);
                     return prepared.kind === 'ready' ? prepared.invocation.run() : prepared.result;
                 })();
+            if (admitted) {
+                expect(sourceReads).toHaveLength(1);
+                expect(result).toMatchObject({ ok: false });
+            } else {
+                expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+                expect(sourceReads).toEqual([]);
+            }
             expect(JSON.stringify(admittedRequest)).not.toContain('private-template-creation-key');
             expect(JSON.stringify(admittedRequest)).not.toContain('private-template-env-secret');
-            expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
             expect(post).toHaveBeenCalledTimes(1);
         });
     });
@@ -439,7 +464,12 @@ describe('paired terminal Action admission', () => {
             const result = { ok: true, result: { attemptId: 'attempt', machineId: 'remote-machine',
                 authorizationUrl: 'https://issuer.fixture.test/authorize', expiresAtMs: 5000 } };
             const requests: unknown[] = [];
-            vi.spyOn(axios, 'post').mockRejectedValue(new Error('MCP sign-in must use its current catalog and Machine transport'));
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                // Account authentication selects executable custody before Machine RPC.
+                const availability = readBundledPluginAvailabilityHttpFixture(new URL(url).pathname, body);
+                if (availability) return { status: 200, data: availability };
+                throw new Error('MCP sign-in must use its current catalog and Machine transport');
+            });
             // Home HTTP and the real Socket.IO peer are the only substituted
             // boundaries; MCP and Connected Account composition remain real.
             currentness.server.on('connection', socket => socket.on('rpc-call', (packet, acknowledge) => {
@@ -652,7 +682,8 @@ describe('paired terminal Action admission', () => {
         { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true },
         { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true, prepare: true },
         { outerTarget: true, daemonAccountId: 'owner', authority: undefined, errorCode: null },
-        { outerTarget: false, daemonAccountId: 'different-account', authority: undefined, errorCode: 'target_unavailable' },
+        // A foreign daemon cannot admit this caller; Home admission rejects the incomplete Machine access fixture.
+        { outerTarget: false, daemonAccountId: 'different-account', authority: undefined, errorCode: 'admission_unavailable' },
         { outerTarget: false, daemonAccountId: 'owner', authority: 'account_automation', errorCode: 'invalid_parameters' },
     ] as const)('preserves exact Home/Account and terminal authority (%j)', async scenario => {
         const { outerTarget, daemonAccountId, authority, errorCode } = scenario;

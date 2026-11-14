@@ -653,8 +653,6 @@ type OriginalAccountActionInput = Readonly<{
   input: unknown;
   requestId: string;
   target: ExternalActionTargetV1;
-  /** Account placement runs on its requester after Home admission, using the captured Account credential. */
-  executeOnRequester?: () => Promise<ActionExecuteResult>;
   /** Private result retained by the fresh preset origin, never read from Action input. */
   managedPresetOrigin?: Extract<ManagedPresetAcquireOriginV1, { kind: 'bound' }>;
   credentials: StoredCredentials;
@@ -678,7 +676,11 @@ type OriginalAccountActionInput = Readonly<{
   onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) => boolean | void | Promise<boolean | void>;
   isCurrent?: () => boolean | Promise<boolean>;
   signal?: AbortSignal;
-}>;
+}> & (Readonly<{ executeOnRequester?: undefined }> | Readonly<{
+  target: Extract<ExternalActionTargetV1, { kind: 'machine' }>;
+  /** Account placement retains private input on its requester after Home admission. */
+  executeOnRequester: Readonly<{ input: unknown; run: () => Promise<ActionExecuteResult> }>;
+}>);
 
 /** Home-bound managed effects, Sync writes, native Agent inventory, finite work, owned-copy review and terminal access need Machine
  * admission even on an own target. Workflow birth also needs the authenticated
@@ -731,7 +733,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
 
 /** Unbound presets select their saved controller before CLI/MCP placement, without a local daemon or Machine grant. */
 export async function prepareOriginalAccountPresetAcquire(
-  params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin'>,
+  params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin' | 'executeOnRequester'>,
 ): Promise<(() => Promise<ActionExecuteResult>) | null> {
   const parsed = params.actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(params.input) : null;
   if (!parsed?.success || parsed.data.selection.kind !== 'preset'
@@ -946,9 +948,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
   // Requester execution retains private authored input locally. Home receives
-  // the Action owner's existing observation projection for admission.
-  const spec = getActionSpec(ActionIdSchema.parse(actionId));
-  const envelopeInput = input.executeOnRequester ? spec.projectObservationInput?.(input.input) ?? input.input : input.input;
+  // the Action owner's existing admission projection.
+  const envelopeInput = input.executeOnRequester?.input ?? input.input;
   const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
     ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.input !== null && typeof input.input === 'object'
       && 'machineSetupPlanInput' in input.input && input.input.machineSetupPlanInput !== undefined ? {
@@ -960,7 +961,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
   if (input.executeOnRequester) {
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
-      actionId, envelope, machineId: input.target.kind === 'machine' ? input.target.machineId : '',
+      actionId, envelope, machineId: input.target.machineId,
       pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
@@ -969,7 +970,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       ...(minted.details === undefined ? {} : { details: minted.details }),
       ...(minted.requestId === undefined ? {} : { requestId: minted.requestId }),
       ...(minted.failureCause ? { failureCause: minted.failureCause } : {}) };
-    return input.executeOnRequester();
+    return input.executeOnRequester.run();
   }
   let body: unknown = envelope;
   const access = machine?.access;
