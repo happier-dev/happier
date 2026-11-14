@@ -1478,10 +1478,13 @@ Group metadata on its next normal metadata save; reads never rewrite it.
 Group sorting and search run over the client's opened loaded collection. The
 server uses structural IDs for order and cursors; `nameKey` is removed. Credential
 audit subjects retain the resource binding and are opened by the client. Label
-writes prepare the current Team audience. A newly joined member without an
-envelope sees an unavailable label until a qualifying keyholder save prepares
-it; historical audit snapshots can remain unavailable. The server has no label
-opening key or automatic membership-triggered rewrap.
+writes prepare the current Team audience. In 0.3 development, current members'
+clients also repair missing Group-name/description envelopes automatically on
+the existing Team-change wake and reconnect. This wraps the existing data key
+for the current audience without changing ciphertext or requiring a metadata
+save. Repair admission uses current membership and recipient keys; a departed
+member receives no new seals. The Home never opens labels. A keyholding client
+must be online; historical audit snapshots are outside this Group-label repair.
 
 An External API key has its own private label identity, not its parent
 credential-resource binding. Creation supplies the immutable key id before

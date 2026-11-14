@@ -49,6 +49,13 @@ import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
 import type { InvalidateSync } from '@/utils/sessions/sync';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { TeamGroupLabelEnvelopeRepairsV1Schema } from '@happier-dev/protocol/teams';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { createPrivateLabelClientForAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 import {
     installLocalStorageMock,
@@ -373,6 +380,55 @@ function accountChangeWake(id: string): Readonly<{
 }
 
 describe('sync AccountChange catch-up projection', () => {
+    it.each(['name', 'description'] as const)('automatically distributes an existing Group %s on the membership-change wake', async field => {
+        const credentials = { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(71), 'base64url') };
+        const owner = await createEncryptionFromAuthCredentials(credentials);
+        const newcomer = await createEncryptionFromAuthCredentials({ token: 'hdr.eyJzdWIiOiJuZXcifQ.sig',
+            secret: encodeBase64(new Uint8Array(32).fill(72), 'base64url') });
+        const recipient = (accountId: string, key: Uint8Array) => ({
+            account: { kind: 'account' as const, accountId, firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available' as const, contentPublicKey: encodeBase64(key, 'base64'),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(key) }, envelopeStatus: 'missing' as const,
+        });
+        const binding = { entity: 'team_group', field, id: 'group-before-join' };
+        const labelClient = createPrivateLabelClientForAccountContext({ accountId: ACCOUNT_ID, isCurrent: () => true,
+            resolveContentEncryptionMode: async () => 'e2ee', decryptEncryptionKey: key => owner.decryptEncryptionKey(key),
+            request: async () => ({ ok: true, body: { contentEncryptionMode: 'e2ee', recipients: [recipient(ACCOUNT_ID, owner.contentDataKey)] } }),
+        });
+        const stored = await labelClient.seal({ owner: { kind: 'team', teamId: 'team-before-join' }, binding, value: 'Saved before join' });
+        if (!stored) throw new Error('Expected sealed fixture');
+        const projection = { content: stored.content, recipientEnvelope: stored.recipients[0]!.envelope };
+        let joined = false;
+        let repaired: ReturnType<typeof TeamGroupLabelEnvelopeRepairsV1Schema.parse> | null = null;
+        await restoreTestAccount({ credentials, accountMode: 'e2ee', physicalRequest: (url, init) => {
+            if (new URL(url).pathname === '/v1/account/encryption/currentness') {
+                return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
+            }
+            if (new URL(url).pathname !== '/v2/teams/groups/label-envelopes') return undefined;
+            if (init?.method === 'PATCH') {
+                repaired = TeamGroupLabelEnvelopeRepairsV1Schema.parse(JSON.parse(String(init.body)));
+                return Promise.resolve(jsonResponse({ ok: true }));
+            }
+            return Promise.resolve(jsonResponse({ teams: joined ? [{ teamId: 'team-before-join',
+                recipients: [recipient(ACCOUNT_ID, owner.contentDataKey), recipient('new', newcomer.contentDataKey)],
+                labels: [{ groupId: binding.id, field, label: projection }] }] : [] }));
+        } });
+        joined = true;
+        changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
+            entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
+        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness;
+        await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
+        await waitForHomeGovernance(() => expect(repaired).not.toBeNull());
+        const published = TeamGroupLabelEnvelopeRepairsV1Schema.parse(repaired).labels[0]!.label;
+        expect(published.content).toEqual(stored.content);
+        const newEnvelope = published.recipients.find(row => row.accountId === 'new');
+        const reader = createPrivateLabelClientForAccountContext({ accountId: 'new', isCurrent: () => true,
+            resolveContentEncryptionMode: async () => 'e2ee', request: async () => null,
+            decryptEncryptionKey: key => newcomer.decryptEncryptionKey(key) });
+        expect(await reader.open({ binding, label: { content: published.content,
+            recipientEnvelope: newEnvelope?.envelope ?? null }, readPolicy: { kind: 'team-resource' } })).toBe('Saved before join');
+    });
+
     it('FLOWBUDGET foregrounds an acquired 1000-Session list and applies one changed Session', async () => {
         const rows = Array.from({ length: 1_000 }, (_, index) =>
             createPlainSessionCurrentProjectionRecordFixture({ id: `flowbudget-session-${index}` }));

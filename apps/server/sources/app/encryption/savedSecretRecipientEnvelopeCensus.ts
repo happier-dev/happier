@@ -58,6 +58,38 @@ const ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE = {
     ...ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE, role: { not: "guest" },
 } as const;
 
+async function readTeamAudienceAccountIdsInTx(tx: Tx, teamIds: readonly string[]) {
+    const members = teamIds.length === 0 ? [] : await tx.teamMembership.findMany({
+        where: { teamId: { in: [...teamIds] }, ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
+            team: { archivedAt: null } },
+        select: { teamId: true, accountId: true, role: true },
+    });
+    const byTeam = new Map(teamIds.map(teamId => [teamId, [] as string[]]));
+    for (const member of members) {
+        if (isTeamPrincipalRoleV1(member.role)) byTeam.get(member.teamId)?.push(member.accountId);
+    }
+    return byTeam;
+}
+
+/** Batch the same Team audience policy for membership-driven envelope distribution. */
+export async function readTeamRecipientEnvelopeCensusesInTx(
+    tx: Tx,
+    teamIds: readonly string[],
+): Promise<ReadonlyMap<string, readonly SavedSecretResourceEnvelopeCensusRecipientV1[]>> {
+    const byTeam = await readTeamAudienceAccountIdsInTx(tx, teamIds);
+    const accountIds = [...new Set([...byTeam.values()].flat())];
+    const accounts = accountIds.length === 0 ? [] : await tx.account.findMany({
+        where: { id: { in: accountIds } }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
+    });
+    const accountsById = new Map(accounts.map(account => [account.id, account]));
+    return new Map([...byTeam].map(([teamId, ids]) => [teamId,
+        projectSavedSecretRecipientEnvelopeCensusRecipientsV1({
+            accounts: ids.flatMap(id => { const account = accountsById.get(id); return account ? [account] : []; }),
+            envelopes: [],
+        }),
+    ]));
+}
+
 /**
  * The recipient-audience policy for Saved Secret resources and Team-readable
  * labels. The caller supplies only authoritative grants; the client never
@@ -74,14 +106,7 @@ export async function resolveSavedSecretAudienceAccountIdsInTx(
     }>,
 ): Promise<readonly string[]> {
     const [teamMembers, groupMembers] = await Promise.all([
-        input.teamIds.length === 0 ? [] : tx.teamMembership.findMany({
-            where: {
-                teamId: { in: [...input.teamIds] },
-                ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
-                team: { archivedAt: null },
-            },
-            select: { accountId: true, role: true },
-        }),
+        readTeamAudienceAccountIdsInTx(tx, input.teamIds),
         input.groupIds.length === 0 ? [] : tx.teamGroupMembership.findMany({
             where: {
                 teamGroupId: { in: [...input.groupIds] },
@@ -94,7 +119,7 @@ export async function resolveSavedSecretAudienceAccountIdsInTx(
     return [...new Set([
         ...(input.ownerAccountId === undefined ? [] : [input.ownerAccountId]),
         ...input.accountIds,
-        ...teamMembers.filter((member) => isTeamPrincipalRoleV1(member.role)).map((member) => member.accountId),
+        ...[...teamMembers.values()].flat(),
         ...groupMembers.map((member) => member.teamMembership.accountId),
     ])];
 }

@@ -7,7 +7,8 @@ import { registerSyncRuntime } from './sync';
 import { ViewDemandSync, type PeripheralFeed } from './engine/viewDemandSync';
 import { readAutomationRunHistoryDemand } from './domains/automations/automationRunHistoryDemand';
 import { type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
-import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
+import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { repairTeamGroupLabelEnvelopes } from './ops/teams/teamGroupLabelEnvelopes';
 import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { parsePermissionIntentAlias, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
@@ -1430,6 +1431,7 @@ class Sync {
       private readonly sessionSystemRecordRepositories = new Map<string, SessionSystemRecordRepository>();
     private sessionsSync: InvalidateSync;
     private metadataUpgradeDiscovery = new SessionMetadataUpgradeDiscovery();
+    private teamGroupLabelEnvelopeSync: InvalidateSync;
     private fetchSessionsInFlight: {
         serverScopeGeneration: number;
         snapshotGeneration: number;
@@ -1823,6 +1825,12 @@ class Sync {
                 shouldRetry,
             });
             this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
+            this.teamGroupLabelEnvelopeSync = new InvalidateSync(async () => {
+                const target = this.getAppliedTransportTarget();
+                if (!target || !this.credentials || this.embedSessionScope) return;
+                await repairTeamGroupLabelEnvelopes(target.serverId);
+            }, { pause, backoff, shouldRetry,
+                onError: (error) => log.log(`Team Group label envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`) });
             // The Home-wide sync error is the Home's connection verdict (it reads "Can't reach this Home").
             // Store purchases and Plugin Availability own their failures: RevenueCat logs its own, and
             // Availability publishes its failure into its projection. Neither sets nor clears the Home's.
@@ -8447,6 +8455,10 @@ class Sync {
 
                   await this.refreshSessionMetadataUpgrades();
 
+                  if (reason === 'socket-reconnect' || reason === 'manual') {
+                      this.teamGroupLabelEnvelopeSync.invalidateCoalesced();
+                  }
+
                   if (!shouldContinue()) {
                       return;
                   }
@@ -8683,6 +8695,7 @@ class Sync {
               this.machinesSync, this.artifactsSync, this.pluginAvailabilitySync,
           ]) syncUnit.invalidateCoalesced();
           this.requestAutomationsRefresh();
+          this.teamGroupLabelEnvelopeSync.invalidateCoalesced();
 
           await this.refreshSessionDraftRepositoryForSync();
           if (this.serverScopeGeneration !== generation || this.credentials !== credentials) return;
@@ -13340,6 +13353,7 @@ class Sync {
                         refreshedByCatchUp.sessions = true;
                         refreshedByCatchUp.machines = !embedScope;
                         if (embedScope) return snapshot;
+	                    this.teamGroupLabelEnvelopeSync.invalidateCoalesced();
 	                    resetCollectionWatches();
 	                    resetSettingsWatches();
                         return snapshot;
@@ -13378,6 +13392,10 @@ class Sync {
                         return applied;
                     }
                     const plannedServerId = transportTarget.serverId || sessionRecordChangeScope?.serverId || '';
+                    if (planned.changes.some(change => change.kind === 'account'
+                        && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
+                        this.teamGroupLabelEnvelopeSync.invalidateCoalesced({ rerunIfStarted: true });
+                    }
                     if (changesRequireSessionMetadataUpgradeDiscovery(planned.changes)) {
                         this.metadataUpgradeDiscovery.invalidate();
                         // share rows already refresh the list. A narrow row or

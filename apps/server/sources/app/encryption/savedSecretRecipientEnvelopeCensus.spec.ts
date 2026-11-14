@@ -51,7 +51,7 @@ describe("Saved Secret recipient envelope census", () => {
     it("supports a Team-only automated writer without inventing an author Account recipient", async () => {
         const tx = {
             teamMembership: {
-                findMany: async () => [{ accountId: "team-member", role: "member" }],
+                findMany: async () => [{ teamId: "team-1", accountId: "team-member", role: "member" }],
             },
             teamGroupMembership: {
                 findMany: async () => [],

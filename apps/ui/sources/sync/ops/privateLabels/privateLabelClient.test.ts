@@ -44,6 +44,38 @@ afterEach(async () => {
 });
 
 describe('private label client', () => {
+    it('rewraps a saved Team label for a later member without rewriting ciphertext or adding removed members', async () => {
+        const encryption = await createEncryptionFromAuthCredentials({ token: createAccountTokenForTests('owner'),
+            secret: encodeBase64(new Uint8Array(32).fill(61), 'base64url') });
+        const newcomer = await createEncryptionFromAuthCredentials({ token: createAccountTokenForTests('new'),
+            secret: encodeBase64(new Uint8Array(32).fill(62), 'base64url') });
+        const audience = [recipient('owner', encryption.contentDataKey)];
+        const client = createPrivateLabelClientForAccountContext({ accountId: 'owner', isCurrent: () => true,
+            resolveContentEncryptionMode: async () => 'e2ee',
+            request: async () => ({ ok: true, body: { contentEncryptionMode: 'e2ee', recipients: audience } }),
+            decryptEncryptionKey: async key => await encryption.decryptEncryptionKey(key),
+        });
+        const binding = { entity: 'team_group', field: 'description', id: 'group' };
+        const stored = await client.seal({ owner: { kind: 'team', teamId: 'team' }, binding, value: 'Before join' });
+        if (!stored) throw new Error('Fixture seal failed');
+        audience.push(recipient('new', newcomer.contentDataKey));
+        const repaired = await client.rewrap({ binding, label: { content: stored.content,
+            recipientEnvelope: stored.recipients[0]!.envelope }, recipients: audience });
+        expect(repaired?.content).toEqual(stored.content);
+        expect(repaired?.recipients.map(row => row.accountId)).toEqual(['owner', 'new']);
+        const reader = createPrivateLabelClientForAccountContext({ accountId: 'new', isCurrent: () => true,
+            resolveContentEncryptionMode: async () => 'plain', request: async () => null,
+            decryptEncryptionKey: async key => await newcomer.decryptEncryptionKey(key),
+        });
+        expect(await reader.open({ binding, readPolicy: { kind: 'team-resource' }, label: {
+            content: repaired!.content, recipientEnvelope: repaired!.recipients[1]!.envelope,
+        } })).toBe('Before join');
+        audience.pop();
+        const afterRemoval = await client.rewrap({ binding, label: { content: stored.content,
+            recipientEnvelope: stored.recipients[0]!.envelope }, recipients: audience });
+        expect(afterRemoval?.recipients.map(row => row.accountId)).toEqual(['owner']);
+    });
+
     it('retains unchanged labels while withdrawing only a changed request and removed rows', async () => {
         const observations: Readonly<Record<string, string | null>>[] = [];
         const scope = { serverId: 'viewer-home', accountId: 'viewer' };

@@ -57,7 +57,7 @@ export function projectTeamGroupLabelForRecipient(params: Readonly<{
 /** Name-only consumers retain the same canonical projection owner. */
 export const projectTeamGroupNameForRecipient = projectTeamGroupLabelForRecipient;
 
-function toEnvelopeRows(label: PrivateLabelStoredV1): readonly ResourceRecipientEnvelopeRow[] | null {
+export function toEnvelopeRows(label: PrivateLabelStoredV1): readonly ResourceRecipientEnvelopeRow[] | null {
     try {
         return label.recipients.map((recipient) => ({
             accountId: recipient.accountId,

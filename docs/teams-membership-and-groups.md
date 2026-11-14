@@ -218,6 +218,10 @@ non-guest members; a Group is exactly the narrower audience.
   recipient projection carries only that viewer's envelope. Raw pre-envelope text
   remains readable until its next normal metadata save. The server orders and
   targets Groups by structural IDs; display names need not be unique.
+  Development clients distribute existing encrypted Group-label keys to new
+  eligible Team members on the Team-change wake and reconnect, without editing
+  the saved labels. Repair changes envelopes only and admits the current Team
+  audience; it cannot replace a concurrently edited label's ciphertext.
 - Archive stops Group-derived access immediately while retaining every membership row and
   horizon; restore re-enables exactly the retained grants that are still valid.
 - A Group membership can exist only for an Account that belongs to the same Team, enforced

@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol';
 import { TeamGroupV1Schema } from '@happier-dev/protocol/teams';
 import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
@@ -51,8 +54,66 @@ describe('Team Group description privacy through HTTP and storage', () => {
                 label: group.description.label, readPolicy: { kind: 'team-resource' },
                 ...(content ? { accountKey: content.secretKey } : {}) });
         };
-        return { account, team, groupId, seal, post, openDescription };
+        return { account, team, groupId, seal, post, openDescription, content };
     }
+
+    it('delivers saved encrypted descriptions after a join without editing and refuses departed recipients', async () => {
+        const a = await owner('e2ee');
+        const b = await owner('e2ee');
+        const description = await a.seal('description', 'Saved before join');
+        expect((await a.post('create', { name: await a.seal('name', 'Private'), description,
+            requestKey: crypto.randomUUID() })).statusCode).toBe(200);
+        const joined = await inTx(tx => admitTeamMemberInTx(tx, { teamId: a.team.id, accountId: b.account.id,
+            role: 'member', historyAccess: 'all_existing' }));
+        expect(joined.ok).toBe(true);
+        const pending = await app.inject({ method: 'GET', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': a.account.id } });
+        expect(pending.statusCode).toBe(200);
+        expect(pending.json().teams.flatMap((team: { labels: { groupId: string }[] }) => team.labels)
+            .some((label: { groupId: string }) => label.groupId === a.groupId)).toBe(true);
+        const dataKey = openEncryptedDataKeyEnvelopeV1({
+            envelope: decodeBase64(description.recipients[0]!.envelope.encryptedDataKey, 'base64'),
+            recipientSecretKeyOrSeed: a.content!.secretKey,
+        });
+        if (!dataKey) throw new Error('Fixture key unavailable');
+        const recipients = [a, b].map(f => ({ accountId: f.account.id, envelope: {
+            encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+                recipientPublicKey: f.content!.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.content!.publicKey),
+        } }));
+        const publish = (actor = a.account.id) => app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': actor }, payload: { teamId: a.team.id,
+                labels: [{ groupId: a.groupId, field: 'description', label: { ...description, recipients } }] } });
+        expect((await publish()).statusCode).toBe(200);
+        const read = await app.inject({ method: 'POST', url: '/v1/teams/groups/get',
+            headers: { 'x-test-user-id': b.account.id }, payload: { v: 1, teamId: a.team.id, groupId: a.groupId } });
+        const group = TeamGroupV1Schema.parse(read.json());
+        expect(group.description?.kind === 'available' ? openCliPrivateLabel({
+            binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: group.description.label,
+            readPolicy: { kind: 'team-resource' }, accountKey: b.content!.secretKey,
+        }) : null).toBe('Saved before join');
+        const stored = await db.teamGroup.findUniqueOrThrow({ where: { id: a.groupId } });
+        expect(JSON.parse(stored.description!).content).toEqual(description.content);
+        // The newly eligible member can help distribute existing keys, but cannot reauthor the label through repair.
+        expect((await publish(b.account.id)).statusCode).toBe(200);
+        const changed = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
+                labels: [{ groupId: a.groupId, field: 'description', label: {
+                    ...description, content: (await a.seal('description', 'Changed content')).content, recipients,
+                } }] } });
+        expect(changed.statusCode).toBe(409);
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: a.team.id, accountId: b.account.id } } });
+        expect((await publish()).statusCode).toBe(400);
+        expect((await publish(b.account.id)).statusCode).toBe(403);
+        expect((await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
+                labels: [{ groupId: a.groupId, field: 'description', label: {
+                    ...description, recipients: recipients.filter(row => row.accountId === a.account.id),
+                } }] } })).statusCode).toBe(200);
+        const afterRemoval = await db.teamGroup.findUniqueOrThrow({ where: { id: a.groupId } });
+        expect(JSON.parse(afterRemoval.description!).recipients.map((row: { accountId: string }) => row.accountId)).toEqual([a.account.id]);
+        expect(JSON.parse(afterRemoval.description!).content).toEqual(description.content);
+    });
 
     it('refuses raw E2EE descriptions before plaintext reaches the stored Group', async () => {
         const fixture = await owner('e2ee');

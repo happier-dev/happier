@@ -15,6 +15,7 @@ import {
     type PrivateLabelRecipientCensusOwnerV1,
 } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { prepareSavedSecretResourceRecipientEnvelopesV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageReadFailure';
@@ -174,7 +175,35 @@ export function createPrivateLabelClientForAccountContext(context: PrivateLabelA
         }
     }
 
-    return { seal, open };
+    /** Rewrap a Team resource key under its stored privacy arm, without reauthoring content. */
+    async function rewrap(input: Readonly<{
+        binding: PrivateLabelBindingV1;
+        label: PrivateLabelReadV1;
+        recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+        signal?: AbortSignal;
+    }>): Promise<PrivateLabelStoredV1 | null> {
+        assertContextCurrent(context, input.signal);
+        if (input.label.content.t !== 'encrypted' || !input.label.recipientEnvelope || !context.decryptEncryptionKey) return null;
+        try {
+            const dataKey = await context.decryptEncryptionKey(input.label.recipientEnvelope.encryptedDataKey, input.signal);
+            assertContextCurrent(context, input.signal);
+            if (!dataKey || openPrivateLabelV1({ binding: input.binding, label: input.label,
+                readPolicy: { kind: 'team-resource' }, dataKey }) === null) return null;
+            const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({ recipients: input.recipients,
+                resourceDataKey: dataKey, randomBytes: getRandomBytes });
+            if (!prepared.length || prepared.length !== input.recipients.length) return null;
+            return { content: input.label.content, recipients: prepared.map(recipient => ({
+                accountId: recipient.recipientAccountId,
+                envelope: { encryptedDataKey: recipient.encryptedDataKey,
+                    recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint },
+            })) };
+        } catch (error) {
+            rethrowLifecycleFailure(error, input.signal);
+            return null;
+        }
+    }
+
+    return { seal, open, rewrap };
 }
 
 /**

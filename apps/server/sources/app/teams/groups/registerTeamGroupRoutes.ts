@@ -4,6 +4,8 @@ import { decodeMembershipSessionDataKeyEnvelopeCursorV1, MembershipSessionDataKe
 import {
     TeamErrorV1Schema,
     TeamGroupCreateInputV1Schema,
+    TeamGroupLabelEnvelopeRepairsV1Schema,
+    TeamGroupLabelEnvelopeWorkV1Schema,
     TeamGroupMemberAddInputV1Schema,
     TeamGroupMemberMutationResultV1Schema,
     TeamGroupMemberRemoveInputV1Schema,
@@ -30,6 +32,7 @@ import { inTx } from "@/storage/inTx";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { createTeamRouteApp } from "../teamRouteApp";
+import { readTeamGroupLabelEnvelopeWorkInTx, repairTeamGroupLabelEnvelopesInTx } from './labelEnvelopes';
 
 import {
     addTeamGroupMemberForActorInTx,
@@ -95,6 +98,25 @@ export function registerTeamGroupRoutes(app: Fastify) {
     function fail(reply: TeamErrorReply, error: TeamErrorCodeV1): void {
         reply.code(teamErrorHttpStatusV1(error)).send({ error });
     }
+
+    teamsApp.get('/v2/teams/groups/label-envelopes', {
+        preHandler: app.authenticate,
+        schema: { response: { 200: TeamGroupLabelEnvelopeWorkV1Schema, ...TEAM_ERROR_RESPONSES } },
+    }, async (request, reply) => reply.send(await inTx(tx => readTeamGroupLabelEnvelopeWorkInTx(tx,
+        request.userId, readTeamOperationAuthenticationFromRequest(request)))));
+
+    teamsApp.patch('/v2/teams/groups/label-envelopes', {
+        preHandler: app.authenticate,
+        attachValidation: true,
+        schema: { body: TeamGroupLabelEnvelopeRepairsV1Schema,
+            response: { 200: z.strictObject({ ok: z.literal(true) }), ...TEAM_ERROR_RESPONSES } },
+    }, async (request, reply) => {
+        if (request.validationError) return fail(reply, 'invalid_team_input');
+        const result = await inTx(tx => repairTeamGroupLabelEnvelopesInTx(tx, request.userId, request.body,
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'ReadCommitted' });
+        if (result !== 'ready') return fail(reply, result);
+        return reply.send({ ok: true });
+    });
 
     teamsApp.post(homeDomainActionPathForMethod("teams.groups.list", "POST"), {
         preHandler: app.authenticate,
