@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import '../../../packages/cli-common/registerSourceRuntime.mjs';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -56,4 +56,93 @@ test('source Plugin UI compilation succeeds with the SDK dist compiler unavailab
   const module = { exports: {} };
   runInNewContext(bundle, { module, exports: module.exports });
   assert.equal(await module.exports.renderSurface(), 'source-only');
+});
+
+test('a relocated copy of a prepared checkout reuses unchanged Plugin UI bundles and recompiles only an edited plugin', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-relocated-reuse-' });
+  const write = async (path, bytes) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, bytes);
+  };
+  const origin = fixture.path('origin');
+  await write(join(origin, 'apps/ui/package.json'), '{}');
+  const workspaceNames = ['plugins-alpha', 'plugins-beta'];
+  for (const directory of ['alpha', 'beta']) {
+    const root = join(origin, 'packages/plugins', directory);
+    await write(join(root, 'package.json'), JSON.stringify({
+      name: `@happier-dev/plugins-${directory}`, version: '0.0.0', exports: {
+        './happier-plugin-ui/account-runtime': { 'happier-source': './src/account.ts' },
+      },
+    }));
+    await write(join(root, 'src/account.ts'), `export function activateAccount() { return "${directory}-ready"; }`);
+    await write(join(root, '.happier-plugin/plugin.json'), JSON.stringify({
+      schemaVersion: 2, id: `happier.${directory}`, version: '0.0.0', displayName: directory,
+      runtime: { apiVersion: 1 }, contributes: { actions: [{
+        id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+        inputSchema: { type: 'object' }, outputSchema: { type: 'object' },
+        execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+      }] },
+    }));
+  }
+  // The compiler's per-batch outcome line is the owner's observable reuse count.
+  const outcomes = [];
+  const error = console.error;
+  t.after(() => { console.error = error; });
+  console.error = (...args) => {
+    const line = args.join(' ');
+    const match = /phase=plugin-ui-input-reuse .*compiled=(\d+) reused=(\d+)/u.exec(line);
+    if (match) outcomes.push({ compiled: Number(match[1]), reused: Number(match[2]) });
+    else error(...args);
+  };
+  const { prepareSourceCliPluginUiArtifacts } = await import('../../cli/scripts/prepareSourcePluginUiArtifacts.mjs');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot: origin, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 2, reused: 0 });
+  // A snapshot is the same bytes at another checkout path, with the package
+  // dists carried and no consumer scratch (.project is never captured).
+  const relocated = fixture.path('relocated');
+  await cp(origin, relocated, { recursive: true, filter: source => !source.includes(`${join(origin, '.project')}`) });
+  await prepareSourceCliPluginUiArtifacts({ repoRoot: relocated, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 0, reused: 2 });
+  await write(join(relocated, 'packages/plugins/beta/src/account.ts'),
+    'export function activateAccount() { return "beta-edited"; }');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot: relocated, workspaceNames });
+  assert.deepEqual(outcomes.at(-1), { compiled: 1, reused: 1 });
+  const artifact = JSON.parse(await readFile(join(relocated, 'packages/plugins/beta/dist/happier-plugin-ui/ui-artifacts.json'), 'utf8'));
+  const module = { exports: {} };
+  runInNewContext(await readFile(join(relocated, 'packages/plugins/beta/dist/happier-plugin-ui', artifact.entries[0].entry), 'utf8'),
+    { module, exports: module.exports });
+  assert.equal(module.exports.activateAccount(), 'beta-edited');
+});
+
+test('source publication into a package dist keeps the compiler\'s exact artifact manifest bytes', async t => {
+  // A package build records its dist/happier-plugin-ui outputs by digest. A
+  // re-serialized manifest made every later package check report changed
+  // outputs and refresh the package, which then recompiled the UI again.
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-exact-manifest-' });
+  const repoRoot = fixture.path('repo');
+  const root = join(repoRoot, 'packages/plugins/alpha');
+  const write = async (path, bytes) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, bytes);
+  };
+  await write(join(repoRoot, 'apps/ui/package.json'), '{}');
+  await write(join(root, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-alpha', version: '0.0.0', exports: {
+      './happier-plugin-ui/account-runtime': { 'happier-source': './src/account.ts' },
+    },
+  }));
+  await write(join(root, 'src/account.ts'), 'export function activateAccount() { return "alpha-ready"; }');
+  await write(join(root, '.happier-plugin/plugin.json'), JSON.stringify({
+    schemaVersion: 2, id: 'happier.alpha', version: '0.0.0', displayName: 'alpha',
+    runtime: { apiVersion: 1 }, contributes: { actions: [{
+      id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+      inputSchema: { type: 'object' }, outputSchema: { type: 'object' },
+      execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+    }] },
+  }));
+  const { prepareSourceCliPluginUiArtifacts } = await import('../../cli/scripts/prepareSourcePluginUiArtifacts.mjs');
+  await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: ['plugins-alpha'] });
+  const compiled = await readFile(join(repoRoot, '.project/tmp/source-cli-plugin-ui/alpha/happier-plugin-ui/ui-artifacts.json'));
+  const published = await readFile(join(root, 'dist/happier-plugin-ui/ui-artifacts.json'));
+  assert.equal(published.toString('utf8'), compiled.toString('utf8'));
 });

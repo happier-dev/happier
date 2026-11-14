@@ -383,11 +383,13 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     for (const [candidateIndex, artifactsRoot] of candidateRoots.entries()) {
     try {
     let rawArtifactManifest;
+    let artifactManifestBytes;
     let artifactManifestError;
     if (artifactsRoot) {
       const artifactsManifestPath = resolve(artifactsRoot, 'ui-artifacts.json');
       try {
-        rawArtifactManifest = parseJson(await readFile(artifactsManifestPath, 'utf8'), artifactsManifestPath);
+        artifactManifestBytes = await readFile(artifactsManifestPath);
+        rawArtifactManifest = parseJson(artifactManifestBytes.toString('utf8'), artifactsManifestPath);
       } catch (error) {
         artifactManifestError = error;
       }
@@ -533,7 +535,9 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     // the retained graph between validation and materialization.
     if (destination && destination !== artifactsRoot) {
       await materializeArtifactGraph(destination, [...pluginFiles,
-        ...(parsedManifest?.success ? [{ relativePath: 'ui-artifacts.json', bytes: Buffer.from(JSON.stringify(parsedManifest.data)) }] : [])], Boolean(artifactStoreDir));
+        // The strict schema accepted these exact bytes. Re-serializing them would
+        // change a package dist's recorded output and invalidate it every run.
+        ...(parsedManifest?.success ? [{ relativePath: 'ui-artifacts.json', bytes: artifactManifestBytes }] : [])], Boolean(artifactStoreDir));
       for (const source of pluginSources) {
         source.files = source.files.map((file) => ({ ...file,
           specifier: assertArtifactPath(destination, file.relativePath, source.packageName) }));
