@@ -15,8 +15,7 @@ describe('Voice settings edit intent', () => {
         const pending = VoiceLocalConversationProviderChatSchema.parse({ status: 'needs_selection', providerConnectionId: 'voice-openai-compatible-chat',
             chatModelId: 'legacy-chat', commitModelId: 'legacy-commit' });
         if (pending.status !== 'needs_selection') throw new Error('Expected the canonical pending Provider selection');
-        const configured = completeLegacyVoiceOpenAiChatAgentSelection(pending, 'opencode');
-        if (!configured) throw new Error('Missing supported legacy Chat Agent choice');
+        const configured = completeLegacyVoiceOpenAiChatAgentSelection(pending, { kind: 'backend', backendId: 'opencode' });
         const before = writeLocalConversationVoiceSettings(initial, { ...cfg, agent: { ...cfg.agent, providerChat: pending } });
         const next = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent,
             agentSource: 'agent', agentId: 'opencode', agentTargetKey: configured.chat.agentTargetKey, providerChat: configured,
