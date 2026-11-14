@@ -1,5 +1,6 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { isPluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectPluginEventSourceConnectionStatusV1, type PluginEventSourceConnectionStatusV1 } from '@happier-dev/plugin-sdk/events';
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   ConversationProviderConnectionReadResultV1Schema,
@@ -10,7 +11,8 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { materializeExactSlackCredentials, readSlackConnectionConfiguration } from './slackActions.js';
 import { createSlackApi } from './slackApi.js';
-import { SLACK_CREDENTIAL_PURPOSE, SLACK_PLUGIN_ID, SLACK_SOCKET_BACKGROUND_SERVICE_ID, SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID } from './slackPluginConstants.js';
+import { SLACK_CREDENTIAL_PURPOSE, SLACK_PLUGIN_ID, SLACK_SOCKET_BACKGROUND_SERVICE_ID, SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID,
+  SLACK_AUTOMATION_MESSAGE_EVENT_ID, SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION, createSlackConnectionKey } from './slackPluginConstants.js';
 import { startSlackSocketWorker, type SlackSocketWorker, type SlackSocketWorkerResult } from './slackSocketWorker.js';
 
 // Repair failed authority/fact reads at the existing CHAN-28 cadence. Settled
@@ -50,6 +52,18 @@ function connectionFingerprint(snapshot: Snapshot): string {
     configuration: 'kind' in configuration ? configuration
       : [configuration.teamId, configuration.appId, configuration.botUserId, configuration.botId],
   });
+}
+
+/** Socket health stays with this supervisor; the SDK projects current Workflow sources. */
+async function projectSourceConnectionStatus(snapshot: Snapshot, status: PluginEventSourceConnectionStatusV1, context: PluginInvocationContext): Promise<void> {
+  const configuration = readSlackConnectionConfiguration(snapshot);
+  if ('kind' in configuration) return;
+  await projectPluginEventSourceConnectionStatusV1({
+    eventRef: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_AUTOMATION_MESSAGE_EVENT_ID },
+    sourceContractVersion: SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    sourceInstanceIdPrefix: `${createSlackConnectionKey(configuration)}:channel:`,
+    scope: { kind: 'socket' }, status,
+  }, context);
 }
 
 /** Process-local socket custody only. Core Actions remain the Account authority. */
@@ -166,7 +180,13 @@ export function createSlackSocketSupervisor() {
     } catch (error) {
       if (!stopOnCollectionUpdateRequired(error, context) && !context.signal.aborted && !entry.controller.signal.aborted) result = { kind: 'notReady', failure: {
         kind: 'notReady', reason: 'network', diagnostic: 'Slack Socket Mode could not be initialized.' } };
-    } finally { recordResult(entry, result); }
+    } finally {
+      recordResult(entry, result);
+      if (result.kind === 'notReady' && workers.get(snapshot.connectionId) === entry
+        && !entry.controller.signal.aborted && !context.signal.aborted) {
+        await projectSourceConnectionStatus(snapshot, 'reconnecting', context);
+      }
+    }
   };
 
   const publishFacts = async (snapshot: Snapshot, context: BackgroundServiceContext): Promise<boolean> => {
@@ -181,6 +201,8 @@ export function createSlackSocketSupervisor() {
           pluginId: 'happier.channels', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
         }, { connectionId: snapshot.connectionId, authorityEpoch: snapshot.authorityEpoch, fact }, { signal: context.signal }));
         if (result.kind === 'staleAuthority') { pendingFacts.delete(key); return false; }
+        if (fact.kind === 'historyGap') await projectSourceConnectionStatus(snapshot, 'historyGap', context);
+        else if (fact.kind === 'providerReadiness' && fact.status === 'ready') await projectSourceConnectionStatus(snapshot, 'ready', context);
       } catch (error) { if (!stopOnCollectionUpdateRequired(error, context)) retryReconciliation(); return false; }
     }
     // Preserve any newer fact queued while publication was in flight.

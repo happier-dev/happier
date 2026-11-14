@@ -47,8 +47,10 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   };
   const admissions: unknown[] = [];
   const facts: ReturnType<typeof ConversationTransportFactReportInputV1Schema.parse>[] = [];
+  const sourceStatuses: unknown[] = [];
   let reads = 0;
   let lists = 0;
+  let sourceLists = 0;
   let socketsOpened = 0;
   let socketsClosed = 0;
   const listed = !input.empty;
@@ -58,6 +60,16 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   let resyncCredentials = (_event: ConnectedAccountBindingEvent) => {};
   let background!: BackgroundServiceContext;
   const execute = vi.fn(async (action: string | Readonly<{ pluginId: string; localId: string }>, value: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+    if (action === 'automation.event.sources.list') { sourceLists += 1; return { kind: 'page', revision: '1', nextCursor: null, definitions: [{
+      automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'slack-trigger', triggerRevision: 1,
+      sourceSelectorId: '3f5b6d0e-1c4a-4d2b-9f77-2a0c4e6b8d91',
+      eventRef: { pluginId: 'happier.channel.slack', localId: 'automation/channel-message-observed-v1' },
+      sourceInstanceId: 'slack:team:T1:app:A1:channel:C1', sourceContractVersion: 1,
+      sourceConfig: { v: 1, teamId: 'T1', appId: 'A1', channelId: 'C1' },
+      observationTransport: { kind: 'socket', watcherMaterializationRef: { pluginId: 'happier.channel.slack', machineId: 'machine-1', materializationId: 'materialization-1' } },
+      filter: null, maximumObservationAgeMs: null,
+    }] }; }
+    if (action === 'automation.event.source.status.report') { sourceStatuses.push(value); return {}; }
     if (typeof action === 'string') throw new Error('Unexpected host Action.');
     if (action.pluginId === 'happier.channel.slack' && action.localId === SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID) {
       await supervisor.runWorkerAttempt(ConversationProviderConnectionReconciliationSnapshotV1Schema.parse(value), {
@@ -112,14 +124,25 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   background = { plugin: { id: 'happier.channel.slack', version: '0.0.0' }, contribution: { id: SLACK_SOCKET_BACKGROUND_SERVICE_ID,
     qualifiedId: `happier.channel.slack/backgroundServices/${SLACK_SOCKET_BACKGROUND_SERVICE_ID}` },
     surface: 'background', invokedAtMs: 1700000000000, signal: controller.signal, services };
-  return { supervisor, background, admissions, facts, controller, unavailable,
+  return { supervisor, background, admissions, facts, sourceStatuses, controller, unavailable,
     setSnapshot(value: typeof snapshot) { current = value; },
     resyncCredentials: (authorityChanged = true) => resyncCredentials({ kind: 'resync', authorityChanged }),
     get lists() { return lists; }, get reads() { return reads; }, get socketsOpened() { return socketsOpened; },
+    get sourceLists() { return sourceLists; },
     get socketsClosed() { return socketsClosed; } };
 }
 
 describe('Slack socket supervisor through real target worker Action', () => {
+  it('projects ready and a lost Socket Mode history into the existing Workflow source status owner', async () => {
+    vi.useFakeTimers();
+    const h = harness({ disconnect: 'unexpected' });
+    const running = h.supervisor.run(h.background);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.sourceStatuses).toContainEqual(expect.objectContaining({ kind: 'source', triggerId: 'slack-trigger', state: 'observing', code: 'none' }));
+      expect(h.sourceStatuses).toContainEqual(expect.objectContaining({ kind: 'source', triggerId: 'slack-trigger', state: 'attention', code: 'historyGap' }));
+    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
+  });
   it('keeps the socket for generation-only changes and replaces it for a credential change', async () => {
     vi.useFakeTimers();
     const h = harness();
@@ -191,9 +214,11 @@ describe('Slack socket supervisor through real target worker Action', () => {
       else await vi.waitFor(() => expect(h.facts).toContainEqual({ connectionId: 'connection-1', authorityEpoch: 7,
         fact: { kind: 'providerReadiness', status: 'ready' } }));
       await vi.advanceTimersByTimeAsync(0);
-      const before = { lists: h.lists, reads: h.reads };
+      const before = { lists: h.lists, reads: h.reads, sourceLists: h.sourceLists, sourceStatuses: h.sourceStatuses.length };
       await vi.advanceTimersByTimeAsync(60_000);
       expect({ lists: h.lists - before.lists, reads: h.reads - before.reads }).toEqual({ lists: 0, reads: 0 });
+      expect(h.sourceLists - before.sourceLists).toBe(0);
+      expect(h.sourceStatuses.length - before.sourceStatuses).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
 
       h.supervisor.invalidateConnections();

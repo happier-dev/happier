@@ -15,9 +15,16 @@ import {
 } from './slackActions.js';
 import { createSlackSocketSupervisor } from './slackSocketSupervisor.js';
 import {
+  SLACK_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA, SLACK_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+  SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA, SLACK_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+  SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS, setupSlackAutomationMessageSource, admitSlackAutomationEvent,
+} from './automationEvents.js';
+import {
   SLACK_PLUGIN_ID, SLACK_CHANNEL_PROVIDER_CONTRIBUTION_ID, SLACK_CHANNEL_ACTION_IDS,
   SLACK_CONNECTED_ACCOUNT_ID, SLACK_CREDENTIAL_PURPOSE,
   SLACK_SOCKET_BACKGROUND_SERVICE_ID, SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID,
+  SLACK_AUTOMATION_MESSAGE_EVENT_ID, SLACK_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  SLACK_AUTOMATION_MESSAGE_ADMIT_ACTION_ID, SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
 } from './slackPluginConstants.js';
 
 const protocol = ConversationProvidersContributionProtocolV1;
@@ -75,6 +82,18 @@ function createSlackPlugin() {
     },
     notificationChannels: { alerts: { declaration: { title: 'Slack', kind: 'plugin', metadata: { destinationSetup: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_CHANNEL_ACTION_IDS.notificationSetup } } }, sender: sendSlackNotification } },
     actions: {
+      [SLACK_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
+        title: 'Watch a Slack conversation for Workflows', surfaces: ['ui', 'plugin'],
+        inputSchema: SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
+        resultSchema: SLACK_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA, inputHints: SLACK_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
+        hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: setupSlackAutomationMessageSource,
+      },
+      [SLACK_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {
+        title: 'Admit Slack Workflow Event', surfaces: roles.automationEventAdmit.declaration.surfaces,
+        dangerLevel: roles.automationEventAdmit.declaration.dangerLevel,
+        inputSchema: roles.automationEventAdmit.declaration.input.schema.jsonSchema,
+        resultSchema: roles.automationEventAdmit.declaration.resultSchema.jsonSchema, run: admitSlackAutomationEvent,
+      },
       [SLACK_CHANNEL_ACTION_IDS.notificationSetup]: {
         title: 'Choose Slack notification destination',
         surfaces: roles.notificationDestinationSetup.declaration.surfaces,
@@ -137,6 +156,16 @@ function createSlackPlugin() {
       },
     },
     events: {
+      [SLACK_AUTOMATION_MESSAGE_EVENT_ID]: { declaration: {
+        kind: 'event', title: 'Slack conversation message',
+        description: 'A Slack conversation message observed through the selected Channels Socket Mode connection.',
+        payloadSchema: SLACK_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+        automation: { v: 1, eligible: true, source: {
+          sourceContractVersion: SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+          supportedObservationTransports: ['socket'], sourceConfigSchema: SLACK_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
+          setupActionRef: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
+        } },
+      } },
       'connections-invalidated-v1': { declaration: { kind: 'subscription', target: { kind: 'plugin',
         event: { pluginId: 'happier.channels', localId: 'connections-invalidated-v1' } } }, handler: () => supervisor?.invalidateConnections() },
     },
@@ -151,6 +180,7 @@ function createSlackPlugin() {
       messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver),
       sessionStatus: roles.sessionStatus.bind(SLACK_CHANNEL_ACTION_IDS.sessionStatus),
       attachmentFetch: roles.attachmentFetch.bind(SLACK_CHANNEL_ACTION_IDS.attachmentFetch),
+      automationEventAdmit: roles.automationEventAdmit.bind(SLACK_AUTOMATION_MESSAGE_ADMIT_ACTION_ID),
     } }) } } },
     setup() {
       if (supervisor) throw new Error('Slack Socket Mode supervisor is already active.');

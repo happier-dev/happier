@@ -315,7 +315,7 @@ function createTelegramPluginDefinition() {
     [TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Choose a Telegram chat to watch',
       description: 'Resolves a Telegram chat to immutable source facts for a Workflow Event.',
-      surfaces: ['plugin'],
+      surfaces: ['ui', 'plugin'],
       inputSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       resultSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
       hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],

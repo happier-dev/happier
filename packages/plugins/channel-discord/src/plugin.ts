@@ -286,7 +286,7 @@ function createDiscordPlugin() {
     [DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Watch a Discord channel for Workflows',
       description: 'Resolves a Discord channel to immutable source facts for a Workflow Event.',
-      surfaces: ['plugin'],
+      surfaces: ['ui', 'plugin'],
       inputSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       inputHints: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
       resultSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,

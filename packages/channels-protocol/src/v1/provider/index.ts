@@ -130,6 +130,7 @@ export {
     ConversationProviderAutomationEventAdmitResultV1JsonSchema,
     ConversationProviderAutomationEventAdmitResultV1Schema,
 } from './automationEvents.js';
+export { admitConversationProviderAutomationEventV1 } from './automationEventAdmission.js';
 export type {
     ConversationProviderAutomationEventAdmitInputV1,
     ConversationProviderAutomationEventAdmitResultV1,
@@ -178,3 +179,15 @@ export type {
     ConversationProviderSetupRemediationResultV1,
     ConversationProviderSetupResultV1,
 } from './setup.js';
+export {
+    NOTIFICATION_DESTINATION_INPUT_TYPE_V1,
+    NotificationDestinationSelectionV1Schema,
+    ConversationNotificationDestinationV1Schema,
+    ConversationNotificationDestinationSetupInputV1Schema,
+    ConversationNotificationDestinationSetupResultV1Schema,
+} from './notifications.js';
+export type {
+    ConversationNotificationDestinationV1,
+    ConversationNotificationDestinationSetupInputV1,
+    ConversationNotificationDestinationSetupResultV1,
+} from './notifications.js';

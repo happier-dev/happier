@@ -9,6 +9,10 @@ export const SLACK_BOT_TOKEN_ENVIRONMENT_KEY = 'SLACK_BOT_TOKEN';
 export const SLACK_APP_TOKEN_ENVIRONMENT_KEY = 'SLACK_APP_TOKEN';
 export const SLACK_SOCKET_BACKGROUND_SERVICE_ID = 'socket-supervisor';
 export const SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID = 'slack/socket-worker-attempt';
+export const SLACK_AUTOMATION_MESSAGE_EVENT_ID = 'automation/channel-message-observed-v1';
+export const SLACK_AUTOMATION_MESSAGE_SETUP_ACTION_ID = 'automation/setup-channel-message-source-v1';
+export const SLACK_AUTOMATION_MESSAGE_ADMIT_ACTION_ID = 'slack/admit-automation-event';
+export const SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION = 1;
 export const SLACK_CHANNEL_ACTION_IDS = Object.freeze({
   notificationSetup: 'notifications/setup',
   setup: 'slack/prepare-bot',
@@ -22,6 +26,14 @@ export const SLACK_CHANNEL_ACTION_IDS = Object.freeze({
 
 export function createSlackChannelEndpointId(teamId: string, channelId: string): string {
   return `slack:${teamId}:channel:${channelId}`;
+}
+
+export function createSlackAutomationMessageSourceInstanceId(input: Readonly<{ teamId: string; appId: string; channelId: string }>): string {
+  return `${createSlackConnectionKey(input)}:channel:${input.channelId}`;
+}
+
+export function createSlackConnectionKey(identity: Pick<SlackIdentity, 'teamId' | 'appId'>): string {
+  return `slack:team:${identity.teamId}:app:${identity.appId}`;
 }
 
 export function createSlackThreadEndpointId(teamId: string, channelId: string, threadTs: string): string {

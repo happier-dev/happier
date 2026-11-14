@@ -44,6 +44,7 @@ import {
 import { ConversationAttachmentFetchInputV1Schema, ConversationAttachmentFetchResultV1Schema } from './attachments.js';
 import { ConversationProviderDescriptorV1Schema } from './descriptor.js';
 import { ConversationSessionStatusInputV1Schema } from './status.js';
+import { ConversationNotificationDestinationSetupInputV1Schema, ConversationNotificationDestinationSetupResultV1Schema } from './notifications.js';
 
 /**
  * The V1 provider presentation and role contract. Its arbitrary provider-local
@@ -54,6 +55,12 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
     version: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
     descriptor: ConversationProviderDescriptorV1Schema,
     operations: {
+        notificationDestinationSetup: {
+            required: false,
+            input: { kind: 'protocolDefined', schema: ConversationNotificationDestinationSetupInputV1Schema },
+            resultSchema: ConversationNotificationDestinationSetupResultV1Schema,
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+        },
         setup: {
             required: true,
             input: { kind: 'contributorDefined' },

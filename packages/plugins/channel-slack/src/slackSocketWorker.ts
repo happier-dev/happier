@@ -1,7 +1,7 @@
 import type { ConversationProviderFailureV1, ConversationProviderObservationIngestInputV1 } from '@happier-dev/channels-protocol/v1';
 import type { HttpService, PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import type { createSlackApi, SlackIdentity } from './slackApi.js';
-import { mapSlackEventToIngress } from './slackObservation.js';
+import { createSlackAutomationEventCandidate, mapSlackEventToIngress } from './slackObservation.js';
 import { readSlackPrincipalId } from './slackPluginConstants.js';
 
 export type SlackSocketWorkerResult =
@@ -111,7 +111,9 @@ export function startSlackSocketWorker(input: SlackSocketWorkerInput): SlackSock
             }
           }
           if (observation) await input.admitObservation({ connectionId: input.connection.connectionId,
-            authorityEpoch: input.connection.authorityEpoch, entry: { observation, eventCandidate: null } }, { signal });
+            authorityEpoch: input.connection.authorityEpoch, entry: { observation,
+              eventCandidate: createSlackAutomationEventCandidate({ identity: input.connection.identity, observation,
+                ...(typeof payload.event.text === 'string' ? { originalText: payload.event.text } : {}) }) } }, { signal });
           admissionPending = false;
         }
         signal.throwIfAborted();

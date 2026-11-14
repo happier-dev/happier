@@ -44,6 +44,8 @@ describe('Discord Automation Event contribution', () => {
       },
     });
     const actions = PLUGIN_MANIFEST.contributes.actions ?? [];
+    expect(actions.find((action) => action.id === DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID)?.surfaces)
+      .toContain('ui');
     expect(actions.map((action) => action.id))
       .toContain(DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID);
     expect(actions.find((action) => action.id === DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID))

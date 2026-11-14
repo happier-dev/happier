@@ -798,6 +798,13 @@ cursors, epochs and unresolved effects.
 
 ## Cancellation, currentness, and lifecycle
 
+In 0.3 development source, provider Event admission uses the shared
+`admitConversationProviderAutomationEventV1` bridge after the provider's existing
+Channels caller check. It passes a frozen Channels obligation to the SDK Event
+admission owner and returns the closed Channels settlement result. Discord and
+Slack select `socket`, while Telegram selects `checkpointedPull`; the bridge adds
+no observer, retry loop, checkpoint, or persisted state.
+
 Use the invocation `AbortSignal` for every network, credential, and provider
 operation. Re-check current Account/connection/binding/plugin generation before
 an external effect and before settling its result. A cancellation or generation

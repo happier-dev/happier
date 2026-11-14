@@ -1,6 +1,8 @@
-import { createConversationAttachmentIdV1, ConversationNormalizedIngressV1Schema, type ConversationMessageAttachmentV1, type ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
+import { createConversationAttachmentIdV1, ConversationNormalizedIngressV1Schema, type ConversationIngressAutomationEventCandidateV1, type ConversationMessageAttachmentV1, type ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
 import type { SlackChannel, SlackIdentity } from './slackApi.js';
-import { createSlackChannelEndpointId, createSlackEndpointIdentity, createSlackPrincipalId } from './slackPluginConstants.js';
+import { createSlackChannelEndpointId, createSlackEndpointIdentity, createSlackPrincipalId, readSlackEndpointId,
+  SLACK_PLUGIN_ID, SLACK_AUTOMATION_MESSAGE_EVENT_ID, SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+  createSlackAutomationMessageSourceInstanceId } from './slackPluginConstants.js';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -8,6 +10,27 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function timestamp(value: unknown): value is string {
   return typeof value === 'string' && /^\d+\.\d+$/.test(value);
+}
+
+/** The candidate shares Channels custody; own deliveries and bodyless revisions never arm work. */
+export function createSlackAutomationEventCandidate(input: Readonly<{
+  identity: SlackIdentity; observation: ConversationNormalizedIngressV1; originalText?: string;
+}>): ConversationIngressAutomationEventCandidateV1 | null {
+  if (input.observation.kind !== 'fullText' || input.observation.observation.actor.isIntegrationSelf) return null;
+  const { endpoint, actor, message } = input.observation.observation;
+  const selected = readSlackEndpointId(endpoint.id);
+  if (selected === null || (endpoint.kind !== 'direct' && endpoint.kind !== 'shared' && endpoint.kind !== 'thread')) return null;
+  const text = input.originalText ?? message.text;
+  return {
+    eventRef: { pluginId: SLACK_PLUGIN_ID, localId: SLACK_AUTOMATION_MESSAGE_EVENT_ID },
+    sourceInstanceId: createSlackAutomationMessageSourceInstanceId({ ...input.identity, channelId: selected.channelId }),
+    sourceContractVersion: SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    payload: { teamId: input.identity.teamId, channelId: selected.channelId, channelKind: endpoint.kind,
+      messageId: message.id, text, actorKind: actor.kind, addressingEvidence: message.addressingEvidence,
+      ...(actor.principalId === null ? {} : { actorPrincipalId: actor.principalId }),
+      ...(message.replyToMessageId === undefined ? {} : { replyToMessageId: message.replyToMessageId }),
+    },
+  };
 }
 
 /** Authenticated Socket Mode Events API evidence; no receive cursor or checkpoint. */

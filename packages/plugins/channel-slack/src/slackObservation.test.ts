@@ -1,7 +1,7 @@
 import { ConversationNormalizedIngressV1Schema } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
-import { mapSlackEventToIngress } from './slackObservation.js';
+import { createSlackAutomationEventCandidate, mapSlackEventToIngress } from './slackObservation.js';
 
 const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' };
 const channel = { id: 'C1', isIm: false, isMpim: false, isPrivate: false, isArchived: false };
@@ -11,6 +11,25 @@ function payload(event: Record<string, unknown> = {}) {
 }
 
 describe('Slack authenticated message normalization', () => {
+  it('projects channel-wide Workflow source identity for threads while retaining native addressing and text', () => {
+    const native = payload({ thread_ts: '1699999999.000001' });
+    const observation = mapSlackEventToIngress({ payload: native, identity, channel });
+    expect(observation?.kind).toBe('fullText');
+    const candidate = createSlackAutomationEventCandidate({ identity, observation: observation!, originalText: native.event.text });
+    expect(candidate).toMatchObject({ sourceInstanceId: 'slack:team:T1:app:A1:channel:C1', payload: {
+      teamId: 'T1', channelId: 'C1', channelKind: 'thread', text: '<@U1> hello',
+      replyToMessageId: '1699999999.000001', actorPrincipalId: 'slack:T1:user:U2', addressingEvidence: 'directIntegrationMention',
+    } });
+  });
+
+  it('preserves complete Unicode message text independently of the outgoing delivery ceiling', () => {
+    const text = '🦊'.repeat(40_001);
+    const observation = mapSlackEventToIngress({ payload: payload({ text }), identity, channel });
+    expect(observation?.kind).toBe('fullText');
+    expect(createSlackAutomationEventCandidate({ identity, observation: observation! })?.payload).toMatchObject({
+      text,
+    });
+  });
   it('preserves workspace-qualified occurrence, principal and thread identities through the core schema', () => {
     const result = mapSlackEventToIngress({ payload: payload({ thread_ts: '1699999999.000001' }), identity, channel });
     expect(result).toMatchObject({ kind: 'fullText', observation: {

@@ -27,6 +27,7 @@ import {
   SLACK_PLUGIN_ID, SLACK_CONNECTED_ACCOUNT_ID, SLACK_CREDENTIAL_PURPOSE,
   SLACK_BOT_TOKEN_ENVIRONMENT_KEY, SLACK_APP_TOKEN_ENVIRONMENT_KEY,
   createSlackEndpointIdentity, createSlackPrincipalId, readSlackEndpointId, readSlackPrincipalId,
+  createSlackConnectionKey,
 } from './slackPluginConstants.js';
 
 export const SLACK_SETUP_INPUT_PROTOCOL_SCHEMA = defineProtocolObject({ credentialRef: QualifiedConnectedAccountRefSchema }, { policy: 'closed' });
@@ -38,7 +39,6 @@ const storedConfiguration = createProtocolStoredReadSchema(defineProtocolObject(
   label: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' }));
 type ConnectionInput = Readonly<{ providerConnectionKey: string; providerConfigVersion: number; providerConfig: unknown; credentialRef: ConnectedAccountRef | null }>;
-function connectionKey(identity: SlackIdentity): string { return `slack:team:${identity.teamId}:app:${identity.appId}`; }
 function invalidConfiguration(): ConversationProviderFailureV1 {
   return { kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'Slack did not confirm the selected connection identity or destination.' };
 }
@@ -50,7 +50,7 @@ function isSlackCredential(ref: ConnectedAccountRef | null): ref is ConnectedAcc
 export function readSlackConnectionConfiguration(input: ConnectionInput): SlackIdentity | ConversationProviderFailureV1 {
   if (!isSlackCredential(input.credentialRef)) return { kind: 'notReady', reason: 'credentialInvalid' };
   const parsed = storedConfiguration.safeParse(input.providerConfig);
-  if (input.providerConfigVersion !== 1 || !parsed.success || input.providerConnectionKey !== connectionKey(parsed.data)) return invalidConfiguration();
+  if (input.providerConfigVersion !== 1 || !parsed.success || input.providerConnectionKey !== createSlackConnectionKey(parsed.data)) return invalidConfiguration();
   return parsed.data;
 }
 
@@ -112,7 +112,7 @@ export async function setupSlackChannels(input: unknown, context: PluginInvocati
   context.signal.throwIfAborted();
   if (socketFailure) throw new PluginError({ code: `slack_socket_${socketFailure.reason}`, message: socketFailure.diagnostic ?? 'Slack Socket Mode could not be verified.' });
   return ConversationProviderSetupResultV1Schema.parse({
-    v: 1, credentialRef, providerConnectionKey: connectionKey(identity), providerConfigVersion: 1, providerConfig: identity,
+    v: 1, credentialRef, providerConnectionKey: createSlackConnectionKey(identity), providerConfigVersion: 1, providerConfig: identity,
     integrationPrincipal: { id: createSlackPrincipalId(identity.teamId, identity.botUserId), label: identity.label },
     supportedTransports: ['socket'], recommendedTransport: 'socket', overlapSafety: 'safe', replayContinuity: 'sessionBound',
     outboundTextLimit: { maximum: SLACK_MAX_MESSAGE_CODE_POINTS, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
@@ -143,7 +143,7 @@ export async function testSlackConnection(input: unknown, context: PluginInvocat
   if ('kind' in ready) return ready;
   const failure = await verifySlackSocketIdentity({ api: ready.api, identity: ready.identity, webSockets: context.services.http, signal: context.signal });
   context.signal.throwIfAborted();
-  return failure ?? ConversationConnectionTestResultV1Schema.parse({ kind: 'ready', providerConnectionKey: connectionKey(ready.identity),
+  return failure ?? ConversationConnectionTestResultV1Schema.parse({ kind: 'ready', providerConnectionKey: createSlackConnectionKey(ready.identity),
     integrationPrincipal: { id: createSlackPrincipalId(ready.identity.teamId, ready.identity.botUserId), label: ready.identity.label } });
 }
 

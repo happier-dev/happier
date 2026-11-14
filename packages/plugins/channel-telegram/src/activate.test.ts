@@ -29,6 +29,7 @@ const telegramAccount = Object.freeze({
 const telegramSetupInput = Object.freeze({ credentialRef: telegramAccount });
 
 const TELEGRAM_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
+  notificationDestinationSetup: TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup,
   setup: TELEGRAM_CHANNEL_ACTION_IDS.setup,
   setupRemediation: TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
   connectionTest: TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
@@ -105,6 +106,8 @@ describe('Telegram Channel plugin activation', () => {
   });
 
   it('declares the Event after Channels durably owns its shared-offset obligation', () => {
+    expect(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID)?.surfaces)
+      .toContain('ui');
     expect(PLUGIN_MANIFEST.contributes.events).toEqual([expect.objectContaining({
       id: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID,
       kind: 'event',
@@ -122,7 +125,7 @@ describe('Telegram Channel plugin activation', () => {
     })]);
     expect(PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
-    )).toMatchObject({ surfaces: ['plugin'] });
+    )).toMatchObject({ surfaces: ['ui', 'plugin'] });
     expect(PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
     )).toMatchObject({ surfaces: ['plugin'], dangerLevel: 'writesRemote' });
@@ -172,6 +175,7 @@ describe('Telegram Channel plugin activation', () => {
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
         .not.toHaveProperty('principalResolve');
       expect(testkit.registrations()).toEqual([
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.setup },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.connectionTest },
@@ -181,6 +185,7 @@ describe('Telegram Channel plugin activation', () => {
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.attachmentFetch },
         { family: 'actions', localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'actions', localId: TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
+        { family: 'notificationChannels', localId: 'alerts' },
         { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
       ]);
 
@@ -232,6 +237,7 @@ describe('Telegram Channel plugin activation', () => {
           },
         })]);
       expect((PLUGIN_MANIFEST.contributes.actions ?? []).map(({ id }) => id)).toEqual([
+        TELEGRAM_CHANNEL_ACTION_IDS.notificationSetup,
         TELEGRAM_CHANNEL_ACTION_IDS.setup,
         TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
         TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,

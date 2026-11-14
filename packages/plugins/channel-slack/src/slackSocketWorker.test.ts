@@ -52,6 +52,21 @@ function httpBoundary(channelResults: readonly Readonly<{ status: number; body: 
 }
 
 describe('Slack Socket Mode worker', () => {
+  it.each([
+    ['own delivery', { ...envelope.payload.event, user: 'U1', bot_id: 'B1' }],
+    ['edited message', { ...envelope.payload.event, subtype: 'message_changed', message: {
+      ...envelope.payload.event, edited: { ts: '1700000001.000001' },
+    } }],
+  ])('keeps %s in Channels custody without creating a Workflow Event obligation', async (_name, event) => {
+    const boundary = socketBoundary([hello, { ...envelope, payload: { ...envelope.payload, event } }, { type: 'disconnect', reason: 'refresh_requested' }]);
+    const admissions: unknown[] = [];
+    const worker = startSlackSocketWorker({ connection: { connectionId: 'connection-1', authorityEpoch: 7, identity },
+      api: httpBoundary().api, webSockets: { openWebSocket: async () => boundary.socket },
+      admitObservation: async value => { admissions.push(ConversationProviderObservationIngestInputV1Schema.parse(value)); }, signal: new AbortController().signal });
+    await expect(worker.result).resolves.toEqual({ kind: 'stopped' });
+    expect(admissions).toMatchObject([{ entry: { eventCandidate: null } }]);
+    expect(boundary.sent).toHaveLength(1);
+  });
   it('admits and acknowledges input when the optional sender profile is unavailable', async () => {
     const boundary = socketBoundary([hello, envelope, { type: 'disconnect', reason: 'refresh_requested' }]);
     const admissions: unknown[] = [];
@@ -63,7 +78,11 @@ describe('Slack Socket Mode worker', () => {
     expect(admissions).toHaveLength(1);
     expect(admissions[0]).toMatchObject({ entry: { observation: { observation: {
       actor: { principalId: 'slack:T1:user:U2' }, message: { text: 'hello' },
-    } } } });
+    } }, eventCandidate: {
+      eventRef: { pluginId: 'happier.channel.slack', localId: 'automation/channel-message-observed-v1' },
+      sourceInstanceId: 'slack:team:T1:app:A1:channel:C1', sourceContractVersion: 1,
+      payload: { teamId: 'T1', channelId: 'C1', messageId: '1700000000.000001', text: 'hello' },
+    } } });
     expect(boundary.sent).toEqual([{ kind: 'text', text: JSON.stringify({ envelope_id: 'envelope-1' }) }]);
   });
   it('ACKs only after the real normalized ingress reaches durable core custody', async () => {
