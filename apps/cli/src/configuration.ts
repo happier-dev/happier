@@ -25,6 +25,7 @@ import {
   MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS,
   type ClientEncryptionRequirement,
 } from '@happier-dev/protocol'
+import { SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES } from '@happier-dev/protocol/socketRpc'
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 
@@ -219,6 +220,8 @@ class Configuration {
   public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
   // File system RPC limits (Files tab + transfers).
   public readonly filesReadMaxBytes: number
+  // Largest RPC reply payload; larger replies get RPC_RESPONSE_TOO_LARGE instead of a dropped socket.
+  public readonly rpcResponseMaxBytes: number
   // Prompt transfer payload limits (prompt assets + prompt registry items).
   public readonly promptTransferJsonMaxBytes: number
   public readonly filesTransferChunkBytes: number
@@ -482,6 +485,12 @@ class Configuration {
     // Default: 2.5MB. Defensive minimum: 1 byte.
     this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
       min: 1, default: 2_500_000,
+    });
+
+    // Default: the relay's default socket packet limit minus reply framing. Raise it only
+    // together with the relay's HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE.
+    this.rpcResponseMaxBytes = resolveIntEnvWithBounds('HAPPIER_RPC_RESPONSE_MAX_BYTES', {
+      min: 1, default: SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES,
     });
 
     // Default: 2.5MB. Defensive min: 1 byte; max: 10MB.

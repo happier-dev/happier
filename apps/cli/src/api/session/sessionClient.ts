@@ -1038,6 +1038,7 @@ export class ApiSessionClient extends EventEmitter {
             encryptionKey: this.encryptionKey,
             encryptionVariant: this.encryptionVariant,
             encryptionMode: this.sessionEncryptionMode,
+            responseMaxBytes: configuration.rpcResponseMaxBytes,
             logger: (msg, data) => logger.debug(msg, data),
             onRegistrationError: (error) => {
                 const probe = classifySessionTransportErrorToProbeResult(error);

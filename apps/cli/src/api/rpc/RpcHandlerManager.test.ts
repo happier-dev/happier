@@ -5,7 +5,11 @@ import { logger } from '@/ui/logger';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { PublicRpcHandlerError, RpcError, isSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import {
+  SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES,
+  SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES,
+  SOCKET_RPC_EVENTS,
+} from '@happier-dev/protocol/socketRpc';
 import type { Socket } from 'socket.io-client';
 
 function createDeferredVoid(): { promise: Promise<void>; resolve: () => void } {
@@ -601,5 +605,245 @@ describe('RpcHandlerManager in-flight request tracking', () => {
     await idlePromise;
 
     expect(idleResolved).toBe(true);
+  });
+});
+
+
+describe('RpcHandlerManager response wire-size guard', () => {
+  const oversizedMarker = 'oversized-payload-must-not-cross-the-transport';
+
+  function createGuardedRpc(encryptionKey: Uint8Array, responseMaxBytes: number): RpcHandlerManager {
+    return new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+      responseMaxBytes,
+    });
+  }
+
+  it('refuses an encoded response above the limit, returns the typed error, and never emits the oversized frame', async () => {
+    const encryptionKey = new Uint8Array(32).fill(11);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = createGuardedRpc(encryptionKey, 1_000);
+      const result = { payload: 'x'.repeat(5_000), marker: oversizedMarker };
+      const expectedWireBytes = encodeBase64(encrypt(encryptionKey, 'dataKey', result)).length;
+      expect(expectedWireBytes).toBeGreaterThan(1_000);
+      rpc.registerHandler('demo.big', async () => result);
+
+      const response = await rpc.handleRequest({
+        method: 'machine-1:demo.big',
+        params: encodeBase64(encrypt(encryptionKey, 'dataKey', {})),
+      });
+
+      expect(typeof response).toBe('string');
+      expect((response as string).length).toBeLessThan(1_000);
+      expect(response as string).not.toContain(oversizedMarker);
+      expect(decrypt(encryptionKey, 'dataKey', decodeBase64(response as string))).toEqual({
+        error: expect.stringContaining('RPC response too large'),
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        method: 'demo.big',
+        measuredBytes: expectedWireBytes,
+        limitBytes: 1_000,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain('[RPC]');
+      expect(warnSpy.mock.calls[0][1]).toMatchObject({
+        reason: 'rpc_response_too_large',
+        method: 'demo.big',
+        measuredBytes: expectedWireBytes,
+        limitBytes: 1_000,
+      });
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(oversizedMarker);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('returns the typed error instead of recursing when the limit is below the error reply itself', async () => {
+    const encryptionKey = new Uint8Array(32).fill(23);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = createGuardedRpc(encryptionKey, 1);
+      rpc.registerHandler('demo.tiny', async () => ({ payload: 'x'.repeat(10) }));
+
+      const response = await rpc.handleRequest({
+        method: 'machine-1:demo.tiny',
+        params: encodeBase64(encrypt(encryptionKey, 'dataKey', {})),
+      });
+
+      expect(typeof response).toBe('string');
+      expect(decrypt(encryptionKey, 'dataKey', decodeBase64(response as string))).toMatchObject({
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        method: 'demo.tiny',
+        limitBytes: 1,
+      });
+      // The diagnostic reply is deliberately not re-guarded: a ceiling below the
+      // error reply itself must still deliver that reply instead of recursing.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('emits the encoded response unchanged at exactly the limit', async () => {
+    const encryptionKey = new Uint8Array(32).fill(13);
+    const result = { payload: 'y'.repeat(2_000) };
+    const wireBytes = encodeBase64(encrypt(encryptionKey, 'dataKey', result)).length;
+    const rpc = createGuardedRpc(encryptionKey, wireBytes);
+    rpc.registerHandler('demo.boundary', async () => result);
+
+    const response = await rpc.handleRequest({
+      method: 'machine-1:demo.boundary',
+      params: encodeBase64(encrypt(encryptionKey, 'dataKey', {})),
+    });
+
+    expect(typeof response).toBe('string');
+    expect((response as string).length).toBe(wireBytes);
+    expect(decrypt(encryptionKey, 'dataKey', decodeBase64(response as string))).toEqual(result);
+  });
+
+  it('fires exactly one byte above the limit on the encoded response', async () => {
+    const encryptionKey = new Uint8Array(32).fill(17);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const result = { payload: 'z'.repeat(2_000) };
+      const wireBytes = encodeBase64(encrypt(encryptionKey, 'dataKey', result)).length;
+      const rpc = createGuardedRpc(encryptionKey, wireBytes - 1);
+      rpc.registerHandler('demo.boundary', async () => result);
+
+      const response = await rpc.handleRequest({
+        method: 'machine-1:demo.boundary',
+        params: encodeBase64(encrypt(encryptionKey, 'dataKey', {})),
+      });
+
+      expect(decrypt(encryptionKey, 'dataKey', decodeBase64(response as string))).toMatchObject({
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        measuredBytes: wireBytes,
+        limitBytes: wireBytes - 1,
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('measures the encrypted result string inside the transport response envelope', async () => {
+    const encryptionKey = new Uint8Array(32).fill(19);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = createGuardedRpc(encryptionKey, 1_000);
+      const result = { payload: 'w'.repeat(5_000), marker: oversizedMarker };
+      const expectedWireBytes = encodeBase64(encrypt(encryptionKey, 'dataKey', result)).length;
+      rpc.registerHandler('demo.envelope', async () => result);
+
+      const response = await rpc.handleRequest({
+        method: 'machine-1:demo.envelope',
+        params: encodeBase64(encrypt(encryptionKey, 'dataKey', {})),
+        transportResponseEnvelopeVersion: 1,
+      });
+
+      expect(response).toEqual({ v: 1, result: expect.any(String) });
+      expect((response as { result: string }).result.length).toBeLessThan(1_000);
+      expect(decrypt(encryptionKey, 'dataKey', decodeBase64((response as { result: string }).result))).toEqual({
+        error: expect.stringContaining('RPC response too large'),
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        method: 'demo.envelope',
+        measuredBytes: expectedWireBytes,
+        limitBytes: 1_000,
+      });
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(oversizedMarker);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('refuses an oversized plaintext object response and reports the measured JSON size', async () => {
+    const encryptionKey = new Uint8Array(32).fill(23);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = new RpcHandlerManager({
+        scopePrefix: 'machine-1',
+        encryptionKey,
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => {},
+        responseMaxBytes: 1_000,
+      });
+      rpc.registerHandler('demo.plainBig', async () => ({ big: 'x'.repeat(5_000), marker: oversizedMarker }));
+
+      const response = await rpc.handleRequest({ method: 'machine-1:demo.plainBig', params: {} });
+
+      expect(response).toMatchObject({
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        limitBytes: 1_000,
+      });
+      expect((response as { measuredBytes: number }).measuredBytes).toBeGreaterThan(1_000);
+      // The returned frame itself stays far below the limit.
+      expect(JSON.stringify(response).length).toBeLessThan(1_000);
+      expect(JSON.stringify(response)).not.toContain(oversizedMarker);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][1]).toMatchObject({ reason: 'rpc_response_too_large' });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('emits a plaintext response unchanged when its JSON size is below the limit', async () => {
+    const encryptionKey = new Uint8Array(32).fill(29);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      encryptionMode: 'plain',
+      logger: () => {},
+      responseMaxBytes: 1_000,
+    });
+    const result = { big: 'x'.repeat(200) };
+    rpc.registerHandler('demo.plainSmall', async () => result);
+
+    const response = await rpc.handleRequest({ method: 'machine-1:demo.plainSmall', params: {} });
+
+    expect(response).toEqual(result);
+  });
+
+  it('by default lets through every reply the relay socket accepts, including ones above the old 8 MB guess', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey: new Uint8Array(32).fill(31),
+      encryptionVariant: 'dataKey',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    // 11 MB replies are delivered successfully today; the default must keep them working.
+    const result = { big: 'x'.repeat(11_000_000) };
+    rpc.registerHandler('demo.large', async () => result);
+
+    const response = await rpc.handleRequest({ method: 'machine-1:demo.large', params: {} });
+
+    expect(response).toBe(result);
+  });
+
+  it('by default refuses a reply the relay socket would drop the whole connection for', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const rpc = new RpcHandlerManager({
+        scopePrefix: 'machine-1',
+        encryptionKey: new Uint8Array(32).fill(37),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => {},
+      });
+      rpc.registerHandler('demo.tooLarge', async () => ({ big: 'x'.repeat(SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES) }));
+
+      const response = await rpc.handleRequest({ method: 'machine-1:demo.tooLarge', params: {} });
+
+      expect(response).toMatchObject({
+        errorCode: 'RPC_RESPONSE_TOO_LARGE',
+        limitBytes: SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES,
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
