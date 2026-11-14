@@ -894,6 +894,46 @@ describe('createLocalVoiceCaptureOwner', () => {
         await owner.stopSession();
     });
 
+    it('keeps daemon endpoint admission after the runtime ignores speech during a preceding turn', async () => {
+        const { boundary, getSettings } = await installDaemonCaptureBoundary();
+        const rejected = createDeferred<void>();
+        const accepted = createDeferred<void>();
+        let inFlight = true;
+        const submitted: string[] = [];
+        let owner!: ReturnType<typeof createLocalVoiceCaptureOwner>;
+        const onEndpointSignal = vi.fn((signal: TurnEndpointSignal) => {
+            const decision = owner.resolveEndpointSignalAction({
+                currentSessionId: 'control-session', currentStatus: 'recording',
+                handsFreeEnabled: true, inFlight, provider: 'local_neural', signal,
+            });
+            if (decision.kind !== 'stop_capture') {
+                rejected.resolve();
+                return false;
+            }
+            submitted.push(signal.transcript);
+            accepted.resolve();
+            return true;
+        });
+        owner = createLocalVoiceCaptureOwner({ getSettings, onCaptureStarted() {}, onCaptureError() {}, onEndpointSignal });
+        await owner.startCapture({ handsFree: true, localNeuralExecution: 'daemon', provider: 'local_neural', sessionId: 'control-session' });
+        boundary.events = [{ type: 'endpoint', seq: 0, transcript: 'while settling', reason: 'vad' }];
+        nativeAudio.emit();
+        await rejected.promise;
+        expect(submitted).toEqual([]);
+        inFlight = false;
+        boundary.finalText = 'please brief me';
+        boundary.events = [{ type: 'endpoint', seq: 1, transcript: boundary.finalText, reason: 'vad' }];
+        nativeAudio.emit();
+        await accepted.promise;
+        nativeAudio.emit();
+        await expect(owner.stopCapture({ provider: 'local_neural', sessionId: 'control-session' }))
+            .resolves.toMatchObject({ text: 'please brief me' });
+        expect(submitted).toEqual(['please brief me']);
+        expect(onEndpointSignal).toHaveBeenCalledTimes(2);
+        expect(boundary.start).toHaveBeenCalledOnce();
+        await owner.stopSession();
+    });
+
     it('keeps manual barge-in decisions and endpoint-controller wiring in the runtime capture owner', async () => {
         vi.useFakeTimers();
         const onEndpointSignal = vi.fn();

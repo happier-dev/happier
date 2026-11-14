@@ -40,6 +40,12 @@ describe('fresh Voice carrier prompt cost', () => {
                 expect(open?.params.config).toMatchObject({ 'project_doc_max_bytes': 0, 'skills.include_instructions': false });
                 expect(open?.params.dynamicTools).toEqual([expect.objectContaining({ name: tool.name })]);
                 expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1);
+                const dynamicTools = open?.params.dynamicTools;
+                console.log(JSON.stringify({ contract: 'Codex Voice native advertisement cost',
+                    fixture: 'fresh retained Voice host; Say hello input',
+                    functionToolCount: Array.isArray(dynamicTools) ? dynamicTools.length : 0,
+                    functionToolAdvertisementBytes: Buffer.byteLength(JSON.stringify(dynamicTools ?? []), 'utf8'),
+                }));
             } finally { await host.dispose(); }
         }, { functionTools });
     });

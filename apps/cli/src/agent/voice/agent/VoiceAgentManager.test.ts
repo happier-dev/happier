@@ -4304,12 +4304,17 @@ describe('VoiceAgentManager', () => {
   });
 
   it.each(['turn', 'stream'] as const)('reads current instruction content again before a %s and keeps unchanged text seeded', async (carrier) => {
-    const backend = createPromptCaptureBackend([
-      { responseText: 'READY' }, { responseText: 'first' }, { responseText: 'second' },
-    ]);
+    const nativeOpens: AgentSessionOpenRequest[] = [];
+    let backend!: ReturnType<typeof createDeterministicBackend>;
     let markdown = 'Current admitted instruction';
     const manager = new VoiceAgentManager({
-      createRuntime: () => backend,
+      createRuntime: ({ functionTools }) => {
+        backend = createDeterministicBackend('prompt-cost', {
+          functionTools,
+          onOpen: request => { nativeOpens.push(request); },
+        });
+        return backend;
+      },
       resolvePromptPreparation: createInstructionBlocksResolver(async () => markdown),
     });
     try {
@@ -4320,7 +4325,7 @@ describe('VoiceAgentManager', () => {
         idleTtlSeconds: 60, initialContext: 'CTX', bootstrapMode: 'ready_handshake',
       });
       await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'first' });
-      expect(backend.prompts[1]).not.toContain('Current admitted instruction');
+      expect(backend.getSeenPrompts()[1]).not.toContain('Current admitted instruction');
       markdown = 'Edited admitted instruction';
       if (carrier === 'turn') {
         await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'second' });
@@ -4328,8 +4333,24 @@ describe('VoiceAgentManager', () => {
         const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'second' });
         await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
       }
-      expect(backend.prompts[2]).toContain('Edited admitted instruction');
-      expect(backend.prompts[2]).not.toContain('Current admitted instruction');
+      const prompts = backend.getSeenPrompts();
+      expect(prompts[2]).toContain('Edited admitted instruction');
+      expect(prompts[2]).not.toContain('Current admitted instruction');
+      expect(prompts).toHaveLength(3);
+      expect(nativeOpens).toHaveLength(1);
+      const functionTools = nativeOpens[0]!.functionTools ?? [];
+      expect(functionTools).toHaveLength(1);
+      const promptBytes = prompts.map(prompt => Buffer.byteLength(prompt, 'utf8'));
+      expect(promptBytes[1]).toBeLessThan(promptBytes[0]!);
+      expect(promptBytes[1]).toBeLessThan(promptBytes[2]!);
+      // Constructed final SDK-boundary payloads, not live/provider token usage.
+      // JSON serialization omits executable callbacks; no prompt/tool text is logged.
+      console.log(JSON.stringify({ contract: 'Voice final input cost', carrier,
+        fixture: 'READY bootstrap; unchanged instruction; edited instruction',
+        promptBytes: { fresh: promptBytes[0], warm: promptBytes[1], reseeded: promptBytes[2] },
+        nativeOpenCount: nativeOpens.length, functionToolCount: functionTools.length,
+        functionToolAdvertisementBytes: Buffer.byteLength(JSON.stringify(functionTools), 'utf8'),
+      }));
     } finally {
       await manager.dispose();
     }

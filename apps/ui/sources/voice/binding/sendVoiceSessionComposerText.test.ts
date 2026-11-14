@@ -31,6 +31,11 @@ import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureOrStartResponseSchema, ExecutionRunEnsureResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import type { ExternalActionRequesterInvocationBaseV1 } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'web' } }));
 
@@ -86,6 +91,7 @@ const currentnessHttpStatuses: number[] = [];
 const httpEvents: string[] = [];
 let homeSequence = 0;
 const providerMessages: string[] = [];
+let actionBoundaries: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>[] = [];
 
 // ElevenLabs' network/media SDK is the system boundary; the real plugin codecs,
 // SDK handle, host controller, adapter, binding and Sync custody stay in use.
@@ -108,6 +114,7 @@ vi.doMock('@elevenlabs/client/web', () => ({ Conversation: {
 } }));
 
 async function restorePendingHttpAccount() {
+    actionBoundaries = [];
     network.resetRequests();
     enqueued = null;
     deliveryStatus = null;
@@ -137,7 +144,13 @@ async function restorePendingHttpAccount() {
         // Distinct real Home lifetimes keep outstanding bootstrap reads from a
         // preceding case from becoming this case's HTTP snapshot.
         serverUrl: `https://voice-composer-${++homeSequence}.example.test`, accountId: 'composer-account', credentialScope: 'restored-home',
+        serverIdentityId: `srv_voice_composer_${homeSequence}`,
+        credentials: { token: createAccountTokenForTests('composer-account', { currentAccount: true }) },
         request: createSessionReadBatchFetchBoundary(async (input, init) => {
+            for (const boundary of actionBoundaries) {
+                const response = await boundary.handle(new URL(String(input)), init);
+                if (response) return response;
+            }
             const path = new URL(String(input)).pathname;
             const kvResponse = await kv.handleFetch(input, init);
             if (kvResponse) return kvResponse;
@@ -145,6 +158,7 @@ async function restorePendingHttpAccount() {
             if (purposeResponse) return purposeResponse;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'composer-account' }));
             if (path === '/v1/account/encryption/currentness') {
                 currentnessHttpStatuses.push(200);
                 return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }));
@@ -172,9 +186,9 @@ async function restorePendingHttpAccount() {
                 if (changeControlBeforeEnqueueAck) {
                     const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
                     if (!adapter || !account) throw new Error('Actual lifecycle owner is unavailable');
-                    getStorage().getState().applySessions([createSessionFixture({ id: 'other-s2', serverId: account.home.id })]);
+                    getStorage().getState().applySessions([createSessionFixture({ id: 'other-s2', serverId: account.serverId })]);
                     await adapter.stop({ sessionId: 'carrier-s1' });
-                    await adapter.start({ sessionId: 'other-s2', requestedTargetSessionAddress: { serverId: account.home.id, sessionId: 'other-s2' },
+                    await adapter.start({ sessionId: 'other-s2', requestedTargetSessionAddress: { serverId: account.serverId, sessionId: 'other-s2' },
                         initialContext: '', textOnly: true });
                 }
                 if (refreshBeforeEnqueueAck) {
@@ -186,13 +200,13 @@ async function restorePendingHttpAccount() {
                 if (cancelAfterEnqueue) {
                     if (!account) throw new Error('HTTP fixture requires its restored Account');
                     await markPendingOutboxMessageCancelRequested('carrier-s1', enqueued.localId,
-                        { serverId: account.home.id, accountId: 'composer-account' });
+                        { serverId: account.serverId, accountId: 'composer-account' });
                 }
                 if (settleAfterEnqueue) {
                     if (!account) throw new Error('HTTP fixture requires its restored Account');
                     await sync.markPendingDeliveryHandled('carrier-s1', enqueued.localId);
                     await removePendingOutboxMessage('carrier-s1', enqueued.localId,
-                        { serverId: account.home.id, accountId: 'composer-account' });
+                        { serverId: account.serverId, accountId: 'composer-account' });
                 }
                 if (terminalResponse === 'reject') return Response.json({ error: 'invalid-params' }, { status: 400 });
                 if (refreshBeforeEnqueueAck) httpEvents.push(`ack:${enqueued.localId}`);
@@ -236,7 +250,7 @@ async function restorePendingHttpAccount() {
             return metadata.handle(input, init);
         }),
     });
-    const session = createSessionFixture({ id: 'carrier-s1', serverId: account.home.id });
+    const session = createSessionFixture({ id: 'carrier-s1', serverId: account.serverId });
     if (!session.metadata) throw new Error('Expected canonical Session fixture metadata');
     getStorage().getState().applySessions([{ ...session, metadata: { ...session.metadata, ...buildVoiceTranscriptHistorySessionMetadata() } }]);
 }
@@ -251,7 +265,9 @@ describe('Voice composer through Sync HTTP custody', () => {
     beforeEach(async () => {
         await restorePendingHttpAccount();
         if (!account) throw new Error('Actual composer Account fixture is unavailable');
-        await sync.refreshAccountSettingsFromServer(1, { serverId: account.home.id, accountId: 'composer-account' });
+        const settingsScope = getStorage().getState().settingsScope;
+        if (!settingsScope || settingsScope.accountId !== 'composer-account') throw new Error('Restored composer settings Account is unavailable');
+        await sync.refreshAccountSettingsFromServer(1, settingsScope);
         composerAssembly = (await createBuiltinVoiceAdapterAssembly());
         registerVoiceAdapters(composerAssembly.adapters);
         const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
@@ -259,7 +275,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         // Admission and opaque binding ownership are produced by the public
         // adapter/host, not by a test-only dispatch or registry replacement.
         await adapter.start({ sessionId: 'carrier-s1',
-            requestedTargetSessionAddress: { serverId: account.home.id, sessionId: 'carrier-s1' },
+            requestedTargetSessionAddress: { serverId: account.serverId, sessionId: 'carrier-s1' },
             initialContext: '', textOnly: true });
         expect(adapter.getSnapshot()).toMatchObject({ status: 'connected' });
     });
@@ -268,7 +284,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         composerAssembly = null;
         registerVoiceAdapters(initialRegisteredAdapters);
         if (account && enqueued) await removePendingOutboxMessage('carrier-s1', enqueued.localId,
-            { serverId: account.home.id, accountId: 'composer-account' });
+            { serverId: account.serverId, accountId: 'composer-account' });
         await account?.dispose();
         account = null;
         getStorage().setState(initialStorageState, true);
@@ -293,7 +309,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         ]);
         providerSendFailure = null;
         await adapter.stop({ sessionId: 'carrier-s1' });
-        await adapter.start({ sessionId: 'carrier-s1', requestedTargetSessionAddress: { serverId: account.home.id, sessionId: 'carrier-s1' },
+        await adapter.start({ sessionId: 'carrier-s1', requestedTargetSessionAddress: { serverId: account.serverId, sessionId: 'carrier-s1' },
             initialContext: '', textOnly: true });
         expect(adapter.getSnapshot().status).toBe('connected');
         expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'new input', localId: 'fresh-after-held',
@@ -344,7 +360,7 @@ describe('Voice composer through Sync HTTP custody', () => {
             } } } } });
     });
 
-    it('awaits exact-row HTTP settlement before the actual provider adapter continues after acceptance', async () => {
+    it('continues the accepted provider dispatch while joining exact-row HTTP settlement before returning its durable result', async () => {
         const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual text-turn adapter is unavailable');
         // Observation only: the original controller/SDK dispatch runs unchanged.
@@ -365,7 +381,9 @@ describe('Voice composer through Sync HTTP custody', () => {
             await handling;
             expect(providerMessages).toEqual(['hello']);
             expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'awaited-acceptance', pendingDeliveryStatus: 'external_handoff' })]);
-            expect(dispatch.mock.settledResults).toEqual([]);
+            // VOICE-LATENCY-1114: handled bookkeeping must not hold an
+            // already accepted reply. Durable submission still joins it below.
+            await vi.waitFor(() => expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]));
             release();
             expect(await submission).toEqual({ ok: true, localId: 'awaited-acceptance', disposition: 'settled' });
             expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]);
@@ -401,7 +419,10 @@ describe('Voice composer through Sync HTTP custody', () => {
         expect(deliveryStatus).toEqual({ status: 'external_handoff' });
     });
 
-    it('keeps the accepted row settled when the actual provider lifecycle changes before dispatch continuation', async () => {
+    it('keeps the accepted row settled when the provider stops while handled bookkeeping is pending', async () => {
+        const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
+        if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual accepted lifecycle owner is unavailable');
+        const dispatch = vi.spyOn(adapter, 'sendTextTurn');
         let entered!: () => void;
         let release!: () => void;
         const handling = new Promise<void>((resolve) => { entered = resolve; });
@@ -414,22 +435,20 @@ describe('Voice composer through Sync HTTP custody', () => {
         };
         const submission = sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'accepted-carrier-change',
             getAdapter: getVoiceAdapterRegistry().get });
-        const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
-        if (!adapter) throw new Error('Actual accepted lifecycle owner is unavailable');
         let stopping: Promise<void> | null = null;
         try {
             await handling;
+            await vi.waitFor(() => expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]));
             // A genuine user Stop is independent of the delayed server response.
             // Release the ACK without waiting for the client lifecycle to drain.
             stopping = adapter.stop({ sessionId: 'carrier-s1' });
             release();
-            expect(await submission).toEqual({ ok: true, disposition: 'settled', localId: 'accepted-carrier-change',
-                message: 'voice_transcript_carrier_changed' });
+            expect(await submission).toEqual({ ok: true, disposition: 'settled', localId: 'accepted-carrier-change' });
             expect(providerMessages).toEqual(['hello']);
             expect(httpEvents).toEqual(['enqueue:accepted-carrier-change', 'provider:hello', 'settle:accepted-carrier-change']);
             expect(deliveryStatus).toBeNull();
             expect(pendingRows()).toEqual([]);
-        } finally { release(); await submission; await stopping; }
+        } finally { release(); await submission; await stopping; dispatch.mockRestore(); }
     });
 
     it('does not mistake an external-handoff snapshot before the enqueue acknowledgement for provider acceptance', async () => {
@@ -615,7 +634,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         expect(await sync.enqueuePendingMessage('carrier-s1', 'ordinary input', undefined, undefined,
             { localId: 'ordinary-before-voice', requestedAction: { v: 1, kind: 'send_now' } }))
             .toMatchObject({ accepted: false, localId: 'ordinary-before-voice' });
-        expect(await loadPendingOutboxForSession('carrier-s1', { serverId: account!.home.id, accountId: 'composer-account' }))
+        expect(await loadPendingOutboxForSession('carrier-s1', { serverId: account!.serverId, accountId: 'composer-account' }))
             .toEqual([expect.objectContaining({ localId: 'ordinary-before-voice', operation: 'enqueue' })]);
         enqueueNetworkFailure = false;
         expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'new voice input', localId: 'ordinary-before-voice',
@@ -635,7 +654,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         const adapterId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const store = createVoiceSessionBindingStore();
         store.getState().bind({ adapterId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'carrier-s1',
-            conversationSessionAddress: { serverId: account!.home.id, sessionId: 'carrier-s1' }, lifetime: 'runtime_attempt',
+            conversationSessionAddress: { serverId: account!.serverId, sessionId: 'carrier-s1' }, lifetime: 'runtime_attempt',
             transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 123 });
         try {
             const adapter = getVoiceAdapterRegistry().get(adapterId);
@@ -655,7 +674,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         registerVoiceAdapters(assembly.adapters);
         const store = createVoiceSessionBindingStore();
         store.getState().bind({ adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'carrier-s1',
-            conversationSessionAddress: { serverId: account!.home.id, sessionId: 'carrier-s1' },
+            conversationSessionAddress: { serverId: account!.serverId, sessionId: 'carrier-s1' },
             transcriptMode: 'native_session', targetSessionAddress: null, updatedAt: 123 });
         try {
             expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'native-cancelled',
@@ -719,11 +738,11 @@ describe('Voice composer through Sync HTTP custody', () => {
                 agent: { ...local.agent, agentSource: 'agent', agentId: 'claude', prewarmOnConnect: false },
             }), providerId: 'local_conversation', welcome: { ...getStorage().getState().settings.voice.welcome, enabled: false } } }, getStorage().getState().settings));
         expect(readLocalConversationVoiceSettings(getStorage().getState().settings.voice).conversationMode).toBe('agent');
-        const root = createSessionFixture({ id: `native-target-${outcome}`, serverId: account.home.id, active: true, activeAt: Date.now(),
+        const root = createSessionFixture({ id: `native-target-${outcome}`, serverId: account.serverId, active: true, activeAt: Date.now(),
             metadata: { path: '/voice/native', host: 'tester.local', machineId: 'machine-1',
                 ...(outcome === 'selection-unavailable' ? {} : { flavor: 'claude' }),
                 agentRuntimeCapabilitiesV1: { localControl: { supported: true } } } });
-        const carrier = createSessionFixture({ id: 'carrier-s1', serverId: account.home.id, active: true, activeAt: Date.now(),
+        const carrier = createSessionFixture({ id: 'carrier-s1', serverId: account.serverId, active: true, activeAt: Date.now(),
             metadata: writeVoiceConversationScopeMetadata({ path: '/voice/native', host: 'tester.local', machineId: 'machine-1', flavor: 'claude',
                 permissionMode: local.agent.permissionIntent, connectedServices: { v: 2, bindingsByServiceId: {} },
                 ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }) }, { kind: 'session_root', sessionRootId: root.id }) });
@@ -757,16 +776,49 @@ describe('Voice composer through Sync HTTP custody', () => {
                 if (outcome === 'unacknowledged') throw new Error('send_failed');
                 return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'native-real-stream' });
             }
-            if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) return ExecutionRunTurnStreamReadResponseSchema.parse({
-                streamId: 'native-real-stream', events: [{ t: 'done', assistantText: '', actions: [] }], nextCursor: 1, done: true });
+            if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+                if (outcome.startsWith('aborted-')) await gate;
+                return ExecutionRunTurnStreamReadResponseSchema.parse({
+                    streamId: 'native-real-stream', events: [{ t: 'done', assistantText: '', actions: [] }], nextCursor: 1, done: true });
+            }
             if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) return ExecutionRunTurnStreamCancelResponseSchema.parse({ ok: true });
             throw new Error(`Unexpected native daemon method: ${method}`);
         } });
         network.setRpcAckResponder(async request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
             ? { ok: false, error: 'RPC method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
             : { ok: true, result: await daemon.dispatch(request.method, request.payload) });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const actionAccount = await captureLazyActionAccountContext(account.serverId);
+        try {
+            const serverIdentityId = actionAccount.serverIdentityId;
+            if (!serverIdentityId) throw new Error('Native composer requires its restored Action Home identity');
+            const admittedInvocations = new Map<string, ExternalActionRequesterInvocationBaseV1>();
+            actionBoundaries = await Promise.all((['execution.run.start', 'execution.run.ensure'] as const).map(actionId =>
+                createExternalActionAccountHttpBoundary({ serverUrl: actionAccount.endpointUrl,
+                    serverIdentityId, accountId: actionAccount.accountId, machineId: 'machine-1', actionId, tokenEpoch: 0,
+                    execute: async (input, context) => {
+                        if (!input || typeof input !== 'object' || Array.isArray(input) || !('sessionId' in input)) {
+                            throw new Error('Expected the native Run Action request');
+                        }
+                        const { sessionId: _sessionId, ...runInput } = input;
+                        const request = ExecutionRunEnsureOrStartRequestSchema.parse(actionId === 'execution.run.start'
+                            ? { start: runInput } : runInput);
+                        const result = ExecutionRunEnsureOrStartResponseSchema.parse(await daemon.dispatch(
+                            SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, request));
+                        if (!result.ok) throw new Error('Native fixture daemon rejected Run admission');
+                        const { caller, surface, authority } = context.invocation;
+                        const actionInvocation = actionId === 'execution.run.start'
+                            ? { caller, surface, authority } : admittedInvocations.get(result.runId);
+                        if (actionId === 'execution.run.ensure') {
+                            return ExecutionRunEnsureResponseSchema.parse({ ok: true, actionInvocation });
+                        }
+                        admittedInvocations.set(result.runId, { caller, surface, authority });
+                        return { runId: result.runId, callId: 'local-call', sidechainId: 'local-sidechain', actionInvocation };
+                    },
+                })));
+        } finally { actionAccount.dispose(); }
         const binding = await ensureDefaultLocalVoiceQaBinding({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-            requestedTargetSessionAddress: { serverId: account.home.id, sessionId: root.id } });
+            requestedTargetSessionAddress: { serverId: account.serverId, sessionId: root.id } });
         expect(binding).toMatchObject({ conversationSessionId: carrier.id, transcriptMode: 'native_session' });
         const adapter = getVoiceAdapterRegistry().get('local_conversation');
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual native text-turn adapter is unavailable');
@@ -790,10 +842,25 @@ describe('Voice composer through Sync HTTP custody', () => {
         try {
             if (outcome === 'target-offline') {
                 await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
-                // A durable active target without an observed runtime is the
-                // reported refusal, distinct from an inactive Session.
-                getStorage().getState().applySessions([{ ...getStorage().getState().sessions[root.id], presence: undefined }]);
-                expect(getStorage().getState().sessions[root.id]).toMatchObject({ active: true, presence: undefined });
+                // Unknown Session presence permits admission. Publish the
+                // actual daemon's offline transition through its Socket ingress.
+                // Current Homes own transition-driven presence; legacy rows
+                // without this fact intentionally retain heartbeat grace.
+                for (const boundary of actionBoundaries) boundary.machine.presenceProtocolVersion = 1;
+                await sync.refreshMachines();
+                const offline = EphemeralUpdateSchema.parse({ type: 'machine-activity', id: 'machine-1',
+                    active: false, activeAt: Date.now() });
+                for (const boundary of network.socketBoundaries.filter(value => value.serverUrl === account!.home.serverUrl)) {
+                    boundary.trigger('ephemeral', offline);
+                }
+                const { resolveMachineForActiveServerFromState } = await import('@/sync/store/domains/machines/resolveMachinesForActiveServerFromState');
+                const { resolveMachineReachability } = await import('@/sync/domains/machines/reachability/machineReachability');
+                await vi.waitFor(() => {
+                    const state = getStorage().getState();
+                    const machine = resolveMachineForActiveServerFromState(state, 'machine-1');
+                    expect(machine && resolveMachineReachability(state.profileScope, machine)).toBe('unreachable');
+                });
+                expect(getStorage().getState().sessions[root.id]).toMatchObject({ active: true });
             } else if (outcome === 'selection-unavailable') {
                 // This case starts a new turn admission. An already admitted
                 // run correctly retains its captured Agent despite edits.
@@ -808,7 +875,7 @@ describe('Voice composer through Sync HTTP custody', () => {
                 // Home hydration reads the same initially unreadable identity;
                 // no earlier readable root projection may be retained here.
                 expect(resolveAgentIdFromSessionMetadata(readVoiceSessionOwnerMetadataFromState(getStorage().getState(), {
-                    serverId: account.home.id, sessionId: root.id,
+                    serverId: account.serverId, sessionId: root.id,
                 }))).toBeNull();
             } else {
                 await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
@@ -855,15 +922,17 @@ describe('Voice composer through Sync HTTP custody', () => {
             }
             const submission = sendVoiceSessionComposerText({ conversationSessionId: carrier.id, text: 'hello',
                 ...(!outcome.startsWith('accepted') ? { localId: 'native-real-turn' } : {}),
-                sessionMetadata: readVoiceSessionOwnerMetadataFromState(getStorage().getState(), { serverId: account.home.id, sessionId: carrier.id }),
+                sessionMetadata: readVoiceSessionOwnerMetadataFromState(getStorage().getState(), { serverId: account.serverId, sessionId: carrier.id }),
                 getAdapter: getVoiceAdapterRegistry().get });
             if (acceptsTranscript) {
                 // An early admission failure must settle this test before the
                 // transcript acceptance gate rather than waiting indefinitely.
                 await Promise.race([handling, submission]);
                 expect(providerMessages).toHaveLength(1);
-                expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ)).toEqual([]);
-                expect(dispatch.mock.settledResults).toEqual([]);
+                // VOICE-LATENCY-1114: admission already owns Pending custody.
+                // A held handled write must not hold the admitted output reader.
+                await vi.waitFor(() => expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ)).toHaveLength(1));
+                expect(deliveryStatus).toEqual({ status: 'external_handoff' });
                 if (outcome.startsWith('aborted-')) {
                     await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
                     await dispatch.mock.results[0]?.value;

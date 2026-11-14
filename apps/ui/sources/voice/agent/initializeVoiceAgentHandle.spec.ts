@@ -45,6 +45,8 @@ const start = vi.fn(async (_request: ExecutionRunEnsureOrStartRequest) => ({ ok:
 const rpcTargets: Array<{ sessionId: string; method: string }> = [];
 const ensuredRuns: Array<{ sessionId: string; runId: string; resume?: boolean }> = [];
 const startedSessions: string[] = [];
+const messageRequests: string[] = [];
+let beforeMessageResponse: (() => Promise<void>) | undefined;
 const transcriptMemory = createAccountKvHttpFixture();
 let rootRunnerPid = 123;
 let stallRootRunnerStatus = false;
@@ -200,6 +202,7 @@ describe('initializeVoiceAgentHandle', () => {
         vi.restoreAllMocks();
     });
     beforeEach(async () => {
+        beforeMessageResponse = undefined;
         state = structuredClone(initialState);
         actionBoundaries = [];
         resetAcpCatalogSnapshotsForTests();
@@ -241,7 +244,11 @@ describe('initializeVoiceAgentHandle', () => {
                 if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                     id => id === 'machine-1' ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
                 if (path === '/v1/machines/machine-1') return respond({ machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }) });
-                if (path.endsWith('/messages')) return respond({ messages: [], hasMore: false });
+                if (path.endsWith('/messages')) {
+                    messageRequests.push(path);
+                    await beforeMessageResponse?.();
+                    return respond({ messages: [], hasMore: false });
+                }
                 if (path === '/v1/account/encryption/currentness') return respond(createPlainAccountEncryptionCurrentnessFixture());
                 const sessionResponse = sessionHttp.handle(url, init);
                 if (sessionResponse) return sessionResponse;
@@ -348,6 +355,24 @@ describe('initializeVoiceAgentHandle', () => {
         });
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         await getServerFeaturesSnapshot({ serverId: serverId, force: true });
+        messageRequests.length = 0;
+    });
+
+    it('hydrates the coding target transcript once before fresh daemon admission', async () => {
+        omitIncidentalProfile();
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        beforeMessageResponse = async () => { entered.resolve(); await release.promise; };
+        const initializing = initializeVoiceAgentHandle({ sessionId: 's1',
+            getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+            setDeferredTargetSessionContext: () => {} });
+        await entered.promise;
+        try { expect(start).not.toHaveBeenCalled(); }
+        finally { release.resolve(); }
+        await initializing;
+        expect(messageRequests.filter(path => path.includes('/s1/'))).toHaveLength(1);
+        expect(admittedStart().intent).toBe('voice_agent');
     });
 
     it('drops a Claude custom model when following a Codex Session at daemon admission', async () => {

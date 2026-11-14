@@ -261,6 +261,9 @@ export async function initializeVoiceAgentHandle({
         await Promise.resolve(
             sync.ensureSessionVisibleForMessageRoute(normalizedSessionId, {
                 ...options,
+                // This preparation owns the awaited refresh below. Letting
+                // route hydration also kick its initial queue reads it twice.
+                hydrateMessages: false,
                 ...(serverId ? { serverId } : {}),
             }),
         ).catch(() => {});

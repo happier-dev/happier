@@ -194,6 +194,26 @@ async function mountAutomaticUiContext() {
 }
 
 describe('Voice streaming through retained initialization, execution transport and daemon RPC', () => {
+    it.each([true, false])('does not visit loaded transcript rows before an ordinary turn (streaming=%s)', async streaming => {
+        const f = await createStreamingFixture({ streaming });
+        let idReads = 0;
+        const messages = Array.from({ length: 2_000 }, (_, index): Message => ({
+            get id() { idReads += 1; return `historical-${index}`; },
+            kind: 'agent-text', text: 'Earlier answer.', seq: index + 1, localId: null, createdAt: index,
+        }));
+        f.storage.setState({ sessionMessages: { ...f.storage.getState().sessionMessages,
+            [f.fixture.sessionId]: createSessionMessagesFixture({
+                messageIdsOldestFirst: messages.map(message => message.id),
+                messagesById: Object.fromEntries(messages.map(message => [message.id, message])),
+            }),
+        } });
+        idReads = 0;
+        await expect(f.transport.sendTurn(f.controlSessionId, 'hello')).resolves.toEqual({
+            assistantText: 'assistant reply', actions: [],
+        });
+        expect(idReads).toBe(0);
+        expect(f.starts).toHaveLength(1);
+    });
     it.each(['person', 'synthetic'] as const)('exposes only the active host turn origin to shared MCP Actions (%s)', async turnOrigin => {
         const f = await createStreamingFixture();
         const playHostText = async () => ({ status: 'completed' as const });

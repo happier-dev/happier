@@ -44,7 +44,8 @@ type TurnEndpointControllerDeps = Readonly<{
     clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
     now?: () => number;
     shouldAcceptAcousticEndpoint?: (source: Exclude<TurnEndpointSignalSource, 'heuristic'>) => boolean;
-    onSignal: (signal: TurnEndpointSignal) => void;
+    /** An ignored signal leaves this capture ready for the next utterance. */
+    onSignal: (signal: TurnEndpointSignal) => boolean | void;
     queueTask?: (task: () => void) => void;
     setTimer?: (task: () => void, waitMs: number) => ReturnType<typeof setTimeout>;
 }>;
@@ -109,8 +110,7 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
             ? args.confidence
             : null;
 
-        replaceActiveSession(null);
-        deps.onSignal({
+        const accepted = deps.onSignal({
             detectedAt: now(),
             sessionId: args.sessionId,
             source: args.source,
@@ -119,6 +119,12 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
             confidence,
             endpoint: args.endpoint,
         });
+        // The runtime may still be settling the preceding turn while this
+        // capture is live. Spend its one-shot endpoint only when accepted,
+        // and never clear a successor started synchronously by the consumer.
+        if (accepted !== false && activeSession?.token === args.expectedToken) {
+            replaceActiveSession(null);
+        }
     };
 
     return {

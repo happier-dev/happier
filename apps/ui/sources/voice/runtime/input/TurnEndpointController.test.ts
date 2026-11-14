@@ -168,4 +168,18 @@ describe('createTurnEndpointController', () => {
             transcript: 'first',
         }));
     });
+
+    it('preserves a successor capture started synchronously by the accepted endpoint', () => {
+        const transcripts: string[] = [];
+        const controller = createTurnEndpointController({ onSignal: signal => {
+            transcripts.push(signal.transcript);
+            if (signal.transcript === 'first') controller.startSession('session-1');
+            return true;
+        } });
+        controller.startSession('session-1');
+        controller.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'first' });
+        controller.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'next' });
+        controller.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'duplicate' });
+        expect(transcripts).toEqual(['first', 'next']);
+    });
 });

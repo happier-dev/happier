@@ -130,7 +130,10 @@ export function createVoiceTurnStreaming(args: Readonly<{
             });
             lastHandle = handle;
             const nextUserText = preparePayloadText();
-            const transcriptBaseline = captureAssistantTextMessageBaseline(handle.rpcSessionId);
+            const submittedUserLocalId = options?.userTranscript?.localId;
+            const transcriptBaseline = submittedUserLocalId
+                ? captureAssistantTextMessageBaseline(handle.rpcSessionId)
+                : null;
             const settings: any = storage.getState().settings;
             const localConversation = readLocalConversationSettingsFromAccountSettings(settings);
             const streamingEnabled = localConversation.streaming.enabled === true;
@@ -171,8 +174,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
                     ? response.actions ?? []
                     : withClientTurnEffectIdentity(handle, response.actions ?? []),
             };
-            const submittedUserLocalId = options?.userTranscript?.localId;
-            if (normalizedResponse.assistantText.trim().length === 0 && submittedUserLocalId) {
+            if (normalizedResponse.assistantText.trim().length === 0 && submittedUserLocalId && transcriptBaseline) {
                 const messages = readStoredSessionMessages(storage.getState(), handle.rpcSessionId);
                 const submittedUserIndex = messages.findIndex((message) =>
                     message.kind === 'user-text' && message.localId === submittedUserLocalId);

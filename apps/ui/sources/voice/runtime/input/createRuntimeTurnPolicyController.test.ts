@@ -79,6 +79,29 @@ describe('createRuntimeTurnPolicyController', () => {
         });
     });
 
+    it('keeps listening after a recognized endpoint is rejected while the preceding turn settles', () => {
+        const policy = createRuntimeTurnPolicyController();
+        policy.setHandsFreeCaptureSession({ provider: 'local_neural', sessionId: 'session-1' });
+        let inFlight = true;
+        const accepted: string[] = [];
+        const endpoints = createTurnEndpointController({ onSignal: signal => {
+            const action = policy.resolveEndpointSignalAction({
+                currentStatus: 'recording', currentSessionId: 'session-1',
+                handsFreeEnabled: true, inFlight, provider: 'local_neural', signal,
+            });
+            if (action.kind !== 'stop_capture') return false;
+            accepted.push(signal.transcript);
+            return true;
+        } });
+        endpoints.startSession('session-1');
+        endpoints.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'while the turn is settling' });
+        expect(accepted).toEqual([]);
+        inFlight = false;
+        endpoints.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'please brief me' });
+        endpoints.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: 'duplicate endpoint' });
+        expect(accepted).toEqual(['please brief me']);
+    });
+
     it.each(['ok', 'yes', 'stop please', 'yeah'])('submits the silent assistant reply %s without applying the interruption gate', (transcript) => {
         const controller = createRuntimeTurnPolicyController();
         const submissions: RuntimeStoppedCaptureAction[] = [];

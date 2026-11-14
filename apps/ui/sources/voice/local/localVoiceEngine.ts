@@ -139,7 +139,7 @@ const localVoiceCaptureOwner = createLocalVoiceCaptureOwner({
   },
   getSettings: () => storage.getState().settings as any,
   onEndpointSignal: (signal) => {
-    handleRuntimeOwnedEndpointSignal(signal);
+    return handleRuntimeOwnedEndpointSignal(signal);
   },
   onSpeechCandidateStart: ({ controlSessionId }) => {
     const admission = readCaptureAdmission(controlSessionId);
@@ -676,10 +676,10 @@ function beginEndpointDrivenStopAndSend(
   fireAndForget(operation, { tag: 'localVoiceEngine.endpointTurn' });
 }
 
-function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
+function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): boolean {
   const current = getCurrentLocalRuntimeCompatState();
   const admission = readCaptureAdmission(signal.sessionId);
-  if (!admission) return;
+  if (!admission) return false;
   const captureAttempt = admission.captureAttempt;
   const { settings, provider } = captureAttempt;
 
@@ -688,7 +688,7 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
   // The controller re-validates machine state/session, the backchannel gate, and
   // the textual echo guard before it aborts playback + interrupt-and-rearms.
   if (current.status === 'speaking') {
-    if (!isEndpointDrivenCaptureProvider(provider)) return;
+    if (!isEndpointDrivenCaptureProvider(provider)) return false;
     const precedingTurn = inFlight;
     fireAndForget(
       (async () => {
@@ -723,7 +723,7 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
       })(),
       { tag: 'localVoiceEngine.bargeIn.handleUserSpeechDuringPlayback' },
     );
-    return;
+    return true;
   }
 
   const endpointAction = localVoiceCaptureOwner.resolveEndpointSignalAction({
@@ -737,10 +737,11 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
     signal,
   });
   if (endpointAction.kind !== 'stop_capture') {
-    return;
+    return false;
   }
 
   beginEndpointDrivenStopAndSend(admission, captureAttempt, endpointAction.provider);
+  return true;
 }
 
 function isUnsupportedVoiceAgentPrewarmError(error: unknown): boolean {

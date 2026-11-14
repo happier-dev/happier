@@ -217,7 +217,9 @@ runner-bound input retains exact Machine-target admission. The existing handled
 settlement commits the accepted transcript and retires the reservation.
 
 `submitDurableVoiceTextTurn` separates provider acceptance from that settlement
-write. If the provider accepts the turn but the handled request fails, its reply
+write. Accepted output can stream while the handled write is in flight; the
+durable submission result still waits for that write. If the provider accepts
+the turn but the handled request fails, its reply
 continues and the result is `accepted_unsettled`, with the settlement error. The
 reservation remains in external handoff; Voice does not redispatch it, block it
 as uncertain execution, or disconnect the call. The owner records a content-free

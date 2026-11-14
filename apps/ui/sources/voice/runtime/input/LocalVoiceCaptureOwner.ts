@@ -121,7 +121,7 @@ type LocalVoiceCaptureOwnerDeps = Readonly<{
     onCaptureStarted: (controlSessionId: string) => void;
     onCaptureError: (error: RuntimeCaptureError) => void;
     getSettings: () => any;
-    onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+    onEndpointSignal?: (signal: TurnEndpointSignal) => boolean | void;
     onSpeechCandidateStart?: (input: Readonly<{
         controlSessionId: string;
         source: Extract<TurnEndpointSignal['source'], 'native_vad' | 'web_vad' | 'device_recognizer'>;
@@ -377,12 +377,12 @@ export function createLocalVoiceCaptureOwner(
             await nativeVadController.stopSession(sessionId).catch(() => {});
         }
     };
-    const forwardEndpointSignal = (signal: TurnEndpointSignal): void => {
+    const forwardEndpointSignal = (signal: TurnEndpointSignal): boolean | void => {
         // Correlate the controller's internal capture key to the live control
         // session before forwarding; also clears the watchdog (audio was heard).
         clearMicPlateauWatchdog();
         const controlSessionId = activeCaptureSessionId ?? signal.sessionId;
-        deps.onEndpointSignal?.({ ...signal, sessionId: controlSessionId });
+        return deps.onEndpointSignal?.({ ...signal, sessionId: controlSessionId });
     };
     const forwardSpeechCandidateStart = (input: Readonly<{
         sessionId: string;

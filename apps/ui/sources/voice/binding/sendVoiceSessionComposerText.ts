@@ -177,8 +177,8 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
     let acceptanceSettled = false;
     let acceptanceSettlementError: unknown;
     let acceptancePromise: Promise<void> | null = null;
-    const onAccepted = (): Promise<void> => {
-        if (acceptancePromise) return acceptancePromise;
+    const onAccepted = async (): Promise<void> => {
+        if (acceptanceStarted) return;
         acceptanceStarted = true;
         if (attemptId && lifetime) recordVoiceSessionFirstSuccessInput({ attemptId, lifetime,
             conversationSessionId: params.conversationSessionId, localId });
@@ -196,7 +196,9 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
                 errorCode: readSafeVoiceRuntimeFailureCode(error) ?? 'voice_pending_settlement_failed',
             })}`);
         });
-        return acceptancePromise;
+        // Custody was admitted before dispatch. Let the accepted reply stream
+        // while the tracked bookkeeping write settles; join it below before
+        // returning the durable submission result.
     };
 
     let dispatchFailure: Readonly<{ error: unknown }> | null = null;
