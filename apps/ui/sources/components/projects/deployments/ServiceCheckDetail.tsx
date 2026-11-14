@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Heatmap } from '@happier-dev/plugin-ui/presentation';
+import { Heatmap, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
@@ -10,7 +10,10 @@ import {
 } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { checkNowConfiguredHealthCheck } from '@/components/store/inventory/configuredHealthResults';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
@@ -28,6 +31,7 @@ import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 
 import {
   readServiceCheckFacts,
+  readServiceCheckRecent,
   readServiceCheckSettings,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
@@ -63,6 +67,15 @@ const formatClock = (ms: number) =>
     hour: 'numeric',
     minute: '2-digit',
   });
+const formatSpan = (ms: number) => {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${unit(hours, 'hour')} ${unit(minutes % 60, 'minute')}` : unit(minutes, 'minute');
+};
+/** One page of retained results at a time; Older shows the next. */
+const RESULTS_PAGE = 10;
+/** The Response sparkline reads the last results the lab names ("last 20 results"). */
+const SPARK_RESULTS = 20;
 const percentText = (percent: number | null) =>
   percent === null ? '—' : `${Math.round(percent * 10) / 10}%`;
 
@@ -203,6 +216,22 @@ export function ServiceCheckDetail(
     statusText,
   ].filter((part): part is string => Boolean(part));
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
+  const recent = shown ? readServiceCheckRecent(shown) : null;
+  const cause = shown?.result.cause ?? null;
+  const causeText = cause
+    ? [
+        cause.httpStatus !== undefined && cause.expectStatus !== undefined && cause.httpStatus !== cause.expectStatus
+          ? t(`${k}.causeAnswered`, { status: String(cause.httpStatus), expected: String(cause.expectStatus) })
+          : null,
+        cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null,
+        cause.reason ?? null,
+        t(cause.vantage === 'outside' ? `${k}.causeFromOutside` : `${k}.causeFromSameMachine`),
+      ].filter((part): part is string => Boolean(part)).join(' · ')
+    : null;
+  const latencies = recent
+    ? recent.results.slice(0, SPARK_RESULTS).flatMap((result) => (result.latencyMs === undefined ? [] : [result])).reverse()
+    : [];
+  const [resultsShown, setResultsShown] = React.useState(RESULTS_PAGE);
   const stripFacts: FactStripFact[] = [
     {
       key: 'last',
@@ -224,6 +253,16 @@ export function ServiceCheckDetail(
           }
         : {}),
     },
+    ...(recent?.failingSince !== null && recent?.failingSince !== undefined
+      ? [
+          {
+            key: 'failingFor',
+            label: t(`${k}.failingFor`),
+            value: formatSpan(nowMs - recent.failingSince),
+            ...(recent.failureStreak !== null ? { detail: t(`${k}.failureStreak`, { count: recent.failureStreak }) } : {}),
+          },
+        ]
+      : []),
     {
       key: 'response',
       label: t(`${k}.response`),
@@ -231,7 +270,31 @@ export function ServiceCheckDetail(
         shown?.result.latencyMs === undefined || !shown
           ? '—'
           : formatLatency(shown.result.latencyMs),
-      detail: t(`${k}.lastResult`),
+      detail:
+        latencies.length >= 2 ? (
+          <StackedSeriesChart
+            theme={pluginTheme}
+            label=""
+            series={[
+              {
+                id: 'latency',
+                label: t(`${k}.response`),
+                color: theme.colors.text.secondary,
+                points: latencies.map((result) => ({ id: String(result.observedAt), x: result.observedAt, y: result.latencyMs ?? null })),
+              },
+            ]}
+            variant="line"
+            size="inline"
+            fitLine
+            showAxis={false}
+            showLegend={false}
+            showGrid={false}
+            showReadout={false}
+            decorative
+          />
+        ) : (
+          t(`${k}.lastResult`)
+        ),
     },
     {
       key: 'uptime',
@@ -258,9 +321,12 @@ export function ServiceCheckDetail(
         >
           {meta.join(' · ')}
         </Text>
-        {failing && investigateSubject ? (
-          <CheckInvestigate subject={investigateSubject} serverId={serverIdForSubject} />
-        ) : null}
+        <View style={styles.actions}>
+          {settings ? <CheckNow run={settings.run} scope={row.scope} /> : null}
+          {failing && investigateSubject ? (
+            <CheckInvestigate subject={investigateSubject} serverId={serverIdForSubject} />
+          ) : null}
+        </View>
       </ItemGroup>
       {failing ? (
         <AttentionBanner
@@ -271,6 +337,7 @@ export function ServiceCheckDetail(
               ? `${k}.checkFailingTitle`
               : `${k}.checkDegradedTitle`,
           )}
+          {...(causeText ? { description: causeText } : {})}
         />
       ) : null}
       <ItemGroup surface="none" testID="services.check.facts">
@@ -317,33 +384,38 @@ export function ServiceCheckDetail(
           </ItemGroup>
         ) : null;
       })}
-      {facts.checks.length > 0 ? (
+      {recent ? (
         <ItemGroup
-          title={t(`${k}.latestResults`)}
-          description={t(`${k}.latestResultsBody`)}
+          title={t(`${k}.recentResults`)}
+          description={t(recent.partial ? `${k}.recentResultsPartial` : `${k}.recentResultsBody`)}
           testID="services.check.results"
         >
-          {facts.checks.map((check) => (
+          {recent.results.slice(0, resultsShown).map((result) => (
             <Item
-              key={check.checkId}
-              testID={`services.check.result.${check.checkId}`}
-              title={serviceCheckStatusWord(check.result.status)}
-              subtitle={
-                observer
-                  ? t(`${k}.resultFrom`, { machine: observer })
-                  : undefined
-              }
+              key={result.observedAt}
+              testID={`services.check.result.${result.observedAt}`}
+              title={serviceCheckStatusWord(result.status)}
+              subtitle={observer ? t(`${k}.resultFrom`, { machine: observer }) : undefined}
               detail={[
-                check.result.latencyMs === undefined
-                  ? null
-                  : formatLatency(check.result.latencyMs),
-                formatClock(check.result.observedAt),
+                result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
+                result.latencyMs === undefined ? null : formatLatency(result.latencyMs),
+                formatClock(result.observedAt),
               ]
                 .filter(Boolean)
                 .join(' · ')}
               mode="info"
             />
           ))}
+        </ItemGroup>
+      ) : null}
+      {recent && recent.results.length > resultsShown ? (
+        <ItemGroup surface="none" header="none">
+          <SectionActionButton
+            testID="services.check.results.older"
+            title={t('projects.deployments.pageOlder')}
+            icon="caret-right"
+            onPress={() => setResultsShown((count) => count + RESULTS_PAGE)}
+          />
         </ItemGroup>
       ) : null}
       <ItemGroup
@@ -423,6 +495,47 @@ export function ServiceCheckDetail(
   );
 }
 
+/** Check now runs the saved kind's public Action through the ordinary front door (policy, approval, Machine). */
+function CheckNow(props: Readonly<{ run: ServiceCheckSettings['run']; scope: ManagedConfiguredCheckRow['scope'] }>) {
+  const [state, setState] = React.useState<'idle' | 'running' | 'failed'>('idle');
+  const controller = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => controller.current?.abort(), []);
+  const run = React.useCallback(async () => {
+    controller.current?.abort();
+    const current = new AbortController();
+    controller.current = current;
+    setState('running');
+    try {
+      await checkNowConfiguredHealthCheck({
+        subject: props.run.subject,
+        check: props.run.check,
+        signal: current.signal,
+        serverId: props.scope.serverId,
+        expectedAccountId: props.scope.accountId,
+      });
+      if (!current.signal.aborted) setState('idle');
+    } catch {
+      if (!current.signal.aborted) setState('failed');
+    }
+  }, [props.run, props.scope.accountId, props.scope.serverId]);
+  return (
+    <View style={styles.checkNow}>
+      <RoundButton
+        testID="services.check.checkNow"
+        display="secondary"
+        title={t(`${k}.checkNow`)}
+        loading={state === 'running'}
+        onPress={() => void run()}
+      />
+      {state === 'failed' ? (
+        <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
+          {t(`${k}.checkNowFailed`)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 const CHECK_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
 
 /** Investigate a failing Check through the one failure-investigation owner, on the subject its source watches. */
@@ -434,7 +547,7 @@ function CheckInvestigate(props: Readonly<{ subject: NonNullable<ReturnType<type
   ], []);
   const actions = investigation.actions ?? fallback;
   return (
-    <View style={styles.actions} testID="services.check.investigate">
+    <View style={styles.investigate} testID="services.check.investigate">
       <InvestigationAgentActionButtons
         actions={actions}
         pending={investigation.pending}
@@ -474,7 +587,9 @@ function kindWord(kind: NonNullable<ServiceCheckSettings['kind']>): string {
 
 const styles = StyleSheet.create((theme) => ({
   metaText: { color: theme.colors.text.secondary },
-  actions: { paddingTop: theme.space.s12, gap: theme.space.s8, alignItems: 'flex-start' },
+  checkNow: { gap: theme.space.s4 },
+  investigate: { gap: theme.space.s8, alignItems: 'flex-start' },
+  actions: { paddingTop: theme.space.s12, flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'flex-start' },
   strip: { paddingHorizontal: theme.space.s16 },
   mono: { ...Typography.mono(), color: theme.colors.text.secondary },
 }));

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   readServiceCheckFacts,
+  readServiceCheckRecent,
   readServiceCheckSettings,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
@@ -125,6 +126,10 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
       observerMachineId: 'machine-observer',
       subjectMachineId: 'machine-service',
       label: 'n8n from outside',
+      run: {
+        subject: { kind: 'machineService', machineId: 'machine-service', serviceId: 'n8n' },
+        check: { checkId: 'second', kind: { pluginId: 'happier.machine.services', localId: 'http' } },
+      },
     });
   });
 
@@ -172,5 +177,26 @@ describe('Investigate on a failing Check names the subject its saved source watc
       checks: [check('svc', { kind: 'healthCheck' })] };
     expect(serviceCheckInvestigationSubject(seed(config), 'svc', 'server-a')).toBeNull();
     expect(serviceCheckInvestigationSubject(null, null, 'server-a')).toBeNull();
+  });
+});
+
+describe('A Check’s retained results read newest first, with its failing streak only while it fails', () => {
+  const sample = (status: 'up' | 'down', at: number, latencyMs?: number) =>
+    ({ status, observedAt: at, ...(latencyMs === undefined ? {} : { latencyMs }), evidence: { v: 1, items: [] } }) as never;
+
+  it('orders retained results newest first and keeps the owner’s failing-since and streak', () => {
+    const recent = readServiceCheckRecent({
+      checkId: 'a', result: sample('down', 300, 90),
+      recentResults: [sample('up', 100, 80), sample('down', 200, 95), sample('down', 300, 90)],
+      recentResultsCoverage: 'partial', failingSince: 200, failureStreak: 2,
+    } as never);
+    expect(recent.results.map((item) => item.observedAt)).toEqual([300, 200, 100]);
+    expect(recent).toMatchObject({ partial: true, failingSince: 200, failureStreak: 2 });
+  });
+
+  it('a passing check has no failing facts; a check from before retention shows only its latest result', () => {
+    const passing = readServiceCheckRecent({ checkId: 'a', result: sample('up', 300), failingSince: null, failureStreak: 0 } as never);
+    expect(passing).toMatchObject({ failingSince: null, failureStreak: null, partial: false });
+    expect(passing.results.map((item) => item.observedAt)).toEqual([300]);
   });
 });

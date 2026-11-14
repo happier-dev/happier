@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
+import type { HealthCheckSubjectV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
@@ -114,6 +115,11 @@ export type ServiceCheckSettings = Readonly<{
   /** The Machine whose service is checked, when the subject is a Machine service. */
   subjectMachineId: string | null;
   label: string;
+  /** What Check now runs: the saved subject and the shown check's kind (the saved kind's public Action). */
+  run: Readonly<{
+    subject: HealthCheckSubjectV1;
+    check: Readonly<{ checkId: string; kind: Readonly<{ pluginId: string; localId: string }> }>;
+  }>;
 }>;
 
 /**
@@ -146,6 +152,7 @@ export function readServiceCheckSettings(
     observerMachineId: seed.observation.kind === 'durablePush' ? null : seed.observation.watcherMaterializationRef.machineId,
     subjectMachineId: source.subject.kind === 'machineService' ? source.subject.machineId : null,
     label: seed.source.displayLabel,
+    run: { subject: source.subject, check: { checkId: check.checkId, kind: check.kind } },
   };
 }
 
@@ -189,4 +196,26 @@ export function serviceCheckStatusWord(status: ServiceCheckStatus): string {
 /** Whether a Check's state needs the person: down is danger, degraded a warning; anything else stays quiet (null). */
 export function serviceCheckStatusTone(status: ServiceCheckStatus): 'danger' | 'warning' | null {
   return status === 'down' ? 'danger' : status === 'degraded' ? 'warning' : null;
+}
+
+type RetainedCheck = Checks[number];
+export type ServiceCheckRecent = Readonly<{
+  /** Retained results, newest first; a check from before retention has only its latest. */
+  results: readonly RetainedCheck['result'][];
+  /** Older results were trimmed inside the window: say the list is incomplete. */
+  partial: boolean;
+  failingSince: number | null;
+  failureStreak: number | null;
+}>;
+
+/** One check's retained results and failing streak as the health owner keeps them; nothing is recomputed here. */
+export function readServiceCheckRecent(check: RetainedCheck): ServiceCheckRecent {
+  const results = check.recentResults ? [...check.recentResults].reverse() : [check.result];
+  const failing = check.failingSince !== undefined && check.failingSince !== null;
+  return {
+    results,
+    partial: check.recentResultsCoverage === 'partial',
+    failingSince: failing ? check.failingSince! : null,
+    failureStreak: failing && check.failureStreak !== undefined ? check.failureStreak : null,
+  };
 }
