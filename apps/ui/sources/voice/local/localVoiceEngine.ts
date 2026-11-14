@@ -13,7 +13,7 @@ import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConv
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { localVoicePlaybackController as playbackController } from '@/voice/runtime/VoicePlaybackController';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import { appendVoiceConversationAssistantText } from '@/voice/sessionBinding/voiceConversationTranscript';
@@ -44,7 +44,6 @@ let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 
-const playbackController = createVoicePlaybackController();
 const deviceSttController = createDeviceSttController({
   setState: patchLocalVoiceState,
   getSettings: () => storage.getState().settings as any,

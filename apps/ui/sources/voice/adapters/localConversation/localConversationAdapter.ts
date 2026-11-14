@@ -12,7 +12,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
 import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 
 function mapLocalStatus(status: any): { status: VoiceSessionStatus; mode: VoiceSessionMode } {
   switch (status) {
@@ -109,7 +109,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
       sessionId: opts.controlSessionId,
       settings,
       userText: opts.text,
-      playbackController: createVoicePlaybackController(),
+      playbackController: localVoicePlaybackController,
       voiceAgentSessions,
       durableDispatch: {
         localId: opts.localId,

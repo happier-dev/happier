@@ -2,16 +2,18 @@ import * as React from 'react';
 
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 
 import { resolveLocalVoiceAdapterSettings, type LocalVoiceSettingsInput } from './localVoiceSettings';
 
 // One message is read at a time; starting another (or pressing the active one) stops the first.
-const playbackController = createVoicePlaybackController();
+// Playback goes through the shared local-voice controller so it never overlaps a live voice reply.
 const listeners = new Set<() => void>();
 let activeKey: string | null = null;
+// Identifies the current run, so a stopped run that finishes late cannot clear a newer one.
+let activeRun = 0;
 
-function setActiveKey(next: string | null): void {
+function setActive(next: string | null): void {
   activeKey = next;
   for (const listener of listeners) listener();
 }
@@ -20,14 +22,16 @@ export function getReadAloudActiveKey(): string | null {
   return activeKey;
 }
 
-export function useReadAloudActiveKey(): string | null {
-  const subscribe = React.useCallback((listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-  return React.useSyncExternalStore(subscribe, getReadAloudActiveKey, () => null);
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Whether this message is the one being read; other messages' hooks keep their value and do not rerender. */
+export function useIsReadingAloud(key: string): boolean {
+  return React.useSyncExternalStore(subscribe, () => activeKey === key, () => false);
 }
 
 /**
@@ -40,23 +44,25 @@ export async function toggleReadAloud(params: Readonly<{
   settings: LocalVoiceSettingsInput;
 }>): Promise<boolean> {
   const wasActive = activeKey === params.key;
-  playbackController.interrupt();
+  activeRun += 1;
+  const run = activeRun;
+  localVoicePlaybackController.interrupt();
   if (wasActive) {
-    setActiveKey(null);
+    setActive(null);
     return true;
   }
 
-  setActiveKey(params.key);
+  setActive(params.key);
   const { config } = resolveLocalVoiceAdapterSettings(params.settings);
   try {
     return await speakAssistantText({
       text: params.text,
       settings: params.settings,
       networkTimeoutMs: resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000),
-      registerPlaybackStopper: playbackController.registerStopper,
+      registerPlaybackStopper: localVoicePlaybackController.registerStopper,
       onSpeaking: () => {},
     });
   } finally {
-    if (activeKey === params.key) setActiveKey(null);
+    if (activeRun === run) setActive(null);
   }
 }

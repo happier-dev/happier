@@ -7,7 +7,8 @@ import { Modal } from '@/modal';
 import { useSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { isReadAloudAvailable } from '@/voice/local/localVoiceSettings';
-import { toggleReadAloud, useReadAloudActiveKey } from '@/voice/local/readAloud';
+import { toggleReadAloud, useIsReadingAloud } from '@/voice/local/readAloud';
+import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { RowActionDeferredIcon } from './RowActionRevealSlot';
@@ -26,20 +27,22 @@ export function MessageSpeakButton(props: Readonly<{
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const voice = useSetting('voice');
-    const activeKey = useReadAloudActiveKey();
-    const settings = React.useMemo(() => ({ voice }), [voice]);
     const { messageKey, text } = props;
+    const playing = useIsReadingAloud(messageKey);
+    const settings = React.useMemo(() => ({ voice }), [voice]);
+    const available = React.useMemo(() => isReadAloudAvailable(settings), [settings]);
 
     const handlePress = React.useCallback(() => {
+        // Browsers only allow audio that is unlocked from the press itself, before any async work.
+        primeWebAudioPlayback();
         fireAndForget((async () => {
             const ok = await toggleReadAloud({ key: messageKey, text, settings });
             if (!ok) Modal.alert(t('common.error'), t('message.readAloudFailed'));
         })(), { tag: 'MessageSpeakButton.toggleReadAloud' });
     }, [messageKey, settings, text]);
 
-    if (text.trim().length === 0 || !isReadAloudAvailable(settings)) return null;
+    if (text.trim().length === 0 || !available) return null;
 
-    const playing = activeKey === messageKey;
     return (
         <Pressable
             testID={props.testID}
