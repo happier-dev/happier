@@ -33,6 +33,8 @@ export type OpenProjectOptions = Readonly<{
     /** Open on one of the person's own dashboards: its layout id, or `null` for the default. */
     layoutId?: string | null;
     initialResource?: Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; find?: FindSeed }> | Readonly<{ kind: 'commit'; sha: string }>;
+    /** Open one of this Project's Environments on its Deployments page (the Projects tree's Environment rows). */
+    environmentId?: string;
 }>;
 
 /** Opens an existing project through the shared persisted surface/worktree policy. */
@@ -88,6 +90,11 @@ export function useOpenProject(): OpenProject {
             return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
                 segment: 'overview', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
                 ...(options.attachedDashboard ? { attachedDashboard: options.attachedDashboard } : { layoutId: options.layoutId })}));
+        }
+        if (options?.environmentId) {
+            return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+                segment: 'deployments', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
+                routeParams: { deploymentEnvironment: options.environmentId } }));
         }
         if (options?.initialResource) {
             const resource = options.initialResource;

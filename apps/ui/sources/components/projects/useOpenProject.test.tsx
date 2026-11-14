@@ -323,6 +323,16 @@ describe('useOpenProject', () => {
         expect(new URL(routerPush.mock.calls[1][0], 'https://happier.invalid').pathname).toBe('/projects/wr_1/overview');
     });
 
+    it('opens one of the Project\'s Environments on its Deployments page, whatever page was remembered', async () => {
+        const key = buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId: serverIdA, accountId: 'account-a' }, 'wr_1')!;
+        projectLastMobileSurfaceState.set(key, 'context');
+        const hook = await renderHook(() => useOpenProject(), { wrapper: PaneWrapper });
+        expect(await hook.getCurrent()('wr_1', { serverId: serverIdA, environmentId: 'env-prod' })).toBe(true);
+        const href = new URL(routerPush.mock.calls[0][0], 'https://happier.invalid');
+        expect(href.pathname).toBe('/projects/wr_1/deployments');
+        expect(Object.fromEntries(href.searchParams)).toMatchObject({ serverId: serverIdA, deploymentEnvironment: 'env-prod' });
+    });
+
     it('restores the selected Home qualified preference despite duplicate bare ids', async () => {
         workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
         await refreshWorkspaceRefs();

@@ -1,19 +1,16 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 
 import { useDeploymentEnvironmentRowParts } from './deployments/DeploymentEnvironmentCollection';
-import { deploymentEnvironmentRoute } from './deployments/deploymentNavigation';
 import { useDeploymentPresentationDemand } from './deployments/useDeploymentPresentationDemand';
 import { useDeploymentInventory } from './deployments/useDeploymentProject';
 import type {
   ProjectsTreeEnvironment,
-  ProjectsTreeEnvironmentAddress,
   ProjectsTreeProject,
 } from './projectsTreeRows';
 
@@ -119,19 +116,6 @@ export function useProjectsTreeEnvironments(
     previous.current = { input: projects, output };
     return output;
   }, [parts, projects]);
-}
-
-/** Opens an Environment row's page: the same route Services, the Project's Deployments tab and the Machine open. */
-export function useOpenProjectsTreeEnvironment(): (
-  address: ProjectsTreeEnvironmentAddress,
-) => void {
-  const router = useRouter();
-  return React.useCallback(
-    (address: ProjectsTreeEnvironmentAddress) => {
-      router.push(deploymentEnvironmentRoute(address));
-    },
-    [router],
-  );
 }
 
 const selectOpenEnvironmentId = (params: Readonly<Record<string, string | string[] | undefined>>): string | null =>

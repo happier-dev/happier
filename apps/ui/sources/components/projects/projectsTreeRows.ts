@@ -138,7 +138,10 @@ export function projectsTreeRowEnvironment(row: Pick<ProjectsTreeRow, 'environme
     return row.environment ?? null;
 }
 
-/** A Project's Environments as rows one level under it, after its checkouts; the one on screen is selected. */
+/**
+ * A Project's Environments as rows one level under it, after its checkouts; the one on screen is selected. Each opens
+ * on its Project's Deployments page (the Project's lead checkout, then the Environment), so it keeps the Project around it.
+ */
 function environmentRows(project: ProjectsTreeProject, openEnvironmentId: string | null | undefined): ProjectsTreeRow[] {
     return (project.environments ?? []).map((environment): ProjectsTreeRow => ({
         key: `${project.key}/environment/${environment.environmentId}`,
@@ -151,6 +154,7 @@ function environmentRows(project: ProjectsTreeProject, openEnvironmentId: string
         expandable: false,
         expanded: false,
         refId: null,
+        opens: projectOpenTarget(project),
         attention: environment.needsYouStatus ? null : environment.attention,
         needsYouStatus: environment.needsYouStatus ?? null,
         selected: environment.environmentId === openEnvironmentId,

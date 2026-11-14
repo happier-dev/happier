@@ -22,7 +22,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
 import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
-import { useOpenProjectsTreeEnvironment, useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
+import { useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -63,7 +63,6 @@ export const ProjectsListView = React.memo(() => {
     const [query, setQuery] = React.useState('');
     // The same Environments the column lists under each Project (pfc-redesign dProject tree).
     const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
-    const openEnvironment = useOpenProjectsTreeEnvironment();
     const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     const projectGroupsByKey = React.useMemo(() => new Map([...groups.projectGroups, ...groups.hiddenProjectGroups]
         .map(group => [group.projectKey.projectKey, group] as const)), [groups.projectGroups, groups.hiddenProjectGroups]);
@@ -115,8 +114,8 @@ export const ProjectsListView = React.memo(() => {
     }, []);
     // The column's press owner: a Project opens on its lead checkout, a checkout opens itself.
     const openRow = React.useCallback((row: ProjectsTreeRow) => {
-        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded), openEnvironment);
-    }, [model.openTreeRef, openEnvironment, toggle]);
+        openProjectsTreeRow(row, model.openTreeRef, (key) => toggle(key, row.expanded));
+    }, [model.openTreeRef, toggle]);
     const toggleRow = React.useCallback((row: ProjectsTreeRow) => toggle(row.key, row.expanded), [toggle]);
     // The phone rows are the same tree items as the column's, through the same shared tree owner.
     const keyboard = useProjectsTreeKeyboard(rows, {

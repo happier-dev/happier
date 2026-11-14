@@ -189,12 +189,17 @@ export function useProjectsListModel() {
     const openWorkspace = React.useCallback((ref: WorkspaceRefV1) => openProject(ref.id, {
         workspaceAddress: workspaceAddressFromRefV1(ref),
     }), [openProject]);
-    /** A tree leaf (visible or hidden) opens its exact accepted checkout, resolved by full address. */
-    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV1) => {
+    /**
+     * A tree leaf (visible or hidden) opens its exact accepted checkout, resolved by full address; an Environment row
+     * opens that Environment on the checkout's Project Deployments page.
+     */
+    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV1, environmentId?: string) => {
         if (!address || address.workspaceId !== refId) return;
         const resolution = resolveWorkspaceRefByAddress(treeRefs, address);
-        if (resolution.kind === 'resolved') openWorkspace(resolution.ref);
-    }, [openWorkspace, treeRefs]);
+        if (resolution.kind !== 'resolved') return;
+        if (environmentId) void openProject(resolution.ref.id, { workspaceAddress: workspaceAddressFromRefV1(resolution.ref), environmentId });
+        else openWorkspace(resolution.ref);
+    }, [openProject, openWorkspace, treeRefs]);
     const setProjectHidden = React.useCallback(async (project: QualifiedProjectKeyV1 | WorkspaceRefV1, hidden: boolean) => {
         const target = 'rootPath' in project ? projectWorkspaceRefV1(project) : project;
         if (!areServerProfileIdentifiersEquivalent(target.serverId, activeServer.serverId)) return false;

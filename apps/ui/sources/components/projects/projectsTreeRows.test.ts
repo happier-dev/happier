@@ -228,7 +228,8 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         expect(shape(open)).toEqual(['billing-api v', '  Production', '  Staging']);
         expect(open.slice(1).map(row => [row.kind, row.glyph, row.subtitle, row.attention])).toEqual([
             ['environment', 'environment', 'fixture-a-docker-1111', null], ['environment', 'environment', 'Failed', 'needs-you']]);
-        expect(projectsTreeRowOpenTarget(open[1]!)).toBeNull();
+        // An Environment opens on its Project's Deployments page: the Project's checkout, then that Environment.
+        expect(projectsTreeRowOpenTarget(open[1]!)).toEqual({ refId: 'b1' });
         expect(projectsTreeRowEnvironment(open[1]!)).toEqual({ serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod' });
         // The Environment on screen is selected and holds its Project open, as an open checkout does.
         const onEnvironment = buildProjectsTreeRows({ projects: [billing], openRefId: null, openEnvironmentId: 'stg', expandedKeys: new Set() });

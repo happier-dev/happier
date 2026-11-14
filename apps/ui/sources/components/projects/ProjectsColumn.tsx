@@ -25,7 +25,7 @@ import { ProjectActionApprovalNotice } from './ProjectActionApprovalNotice';
 import { useProjectRowCreationActions } from './ProjectSaveAsSourceSheet';
 import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
-import { useOpenProjectsTreeEnvironment, useProjectsTreeEnvironments, useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
+import { useProjectsTreeEnvironments, useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
 const NO_KEYS: ReadonlySet<string> = new Set();
@@ -111,7 +111,6 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     // Each Project's Environments join its row (pfc-redesign dProject tree): the Project → Environment link.
     const treeProjects = useProjectsTreeEnvironments(model.treeProjects);
     const openEnvironmentId = useProjectsTreeOpenEnvironmentId();
-    const openEnvironment = useOpenProjectsTreeEnvironment();
     const projects = React.useMemo(() => filterProjectsTreeByQuery(treeProjects, query), [treeProjects, query]);
     // Structural rows only: a checkout's live facts are read by its Project's own tree section, so a fact
     // change never re-renders this column or the other rows.
@@ -244,7 +243,6 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         live={live}
                         onToggle={toggle}
                         onOpenRef={openRef}
-                        onOpenEnvironment={openEnvironment}
                         hrefForRef={hrefForRef}
                         renderRowMenu={renderRowMenu}
                         hidden={hidden}
