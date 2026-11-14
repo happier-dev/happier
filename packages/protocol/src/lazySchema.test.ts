@@ -261,6 +261,19 @@ describe('lazySchema', () => {
     expect(registry.get(lazySchema(() => child))).toEqual(registry.get(child));
     expect(registry.get(child)).toEqual({ label: 'Value' });
   });
+
+  it.each([
+    { target: 'draft-2020-12', namedChild: true },
+    { target: 'draft-7', namedChild: false },
+  ] as const)('preserves named-parent refinement projection in $target', ({ target, namedChild }) => {
+    const base = z.string().meta({ id: 'RefinementBase' });
+    const refined = base.min(2);
+    const child = namedChild ? refined.meta({ id: 'RefinementChild' }) : refined;
+    const schema = z.object({ value: lazySchema(() => child) });
+    const eager = z.object({ value: child });
+
+    expect(z.toJSONSchema(schema, { target })).toEqual(z.toJSONSchema(eager, { target }));
+  });
 });
 
 // Importing the protocol package must not build every schema it declares; each
