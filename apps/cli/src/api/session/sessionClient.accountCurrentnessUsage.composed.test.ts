@@ -144,4 +144,55 @@ describe('Session client Account encryption currentness usage', () => {
         }
     });
 
+    it('reads no pre-Turn snapshot while its live connection pushes Session changes, and re-reads without one', async () => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'carol' })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null };
+        const metadata = createTestMetadata({ path: '/pre-turn', flavor: 'claude' });
+        const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+            metadata, agentState: null, storedContentMode: 'plain' });
+        const raw = createSessionRecordFixture({ id: 'pre-turn', encryptionMode: 'plain', metadataLayoutVersion: 1,
+            metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, metadataVersion: 1,
+            agentState: null, agentStateVersion: 0, share: null });
+        let sessionReads = 0;
+        let pendingReads = 0;
+        vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+                updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null } };
+            if (path === '/v2/sessions/pre-turn') { sessionReads++; return { status: 200, data: { session: raw } }; }
+            if (path === '/v2/sessions/pre-turn/pending') { pendingReads++; return { status: 200, data: { messages: [] } }; }
+            return { status: 404, data: {} };
+        });
+        const socket = createApiSessionSocketStub({ connected: true });
+        const client = new ApiSessionClient(token, createPlainSessionFixture({ id: raw.id, metadataLayoutVersion: 1,
+            metadata, metadataVersion: 1, ownerMetadata: fields.ownerMetadataValue, ownerMetadataEnvelope: fields.ownerMetadata }), {
+            metadataAuthority: { kind: 'owner', credentials },
+            durableMutationDeliveryInitiallyActive: false,
+            transport: { serverId: 'pre-turn-home', serverUrl: resolveServerHttpBaseUrl(),
+                createSessionSocketTransport: () => ({ socket: socket as never, transport: createSocketTransportAdapter(socket as never) }) },
+        });
+        try {
+            // The Session socket connects through the client's own supervisor. This fixture serves no
+            // Home feature contract, whose absence retires the transport; keep the live connection up.
+            await vi.waitFor(() => expect((client as unknown as { socket: { connected: boolean } | null }).socket?.connected).toBe(true),
+                { timeout: 15_000 });
+            socket.disconnect = vi.fn(() => socket);
+            // The first required read may join the connect-time catch-up begun before the epoch;
+            // the second is an authoritative read on this connection.
+            await client.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
+            await client.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
+            const read = sessionReads;
+            for (let turn = 0; turn < 3; turn++) await client.refreshSessionSnapshotFromServerBestEffort({ reason: 'primaryTurnRuntimeState' });
+            expect(sessionReads - read).toBe(0);
+            // The Turn-end opportunistic Pending reconcile reads nothing on the same live connection.
+            await client.reconcilePendingQueueState({ force: false });
+            expect({ session: sessionReads - read, pending: pendingReads }).toEqual({ session: 0, pending: 0 });
+            // Without a live connection, pushes cannot keep it current: the pre-Turn read happens.
+            (socket as unknown as { connected: boolean }).connected = false;
+            await client.refreshSessionSnapshotFromServerBestEffort({ reason: 'primaryTurnRuntimeState' });
+            expect(sessionReads - read).toBe(1);
+        } finally {
+            await client.close();
+        }
+    });
 });

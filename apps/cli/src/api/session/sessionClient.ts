@@ -2778,6 +2778,9 @@ export class ApiSessionClient extends EventEmitter {
      * and this runner needs the latest snapshot before making turn decisions (e.g. replaySeedV1).
      */
     async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: SessionSnapshotRefreshReason }): Promise<void> {
+        // Before a Turn the runtime needs current metadata. A snapshot read on this live
+        // connection is kept current by its Session pushes; only a new connection re-reads.
+        if (opts?.reason === 'primaryTurnRuntimeState' && this.isSnapshotCurrentOnThisConnection()) return;
         await this.interactionApi.refreshSessionSnapshotFromServerBestEffort(opts);
     }
 
@@ -5048,10 +5051,14 @@ export class ApiSessionClient extends EventEmitter {
      * connection the held custody is therefore already reconciled, and only a fresh
      * snapshot (new connection or unknown projection) re-reads the statuses here.
      */
+    /** An authoritative snapshot was read on the current live connection, whose pushes keep it current. */
+    private isSnapshotCurrentOnThisConnection(): boolean {
+        return this.socket?.connected === true && this.snapshotReadConnectionEpoch === this.sessionConnectionEpoch;
+    }
+
     async readPendingQueueStateForLiveWork(): Promise<PendingQueueState> {
         if (this.snapshotSyncInFlight) await this.snapshotSyncInFlight;
-        if (!this.materializationRuntime.getPendingQueueState().known || this.socket?.connected !== true
-            || this.snapshotReadConnectionEpoch !== this.sessionConnectionEpoch) {
+        if (!this.materializationRuntime.getPendingQueueState().known || !this.isSnapshotCurrentOnThisConnection()) {
             await this.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
             if (!await this.reconcilePendingProviderInputCustodyBeforeMaterialization()) return UNKNOWN_PENDING_QUEUE_STATE;
         } else if (this.closed || this.hasUnsettledPendingProviderInputCustody()) {
@@ -5061,6 +5068,10 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     async reconcilePendingQueueState(opts?: { force?: boolean }): Promise<boolean> {
+        // An opportunistic reconcile (e.g. at Turn end) adds nothing while the snapshot read on this
+        // live connection is kept current by its `pending-changed` pushes, whose trigger reconciles
+        // custody; materialization still reconciles before it claims. Forced reconciles always read.
+        if (!opts?.force && this.isSnapshotCurrentOnThisConnection()) return false;
         const changed = await this.interactionApi.reconcilePendingQueueState(opts);
         await this.reconcilePendingProviderInputCustodyBeforeMaterialization();
         return changed;
