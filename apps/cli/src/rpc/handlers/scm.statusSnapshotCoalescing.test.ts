@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
-import { SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES, createGitScmCapabilities, type ScmWorkingEntry, type ScmWorkingSnapshot } from '@happier-dev/protocol';
+import { logger } from '@/ui/logger';
+import { createGitScmCapabilities, type ScmWorkingEntry, type ScmWorkingSnapshot } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
+import { SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES } from '@happier-dev/protocol/socketRpc';
 
 const { runScmProvisioningRouteMock, runScmRouteMock } = vi.hoisted(() => ({
   runScmProvisioningRouteMock: vi.fn(),
@@ -191,10 +194,29 @@ describe('registerScmHandlers status snapshot entry budget', () => {
     return handlers;
   };
 
-  const readStatusHandler = async (): Promise<RpcHandler> => {
-    const handler = (await registerHandlers()).get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
-    if (!handler) throw new Error('SCM status handler was not registered');
-    return handler;
+  const encryptionKey = new Uint8Array(32).fill(7);
+
+  /** Registers the SCM handlers on a real encrypted RPC manager, so replies cross the real reply guard. */
+  const createEncryptedRpc = async (): Promise<RpcHandlerManager> => {
+    const { registerScmHandlers } = await import('./scm');
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    registerScmHandlers(rpc, '/workspace');
+    return rpc;
+  };
+
+  const requestStatus = async (rpc: RpcHandlerManager): Promise<unknown> => {
+    const response = await rpc.handleRequest({
+      method: `machine-1:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`,
+      params: encodeBase64(encrypt(encryptionKey, 'dataKey', { cwd: '.' })),
+    });
+    expect(typeof response).toBe('string');
+    expect((response as string).length).toBeLessThanOrEqual(SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES);
+    return decrypt(encryptionKey, 'dataKey', decodeBase64(response as string));
   };
 
   const buildEntry = (path: string): ScmWorkingEntry => ({
@@ -236,11 +258,27 @@ describe('registerScmHandlers status snapshot entry budget', () => {
     } satisfies ScmWorkingSnapshot,
   });
 
-  const serializedSize = (entry: ScmWorkingEntry): number =>
-    estimateJsonUtf8BytesBounded(entry, SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
+  /**
+   * A backend reply whose JSON is exactly `targetBytes`: 1 MB-path entries, with the last path
+   * padded to land on the target.
+   */
+  const buildSnapshotResponseOfJsonBytes = (targetBytes: number) => {
+    const entryCount = Math.ceil(targetBytes / 1_000_000);
+    const entries = Array.from({ length: entryCount }, (_, index) => buildEntry(`${index}-${'p'.repeat(900_000)}`));
+    const baseBytes = Buffer.byteLength(JSON.stringify(buildSnapshotResponse(entries)), 'utf8');
+    const last = entries[entries.length - 1]!;
+    entries[entries.length - 1] = buildEntry(`${last.path}${'q'.repeat(targetBytes - baseBytes)}`);
+    const response = buildSnapshotResponse(entries);
+    expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBe(targetBytes);
+    return response;
+  };
+
+  /** Raw bytes the reply limit can carry once base64-encoded, before any envelope or cipher overhead. */
+  const replyBase64Capacity = Math.floor(SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES / 4) * 3;
 
   it('ships every entry of a snapshot within the budget and reports the changed-file count', async () => {
-    const handler = await readStatusHandler();
+    const handler = (await registerHandlers()).get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+    if (!handler) throw new Error('SCM status handler was not registered');
     runScmRouteMock.mockResolvedValue(buildSnapshotResponse([buildEntry('a.txt'), buildEntry('b.txt')]));
 
     const snapshot = ((await handler({ cwd: '.' })) as { snapshot?: ScmWorkingSnapshot }).snapshot;
@@ -250,44 +288,48 @@ describe('registerScmHandlers status snapshot entry budget', () => {
     expect(snapshot?.totals.changedFiles).toBe(2);
   });
 
-  it('truncates entries by serialized bytes and never ships a partial entry', async () => {
-    const handler = await readStatusHandler();
-    // ~60KB per entry, 80 entries: deterministically over the budget.
-    const longPath = 'x'.repeat(60_000);
-    const mockEntries = Array.from({ length: 80 }, (_, index) => buildEntry(`${longPath}-${index}.txt`));
-    runScmRouteMock.mockResolvedValue(buildSnapshotResponse(mockEntries));
+  it('keeps the full entry list when the encrypted reply fits just under the transport limit', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const backendResponse = buildSnapshotResponseOfJsonBytes(replyBase64Capacity - 1_000);
+      runScmRouteMock.mockResolvedValue(backendResponse);
 
-    const snapshot = ((await handler({ cwd: '.' })) as { snapshot?: ScmWorkingSnapshot }).snapshot;
-    expect(snapshot?.entriesPresentation).toBe('truncated');
-    const shipped = snapshot?.entries ?? [];
-    expect(shipped.length).toBeGreaterThan(0);
-    expect(shipped.length).toBeLessThan(mockEntries.length);
+      const reply = (await requestStatus(await createEncryptedRpc())) as { snapshot?: ScmWorkingSnapshot; errorCode?: string };
 
-    let cumulative = 0;
-    for (let index = 0; index < shipped.length; index += 1) {
-      cumulative += (index > 0 ? 1 : 0) + serializedSize(shipped[index]!);
+      expect(reply.errorCode).toBeUndefined();
+      expect(reply.snapshot?.entriesPresentation).toBeUndefined();
+      expect(reply.snapshot?.entries.length).toBe(backendResponse.snapshot.entries.length);
+      expect(reply.snapshot?.totals.changedFiles).toBe(backendResponse.snapshot.entries.length);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
     }
-    expect(cumulative).toBeLessThanOrEqual(SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
-    const firstDropped = mockEntries[shipped.length]!;
-    expect(cumulative + 1 + serializedSize(firstDropped)).toBeGreaterThan(SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
-
-    // Totals stay the backend's full-set truth; the changed-file count survives truncation.
-    expect(snapshot?.totals).toMatchObject({
-      untrackedFiles: mockEntries.length,
-      pendingFiles: mockEntries.length,
-      changedFiles: mockEntries.length,
-    });
-    expect(shipped.map((entry) => entry.path)).toEqual(mockEntries.slice(0, shipped.length).map((entry) => entry.path));
   });
 
-  it('terminates as an empty prefix when the first entry alone exceeds the budget', async () => {
-    const handler = await readStatusHandler();
-    const hugeEntry = buildEntry(`${'y'.repeat(SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES + 1)}.txt`);
-    runScmRouteMock.mockResolvedValue(buildSnapshotResponse([hugeEntry, buildEntry('b.txt')]));
+  it('truncates the entry list, with full-set totals, when the whole reply would exceed the transport limit', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const backendResponse = buildSnapshotResponseOfJsonBytes(replyBase64Capacity + 1_000);
+      const backendEntries = backendResponse.snapshot.entries;
+      runScmRouteMock.mockResolvedValue(backendResponse);
 
-    const snapshot = ((await handler({ cwd: '.' })) as { snapshot?: ScmWorkingSnapshot }).snapshot;
-    expect(snapshot?.entriesPresentation).toBe('truncated');
-    expect(snapshot?.entries).toEqual([]);
-    expect(snapshot?.totals).toMatchObject({ untrackedFiles: 2, pendingFiles: 2, changedFiles: 2 });
+      const reply = (await requestStatus(await createEncryptedRpc())) as { snapshot?: ScmWorkingSnapshot; errorCode?: string };
+
+      expect(reply.errorCode).toBeUndefined();
+      expect(reply.snapshot?.entriesPresentation).toBe('truncated');
+      const shipped = reply.snapshot?.entries ?? [];
+      expect(shipped.length).toBeGreaterThan(0);
+      expect(shipped.length).toBeLessThan(backendEntries.length);
+      // A whole-entry prefix of the backend's list, never a partial entry.
+      expect(shipped.map((entry) => entry.path)).toEqual(backendEntries.slice(0, shipped.length).map((entry) => entry.path));
+      expect(reply.snapshot?.totals).toMatchObject({
+        untrackedFiles: backendEntries.length,
+        pendingFiles: backendEntries.length,
+        changedFiles: backendEntries.length,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
