@@ -57,6 +57,10 @@ function createTargetCustodyReader(ownership: GuardOwnership) {
     const owned = ownershipByPid?.get(root.pid);
     const key = processOwnerKey(root.owner);
     const sameOwnerRoots = ownership.status === 'ok' ? ownership.roots.filter(item => processOwnerKey(item.owner) === key && item.live) : [];
+    // A session host's process is shared by its hosted Sessions: a hosted Session owns its own
+    // Agent tree, not the host process, which stays running for the others.
+    const sharedHost = ownership.status === 'ok' && ownership.roots.some(item => item.live && item.pid === root.pid
+      && processOwnerKey(item.owner) !== key);
     const members = ownership.status === 'ok' ? ownership.rows.filter(row => row.owner && processOwnerKey(row.owner) === key
       && (target.kind === 'session' && sameOwnerRoots.length <= 1 || row.chain.some(item => item.pid === root.pid))) : [];
     const memories = members.map(row => nativeByPid?.get(row.pid)?.memory?.bytes);
@@ -64,9 +68,9 @@ function createTargetCustodyReader(ownership: GuardOwnership) {
       ? memories.reduce((sum, bytes) => sum + bytes, 0) : null;
     let reason: GuardExclusionReason | undefined;
     if (!root.live || !native || !equalProcessStart(root.start, native.start)) reason = 'identity_changed';
-    else if (owned?.level === 'not_happier') reason = 'not_happier';
-    else if (!owned?.owner || processOwnerKey(owned.owner) !== key || owned.ownerEnded
-      || owned.level !== 'proven' && owned.level !== 'likely'
+    else if (!sharedHost && owned?.level === 'not_happier') reason = 'not_happier';
+    else if (!sharedHost && (!owned?.owner || processOwnerKey(owned.owner) !== key || owned.ownerEnded
+      || owned.level !== 'proven' && owned.level !== 'likely')
       || members.some(member => member.level !== 'proven' && member.level !== 'likely')) reason = 'ownership_unknown';
     return { reason, footprintBytes };
   } };

@@ -85,7 +85,15 @@ export function resolveProcessOwnership(input: Readonly<{
             }
             if (fence) evidence[0] = { kind: 'fence', state: 'met', reason: platform === 'win32' ? 'windows_job' : 'linux_scope' };
             else if (row.cgroup || row.jobs) evidence[0] = { kind: 'fence', state: 'not_met', reason: 'outside_fence' };
-            parent = lineage.flatMap(item => liveByPid.get(item.pid) ?? []).find(root => root.owner.kind !== 'container' && row.start.startTimeMs >= root.start.startTimeMs);
+            // The nearest live root decides. A session host carries one live root per hosted
+            // Session, so it is no single Session's chain: its own tag and each Agent's
+            // tag or fence decide instead, never an arbitrary first hosted Session.
+            for (const item of lineage) {
+                const candidates = (liveByPid.get(item.pid) ?? []).filter(root => root.owner.kind !== 'container' && row.start.startTimeMs >= root.start.startTimeMs);
+                if (!candidates.length) continue;
+                if (new Set(candidates.map(root => processOwnerKey(root.owner))).size === 1) parent = candidates[0];
+                break;
+            }
             if (parent) evidence[1] = { kind: 'parent_chain', state: 'met', reason: 'live_root_chain' };
             {
                 const tagged = lineage.find(item => item.ownerTag !== undefined);

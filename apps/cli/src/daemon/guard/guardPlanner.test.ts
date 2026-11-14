@@ -10,6 +10,9 @@ import type { TrackedSession } from '../types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRoots';
+import { createReadGuardFacts } from './readGuardFacts';
+import { normalizeLocalServiceScan } from '../local/services/inventory/scanner';
 
 const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, happySessionId: 's', startedBy: 'daemon' };
 const serviceOwner = {};
@@ -185,5 +188,43 @@ describe('memory guard canonical ladder', () => {
       expect(decide({ ...project, connectionMinutes }).candidate).toBeUndefined();
     }
     expect(decide({ ...project, listeners: [{ establishedConnections: 0 }, { establishedConnections: 1 }] }).ladder.excluded[0]?.reason).toBe('visitors');
+  });
+});
+
+describe('memory guard with a session host', () => {
+  // One session host process runs several Sessions; each Session's Agent is its own child,
+  // tagged with that Session by the launch owner. The census rows are the OS boundary.
+  it.each(['darwin', 'linux'] as const)('ranks every hosted Session by its own Agent tree, largest first, on %s', async platform => {
+    const scope = '123456789abc';
+    const principal = { kind: 'uid', value: '1' } as const;
+    const mib = 1024 * 1024;
+    const row = (pid: number, ppid: number, bytes: number, ownerTag?: string) => ({ pid, ppid, start: { startTimeMs: pid * 10 }, principal,
+      name: 'node', memory: { bytes, kind: 'rss' as const }, cpuTimeUs: 0, ...(ownerTag ? { ownerTag } : {}) });
+    const hostSnapshot: Extract<ProcessCensusSnapshot, { status: 'ok' }> = { status: 'ok', capturedAtMs: 120000, logicalCpus: 1, rows: [
+      row(10, 1, 100 * mib), row(30, 10, 400 * mib, `v1.${scope}.happier.daemon`),
+      row(31, 30, 150 * mib, `v1.${scope}.session.s1`), row(32, 30, 300 * mib, `v1.${scope}.session.s2`),
+    ] };
+    const hosted = (sessionId: string): TrackedSession => ({ trackingKey: `hosted-${sessionId}`, pid: 30, happySessionId: sessionId,
+      startedBy: 'daemon', processStartTimeMs: 300, hostedSession: { end: async () => true, observed: Promise.resolve() } });
+    const sessions = [hosted('s1'), hosted('s2')];
+    const hostRoots = listHappierProcessRoots({ snapshot: hostSnapshot, selfPid: 10, daemonScopeKey: scope, platform, bootTimeMs: 0, trackedSessions: sessions });
+    const hostOwnership = { status: 'ok' as const, snapshot: hostSnapshot, roots: hostRoots, rows: resolveProcessOwnership({ snapshot: hostSnapshot,
+      roots: hostRoots, daemonPrincipal: principal, daemonScopeKey: scope, platform }) };
+    const hostInventory: LiveWorkInventoryV1 = { coverage: 'complete', items: sessions.map(ownerRef =>
+      ({ category: 'session' as const, ownerRef, attribution: { kind: 'unknown' as const }, state: 'settled' as const, settledAt: 1 })) };
+    const readFacts = createReadGuardFacts({ trackedSessions: () => sessions, readBrowsers: () => [],
+      readInventory: async () => hostInventory,
+      readServices: async () => normalizeLocalServiceScan({ machineId: 'm', now: 0, previous: null, workspaces: [], ownership: [], listeners: [], processes: new Map() }),
+      readSessionEligibility: session => evaluateSessionEligibility({ tracked: session, inventory: hostInventory, draft: { status: 'absent' }, resume: {
+        sessionId: session.happySessionId!, rawSession: { machineId: 'm', path: '/project' },
+        metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } }, machineId: 'm', path: '/project', flavor: 'codex', codexSessionId: `native-${session.happySessionId}` },
+      } }) });
+    const facts = await readFacts({ ownership: hostOwnership, inventory: hostInventory });
+    const plan = planGuard({ ...facts, policy: { ...policy, steps: { browsers: false, devServers: false, idleSessions: true } }, now: 120000 });
+    const rung = plan.ladder.steps.find(step => step.rung === 'idleSessions')!;
+    expect({ excluded: plan.ladder.excluded.map(item => item.reason),
+      candidates: rung.candidates.map(item => [item.target.kind === 'session' ? item.target.tracked.happySessionId : null, item.footprintBytes / mib]) })
+      .toEqual({ excluded: [], candidates: [['s2', 300], ['s1', 150]] });
+    expect(plan.candidate?.target.kind === 'session' && plan.candidate.target.tracked).toBe(sessions[1]);
   });
 });
