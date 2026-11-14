@@ -10,7 +10,7 @@ import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connec
 // Boat OpenAPI 3.1, fetched 2026-11-05: https://docs.boat.dev/openapi/boat-v1.yaml.
 // Only the vendor HTTP boundary is replaced; Account activation and role schemas are real.
 async function fixture(options: { trial?: boolean; permission?: string; health?: 'ok' | 'degraded'; state?: string;
-  matches?: number; lostReply?: boolean; secondPage?: boolean; createRefusal?: string; createRefusalStatus?: number } = {}) {
+  matches?: number; firstPageIneligible?: boolean; lostReply?: boolean; secondPage?: boolean; createRefusal?: string; createRefusalStatus?: number } = {}) {
   const requests: Array<{ path: string; method: string; body?: unknown; label: string | null }> = [];
   const sandboxFacts = { name: 'Boat contract fixture', desktopAvailable: true, snapshotAvailable: true };
   const http = createPluginHttpFixture({ request: request => {
@@ -31,8 +31,8 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
     ] };
     else if (url.pathname.endsWith('/sandboxes') && method === 'GET') {
       const later = url.searchParams.get('cursor') === 'next';
-      value = { ok: true, type: 'sandbox.list', sandboxes: Array.from({ length: options.secondPage && !later ? 0 : options.matches ?? 1 }, (_, index) => ({
-        ...sandboxFacts, id: index ? 'bx_abcdefgh' : 'bx_23456789', state: options.state ?? 'ready', health: options.health ?? 'ok',
+      value = { ok: true, type: 'sandbox.list', sandboxes: Array.from({ length: options.secondPage && !later ? (options.firstPageIneligible ? 1 : 0) : options.matches ?? 1 }, (_, index) => ({
+        ...sandboxFacts, id: index || options.firstPageIneligible && !later ? 'bx_abcdefgh' : 'bx_23456789', state: options.firstPageIneligible && !later ? 'provisioning' : options.state ?? 'ready', health: options.health ?? 'ok',
         labels: { 'happier-managed-id': 'managed-gaps' },
       })), pageInfo: { hasMore: !!options.secondPage && !later, nextCursor: options.secondPage && !later ? 'next' : null, limit: 100 } };
     } else if (method === 'POST') value = { ok: true, type: 'sandbox.created', status: 'provisioning', ttlSeconds: null,
@@ -46,6 +46,21 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
 }
 
 describe('Boat documented contract gaps', () => {
+  it('resolves a retained fork preset when only a later sandbox page is eligible', async () => {
+    const { host, requests } = await fixture({ secondPage: true, firstPageIneligible: true });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await host.invokeAction('options', {}));
+      expect(options.dimensions.image.filter(option => option.id.startsWith('fork/')).map(option => option.id))
+        .toEqual(['fork/bx_23456789']);
+      const selected = projectMachineProvisionerSelectionV1({ options, launchSchema: BoatLaunchV1Schema.jsonSchema,
+        selection: { size: 'small', image: 'fork/bx_23456789', location: 'eu' } });
+      expect(selected).toMatchObject({ kind: 'ready', launch: { size: 'small', source: { kind: 'fork', sandboxId: 'bx_23456789' } } });
+      // One limits read, one snapshots read, and one read per vendor cursor page.
+      expect(requests).toHaveLength(4);
+      expect(requests.every(request => request.method === 'GET' && request.label === null)).toBe(true);
+    } finally { await host.dispose(); }
+  });
+
   it('recovers and deletes a lost Create using the label written by the real acquisition producer', async () => {
     let labels: Record<string, string> | undefined;
     let creates = 0;

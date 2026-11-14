@@ -30,9 +30,9 @@ const snapshotsResponse = mini.object({ ...base, snapshots: mini.array(mini.obje
   name: mini.string().check(mini.regex(/^[a-z0-9][a-z0-9-]{0,62}$/)),
   status: mini.enum(['saving', 'ready', 'failed']), sourceSandboxId: sandboxId, createdAt: text(),
 })) });
-const sandboxesResponse = mini.object({ ...base, sandboxes: mini.array(sandbox) });
-const recoveryResponse = mini.object({ ...base, sandboxes: mini.array(mini.object({ id: sandboxId })),
-  pageInfo: mini.optional(mini.object({ hasMore: mini.boolean(), nextCursor: mini.nullable(text()) })) });
+const pageInfo = mini.optional(mini.object({ hasMore: mini.boolean(), nextCursor: mini.nullable(text()) }));
+const sandboxesResponse = mini.object({ ...base, sandboxes: mini.array(sandbox), pageInfo });
+const recoveryResponse = mini.object({ ...base, sandboxes: mini.array(mini.object({ id: sandboxId })), pageInfo });
 const sandboxResponse = mini.object({ ...base, sandbox });
 const createResponse = mini.object({ ok: mini.literal(true), sandbox: mini.object({ id: sandboxId }) });
 const sshResponse = mini.object({ ...base, success: mini.literal(true), machineIp: mini.nullable(text()),
@@ -134,16 +134,25 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       return { available: true as const };
     },
     async options(): Promise<BoatOptions> {
-      const [limitsValue, snapshotsValue, sandboxesValue] = await Promise.all([
+      const [limitsValue, snapshotsValue, firstSandboxesValue] = await Promise.all([
         request('/limits'), request('/saved-snapshots'), request('/sandboxes'),
       ]);
       const limits = parseBoatValue(BoatLimitsResponseSchema, limitsValue);
       const snapshots = parseBoatValue(snapshotsResponse, snapshotsValue).snapshots
         .filter((value): value is typeof value & { status: 'ready' } => value.status === 'ready')
         .map(({ name, status }) => ({ name, status }));
-      const sandboxes = parseBoatValue(sandboxesResponse, sandboxesValue).sandboxes
-        .filter(value => ['ready', 'idle', 'running', 'archived'].includes(value.state))
-        .map(value => ({ id: value.id, ...(value.name ? { name: value.name } : {}), state: value.state }));
+      const sandboxes: BoatOptions['sandboxes'][number][] = [];
+      let sandboxesValue = firstSandboxesValue;
+      for (;;) {
+        const response = parseBoatValue(sandboxesResponse, sandboxesValue);
+        sandboxes.push(...response.sandboxes
+          .filter(value => ['ready', 'idle', 'running', 'archived'].includes(value.state))
+          .map(value => ({ id: value.id, ...(value.name ? { name: value.name } : {}), state: value.state })));
+        if (!response.pageInfo?.hasMore) break;
+        if (!response.pageInfo.nextCursor) throw new BoatNativeError('native_response_invalid');
+        const query = new URLSearchParams({ cursor: response.pageInfo.nextCursor });
+        sandboxesValue = await request(`/sandboxes?${query}`);
+      }
       return { ...(limits.sandboxPlanKey ? { sandboxPlanKey: limits.sandboxPlanKey } : {}),
         sizes: limits.sandboxPlanDollars !== undefined && limits.sandboxPlanDollars >= 100 ? [...BASE_SIZES, XLARGE] : BASE_SIZES, snapshots, sandboxes };
     },
