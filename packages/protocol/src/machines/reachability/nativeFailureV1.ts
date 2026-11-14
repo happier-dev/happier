@@ -15,6 +15,7 @@ export const MachineReachabilityNativeFailureDetailsV1Schema = lazyZodSchema(() 
       requiredFact: z.literal('homeRoutedDaemonAck'), errorCode: z.optional(text()),
     })])),
     recovery: z.optional(MachineFirewallRecoveryV1Schema), restoration: z.optional(MachineFirewallRestorationV1Schema),
+    setupOutcome: z.optional(z.literal('applied')),
     remedy: text(),
   }),
 ]));

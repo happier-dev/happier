@@ -29,8 +29,10 @@ encrypted device-local Action receipt. Receipt storage uses the operation owner'
 existing admission failure semantics; progress alone does not rewrite it. The
 scoped V2 operation read and Action detail expose the saved capture without an
 interactive task or an SSH connection. This is recovery material, not evidence
-that restoration occurred. The existing 24-hour/50-settled-operation retention
-applies. There is no Home-side durable copy: a fresh reader still needs the
+that restoration occurred. A later publication failure retains the capture
+alongside the actual failure code and diagnostic cause. The existing
+24-hour/50-settled-operation retention applies. There is no Home-side durable
+copy: a fresh reader still needs the
 daemon's outbound Home route.
 
 In unreleased 0.3 source, plugin-provenance-only Actions are excluded from

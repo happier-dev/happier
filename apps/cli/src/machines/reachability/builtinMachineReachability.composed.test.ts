@@ -289,12 +289,13 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
   // MACH-COMPOSE-1107 T2-INGRESS: a default is a Domain-route selection,
   // independent of management membership and the retained-SSH transaction.
   it.each([
-    { kind: 'none' as const },
-    { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
-      config: { hostname: 'app.example.test' }, credentialRefs: [] } },
-    { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'tailscaleServe' },
-      config: {}, credentialRefs: [] } },
-  ])('applies an approved public SSH closure with default ingress %j before saving the posture', async defaultServiceIngress => {
+    { defaultServiceIngress: { kind: 'none' as const }, rejectPublication: false },
+    { defaultServiceIngress: { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+      config: { hostname: 'app.example.test' }, credentialRefs: [] } }, rejectPublication: false },
+    { defaultServiceIngress: { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'tailscaleServe' },
+      config: {}, credentialRefs: [] } }, rejectPublication: false },
+    { defaultServiceIngress: { kind: 'none' as const }, rejectPublication: true },
+  ])('applies an approved public SSH closure with default ingress %j before saving the posture', async ({ defaultServiceIngress, rejectPublication }) => {
     const { f, api } = prepared;
     await api.connectMachineControl();
     try {
@@ -324,7 +325,17 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
         });
       const priorRules = await priorFile('/etc/happier/firewall/rules.nft');
       const priorUnit = await priorFile('/etc/systemd/system/happier-firewall.service');
+      api.setStatePublicationRejected(rejectPublication);
       const configured = await executeReviewedReachabilityConfigure(f, api, review);
+      if (rejectPublication) {
+        expect(configured.result).toMatchObject({ ok: false, errorCode: 'machine_reachability_publication_unavailable',
+          effectAttempted: true, details: { status: 'recoveryRequired', recovery: { rules: priorRules, unit: priorUnit } } });
+        expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: { reachabilityPosture: posture } });
+        const rules = await readFile('/etc/happier/firewall/rules.nft', 'utf8');
+        expect(rules).toContain('ct state new drop');
+        expect(rules).not.toContain('tcp dport 2205 accept');
+        return;
+      }
       expect(parseCompletedReachabilityConfigure(configured.result)).toMatchObject({ status: 'applied', posture,
         observation: { management: { publicSsh: 'closed' } },
         recovery: { rules: priorRules, unit: priorUnit, boot: {
@@ -345,7 +356,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(saved.observation.ingress).toEqual(defaultServiceIngress.kind === 'none' ? [] : [expect.objectContaining({
         provider: defaultServiceIngress.selection.provider,
       })]);
-    } finally { await api.dispose(); }
+    } finally { api.setStatePublicationRejected(false); await api.dispose(); }
   });
 
   it('refuses unavailable, malformed and management-only defaults without native or metadata effects', async () => {

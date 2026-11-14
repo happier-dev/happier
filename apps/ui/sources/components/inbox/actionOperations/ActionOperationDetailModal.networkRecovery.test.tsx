@@ -17,7 +17,8 @@ const { ActionOperationDetailModal } = await import('./ActionOperationDetailModa
 beforeEach(async () => { standardCleanup(); await homes.reset(); actionOperationStore.reset(); });
 afterEach(() => { standardCleanup(); actionOperationStore.reset(); });
 
-it.each(['succeeded', 'failed'] as const)('shows and copies exact saved firewall recovery from a fresh %s Action detail without task or SSH access', async state => {
+it.each(['succeeded', 'failed', 'publication_failure'] as const)('shows and copies exact saved firewall recovery from a fresh %s Action detail without task or SSH access', async outcome => {
+  const state = outcome === 'succeeded' ? 'succeeded' : 'failed';
   const copied: string[] = [];
   installBrowserClipboardBoundary(async text => { copied.push(text); });
   const home = await homes.addHome({ name: 'Studio Home', serverUrl: 'https://network-outcome.test',
@@ -31,8 +32,8 @@ it.each(['succeeded', 'failed'] as const)('shows and copies exact saved firewall
     state, scope: { accountId: 'owner', machineId: 'studio-machine' },
     title: 'Configure Network', createdAt: 1000, startedAt: 1100, settledAt: 2000, cancellation: 'unsupported',
     domainRef: { kind: 'machineSetup', serverId: home, machineId: 'studio-machine' },
-    ...(state === 'failed' ? { error: { errorCode: 'native_effect_failed', error: 'Firewall outcome is unknown',
-      details: { status: 'recoveryRequired', failure: { kind: 'native_effect_failed' }, recovery,
+    ...(state === 'failed' ? { error: { errorCode: outcome === 'publication_failure' ? 'machine_reachability_publication_unavailable' : 'native_effect_failed', error: 'Firewall outcome is unknown',
+      details: { status: 'recoveryRequired', ...(outcome === 'publication_failure' ? {} : { failure: { kind: 'native_effect_failed' } }), recovery,
         remedy: 'Use the independent administrator console.' } } } : {
     result: { status: 'applied', machineId: 'studio-machine', metadataVersion: 2,
       posture: { revision: 1, management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } },

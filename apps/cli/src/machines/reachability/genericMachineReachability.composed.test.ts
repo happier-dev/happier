@@ -567,7 +567,7 @@ describe('independent Generic join', () => {
     } finally { release(); await held; await api.dispose(); }
   });
 
-  it('removes the exact Home join grant after a native command fails during consumption', async () => {
+  it.each([false, true])('removes the exact Home join grant after a native command fails during consumption (publicationRejected: %s)', async rejectPublication => {
     let grantCountAtNativeFailure: number | undefined;
     fixture.hostNative.setOnNetworkMutation(async () => {
       // Assert this observation after the command returns: a native adapter
@@ -579,14 +579,21 @@ describe('independent Generic join', () => {
       const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
         serverId: 'generic-home', machineId, change: { kind: 'privateNetwork', intent: 'join', selection: selected },
       }));
+      api.setStatePublicationRejected(rejectPublication);
       const { result, request } = await executeReviewedReachabilityConfigure(fixture, api, review);
       // The command may already have changed native state before EIO. The
       // canonical host reports that uncertainty as a typed Configure result,
       // not a known pre-effect Action refusal or a successful applied join.
-      expect(parseCompletedReachabilityConfigure(result))
-        .toMatchObject({ status: 'outcome_unknown', errorCode: 'outcome_unknown' });
-      expect(request.execution).toMatchObject({ ok: true,
-        result: { status: 'outcome_unknown', errorCode: 'outcome_unknown' } });
+      if (rejectPublication) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', effectAttempted: true,
+          failureCause: { phase: 'machines.reachability.publication', errorCode: 'ECONNRESET' } });
+        expect(request.execution).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+      } else {
+        expect(parseCompletedReachabilityConfigure(result))
+          .toMatchObject({ status: 'outcome_unknown', errorCode: 'outcome_unknown' });
+        expect(request.execution).toMatchObject({ ok: true,
+          result: { status: 'outcome_unknown', errorCode: 'outcome_unknown' } });
+      }
       expect(grantCountAtNativeFailure).toBe(1);
       const nativeFailures = fixture.elevation.diagnostics.flatMap(diagnostic => diagnostic.records)
         .filter(record => record.type === 'result' && record.stepId === 'network-join');
@@ -597,7 +604,7 @@ describe('independent Generic join', () => {
         .rejects.toMatchObject({ code: 'ENOENT' });
       expect(await fixture.home.readConnectorGrantCount()).toBe(0);
       expect(api.processBoundary.failures).toEqual([]);
-    } finally { fixture.hostNative.setOnNetworkMutation(undefined); await api.dispose(); }
+    } finally { api.setStatePublicationRejected(false); fixture.hostNative.setOnNetworkMutation(undefined); await api.dispose(); }
   });
 });
 

@@ -275,7 +275,11 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
       || ('cleanupFailure' in failure.details && failure.errorCode === failure.details.cleanupFailure?.code)
     : 'requiredFact' in failure.details
     ? DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(failure.details.requiredFact).success || failure.errorCode === 'target_unavailable'
-    : failure.errorCode === 'approval_stale')
+    // A saved prior state is recovery material, independent of the failure's cause.
+    : 'status' in failure.details && failure.details.status === 'recoveryRequired'
+      && 'recovery' in failure.details && failure.details.recovery !== undefined
+      && !('restoration' in failure.details)
+      || failure.errorCode === 'approval_stale')
   : failure.details.kind === 'finiteCommand'
   ? true
   : failure.details.kind === 'machineSetup'

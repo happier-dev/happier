@@ -680,7 +680,10 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         failureCause: projectActionFailureCauseV1(error, 'machines.reachability.publication'),
         effectAttempted: anyNativeEffectPossible || roleMayHaveChangedMembership || metadataOutcomeUnknown
           || currentState.metadataVersion !== prepared.state.metadataVersion,
-        ...(setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };
+        ...(firewallRecovery ? { details: { status: 'recoveryRequired' as const, recovery: firewallRecovery,
+          ...(setupApplied ? { setupOutcome: 'applied' as const } : {}),
+          remedy: 'Use the independent administrator console to inspect the saved firewall state before restoring access.' } }
+          : setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };
     }
     if (knownFailure) return knownFailure;
     return { status, machineId: deps.target.machineId, ...currentState, observation,
