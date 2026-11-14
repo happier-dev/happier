@@ -36,6 +36,7 @@ import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionE
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { applyBrowserDiscoveryEvent, reconcileBrowserDiscovery } from './discovery';
 
@@ -129,6 +130,14 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             view: reconciled.views.find(candidate => candidate.viewId === viewId
                 && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null }));
     });
+
+    React.useEffect(() => {
+        if (!browserSessionId || !serverId || !discoveryAccountId || input.enabled === false
+            || (!requestedMachineId && !sessionRpcSessionId)) return undefined;
+        // A failed watch settles until the existing Home/Machine transport reports recovery.
+        return subscribeMachineRpcRecovery({ machineId, serverId, expectedAccountId: discoveryAccountId },
+            () => setAttempt(current => current + 1));
+    }, [browserSessionId, discoveryAccountId, input.enabled, machineId, requestedMachineId, serverId, sessionRpcSessionId]);
 
     React.useEffect(() => {
         if (!browserSessionId || (!requestedMachineId && !sessionRpcSessionId) || !serverId) {

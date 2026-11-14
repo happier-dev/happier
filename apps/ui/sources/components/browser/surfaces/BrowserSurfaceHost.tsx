@@ -926,7 +926,9 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     }
 
     return (
-        <BrowserStreamedSurfaceRuntimeHost input={{
+        // Discovery's delivered snapshot belongs to this surface projection. A reset must
+        // rehydrate from the daemon rather than keep a baseline for the discarded state.
+        <BrowserStreamedSurfaceRuntimeHost key={props.surfaceKey} input={{
             view: focusedView ?? null,
             browserSessionId: presenceSessionId ?? props.browserSessionId,
             enabled: policy.browserEnabled && policy.viewTargetsEnabled && visible && hostActivelyViewed,

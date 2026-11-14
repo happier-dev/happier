@@ -194,6 +194,49 @@ function daemonView(captureSource?: Record<string, unknown>) {
 }
 
 describe('useBrowserStreamedSurfaceRuntime', () => {
+    it('rediscovers the Session view when its Machine recovers, without reads for unrelated recovery', async () => {
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const { clearMachineRequestReachabilityForMachine } = await import('@/sync/domains/machines/reachability/machineReachability');
+        boundary.discoveryError = 'request_failed';
+        let state = createBrowserControlState();
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({
+            browserSessionId: view.browserSessionId, view: state.viewsById[view.viewId] ?? null,
+            machineId: 'machine_1', serverId,
+            onBrowserEvent: event => { state = applyBrowserControlEvent(state, event); },
+        }));
+        try {
+            await flushHookEffects();
+            const requests = boundary.requests.length;
+            await act(async () => { clearMachineRequestReachabilityForMachine({ serverId, accountId: home.accountId }, 'other'); });
+            await flushHookEffects();
+            expect(boundary.requests).toHaveLength(requests);
+            boundary.discoveryError = null;
+            boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+                supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+            await act(async () => { clearMachineRequestReachabilityForMachine({ serverId, accountId: home.accountId }, 'machine_1'); });
+            await flushHookEffects();
+            expect(state.viewsById[view.viewId]).toMatchObject({ engineKind: 'streamedSurface' });
+        } finally { await hook.unmount(); }
+    });
+    it('rehydrates the daemon view after a launchpad host resets its empty seed', async () => {
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        const render = (surfaceKey: string) => <BrowserSurfaceHost
+            browserSessionId="launchpad" platform="web" surfaceKey={surfaceKey}
+            initialBrowserState={createBrowserControlState()}
+            pluginBrowserActionContext={{ sessionId: view.browserSessionId, machineId: 'machine_1', serverId }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true }} />;
+        const screen = await renderScreen(render('resolving'));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(screen.findByType(BrowserShell).props.state.viewsById[view.viewId]).toBeDefined();
+            await screen.update(render('resolved'));
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(screen.findByType(BrowserShell).props.state.viewsById[view.viewId]).toMatchObject({
+                browserSessionId: view.browserSessionId, engineKind: 'streamedSurface',
+            });
+        } finally { await screen.unmount(); }
+    });
     it('adopts daemon-opened views through scoped change push and releases hidden observation without polling', async () => {
         const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
         const broker = createBrowserDaemonControlBroker();
@@ -565,7 +608,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             admissionResult: { ok: true as const },
             rpcContext: { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } };
         boundary.sourceAdmission = payload => rpc.invokeLocal(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, payload, rpcContext);
-        client.registerBrowserControlRoutes(routes);
+        client.replaceDevicesRoleRoutes({ browserControl: routes });
         boundary.sharedViewer = role === 'owner' ? false : role;
         const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
             accountId: 'machine-owner', sourceMachineInstallationId: 'installation',
