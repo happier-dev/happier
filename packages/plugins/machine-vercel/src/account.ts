@@ -187,14 +187,15 @@ async function stageToken(context: ConnectedAccountAuthenticationContext, token:
  */
 async function discover(token: string, context: ConnectedAccountAuthenticationContext, signal: AbortSignal): Promise<ConnectedAccountAuthCompletionResult> {
   const listed = await listTeams(token, context, signal);
-  if (typeof listed !== 'string' && !Array.isArray(listed)) return listed;
-  const only = Array.isArray(listed) && listed.length === 1 ? listed[0]! : null;
+  if (listed !== 'unlisted' && 'status' in listed) return listed;
+  const teams = listed === 'unlisted' ? [] : listed;
+  const only = teams.length === 1 ? teams[0]! : null;
   if (only && context.stageAccountConfiguration) {
     const scope = scopeOf({ configuration: { ...context.configuration, values: { ...context.configuration.values, teamId: only.id } } });
     const result = await probe(token, scope, context, signal);
     if (result.status !== 'connected') return result;
     try {
-      await context.stageAccountConfiguration({ fields: [teamField(listed as readonly TeamChoice[])],
+      await context.stageAccountConfiguration({ fields: [teamField(teams)],
         values: { ...context.configuration.values, teamId: only.id } });
     } catch {
       signal.throwIfAborted();
@@ -205,7 +206,7 @@ async function discover(token: string, context: ConnectedAccountAuthenticationCo
   const staged = await stageToken(context, token, signal);
   if (staged) return staged;
   return { status: 'configurationRequired',
-    fields: Array.isArray(listed) && listed.length > 0 ? [teamField(listed)] : unlistedScopeFields };
+    fields: teams.length > 0 ? [teamField(teams)] : unlistedScopeFields };
 }
 
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountHealthResult> {
