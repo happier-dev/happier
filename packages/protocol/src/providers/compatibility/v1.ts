@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
+import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';
 import {
   PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
@@ -86,7 +86,7 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
     requiredApiKeyTransports: z.optional(z.array(AgentCredentialTransportSupportV1Schema).check(z.minLength(1), z.maxLength(32))),
   }),
   authIsolation: z.strictObject({
-    suppressConnectedServiceIds: z.array(ConnectedServiceIdSchema).check(z.maxLength(32)),
+    suppressConnectedServiceIds: z.array(ConnectedAccountServiceKeyIngressSchema).check(z.maxLength(32)),
     ownedEnvKeys: z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(64)),
     /** Declared session configuration keys emitted only when this binding consumes them. */
     optionalOwnedEnvKeys: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(64))),

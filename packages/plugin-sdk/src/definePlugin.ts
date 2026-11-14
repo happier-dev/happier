@@ -969,6 +969,11 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['webhooks']>[number], 'id'>
         >>;
+        /** Machine roles this plugin adds, or (`partOf`) the built-in role its daemon work belongs to. */
+        machineRoles?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['machineRoles']>[number], 'id'>
+        >>;
         /** Target-owned versioned capability points; raw host `contributes` stays private. */
         contributionPoints?: TContributionPoints;
         /** Contributor role bindings grouped by exact target plugin and point. */
@@ -2383,6 +2388,7 @@ const DAEMON_DATABASES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     project: projectDaemonDatabaseDeclarations,
 });
 const WEBHOOKS_ADAPTER = descriptorFamilyAdapter('webhooks');
+const MACHINE_ROLES_ADAPTER = descriptorFamilyAdapter('machineRoles');
 const CONTRIBUTION_POINTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'contributionPoints',
     project(input) {
@@ -2531,6 +2537,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     accountCollections: { classification: 'descriptor-only', authorKey: 'accountCollections', inputShape: 'descriptor', adapter: ACCOUNT_COLLECTIONS_ADAPTER },
     daemonDatabases: { classification: 'descriptor-only', authorKey: 'daemonDatabases', inputShape: 'descriptor', adapter: DAEMON_DATABASES_ADAPTER },
     webhooks: { classification: 'descriptor-only', authorKey: 'webhooks', inputShape: 'descriptor', adapter: WEBHOOKS_ADAPTER },
+    machineRoles: { classification: 'descriptor-only', authorKey: 'machineRoles', inputShape: 'descriptor', adapter: MACHINE_ROLES_ADAPTER },
     pluginContributionPoints: { classification: 'descriptor-only', authorKey: 'contributionPoints', inputShape: 'descriptor', adapter: CONTRIBUTION_POINTS_ADAPTER },
     targetedPluginContributions: { classification: 'descriptor-only', authorKey: 'contributesTo', inputShape: 'descriptor', adapter: CONTRIBUTES_TO_ADAPTER },
 } as const satisfies Readonly<Record<string, DefinePluginFamilyPolicy>>);

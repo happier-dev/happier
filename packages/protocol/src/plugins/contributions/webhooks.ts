@@ -6,9 +6,8 @@ import { PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 /**
- * Verifier kinds the host webhook ingress owner implements. Sentry
- * integration webhooks have no shared-installation route, so they bind only
- * to an Account endpoint.
+ * Verifier kinds the host webhook ingress owner implements. Sentry and GitLab
+ * webhooks bind only to an Account endpoint.
  */
 export const PluginWebhookVerifierV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
@@ -17,6 +16,10 @@ export const PluginWebhookVerifierV1Schema = lazyZodSchema(() => z.union([
   }),
   z.strictObject({
     kind: z.literal('sentry_hmac_sha256_v1'),
+    routing: z.literal('accountEndpoint'),
+  }),
+  z.strictObject({
+    kind: z.literal('gitlab_token_v1'),
     routing: z.literal('accountEndpoint'),
   }),
   z.strictObject({

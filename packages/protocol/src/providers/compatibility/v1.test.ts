@@ -11,6 +11,15 @@ const requirements = {
 } as const;
 
 describe('provider compatibility contracts', () => {
+  it('admits qualified contributed service suppression through canonical legacy ingress', () => {
+    const authIsolation = { ...requirements.authIsolation,
+      suppressConnectedServiceIds: ['acme.agent/native-auth', 'openai-codex'] };
+    expect(AgentProviderRequirementsV1Schema.parse({ ...requirements, authIsolation }).authIsolation.suppressConnectedServiceIds)
+      .toEqual(['acme.agent/native-auth', 'happier.agent.codex/openai-codex']);
+    expect(AgentProviderRequirementsV1Schema.safeParse({ ...requirements,
+      authIsolation: { ...authIsolation, suppressConnectedServiceIds: ['unknown-scalar'] } }).success).toBe(false);
+  });
+
   it('preserves contributed model roles for runtime admission and portable editors', () => {
     const modelRoles = [{ id: 'reviewer', title: 'Code reviewer' }];
     expect(AgentProviderRequirementsV1Schema.parse({ ...requirements, modelRoles }))

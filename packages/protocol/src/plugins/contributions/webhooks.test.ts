@@ -92,7 +92,7 @@ describe('plugin webhook contributions', () => {
     }).success).toBe(false);
   });
 
-  it('admits the Sentry HMAC verifier for Account endpoints only', () => {
+  it.each(['sentry_hmac_sha256_v1', 'gitlab_token_v1'])('admits the %s verifier for Account endpoints only', (kind) => {
     const base = {
       schemaVersion: 2,
       id: 'example.sentry-webhooks',
@@ -104,13 +104,13 @@ describe('plugin webhook contributions', () => {
     const contribution = {
       id: 'sentry-events',
       title: 'Sentry events',
-      verifier: { kind: 'sentry_hmac_sha256_v1', routing: 'accountEndpoint' },
+      verifier: { kind, routing: 'accountEndpoint' },
       handlerAction: { localId: 'receive-github' },
     } as const;
     const manifest = PluginManifestV2Schema.parse({ ...base, contributes: { actions: [webhookAction], webhooks: [contribution] } });
     expect(manifest.contributes.webhooks).toEqual([contribution]);
     for (const invalid of [
-      { ...contribution, verifier: { kind: 'sentry_hmac_sha256_v1', routing: 'providerInstallation' } },
+      { ...contribution, verifier: { kind, routing: 'providerInstallation' } },
       { id: contribution.id, title: contribution.title, verifier: contribution.verifier, delivery: 'recordReceiptOnly' },
     ]) {
       expect(PluginManifestV2Schema.safeParse({ ...base, contributes: { actions: [webhookAction], webhooks: [invalid] } }).success).toBe(false);
