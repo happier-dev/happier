@@ -480,6 +480,28 @@ describe('waitForSessionInputResult', () => {
     });
   });
 
+  it('carries the typed runtime cause of a retained transcript failure, not arbitrary transcript fields', async () => {
+    const runtimeIssueV1 = {
+      v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit_reached', source: 'usage_limit',
+      occurredAt: 101, agentId: 'codex', sanitizedPreview: 'Usage limit reached',
+      failureCause: { phase: 'turn', failureReason: 'usage_limit', retryable: false },
+    } as const;
+    const { wait } = await arrange({ rowsAfterInput: () => [{
+      role: 'agent',
+      content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: 'Codex turn failed: Usage limit reached' } },
+      meta: { source: 'runtime', runtimeIssueCode: runtimeIssueV1.code, runtimeIssueSource: runtimeIssueV1.source,
+        runtimeIssueV1: { ...runtimeIssueV1, nativeProviderText: 'raw provider body' } },
+    }] });
+
+    await expect(wait()).resolves.toEqual({
+      ok: true,
+      sessionId,
+      localId: 'automation:run:run-1',
+      inputMessageRef,
+      result: { kind: 'failed', message: 'Current turn failed: Codex turn failed: Usage limit reached', runtimeIssueV1 },
+    });
+  });
+
   it('returns the canonical final text without inventing a consumer-specific ceiling', async () => {
     const text = 'é'.repeat((512 * 1024) + 1);
     const { wait } = await arrange({

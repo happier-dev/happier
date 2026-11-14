@@ -68,7 +68,7 @@ import {
 import { fetchSessionById, fetchSessionTurnsProjection, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { createSessionInputAttentionObserver } from './sessionInputAttention';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { openSessionEventSource, waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
   decryptSessionPayload,
@@ -511,6 +511,12 @@ function readTranscriptRuntimeIssuePreview(value: unknown): string | null {
   return message.length > 0 ? message : null;
 }
 
+/** The host's failure writers attach the typed issue; only its schema fields leave the transcript. */
+function readTranscriptRuntimeIssueV1(value: unknown): Readonly<{ runtimeIssueV1?: SessionRuntimeIssueV1 }> {
+  const parsed = SessionRuntimeIssueV1Schema.safeParse(asRecord(asRecord(value)?.meta)?.runtimeIssueV1);
+  return parsed.success ? { runtimeIssueV1: parsed.data } : {};
+}
+
 function hasTranscriptRuntimeIssue(value: unknown): boolean {
   const record = asRecord(value);
   const meta = asRecord(record?.meta);
@@ -534,7 +540,7 @@ function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
   }
   const lifecycleEvent = detectSessionTurnLifecycleEvent(value);
   if (lifecycleEvent === 'turn_failed') {
-    return { kind: 'failed', message: formatStructuredTurnFailureMessage('failed') };
+    return { kind: 'failed', message: formatStructuredTurnFailureMessage('failed'), ...readTranscriptRuntimeIssueV1(value) };
   }
   if (lifecycleEvent === 'turn_cancelled') {
     return { kind: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled') };
@@ -546,6 +552,7 @@ function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
     return {
       kind: 'failed',
       message: formatStructuredTurnFailureMessage('failed', readTranscriptRuntimeIssuePreview(value)),
+      ...readTranscriptRuntimeIssueV1(value),
     };
   }
   return null;
