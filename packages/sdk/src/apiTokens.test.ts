@@ -54,7 +54,7 @@ describe('API-token Home operations', () => {
         const input = body as { tokenId: string };
         response.end(JSON.stringify({
           token: `hap_v1_${input.tokenId}_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`,
-          apiToken: { tokenId: input.tokenId, label: 'Browser', displayPrefix: `hap_v1_${input.tokenId.slice(0, 8)}`,
+          apiToken: { tokenId: input.tokenId, label: { content: { t: 'plain', v: 'Browser' }, recipientEnvelope: null }, displayPrefix: `hap_v1_${input.tokenId.slice(0, 8)}`,
             createdAt: '2026-09-30T00:00:00.000Z', lastUsedAt: null, expiresAt: EXPIRES_AT,
             hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: GRANT,
             parentTokenId: PARENT_ID, activeChildCount: 0, embedConfig: null },
@@ -70,18 +70,36 @@ describe('API-token Home operations', () => {
       const created = await client.apiTokens.createChild({ label: 'Browser', expiresAt: EXPIRES_AT,
         grant: GRANT, requireCreatedByChildTokenId: CHILD_ID });
       expect(created.apiToken.grant).toEqual(GRANT);
-      expect(requests[0]).toEqual({ path: '/v1/auth/api-tokens/children/create', method: 'POST',
-        body: { tokenId: created.apiToken.tokenId, label: 'Browser', expiresAt: EXPIRES_AT,
-          grant: GRANT, requireCreatedByChildTokenId: CHILD_ID } });
+      // The plaintext label is sealed for the token it names, in the Account's current mode.
+      expect(requests[0]).toEqual({ path: '/v1/auth/api-tokens/self', method: 'GET' });
+      expect(requests[1]).toEqual({ path: '/v1/auth/api-tokens/children/create', method: 'POST',
+        body: { tokenId: created.apiToken.tokenId, label: { content: { t: 'plain', v: 'Browser' }, recipients: [] },
+          expiresAt: EXPIRES_AT, grant: GRANT, requireCreatedByChildTokenId: CHILD_ID } });
       await expect(client.machine('machine-1').apiTokens.self()).resolves.toMatchObject({ grant: GRANT, credentialId: PARENT_ID });
       await expect(client.apiTokens.revokeChild(created.apiToken.tokenId)).resolves.toEqual({ revoked: true });
-      expect(requests[2]).toEqual({ path: '/v1/auth/api-tokens/children/revoke', method: 'POST',
+      expect(requests[3]).toEqual({ path: '/v1/auth/api-tokens/children/revoke', method: 'POST',
         body: { tokenId: created.apiToken.tokenId } });
       await expect(Reflect.apply(client.apiTokens.createChild, client.apiTokens,
         [{ label: 'Missing expiry', grant: GRANT }])).rejects.toThrow();
       await expect(Reflect.apply(client.apiTokens.createChild, client.apiTokens,
         [{ label: 'Unexpected content access', expiresAt: EXPIRES_AT, grant: GRANT, encryption: {} }])).rejects.toThrow();
-      expect(requests).toHaveLength(3);
+      expect(requests).toHaveLength(4);
+    } finally { await client.close(); }
+  });
+
+  it('refuses to mint a child in an E2EE Account before sending an unsealed label', async () => {
+    const paths: string[] = [];
+    const home = await endpoint((request, response) => {
+      paths.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ accountId: 'account-1', accountEncryptionMode: 'e2ee', credentialId: PARENT_ID,
+        parentTokenId: null, expiresAt: EXPIRES_AT, grant: GRANT, embedConfig: null }));
+    });
+    const client = connect({ endpoint: home, token: PARENT });
+    try {
+      await expect(client.apiTokens.createChild({ label: 'Browser', expiresAt: EXPIRES_AT, grant: GRANT }))
+        .rejects.toMatchObject({ code: 'private_label_unavailable' });
+      expect(paths).toEqual(['/v1/auth/api-tokens/self']);
     } finally { await client.close(); }
   });
 

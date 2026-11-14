@@ -11,8 +11,9 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { SessionListActionInputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenChildCreateRequestV1Schema, AccountApiTokenChildRevokeRequestV1Schema, AccountApiTokenSelfV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensServerErrorV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenChildCreateRequestV1Schema, AccountApiTokenChildRevokeRequestV1Schema, AccountApiTokenLabelV1Schema, AccountApiTokenSelfV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensServerErrorV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import type { AccountApiTokenChildCreateRequestV1, AccountApiTokenSelfV1, AccountApiTokensCreateActionOutputV1, AccountApiTokensRevokeActionOutputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -328,8 +329,9 @@ export type HappierMachineExecutionRuns = HappierExecutionRuns<HappierMachineAct
 
 /** Home-owned token operations, independent of a Machine or Action target. */
 export type HappierApiTokens = Readonly<{
+  /** `label` is plaintext; the SDK seals it for the new token in the Account's current mode. */
   createChild: (
-    input: Omit<AccountApiTokenChildCreateRequestV1, 'tokenId'>,
+    input: Omit<AccountApiTokenChildCreateRequestV1, 'tokenId' | 'label'> & Readonly<{ label: string }>,
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<AccountApiTokensCreateActionOutputV1>;
   revokeChild: (
@@ -339,7 +341,8 @@ export type HappierApiTokens = Readonly<{
   self: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<AccountApiTokenSelfV1>;
 }>;
 
-const ChildTokenCreateInputSchema = z.omit(AccountApiTokenChildCreateRequestV1Schema, { tokenId: true });
+const ChildTokenCreateInputSchema = z.extend(z.omit(AccountApiTokenChildCreateRequestV1Schema, { tokenId: true, label: true }),
+  { label: AccountApiTokenLabelV1Schema });
 
 export type HappierClient = Readonly<{
   actions: HappierActions;
@@ -638,8 +641,19 @@ function createClient(
     async createChild(input, options) {
       const parsedInput = ChildTokenCreateInputSchema.parse(input);
       const tokenId = globalThis.crypto.randomUUID();
+      // The Home admits a label only in the Account's persisted mode. An E2EE
+      // label needs the Account's recipient census, which API-token credentials
+      // cannot read, so refuse before sending anything unsealed.
+      const { accountEncryptionMode } = await apiTokens.self(options);
+      if (accountEncryptionMode !== 'plain') {
+        throw new HappierTransportError('This Account seals API-token labels end to end; an API token cannot seal one.', {
+          code: 'private_label_unavailable',
+        });
+      }
+      const label = sealPrivateLabelV1({ mode: 'plain', value: parsedInput.label,
+        binding: { entity: 'account_api_token', field: 'label', id: tokenId } });
       const result = AccountApiTokensCreateActionOutputV1Schema.safeParse(await requestApiToken(
-        ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, 'POST', { ...parsedInput, tokenId }, options?.signal,
+        ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, 'POST', { ...parsedInput, label, tokenId }, options?.signal,
       ));
       if (!result.success || result.data.apiToken.tokenId !== tokenId) throw invalidApiTokenOutput();
       return result.data;

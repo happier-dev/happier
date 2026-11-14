@@ -51,7 +51,7 @@ const plainSession = V2SessionByIdResponseSchema.parse({ session: { id: 'session
 function mintResponse(body: Record<string, unknown>) {
   const id = String(body.tokenId);
   return json({ token: `hap_v1_${id}_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`,
-    apiToken: { tokenId: id, label: String(body.label), displayPrefix: `hap_v1_${id.slice(0, 8)}`,
+    apiToken: { tokenId: id, label: { content: (body.label as { content: unknown }).content, recipientEnvelope: null }, displayPrefix: `hap_v1_${id.slice(0, 8)}`,
       createdAt: '2026-09-30T00:00:00.000Z', lastUsedAt: null, expiresAt: body.expiresAt,
       hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: body.grant,
       parentTokenId: TOKEN_ID, activeChildCount: 0, embedConfig: null } });
@@ -349,7 +349,8 @@ describe('SDK embed helpers', () => {
         embedPublicKey: 'B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9_AsrhtHHw',
         expiresInSeconds: 900, requireCreatedBy: TOKEN_ID })).rejects.toMatchObject({
         code: 'api_token_child_invalid', status: 400 });
-      expect(paths).toEqual(['/v1/auth/api-tokens/self', '/v1/auth/api-tokens/children/create']);
+      // The mint owner reads the Account mode once more to seal the child's label.
+      expect(paths).toEqual(['/v1/auth/api-tokens/self', '/v1/auth/api-tokens/self', '/v1/auth/api-tokens/children/create']);
     } finally { await client.close(); }
   });
 
