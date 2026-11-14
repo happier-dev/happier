@@ -144,15 +144,20 @@ describe('CLI version reuse', () => {
       processBoundary.wait = new Promise<void>(resolve => { release = resolve; });
       env.patch({ HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS: '25' });
       try {
-        expect((await detect(request)).clis.opencode.version).toBeUndefined();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const older = detect(request);
+        await vi.waitFor(() => expect(processBoundary.calls).toBe(1));
+        // The outer deadline can expire before identity lookup starts the shared budget.
+        // Advance that budget only after the process has actually started.
+        await vi.advanceTimersByTimeAsync(25);
+        expect((await older).clis.opencode.version).toBeUndefined();
         processBoundary.wait = Promise.resolve();
         processBoundary.version = '2.0.0';
-        vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(Date.now() + 31_000);
         expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
         // A late successful completion must not become a reusable version fact.
         release();
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await vi.advanceTimersByTimeAsync(0);
         vi.setSystemTime(Date.now() + 31_000);
         expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
       } finally { release(); env.restore(); }
