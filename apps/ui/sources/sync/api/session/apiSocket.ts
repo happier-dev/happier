@@ -818,10 +818,11 @@ class ApiSocket {
      * Home row. `locked`: Sync refused this Machine (lock, downgrade pin, non-ready access); the
      * caller refuses and never re-reads the row, which the same Home serves.
      */
-    captureBoundMachineRpcContent(
+    async captureBoundMachineRpcContent(
         binding: Readonly<{ serverId: string; accountId: string | undefined; credentials: AuthCredentials }>,
         machineId: string,
-    ): BoundMachineRpcContent | null {
+        signal?: AbortSignal,
+    ): Promise<BoundMachineRpcContent | null> {
         const config = this.config;
         const serverId = config?.serverId;
         if (!config || !serverId || config.request || config.generation === undefined || config.isCurrent?.() === false) return null;
@@ -841,6 +842,14 @@ class ApiSocket {
             || resolveAuthCredentialsScopeKey(binding.credentials) !== resolveAuthCredentialsScopeKey({ ...config.credentials, token: config.token })) {
             return null;
         }
+        // A scoped read on Sync's applied Home must wait for the same pending
+        // Machine hydration as an active RPC before capturing a settled lock.
+        if (this.encryption) {
+            await awaitMachineListHydration({ machineId,
+                serverId: resolveServerProfileScopeIdForIdentifier(serverId),
+                machine: storage.getState().machines[machineId], encryption: this.encryption, signal });
+        }
+        if (!isBindingCurrent()) return { kind: 'locked' };
         const machine = storage.getState().machines[machineId];
         // Runner key bindings are not projected; those rows keep the exact row read.
         if (!machine || machine.kind === 'ephemeral_session_runner') return null;

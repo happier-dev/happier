@@ -435,10 +435,11 @@ async function machineRpcWithServerTransport<R, A>(
             const credentials = context.credentials;
             // On Sync's own applied Home, Account and credential, its push-maintained
             // Machine projection is the authority the same Home would serve: no row read.
-            const projected = apiSocket.captureBoundMachineRpcContent({
-                serverId: context.targetServerId, accountId: context.targetAccountId,
-                credentials: credentials ?? { token: context.token },
-            }, context.machineId);
+            const projected = await timeoutBudget.runWithinTimeout('scoped', async () =>
+                await apiSocket.captureBoundMachineRpcContent({
+                    serverId: context.targetServerId, accountId: context.targetAccountId,
+                    credentials: credentials ?? { token: context.token },
+                }, context.machineId, setupCancellation.signal));
             if (projected?.kind === 'locked') {
                 // Sync refused this Machine (lock, downgrade pin, non-ready access). Re-reading
                 // the row from the same Home would re-admit exactly what Sync refused.

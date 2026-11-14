@@ -15,6 +15,7 @@ import {
 } from '@/dev/testkit/fixtures/machineFixtures';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { Encryption } from '@/sync/encryption/encryption';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -62,6 +63,7 @@ afterEach(async () => {
   getStorage().setState({
     machines: initialStorage.machines,
     machineListByServerId: initialStorage.machineListByServerId,
+    machineListStatusByServerId: initialStorage.machineListStatusByServerId,
   });
   await serverScopedRpcSocketPool.stopAll();
   serverScopedRpcSocketPool.resetForTests();
@@ -342,6 +344,58 @@ describe('scoped Machine RPC on the applied active Home consumes Sync’s Machin
       expect(home.readCount).toBe(0);
     } finally {
       await home.close();
+    }
+  });
+
+  it.each(['ready', 'unavailable', 'aborted'] as const)('holds a cold scoped projection during Machine hydration, then settles %s', async outcome => {
+    stored.token = tokenFor(ACCOUNT);
+    const encryption = await Encryption.create(new Uint8Array(32).fill(71));
+    const source = await Encryption.create(new Uint8Array(32).fill(71));
+    const dataKey = new Uint8Array(32).fill(72);
+    await source.initializeMachines(new Map([[MACHINE, dataKey]]));
+    const home = await createActiveHome({ ciphers: () => [['hydrated', source.getMachineEncryption(MACHINE)!]] });
+    const capture = vi.spyOn(apiSocket, 'captureBoundMachineRpcContent');
+    const abort = new AbortController();
+    try {
+      const cold = createMachineFixture({ id: MACHINE, storageMode: 'e2ee', metadata: null,
+        dataEncryptionKey: Buffer.from(await source.encryptEncryptionKey(dataKey)).toString('base64'),
+        availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
+      await applySync(home, cold, { encryption });
+      getStorage().setState({ machineListStatusByServerId: { [home.profile.id]: 'loading' } });
+      let settled = false;
+      const pending = home.rpc({ preferScoped: true, signal: abort.signal }).then(
+        value => { settled = true; return { value }; },
+        error => { settled = true; return { error }; },
+      );
+      await vi.waitFor(() => expect(capture).toHaveBeenCalled());
+      expect(settled).toBe(false);
+      expect(home.calls).toHaveLength(0);
+      expect(home.readCount).toBe(0);
+      if (outcome === 'aborted') abort.abort();
+      else if (outcome === 'ready') {
+        const metadata = await source.getMachineEncryption(MACHINE)!.encryptMetadata(createMachineFixture().metadata!);
+        await fetchAndApplyMachines({
+          credentials: { token: stored.token, secret: Buffer.from(new Uint8Array(32).fill(71)).toString('base64') },
+          expectedAccountMode: 'e2ee', sourceServerId: home.profile.id, encryption, machineDataKeys: new Map(),
+          request: async () => new Response(JSON.stringify([{ ...cold, metadata }])),
+          getMachineSnapshot: () => getStorage().getState().machines,
+          getExistingMachine: id => getStorage().getState().machines[id],
+          applyMachineDisplayEntries: (machines, options) => getStorage().getState().replaceMachineDisplays(machines,
+            { sourceServerId: home.profile.id, ...options }),
+          applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: home.profile.id }),
+          onListComplete: () => getStorage().getState().markMachineListSettled(home.profile.id),
+        });
+      } else getStorage().setState({ machineListStatusByServerId: { [home.profile.id]: 'idle' } });
+      const result = await pending;
+      if (outcome === 'ready') expect(result).toMatchObject({ value: { success: true, key: 'hydrated' } });
+      else expect(result).toMatchObject({ error: { rpcErrorCode: outcome === 'aborted'
+        ? 'MACHINE_RPC_ABORTED' : 'MACHINE_ENCRYPTION_UNAVAILABLE' } });
+      expect(home.calls).toHaveLength(outcome === 'ready' ? 1 : 0);
+      expect(home.readCount).toBe(0);
+    } finally {
+      abort.abort(); capture.mockRestore();
+      await home.close();
+      encryption.retireAccountMaterial(); source.retireAccountMaterial();
     }
   });
 
