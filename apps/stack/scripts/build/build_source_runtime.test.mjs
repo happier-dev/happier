@@ -193,7 +193,8 @@ test('source CLI launches across unrelated dependency refreshes and refuses chan
   assert.deepEqual(await bundledCheck(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
 });
 
-test('explicit dev daemon restart prepares current dependencies instead of refusing a stale retained generation', async t => {
+for (const restart of [false, true, 'bootstrap']) {
+test(`dev daemon ${restart === 'bootstrap' ? 'bootstrap' : restart ? 'restart' : 'startup'} prepares current dependencies instead of refusing a stale retained generation`, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-dev-restart-dependencies-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
   const repoDir = await createReloadDaemonRepo(fixture, 'import value from "restart-input"; console.log(value);');
@@ -219,22 +220,61 @@ test('explicit dev daemon restart prepares current dependencies instead of refus
   await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
     await writeFile(join(dependency, 'index.cjs'), 'module.exports = 2;');
   });
+  await assert.rejects(build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true }),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' }, 'plain pinned consumers still refuse stale dependencies');
+  await assert.rejects(build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true,
+    devStartup: true, sourceRevision: { rev: 'HEAD' } }),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' }, 'an explicit revision must keep its pinned selection');
   const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
   // Keep the actual lifecycle owner active while preventing a fixture from
   // starting a real daemon: a deliberate owner stop is its natural boundary.
   await writeFile(runtimeStatePath, JSON.stringify({ daemon: { desiredStateByIdentity: { default: 'stopped' } } }));
-  const result = await startDevDaemon({ startDaemon: true, restart: true, env, runtimeStatePath,
+  const result = restart === 'bootstrap'
+    ? await prepareDevDaemonSourceRuntime({ sourceRuntimeOptions, env, reuseSelected: 'if-available' },
+      { buildSourceRuntimeBundleImpl: build })
+    : await startDevDaemon({ startDaemon: true, restart, env, runtimeStatePath,
     cliHomeDir: fixture.path('cli-home'), sourceRuntimeOptions }, {
     // Linux fixtures relocate the genuine build/admission owner, without
     // replacing any preparation, selection or daemon lifecycle decisions.
     prepareDevDaemonSourceRuntimeImpl: options => prepareDevDaemonSourceRuntime(options,
       { buildSourceRuntimeBundleImpl: build }),
   });
-  assert.equal(result.reason, undefined, 'restart must get past stale dependency admission');
+  assert.equal(result.reason, undefined, 'startup and restart must get past stale dependency admission');
   const selected = await build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true });
   const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selected });
   assert.equal((await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env })).stdout.trim(), '2');
 });
+
+}
+
+for (const component of ['server', 'daemon']) {
+test(`live dev ${component} startup selects changed source instead of its retained generation`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dev-current-source-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = 1;');
+  const server = join(repoDir, 'apps/server');
+  for (const directory of ['sources', 'scripts', 'node_modules']) await mkdir(join(server, directory), { recursive: true });
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const ready = 1;');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/consumer'), component,
+    env: { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') } };
+  const first = await build(options);
+  const source = join(repoDir, component === 'server' ? 'apps/server/sources/main.light.ts' : 'apps/cli/src/index.ts');
+  await writeFile(source, 'export const ready = 2;');
+  const current = await build({ ...options, devStartup: true, reuseSelected: 'if-available' });
+  assert.equal((await import(pathToFileURL(current.entrypoint))).ready, 2, 'startup must consume the changed source');
+  assert.notEqual(current.entrypoint, first.entrypoint);
+  await writeFile(source, 'export const ready = 3;');
+  const reloaded = await build({ ...options, devStartup: true, reuseSelected: true });
+  assert.equal((await import(pathToFileURL(reloaded.entrypoint))).ready, 3, 'repeated startup must not stay pinned');
+});
+}
 
 test('selected source runtime refuses refreshed dependencies before probing its removed imports', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-runtime-stale-dependencies-' });

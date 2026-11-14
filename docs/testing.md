@@ -374,23 +374,24 @@ the existing single trailing pass instead of admitting a new manifest with an ol
 
 Both `source-dev` and `qa-runtime` package builds compile captured inputs, so edits during compilation do not require a quiet checkout. The output record identifies the captured inputs; later edits demand a subsequent build rather than being marked current by the completed build. Ordinary strict publication builds retain their live-input drift fence.
 
-Development startup separately admits intact last-green output through
-`scripts/workspaces/ensureWorkspacePackagesBuilt.mjs`. Source server admission
-checks the recorded dependency closure and its complete emitted import graph
-without demanding current source fingerprints. Daemon runtime probes and Expo's
-source inventory feed that same startup policy. Refresh failures preserve
+Development package startup separately admits intact last-green output through
+`scripts/workspaces/ensureWorkspacePackagesBuilt.mjs`. In 0.3 development,
+live source server and daemon starts resolve current inputs through
+`buildSourceRuntimeBundle` and its existing producer. Completed captures are
+reused when their inputs still match; source and installed dependency changes
+prepare a replacement before launch. Controlled QA keeps its explicit revision
+and declared overlay selection. Daemon runtime probes and Expo's source
+inventory feed the package startup policy. Refresh failures preserve
 availability; cold, damaged, dependency-incoherent, and strict/artifact preparation
 still block. Test startup availability separately from successful refresh and
 the lifecycle owner's adoption of the next build. Recovery watches derive transitive package inputs from the same
 workspace graph as build admission, including compiler dependencies. Compiler
 and missing-source diagnostics can wait for those corrections; wrapped Expo
 errors retain their component target, and OS/configuration exits fail fast.
-An explicit development-server restart that reuses a retained source generation
-deploys FINAL migrations from the current server checkout before retiring the
+An explicit development-server restart deploys FINAL migrations from the current server checkout before retiring the
 incumbent. It never deploys the older retained catalog. Shared-database consumers
 check that current catalog against their source ledger without deploying; a
-failed deploy or missing migration refuses the restart. Ordinary retained startup
-keeps its migration-free availability policy, and PGlite keeps its existing
+failed deploy or missing migration refuses the restart. PGlite keeps its existing
 exclusive-lock restart lifecycle.
 Finite publication workers stream package start/done events through the
 existing process transport before their terminal result, so CLI progress and

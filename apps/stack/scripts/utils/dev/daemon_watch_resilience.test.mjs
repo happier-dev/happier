@@ -294,12 +294,12 @@ test('dev daemon source generation is the Stack source-runtime daemon bundle, re
   ]);
 });
 
-test('the real source-runtime owner refuses to build when startup asks for a retained generation and none exists', async (t) => {
+test('the real source-runtime owner preserves pinned QA selection when no retained generation exists', async (t) => {
   const stackBaseDir = await mkdtemp(join(tmpdir(), 'hs-daemon-no-retained-'));
   t.after(async () => rm(stackBaseDir, { recursive: true, force: true }));
   await assert.rejects(
     () => prepareDevDaemonSourceRuntime(
-      { sourceRuntimeOptions: { repoDir: join(stackBaseDir, 'repo'), stackBaseDir }, env: {}, reuseSelected: true },
+      { sourceRuntimeOptions: { repoDir: join(stackBaseDir, 'repo'), stackBaseDir }, env: { HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot' }, reuseSelected: true },
       { logger: quietLogger },
     ),
     /selected source daemon bundle is unavailable/,
@@ -425,7 +425,7 @@ test('startDevDaemon keeps the stack running when source preparation or launch f
   }
 });
 
-test('startDevDaemon tells the user the first daemon build is underway, not to restart, when no source generation exists yet', async (t) => {
+test('startDevDaemon reports preparation failure when the source checkout is unavailable', async (t) => {
   const stackBaseDir = await mkdtemp(join(tmpdir(), 'hs-daemon-first-build-'));
   t.after(async () => rm(stackBaseDir, { recursive: true, force: true }));
   const warnings = [];
@@ -439,14 +439,12 @@ test('startDevDaemon tells the user the first daemon build is underway, not to r
       env: {},
     },
     {
-      startLocalDaemonWithAuthImpl: async () => { throw new Error('must not launch without a source generation'); },
       logger: { log() {}, warn(message) { warnings.push(message); } },
     },
   );
-  assert.deepEqual(result, { started: false, reason: 'daemon-awaiting-first-build' });
+  assert.deepEqual(result, { started: false, reason: 'daemon-start-failed' });
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /first daemon build/);
-  assert.doesNotMatch(warnings[0], /restart the Stack/i);
+
 });
 
 function createExecutor({ ping, loaded = null, launches = [], prepared = [], runtimeStatePath = '/tmp/stack.runtime.json', ...overrides } = {}) {

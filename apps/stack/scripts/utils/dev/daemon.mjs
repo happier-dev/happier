@@ -29,10 +29,9 @@ const inFlightDevDaemonStarts = new Map();
  * publication). It is selected and recorded through the existing
  * `sourceRuntimeLaunchUpdate` seam of `startLocalDaemonWithAuth`.
  *
- * `reuseSelected: true` reads only the retained generation and never compiles or
- * waits on a build, dependency or admission lock, so startup and recovery cannot be
- * held up by other sessions; with no retained generation it throws and the reload
- * coordinator's first build supplies one. The default builds current source.
+ * Live development startup resolves current source through the source runtime
+ * producer, reusing a completed capture only when its inputs still match.
+ * Pinned QA selection remains with the same source runtime owner.
  */
 export async function prepareDevDaemonSourceRuntime({
   sourceRuntimeOptions,
@@ -281,16 +280,6 @@ export async function startDevDaemon({
     }
     return { started: true };
   } catch (error) {
-    if (error?.code === 'source_bundle_unavailable') {
-      // No daemon generation has been built for this Stack yet. The reload
-      // coordinator's initial daemon refresh is building one and cold-starts the
-      // daemon when it lands; restarting the Stack would only restart that build.
-      logger.warn(
-        '[local] daemon: the first daemon build is running in the background; the daemon starts as soon as it is ready. ' +
-          'Keep the stack running: a restart starts that build over.',
-      );
-      return { started: false, reason: 'daemon-awaiting-first-build' };
-    }
     logger.warn(
       '[local] daemon startup failed; keeping the stack running so daemon recovery or the next source reload can retry. ' +
         `(${error instanceof Error ? error.message : String(error)})`,

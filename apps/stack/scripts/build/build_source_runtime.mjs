@@ -1068,8 +1068,8 @@ export async function buildSourceRuntimeBundle(options) {
 }
 
 async function buildSourceRuntimeBundlePass(options) {
-  // Explicit development-server starts retain their migration-free last-green
-  // policy. Pending QA starts also use startup admission, but run their migrations.
+  // Explicit live-development starts resolve current inputs before launch.
+  // Pending QA starts retain their revision and startup admission policy.
   const developmentServerStartup = options.devStartup === true;
   // A pending Stack start/reload is runtime-host startup work, just like dev
   // construction. Select the existing startup admission policy here so every
@@ -1082,7 +1082,12 @@ async function buildSourceRuntimeBundlePass(options) {
   // the controller daemon prepared for a remotely placed source Stack.
   const readLastGreen = Boolean(options.devStartup && options.preparation && !options.pending && !options.reuseSelected
     && options.sourceCapturedAfter == null);
-  const selection = options.reuseSelected || (readLastGreen ? 'if-available' : false);
+  // Dev startup is a current-source demand for both server and daemon. Retained
+  // graphs remain available to pinned QA/recovery consumers through this owner.
+  const liveDevStartup = developmentServerStartup && !options.sourceRevision
+    && (options.env ?? process.env).HAPPIER_STACK_RUNTIME_MODE !== 'source-snapshot';
+  if (liveDevStartup) options = { ...options, reuseSelected: false };
+  const selection = liveDevStartup ? false : options.reuseSelected || (readLastGreen ? 'if-available' : false);
   if (options.stackBaseDir && selection) {
     const stackBaseDir = resolve(options.stackBaseDir);
     // Recovery and CLI commands read the pinned graph without consulting
