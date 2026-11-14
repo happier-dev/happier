@@ -132,6 +132,13 @@ struct Shared {
 }
 
 impl Shared {
+    fn initialize(&self, frame: SavedFrame) {
+        if let Ok(mut state) = self.state.lock() {
+            // A failed flush can still be pending when a replacement window is attached.
+            state.0 = frame;
+        }
+    }
+
     fn record(&self, normal: Option<SavedFrame>, maximized: bool) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;
@@ -190,18 +197,13 @@ impl FrameTracker {
             // This window's default geometry is the initial normal frame when saved geometry
             // is absent or its monitor is disconnected. Never initialize from a maximized rect.
             if let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) {
-                if let Ok(mut state) = self.shared.state.lock() {
-                    *state = (
-                        SavedFrame {
-                            x: position.x,
-                            y: position.y,
-                            width: size.width,
-                            height: size.height,
-                            maximized: false,
-                        },
-                        false,
-                    );
-                }
+                self.shared.initialize(SavedFrame {
+                    x: position.x,
+                    y: position.y,
+                    width: size.width,
+                    height: size.height,
+                    maximized: false,
+                });
             }
         }
 
@@ -347,10 +349,13 @@ mod tests {
         };
 
         shared.flush();
+        // Recreating the window after its monitor disconnects replaces the normal geometry.
+        let fallback = frame(40, 50, 1000, 750);
+        shared.initialize(fallback);
         fs::remove_file(&parent).unwrap();
         shared.flush();
 
-        assert_eq!(load(&path), Some(saved));
+        assert_eq!(load(&path), Some(fallback));
     }
 
     #[test]
