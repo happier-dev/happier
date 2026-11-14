@@ -434,7 +434,8 @@ describe('core e2e: same-Session cross-Agent transition', () => {
                 '--input-json', JSON.stringify({
                 sessionId,
                 expectedCurrentAgentId: 'claude',
-                selection: { v: 1, agentId: target.selectedAgentId },
+                selection: { v: 1, agentId: target.selectedAgentId,
+                    ...(target.runtimeAgentId === 'pi' ? { modelId: 'openai/fake-model' } : {}) },
                 input: { text: transitionText, localId: submittedLocalId, meta: {} },
             })],
             timeoutMs: 300_000,
@@ -459,6 +460,11 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         // projector, which is why this asserts the key the transition owns.
         const metadataAfter = decryptLegacyBase64(afterTransition.metadata, secret) as Record<string, unknown>;
         expect(metadataAfter.flavor).toBe(target.runtimeAgentId);
+        if (target.runtimeAgentId === 'pi') {
+            expect(metadataAfter.modelSelectionIntentV1).toMatchObject({
+                selection: { agentTargetKey: 'agent:happier.agent.pi/pi', modelId: 'openai/fake-model' },
+            });
+        }
 
         // Exactly one divider, at the deterministic reserved local ID, carrying the sidecar.
         const messagesAfter = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
