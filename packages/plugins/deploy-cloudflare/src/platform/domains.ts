@@ -1,7 +1,7 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, isPluginError, type DeploymentTargetDomainInputV1, type DeploymentTargetDomainResultV1, type JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
@@ -97,7 +97,7 @@ async function workers(input: DeploymentTargetDomainInputV1, context: PluginAcco
   return { v: 1, hostname: input.domain.hostname, state: row.enabled ? 'active' : 'pending', dns: [] };
 }
 
-function action(product: 'pages' | 'workers', operation: Operation) {
+function action(product: 'pages' | 'workers', operation: Operation): PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>> {
   const write = operation === 'add' || operation === 'remove';
   return { ...pagesCommon, hostAccess: [`cloudflare-${product}`, 'deploy.manage'],
     title: `${operation} Cloudflare ${product} Domain`, dangerLevel: write ? 'writesRemote' as const : 'safe' as const,
