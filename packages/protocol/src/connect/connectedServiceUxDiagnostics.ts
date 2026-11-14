@@ -191,9 +191,11 @@ export type ConnectedServiceCredentialReconnectCauseV1 = z.infer<typeof Connecte
 
 const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = lazyZodSchema(() => z.pipe(
   z.record(ConnectedServiceUxDiagnosticKeyV1Schema, ConnectedServiceUxDiagnosticScalarV1Schema).check(z.refine((diagnostics) => Object.keys(diagnostics).length <= CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS, `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`)),
-  z.catchall(
+  // Keep the scalar index and optional provenance as an intersection: emitting
+  // both on one object makes the optional property conflict with its index.
+  z.intersection(
+    z.record(z.string(), ConnectedServiceUxDiagnosticScalarV1Schema),
     z.object({ reconnectCause: z.optional(ConnectedServiceCredentialReconnectCauseV1Schema) }),
-    ConnectedServiceUxDiagnosticScalarV1Schema,
   ),
 ));
 

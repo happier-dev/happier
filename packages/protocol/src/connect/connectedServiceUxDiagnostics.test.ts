@@ -60,6 +60,12 @@ describe('ConnectedServiceUxDiagnosticV1', () => {
     expect(ConnectedServiceUxDiagnosticV1Schema.safeParse({ ...diagnostic,
       diagnostics: { ' reconnectCause ': 'arbitrary-provider-text' } }).success).toBe(false);
     expect(ConnectedServiceUxDiagnosticV1Schema.parse(diagnostic)).not.toHaveProperty('diagnostics');
+    expect(ConnectedServiceUxDiagnosticV1Schema.parse({ ...diagnostic,
+      diagnostics: { reason: 'spawn_preflight' } }).diagnostics)
+      .toEqual({ reason: 'spawn_preflight' });
+    for (const diagnostics of [{ reconnectCause: undefined }, { reason: undefined }]) {
+      expect(ConnectedServiceUxDiagnosticV1Schema.safeParse({ ...diagnostic, diagnostics }).success).toBe(false);
+    }
   });
 
   it('accepts the shared safe diagnostic shape used by CLI and UI surfaces', () => {
