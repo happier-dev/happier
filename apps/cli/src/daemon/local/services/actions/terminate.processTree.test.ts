@@ -117,7 +117,7 @@ describe('terminate_detected through the real listener and process boundaries', 
             target: { kind: 'inventory_entry', machineId: 'fixture-machine', inventoryEntryId: entry.id },
         };
         const result = await createTerminateDetectedService(createOsProcessControl({ refreshInventory }), {
-            graceMs: 300, verifyPollMs: 50, verifyAttempts: 20,
+            graceMs: 300,
         })({ request, entry, now: Date.now() });
         expect(result).toEqual({ status: 'succeeded' });
         expect(await Promise.all(owned.pids.map(pid => waitForProcessExit(pid)))).toEqual([true, true, true]);

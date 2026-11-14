@@ -31,12 +31,12 @@ vi.mock("@/storage/db", async () => {
             metadata: encodePlainMachineStoredContent({}), daemonState: null,
             dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             installationId: 'installation_1', active: true, revokedAt: null, replacedByMachineId: null,
-            grants: [],  
+            grants: [],
         }] : []
     ));
     storage.db.session.findUnique.mockImplementation(async (query: { where: { id: string } }) => ({
         id: query.where.id, accountId: accessFixture.sessionOwnerId, account: { status: 'active' },
-        currentStorageState: 'hosted', shares: [], teamGrants: [], groupGrants: [],
+        currentStorageState: 'hosted', grants: [],
     }));
     const state = { ...storage.db, ...inTxPostgresControlStatementMock };
     return { db: createDbTransactionMock(() => state).wrapDb(state) };

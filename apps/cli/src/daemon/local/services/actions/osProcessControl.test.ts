@@ -159,7 +159,7 @@ describe('detected listener termination through the shared owner', () => {
         const control = createOsProcessControl({
             refreshInventory: async () => snapshot({ generatedAt: Date.now(), entries: live.has(4321) ? [target] : [] }),
         });
-        const result = await createTerminateDetectedService(control, { graceMs: 1, verifyPollMs: 0, verifyAttempts: 1 })({
+        const result = await createTerminateDetectedService(control, { graceMs: 1 })({
             entry: target,
             now: Date.now(),
             request: { requestId: 'req', action: 'terminate_detected', force, target: { kind: 'inventory_entry', machineId: 'machine-a', inventoryEntryId: target.id } },

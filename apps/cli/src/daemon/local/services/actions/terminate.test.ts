@@ -62,9 +62,8 @@ async function harness(input: Readonly<{ resistantChild?: boolean; survive?: boo
     const control = {
         probeListener,
         terminateTree: createProcessTreeTerminator({ platform: 'linux', kill, censusDependencies: { platform: 'linux', linuxBoundary: boundary } }),
-        wait: async () => {},
     };
-    const run = (target = entry(start)) => createTerminateDetectedService(control, { graceMs: 1, verifyPollMs: 0, verifyAttempts: 2 })({ request, entry: target, now: 3000 });
+    const run = (target = entry(start)) => createTerminateDetectedService(control, { graceMs: 1 })({ request, entry: target, now: 3000 });
     return { run, probeListener, kill, live, start, held };
 }
 
@@ -145,7 +144,8 @@ describe('createTerminateDetectedService', () => {
     });
     it('reports the port still held after the shared terminator observed the tree end', async () => {
         const h = await harness();
-        h.probeListener.mockResolvedValue(h.held);
+        // A later release must not hide the fresh post-termination observation.
+        h.probeListener.mockResolvedValue(free).mockResolvedValueOnce(h.held).mockResolvedValueOnce(h.held);
         await expect(h.run()).resolves.toEqual({ status: 'failed', reasonCode: 'port_not_released' });
         expect(h.live.size).toBe(0);
     });

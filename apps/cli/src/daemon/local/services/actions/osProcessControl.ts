@@ -21,14 +21,7 @@ function hostsCompatible(scanned: string, requested: string): boolean {
     return scanned === '0.0.0.0' || scanned === '::' || scanned === '*';
 }
 
-async function defaultWait(ms: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
 export function createOsProcessControl(input: CreateOsProcessControlInput): TerminateProcessControl {
-    const wait = input.wait ?? defaultWait;
     const terminateTree = input.platform || input.kill || input.wait
         ? createProcessTreeTerminator({
             platform: input.platform,
@@ -94,5 +87,5 @@ export function createOsProcessControl(input: CreateOsProcessControlInput): Term
         } });
         return refusal ? { ...result, outcomes: result.outcomes.map(row => row.outcome === 'refused' ? { ...row, reason: refusal! } : row) } : result;
     } : terminateTree;
-    return { probeListener, terminateTree: terminateWithOwnership, wait };
+    return { probeListener, terminateTree: terminateWithOwnership };
 }

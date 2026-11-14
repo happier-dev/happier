@@ -150,8 +150,8 @@ describe('Process Actions through retained lifecycle owners', () => {
                     readdir: async path => localServiceProcfsFixture([...live].map(pid => ({ pid }))).readdir(path),
                     readFile: async path => localServiceProcfsFixture([...live].map(pid => ({ pid }))).readFile(path),
                     readlink: async path => localServiceProcfsFixture([...live].map(pid => ({ pid }))).readlink(path),
-                } } }), wait: async () => undefined,
-        }, { graceMs: 0, verifyAttempts: 0 });
+                } } }),
+        }, { graceMs: 0 });
         const actions = createProcessActionOwnerAdapters({ refreshInventory: async () => registry.getSnapshot(), terminateDetectedService });
         await expect(actions.terminateDetected(row, {})).resolves.toEqual({ status: 'denied', reasonCode: 'identity_changed' });
         expect(live.has(pid)).toBe(true);

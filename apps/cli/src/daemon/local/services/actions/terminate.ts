@@ -27,14 +27,11 @@ export type TerminateListenerProbeResult =
 export type TerminateProcessControl = Readonly<{
     probeListener(input: TerminateListenerProbeInput): Promise<TerminateListenerProbeResult>;
     terminateTree(input: ProcessTreeTerminationInput): Promise<ProcessTreeTerminationResult>;
-    wait(ms: number): Promise<void>;
 }>;
 
 export type TerminateDetectedServiceConfig = Readonly<{
     /** Override the shared terminator's dev-server grace budget. */
     graceMs?: number;
-    verifyPollMs?: number;
-    verifyAttempts?: number;
 }>;
 
 export type TerminateDetectedServiceInput = Readonly<{
@@ -46,9 +43,6 @@ export type TerminateDetectedServiceInput = Readonly<{
 }>;
 
 export type TerminateDetectedService = (input: TerminateDetectedServiceInput) => Promise<LocalServiceActionExecutionOutcome>;
-
-const DEFAULT_VERIFY_POLL_MS = 200;
-const DEFAULT_VERIFY_ATTEMPTS = 10;
 
 function identityMatches(expected: TerminateProcessIdentity, actual: TerminateProcessIdentity): boolean {
     if (actual.pid !== expected.pid) return false;
@@ -81,9 +75,6 @@ export function createTerminateDetectedService(
     control: TerminateProcessControl,
     config: TerminateDetectedServiceConfig = {},
 ): TerminateDetectedService {
-    const verifyPollMs = config.verifyPollMs ?? DEFAULT_VERIFY_POLL_MS;
-    const verifyAttempts = config.verifyAttempts ?? DEFAULT_VERIFY_ATTEMPTS;
-
     return async ({ request, entry, now, execution }) => {
         if (execution?.signal?.aborted) return { status: 'denied', reasonCode: 'access_denied' };
         const provenance = entry.provenance?.process;
@@ -131,13 +122,9 @@ export function createTerminateDetectedService(
         // Tree liveness and generation verification belong to the shared terminator. The
         // listener owner only verifies its socket after that operation has completed.
         const notBefore = Date.now();
-        let after: TerminateListenerProbeResult = { status: 'indeterminate' };
-        for (let attempt = 0; attempt <= verifyAttempts; attempt += 1) {
-            after = await control.probeListener({ ...probeInput, notBefore });
-            if (isPortReleased(after, current.identity)) {
-                return survived ? { status: 'failed', reasonCode: 'terminate_signal_failed' } : { status: 'succeeded' };
-            }
-            if (attempt < verifyAttempts) await control.wait(verifyPollMs);
+        const after = await control.probeListener({ ...probeInput, notBefore });
+        if (isPortReleased(after, current.identity)) {
+            return survived ? { status: 'failed', reasonCode: 'terminate_signal_failed' } : { status: 'succeeded' };
         }
         if (after.status === 'indeterminate') return { status: 'failed', reasonCode: 'port_release_unverified' };
         return { status: 'failed', reasonCode: ended || survived ? 'port_not_released' : 'terminate_no_process_signaled' };
